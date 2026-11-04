@@ -165,11 +165,17 @@ func (s *Service) entryScope(e hostEntry) (Scope, bool) {
 	return Scope{}, false
 }
 
-// hostKeyScope returns the scope key is registered for.
+// hostKeyScope returns the scope of this image key is registered for. An
+// entry of a scope the image does not serve is skipped, so it never stands
+// for the zero Scope, which is testnet.
 func (s *Service) hostKeyScope(key []byte) (Scope, bool) {
 	for _, e := range s.hostEntries {
-		if bytes.Equal(e.key, key) {
-			return s.entryScope(e)
+		if !bytes.Equal(e.key, key) {
+			continue
+		}
+
+		if sc, ok := s.entryScope(e); ok {
+			return sc, true
 		}
 	}
 
@@ -226,9 +232,9 @@ func (s *Service) callerSees(e hostEntry) bool {
 		return true
 	}
 
-	sc, _ := s.entryScope(e)
+	sc, ok := s.entryScope(e)
 
-	if !s.caller.known {
+	if !ok || !s.caller.known {
 		return false
 	}
 
@@ -264,12 +270,10 @@ func (s *Service) authorizeMulti(route string, req hostAuthed) error {
 		return errDevice
 	}
 
-	sc, err := s.authenticateHostScope(a.HostKey, a.HostSignature, a.Challenge, AdminBinding(route, canonical, a.Challenge))
+	sc, err := s.authenticateHostScope(a.HostKey, a.HostSignature, a.Challenge, AdminBinding(route, canonical, a.Challenge), func(sc Scope) error {
+		return s.authorizeScope(req, sc)
+	})
 	if err != nil {
-		return err
-	}
-
-	if err = s.authorizeScope(req, sc); err != nil {
 		return err
 	}
 
@@ -365,7 +369,8 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 			continue
 		}
 
-		if got, _ := s.entryScope(e); got != sc {
+		// a key of another scope, or of one this image does not serve
+		if got, ok := s.entryScope(e); !ok || got != sc {
 			return HostKeyResponse{}, errKeyOtherScope
 		}
 
@@ -488,14 +493,13 @@ func seedPublic(seed []byte) ed25519.PublicKey {
 // with a host key of the scope of the profile asked for. An unknown profile
 // is refused by the caller once the key is known to be authentic.
 func (s *Service) authenticateInventory(req InventoryRequest) error {
-	sc, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, InventoryRequestBinding(req))
-	if err != nil {
-		return err
-	}
+	_, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, InventoryRequestBinding(req), func(sc Scope) error {
+		if target, err := s.profileScope(req.Profile); err == nil && target != sc {
+			return errScopeMismatch
+		}
 
-	if target, err := s.profileScope(req.Profile); err == nil && target != sc {
-		return errScopeMismatch
-	}
+		return nil
+	})
 
-	return nil
+	return err
 }

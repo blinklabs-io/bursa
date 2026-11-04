@@ -492,10 +492,7 @@ func TestMultiDeviceWideNeedsMainnetKey(t *testing.T) {
 				code, body := c.do(t, s, hexOf(pub), k.key)
 
 				if k.scope != scopeTestnetName {
-					if code != http.StatusOK && strings.Contains(string(body), errDeviceWide.Error()) {
-						t.Fatalf("mainnet key refused as not device-wide: %s", body)
-					}
-
+					mustOK(t, "mainnet key", code, body)
 					return
 				}
 

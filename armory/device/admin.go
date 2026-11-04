@@ -219,10 +219,15 @@ func handleAdmin[Req any, P interface {
 // a host key is registered.
 var errProvisioningClosed = errors.New("a host key is registered: send a signed /provision/cold request")
 
+// errUnsignedImportMulti refuses the firmware's unsigned cold key import in a
+// multi image, which has none.
+var errUnsignedImportMulti = errors.New("a multi image takes no unsigned cold key import: add the scope's first host key with /provision/host-key, then send a signed /provision/cold request")
+
 // UnsignedProvisioningLocked reports why provisioning requests cannot be taken
 // unsigned, or nil when they can: no host key of any network or chain is
-// registered and the stored list is readable. The firmware's unsigned cold
-// key import (/provision) is served only then. The caller holds the lock
+// registered, the stored list is readable and the image is not a multi image,
+// which has no unsigned import. The firmware's unsigned cold key import
+// (/provision) is served only then. The caller holds the lock
 // passed to New across this check and the import, so a host key registered
 // in between cannot let the import through.
 func (s *Service) UnsignedProvisioningLocked() error {
@@ -234,7 +239,7 @@ func (s *Service) UnsignedProvisioningLocked() error {
 	case s.multi():
 		// a multi image authenticates every request, so there is no
 		// unsigned import; the first key of a scope is its way in
-		return errProvisioningClosed
+		return errUnsignedImportMulti
 	case len(s.hostEntries) > 0:
 		return errProvisioningClosed
 	}

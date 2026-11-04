@@ -336,20 +336,24 @@ func (s *Service) purgeUsed(now time.Time) {
 // the challenge is outstanding. The challenge is burned only after the
 // signature verifies, so a forged request cannot use up a real one.
 func (s *Service) authenticate(req SignRequest) error {
-	sc, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, RequestBinding(req))
-	if err != nil || !s.multi() {
-		return err
-	}
-
-	// the key is authentic; in a multi image it must also be of the scope of
-	// the profile it signs for. An unknown profile is refused later as ever.
-	if p, ok := s.profiles[req.Profile]; ok {
-		if target, err := s.scopeOf(p.NetworkID, p.Name); err == nil && target != sc {
-			return errScopeMismatch
+	_, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, RequestBinding(req), func(sc Scope) error {
+		if !s.multi() {
+			return nil
 		}
-	}
 
-	return nil
+		// the key is authentic; in a multi image it must also be of the
+		// scope of the profile it signs for. An unknown profile is refused
+		// later as ever.
+		if p, ok := s.profiles[req.Profile]; ok {
+			if target, err := s.scopeOf(p.NetworkID, p.Name); err == nil && target != sc {
+				return errScopeMismatch
+			}
+		}
+
+		return nil
+	})
+
+	return err
 }
 
 // authenticateHost checks that hostKey is registered, that sig is its
@@ -357,16 +361,18 @@ func (s *Service) authenticate(req SignRequest) error {
 // no host key registered for any network or chain it refuses when host
 // authentication is required and accepts otherwise.
 func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) error {
-	_, err := s.authenticateHostScope(hostKey, sig, challenge, binding)
+	_, err := s.authenticateHostScope(hostKey, sig, challenge, binding, nil)
 
 	return err
 }
 
 // authenticateHostScope is authenticateHost returning the scope of the key
 // that authenticated the request: its registered scope in a multi image, the
-// image's scope otherwise. A request accepted because no host key exists
-// returns the image scope and no error.
-func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte) (Scope, error) {
+// image's scope otherwise. authorize, when set, refuses a scope that may not
+// make the request; it runs after the signature verifies and before the
+// challenge is burned, so only an authorized request uses one up. A request
+// accepted because no host key exists returns the image scope and no error.
+func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte, authorize func(Scope) error) (Scope, error) {
 	if s.hostKeysBad {
 		return Scope{}, errHostKeysBad
 	}
@@ -400,16 +406,26 @@ func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte)
 		return Scope{}, errors.New("host signature does not verify")
 	}
 
+	sc := s.imageScope()
+
+	if s.multi() {
+		var ok bool
+		if sc, ok = s.hostKeyScope(hostKey); !ok {
+			return Scope{}, errHostKeyUnknown
+		}
+	}
+
+	if authorize != nil {
+		if err := authorize(sc); err != nil {
+			return Scope{}, err
+		}
+	}
+
 	if err := s.takeChallenge(challenge); err != nil {
 		return Scope{}, err
 	}
 
-	if s.multi() {
-		sc, _ := s.hostKeyScope(hostKey)
-		return sc, nil
-	}
-
-	return s.imageScope(), nil
+	return sc, nil
 }
 
 func validHostKey(k []byte) error {
