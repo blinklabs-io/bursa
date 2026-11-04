@@ -466,7 +466,10 @@ func (w *Workload) Inventory(
 	}, nil
 }
 
-// Sign permits only canonical pool operational-certificate signable bytes.
+// Sign permits only canonical pool operational-certificate signable bytes with
+// an explicit issue counter. It refuses opcert-next, which would let the host
+// re-issue an existing number for a new KES key, and profiled requests, whose
+// binding signature this workload does not produce.
 func (w *Workload) Sign(
 	ctx context.Context,
 	req backend.AttestedRequest,
@@ -477,6 +480,7 @@ func (w *Workload) Sign(
 	}
 	if req.Version != backend.AttestedProtocol ||
 		req.Purpose != backend.PurposeOpCert ||
+		req.Profile != "" ||
 		req.Role != backend.KeyTypePool ||
 		req.KeyHash != w.hash.String() ||
 		len(req.Nonce) != 32 ||
