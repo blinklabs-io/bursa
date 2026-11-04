@@ -38,7 +38,9 @@ no unfiltered `/sign`. The single-scope images build as before.
   add names the scope, and the key that signs it is of that scope.
 - `/provision/identity`, `/wipe/signlog`, the signing log read, listing the
   keys of other scopes and revoking one need a key of a mainnet scope. A key
-  revokes keys of its own scope.
+  revokes keys of its own scope, its last one included; a mainnet key does
+  not revoke the last key of another scope, which would let the
+  provisioning image take that scope's first key unsigned again.
 - A cold key, or an imported owner key, that belongs to a profile of another
   scope is refused; two slots of one scope may hold the same key.
 - Each scope imports cold keys into, and provisions profiles on, only its own

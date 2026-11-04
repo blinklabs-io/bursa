@@ -155,6 +155,10 @@ var (
 	errMainnetName = errors.New("a testnet profile may not end with the label of a mainnet scope")
 	// errColdRange refuses a cold key object outside the range of a scope
 	errColdRange = errors.New("cold key id is outside the cold key range of the scope")
+	// errLastKeyOtherScope refuses revoking the last host key of another
+	// scope, which would let the provisioning image take that scope's first
+	// key unsigned again
+	errLastKeyOtherScope = errors.New("a key of another scope may not revoke the last host key of a scope")
 )
 
 // caller is who an admin request has been authenticated as, for the handler
@@ -410,14 +414,16 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 }
 
 // revokeHostKeyMulti removes a host key. A key revokes keys of its own
-// scope; a key of a mainnet scope also revokes the keys of other scopes.
+// scope, its last one included; a key of a mainnet scope also revokes the
+// keys of other scopes, but never a scope's last key, since a scope with no
+// key takes an unsigned first key on the provisioning image.
 func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 	if !s.caller.known {
 		return HostKeyResponse{}, errHostAuthMissing
 	}
 
 	entries := []hostEntry{}
-	found := false
+	revoked := []Scope{}
 
 	for _, e := range s.hostEntries {
 		sc, ok := s.entryScope(e)
@@ -431,11 +437,30 @@ func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error
 			return HostKeyResponse{}, errDeviceWide
 		}
 
-		found = true
+		revoked = append(revoked, sc)
 	}
 
-	if !found {
+	if len(revoked) == 0 {
 		return HostKeyResponse{}, errHostKeyUnknown
+	}
+
+	for _, sc := range revoked {
+		if sc == s.caller.scope {
+			continue
+		}
+
+		kept := false
+
+		for _, e := range entries {
+			if got, ok := s.entryScope(e); ok && got == sc {
+				kept = true
+				break
+			}
+		}
+
+		if !kept {
+			return HostKeyResponse{}, errLastKeyOtherScope
+		}
 	}
 
 	return s.writeHostKeys(entries)

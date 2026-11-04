@@ -443,6 +443,10 @@ func TestMultiDeviceWideNeedsMainnetKey(t *testing.T) {
 			return postAs(t, s.WipeHandler(), RouteWipeSignLog, WipeSignLogRequest{IdentityPublicKey: id}, k)
 		}},
 		{"revoke another scope's key", func(t *testing.T, s *Service, _ string, k ed25519.PrivateKey) (int, []byte) {
+			// cardano keeps a key, so only the scope rule applies
+			code, body := postAs(t, s.Handler(), RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb5)), Scope: scopeCardanoName}, multiKeyCardano)
+			mustOK(t, "add a second cardano key", code, body)
+
 			return postAs(t, s.Handler(), RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyCardano), Scope: scopeCardanoName}, k)
 		}},
 	} {
@@ -570,7 +574,7 @@ func TestMultiHostKeyScopeIsSigned(t *testing.T) {
 }
 
 // A key revokes keys of its own scope; a testnet key revokes none of another
-// scope's, a mainnet key revokes any.
+// scope's, a mainnet key revokes any that is not the scope's last.
 func TestMultiRevoke(t *testing.T) {
 	t.Parallel()
 
@@ -588,8 +592,11 @@ func TestMultiRevoke(t *testing.T) {
 	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyPrime)
 	mustOK(t, "prime key revokes a prime key", code, body)
 
+	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb6)), Scope: scopeTestnetName}, multiKeyTestnet)
+	mustOK(t, "add a second testnet key", code, body)
+
 	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyTestnet), Scope: scopeTestnetName}, multiKeyCardano)
-	mustOK(t, "mainnet key revokes the testnet key", code, body)
+	mustOK(t, "mainnet key revokes a testnet key", code, body)
 }
 
 // A cold or owner key that already belongs to a profile of another scope is
@@ -870,4 +877,36 @@ func TestInventoryRequestBindingVector(t *testing.T) {
 	if got != want {
 		t.Fatalf("binding %s", got)
 	}
+}
+
+// A mainnet key revokes another scope's keys only while that scope keeps
+// one: an empty scope takes an unsigned first key on the provisioning image.
+// A scope may still revoke its own last key.
+func TestMultiRevokeKeepsOtherScopesLastKey(t *testing.T) {
+	t.Parallel()
+
+	chip, _ := seedMulti(t)
+	h := multiImage(t, chip, true).Handler()
+
+	code, body := postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyPrime), Scope: scopePrimeName}, multiKeyCardano)
+	refused(t, "cardano key revokes prime's last key", code, body, errLastKeyOtherScope)
+
+	code, body = firstKey(t, h, scopeKey(0xb4), scopePrimeName)
+	refused(t, "unsigned prime key after the refused revoke", code, body, errFirstKey)
+
+	second := scopeKey(0xb3)
+	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyPrime)
+	mustOK(t, "add a second prime key", code, body)
+
+	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyPrime), Scope: scopePrimeName}, multiKeyCardano)
+	mustOK(t, "cardano key revokes a prime key while prime keeps one", code, body)
+
+	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyCardano)
+	refused(t, "cardano key revokes prime's remaining key", code, body, errLastKeyOtherScope)
+
+	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, second)
+	mustOK(t, "prime key revokes its own last key", code, body)
+
+	code, body = firstKey(t, h, scopeKey(0xb4), scopePrimeName)
+	mustOK(t, "unsigned prime key after prime revoked its own", code, body)
 }
