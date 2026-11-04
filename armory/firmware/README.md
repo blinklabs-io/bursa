@@ -40,10 +40,14 @@ no unfiltered `/sign`. The single-scope images build as before.
   keys of other scopes and revoking one need a key of a mainnet scope. A key
   revokes keys of its own scope.
 - A cold key, or an imported owner key, that belongs to a profile of another
-  scope is refused; two slots of one scope may hold the same key. A profile
-  takes only a cold key imported by a key of its scope since the image
-  started; after a restart, import the cold key again before provisioning the
-  profile.
+  scope is refused; two slots of one scope may hold the same key.
+- Each scope imports cold keys into, and provisions profiles on, only its own
+  cold key objects: testnet `0x20e50010`-`0x20e50017`, cardano-mainnet
+  `0x20e50018`-`0x20e5001b`, prime-mainnet `0x20e5001c`-`0x20e5001f`. A
+  profile an older image stored outside its scope's range is still served.
+  An unused cold key an older image left in another scope's range can be
+  taken by that scope: remove it before flashing (provision a profile on it
+  and wipe the profile with the older images, or wipe the device).
 - A device that ran a testnet image keeps its profiles and host key: flash the
   multi image, then add the mainnet scopes' first keys with the provisioning
   image.

@@ -552,11 +552,24 @@ are unchanged. `TESTNET=1` is refused with it.
 - One key, one scope. A cold key import or an imported owner key whose public
   key already belongs to a profile of another scope is refused, as is a cold
   key slot a profile of another scope names. Two slots of one scope may hold
-  the same key. A cold key object that no profile names belongs to the scope
-  of the host key that imported it: `/provision/profile` takes it only for a
-  profile of that scope. The image keeps that scope in memory, not on the
-  chip, so after a restart the cold key is imported again (the same key is
-  accepted into its own object) before a profile takes it.
+  the same key.
+- Cold key ranges. Each scope owns fixed cold key objects
+  (`device.ColdKeyRange`): testnet `0x20e50010`-`0x20e50017`,
+  cardano-mainnet `0x20e50018`-`0x20e5001b`, prime-mainnet
+  `0x20e5001c`-`0x20e5001f`. `/provision/cold` refuses a `cold_key_id`
+  outside the range of the host key's scope, and `/provision/profile` one
+  outside the range of the profile's scope, so a cold key imported by one
+  scope cannot be taken by a profile of another, across restarts too. The
+  single-scope images accept any cold key object as before. A profile stored
+  by an older image on a cold key outside its scope's range keeps being
+  served; only new provisioning is refused.
+- A residual migration case. A cold key that an older single-scope image
+  imported but no profile names stays on the chip; if it sits in another
+  scope's range, a host key of that scope can provision a profile on it.
+  Before flashing the multi image, list the objects with `/wipe/objects` and
+  remove such a key with the older images: provision a profile on it, then
+  `/wipe/profile` it, which deletes a cold key no other profile names, or
+  wipe the whole device with `/wipe/device`.
 - Not changed: `/wipe/device`, which stays confirmed by the identity public
   key alone as the recovery path when every host key is lost, and
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
