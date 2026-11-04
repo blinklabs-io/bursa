@@ -143,9 +143,20 @@ Transit key and its Cardano type.
 
 ### sops
 
-SOPS-encrypted key envelopes fetched from GCP Secret Manager (using the
-top-level `google.project`) and decrypted in-process at boot. Keys are held in
-memory after decryption. Use `secret_prefix` to select the secrets.
+SOPS-encrypted key envelopes decrypted in-process at boot. Keys are held in
+memory after decryption. The envelopes come from one of two sources; set
+exactly one:
+
+- `secret_prefix`: secrets in GCP Secret Manager (using the top-level
+  `google.project`) whose names start with the prefix.
+- `path`: a local directory, such as a mounted Kubernetes Secret. Every
+  regular `*.json` file whose name does not start with a dot is one envelope,
+  encrypted in the SOPS JSON format. Symlinks are followed, so the `..data`
+  links of a Secret volume work. Files are capped at 64 KiB.
+
+Decryption uses the standard SOPS key sources, such as an age identity in
+`SOPS_AGE_KEY_FILE` or `SOPS_AGE_KEY`. Encrypt the key files to a recipient
+that unlocks nothing else.
 
 ### software / file (development only)
 

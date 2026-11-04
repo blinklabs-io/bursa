@@ -69,7 +69,15 @@ func (c gcpSecretManagerClient) AccessSecretVersion(ctx context.Context, req *se
 }
 
 // newSopsSecretSource is a constructor seam so wiring tests can inject a fake.
+// A sops backend reads either a local directory (path) or GCP Secret Manager
+// (secret_prefix within google.project).
 var newSopsSecretSource = func(ctx context.Context, c config.SignerBackendConfig) (backend.SecretSource, error) {
+	if c.Path != "" {
+		if c.SecretPrefix != "" {
+			return nil, errSopsSourceConflict
+		}
+		return NewDirSecretSource(c.Path)
+	}
 	return NewGCPSecretSource(ctx, c.SecretPrefix)
 }
 

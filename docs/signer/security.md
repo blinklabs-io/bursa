@@ -57,8 +57,8 @@ enclave and trust a key only after verifying platform attestation and each
 signature; see [`attested-custody.md`](attested-custody.md) for the protocol and
 for what the enclave itself must enforce when the host is untrusted.
 
-The `sops` backend fetches SOPS-encrypted envelopes from GCP Secret Manager and
-decrypts them **in process** at boot; the decrypted key then lives in signer
+The `sops` backend fetches SOPS-encrypted envelopes from GCP Secret Manager or a
+local directory and decrypts them **in process** at boot; the decrypted key then lives in signer
 memory for the process lifetime. This is stronger than plaintext-at-rest but
 still places key material in the signer's address space.
 

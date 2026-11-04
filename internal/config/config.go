@@ -168,9 +168,9 @@ type SignerWatermarkConfig struct {
 type SignerBackendConfig struct {
 	Name              string                   `yaml:"name"`
 	Type              string                   `yaml:"type"`                 // "software" | "sops" | "vault" | "pkcs11" | "nitro" | "confidential-space" | "armory"
-	Path              string                   `yaml:"path"`                 // software: key dir
+	Path              string                   `yaml:"path"`                 // software: key dir; sops: dir of SOPS-encrypted *.json key files (instead of secret_prefix)
 	PassphraseEnv     string                   `yaml:"passphrase_env"`       // software: env var holding the key-file passphrase
-	SecretPrefix      string                   `yaml:"secret_prefix"`        // sops: secret short-name prefix within google.project
+	SecretPrefix      string                   `yaml:"secret_prefix"`        // sops: secret short-name prefix within google.project (instead of path)
 	Address           string                   `yaml:"address"`              // vault: server URL; nitro, confidential-space, armory: enclave URL (http, https, or unix:///socket)
 	TransitMount      string                   `yaml:"transit_mount"`        // vault
 	TokenEnv          string                   `yaml:"token_env"`            // vault: env var holding the token (default VAULT_TOKEN)

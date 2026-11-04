@@ -37,7 +37,7 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 |------------|---------|
 | Auth | mTLS client certificate, authorized-keys Ed25519 request signing, and JWT bearer (HS256 shared secret or JWKS RS256/ES256/EdDSA); precedence mTLS > request-signing > JWT; optional per-subject caller ACL |
 | Transport | Server-side TLS (TLS 1.2+); loopback may run plaintext. Optional mutual TLS verifies client certificates against a configured CA bundle |
-| Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (GCP Secret Manager + SOPS), `software`/`file` (in-process plaintext, dev-only) |
+| Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (SOPS-encrypted keys from GCP Secret Manager or a local directory), `software`/`file` (in-process plaintext, dev-only) |
 | Operations | `tx`, `cip8`, `opcert` signing; key list/detail with effective policy |
 | Anti-double-sign | Watermark store: `mem` (non-durable; only with `warn` or `off`), `file` (SQLite), or shared HA-safe `postgres`; modes off/warn/enforce |
 | Observability | Static liveness on `/healthz`, dependency-aware readiness on `/readyz`, Prometheus `/metrics` on a dedicated loopback listener |
