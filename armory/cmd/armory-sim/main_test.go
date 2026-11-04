@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -354,5 +355,16 @@ func TestStateLocked(t *testing.T) {
 
 	if _, err := build(o, t.Logf); err == nil {
 		t.Fatal("a second simulator opened a state directory in use")
+	}
+
+	// the lock must outlive garbage collection: a dropped *os.File is
+	// closed by its finalizer, which would release the lock
+	for range 5 {
+		runtime.GC()
+		time.Sleep(20 * time.Millisecond)
+
+		if _, err := build(o, t.Logf); err == nil {
+			t.Fatal("the state lock was released after garbage collection")
+		}
 	}
 }

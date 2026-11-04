@@ -20,12 +20,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
 
+// heldLocks keeps every state lock file reachable: an unreachable *os.File
+// is closed by its finalizer, which would release the lock.
+var (
+	heldLocksMu sync.Mutex
+	heldLocks   []*os.File
+)
+
 // lockState takes an exclusive lock on the state directory for the life of
-// the process. The lock file stays open, so the lock is released only when
-// the process exits.
+// the process. The lock file stays open and referenced, so the lock is
+// released only when the process exits.
 func lockState(dir string) error {
 	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
@@ -36,6 +44,10 @@ func lockState(dir string) error {
 		f.Close() //nolint:errcheck,gosec // the lock error is returned
 		return fmt.Errorf("state directory %s is in use by another armory-sim: %w", dir, err)
 	}
+
+	heldLocksMu.Lock()
+	heldLocks = append(heldLocks, f)
+	heldLocksMu.Unlock()
 
 	return nil
 }
