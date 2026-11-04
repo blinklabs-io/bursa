@@ -116,10 +116,10 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 	seed2 := hex.EncodeToString(bytes.Repeat([]byte{0x62}, 32))
 	cold2 := `{"cold_key_id":551878684,"signing_key":"5820` + seed2 + `"}`
 
-	// a prime key imports only into the prime range
-	outside := `{"cold_key_id":551878674,"signing_key":"5820` + seed2 + `"}`
-	if _, err = adminRun(srv, outside, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err == nil || !strings.Contains(err.Error(), "cold key range") {
-		t.Fatalf("prime cold outside its range: %v", err)
+	// a prime key does not import into an object the testnet key owns
+	outside := `{"cold_key_id":551878673,"signing_key":"5820` + seed2 + `"}`
+	if _, err = adminRun(srv, outside, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err == nil || !strings.Contains(err.Error(), "belongs to another scope") {
+		t.Fatalf("prime cold into the testnet's object: %v", err)
 	}
 
 	if _, err = adminRun(srv, cold2, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err != nil {
@@ -217,14 +217,19 @@ func TestInventoryRetryReportsChallengeFailure(t *testing.T) {
 	}
 }
 
-// The -scope help names each scope's cold key objects.
-func TestScopeHelpListsColdKeyRanges(t *testing.T) {
+// The -scope help names each scope and says cold key objects are owned, not
+// assigned to a range.
+func TestScopeHelpDescribesColdKeyOwnership(t *testing.T) {
 	t.Parallel()
 
 	help := scopeHelp()
-	for _, want := range []string{"testnet 0x20e50010-0x20e50017", "cardano-mainnet 0x20e50018-0x20e5001b", "prime-mainnet 0x20e5001c-0x20e5001f"} {
+	for _, want := range []string{"testnet", "cardano-mainnet", "prime-mainnet", "free cold key object", "belongs to the scope"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("scope help %q lacks %q", help, want)
 		}
+	}
+
+	if strings.Contains(help, "0x20e5") {
+		t.Errorf("scope help %q still names object ranges", help)
 	}
 }

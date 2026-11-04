@@ -462,7 +462,7 @@ profile's scope.
 ### Cold key provisioning
 
 The provisioning firmware's `POST /provision/cold` imports a cold key into a
-free cold key object (`0x20e50010`-`0x20e5001f`):
+free cold key object (`0x20e50010`-`0x20e5001f` or `0x20e50600`-`0x20e5060f`):
 `{"cold_key_id": N, "signing_key": "<cborHex>"}`, the cardano-cli `cborHex`
 (`5820` and the 32-byte seed). An existing object is never replaced; repeating
 the request with the same key confirms the earlier import.
@@ -553,23 +553,23 @@ are unchanged. `TESTNET=1` is refused with it.
   key already belongs to a profile of another scope is refused, as is a cold
   key slot a profile of another scope names. Two slots of one scope may hold
   the same key.
-- Cold key ranges. Each scope owns fixed cold key objects
-  (`device.ColdKeyRange`): testnet `0x20e50010`-`0x20e50017`,
-  cardano-mainnet `0x20e50018`-`0x20e5001b`, prime-mainnet
-  `0x20e5001c`-`0x20e5001f`. `/provision/cold` refuses a `cold_key_id`
-  outside the range of the host key's scope, and `/provision/profile` one
-  outside the range of the profile's scope, so a cold key imported by one
-  scope cannot be taken by a profile of another, across restarts too. The
-  single-scope images accept any cold key object as before. A profile stored
-  by an older image on a cold key outside its scope's range keeps being
-  served; only new provisioning is refused.
-- A residual migration case. A cold key that an older single-scope image
-  imported but no profile names stays on the chip; if it sits in another
-  scope's range, a host key of that scope can provision a profile on it.
-  Before flashing the multi image, list the objects with `/wipe/objects` and
-  remove such a key with the older images: provision a profile on it, then
-  `/wipe/profile` it, which deletes a cold key no other profile names, or
-  wipe the whole device with `/wipe/device`.
+- Cold key ownership. There are 32 cold key objects, `0x20e50010`-`0x20e5001f`
+  and `0x20e50600`-`0x20e5060f`. Any scope imports into any free one, and the
+  import first records the scope as its owner in one fixed-size object
+  (`0x20e50023`: a version byte, then per cold key object a claimed flag, the
+  network id and the chain tag). A cold key object holding a key is used only
+  by its owner: `/provision/cold` and `/provision/profile` refuse another
+  scope's, so a cold key imported by one scope cannot be taken by a profile of
+  another, across restarts too. An empty object is free whatever a stale claim
+  says. Single-scope images keep the record with their own scope. A corrupt
+  record is refused with an error until the device is wiped. A profile stored
+  by an older image is still served.
+- Legacy and unowned keys. A cold key an older image stored has no claim; it
+  belongs to the scope of the profile that names it. A key with no claim and no
+  profile belongs to no scope and every scope is refused; remove it with the
+  wipe image: provision a profile on it with an older image and `/wipe/profile`
+  it, or `/wipe/device`. A multi image refuses it, and a single-scope image
+  keeps serving it as before.
 - Not changed: `/wipe/device`, which stays confirmed by the identity public
   key alone as the recovery path when every host key is lost, and
   `/wipe/objects`, which only lists object IDs and needs no confirmation.

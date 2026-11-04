@@ -45,7 +45,8 @@ const IdentityKeyID uint32 = 0x20e50020
 const SignLogHeadID uint32 = 0x20e50022
 
 // Object ID bases, offset by profile slot. Cold keys live at
-// 0x20e50010-0x20e5001f; each belongs to at most one profile, so a second
+// 0x20e50010-0x20e5001f and 0x20e50600-0x20e5060f, and the scope that owns
+// each is recorded in 0x20e50023; each belongs to at most one profile, so a second
 // profile cannot re-register the pool with another owner. 0x20e50200-0x20e5021f
 // held fee wallet keys in early builds and is not reused.
 const (

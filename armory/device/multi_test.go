@@ -625,9 +625,9 @@ func TestMultiColdKeyNotSharedAcrossScopes(t *testing.T) {
 		refused(t, name, code, body, errCrossScope)
 	}
 
-	// the testnet profile's own slot is outside the prime range
+	// the testnet profile's own slot belongs to the testnet scope
 	code, body := postAs(t, h, RouteProvisionCold, coldReq(testnet.cold, testnet.seed), multiKeyPrime)
-	refused(t, "prime key, slot of testnet", code, body, errColdRange)
+	refused(t, "prime key, slot of testnet", code, body, errColdOwner)
 
 	// the same testnet key twice, under two slots, is one scope
 	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, testnet.seed), multiKeyTestnet)
@@ -654,7 +654,7 @@ func TestMultiProvisionRefusesCrossScopeKeys(t *testing.T) {
 	code, body := postAs(t, h, RouteProvisionProfile, ProvisionRequest{
 		Name: "x@prime-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: testnet.cold, ChainCounter: &counter,
 	}, multiKeyPrime)
-	refused(t, "cold slot of another scope's profile", code, body, errColdRange)
+	refused(t, "cold slot of another scope's profile", code, body, errColdOwner)
 
 	// a prime cold key whose slot holds a key the testnet profile owns too:
 	// the key shared by two slots, one of each scope, is refused at the

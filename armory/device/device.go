@@ -47,9 +47,6 @@ const (
 	maxNonce = 64
 	// opCertSignableSize is kes_vkey (32) + counter (8) + KES period (8).
 	opCertSignableSize = 48
-
-	coldKeyFirst uint32 = 0x20e50010
-	coldKeyLast  uint32 = 0x20e5001f
 )
 
 var (
@@ -841,7 +838,7 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 		return ProvisionResponse{}, errors.New("a profile record is unreadable or inconsistent; provisioning is refused until it is repaired")
 	}
 
-	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
+	if !isColdKeyID(p.ColdKeyID) {
 		return ProvisionResponse{}, errors.New("cold key id outside the cold key range")
 	}
 
@@ -855,17 +852,19 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 			return ProvisionResponse{}, errMainnetName
 		}
 
-		// a new profile takes only a cold key of its scope's range; stored
-		// profiles outside it are served as before
-		if err = coldInRange(sc, p.ColdKeyID); err != nil {
-			return ProvisionResponse{}, err
-		}
-
 		// the cold key of the slot and an imported owner key must not be
 		// keys of a profile of another scope
 		cold, err := s.objectKey(p.ColdKeyID)
 		if err != nil {
 			return ProvisionResponse{}, err
+		}
+
+		// a new profile takes only a cold key its scope owns; an empty
+		// object is refused below as not provisioned
+		if cold != nil {
+			if err = s.requireOwner(p.ColdKeyID, sc); err != nil {
+				return ProvisionResponse{}, err
+			}
 		}
 
 		if err = s.keyScopeConflict(sc, p.ColdKeyID, cold); err != nil {
@@ -876,6 +875,14 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 			if err = s.keyScopeConflict(sc, 0, seedPublic(ownerSeed)); err != nil {
 				return ProvisionResponse{}, err
 			}
+		}
+	}
+
+	// a single-scope image keeps serving an unowned key an older image
+	// stored, and refuses one another scope owns
+	if !s.multi() {
+		if err := s.refuseOtherOwner(p.ColdKeyID, s.imageScope()); err != nil {
+			return ProvisionResponse{}, err
 		}
 	}
 
@@ -1060,7 +1067,7 @@ func (s *Service) importKey(id uint32, seed []byte) (ed25519.PublicKey, error) {
 // provisionCold imports a cold signing key into a free cold key object. The
 // seed is never logged or echoed, and an existing object is never replaced.
 func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
-	if req.ColdKeyID < coldKeyFirst || req.ColdKeyID > coldKeyLast {
+	if !isColdKeyID(req.ColdKeyID) {
 		return ColdResponse{}, errors.New("cold key id outside the cold key range")
 	}
 
@@ -1070,18 +1077,45 @@ func (s *Service) provisionCold(req ColdRequest) (ColdResponse, error) {
 
 	seed := req.SigningKey[len(coldKeyCBORPrefix):]
 
+	if s.multi() && !s.caller.known {
+		return ColdResponse{}, errHostAuthMissing
+	}
+
+	// the scope of the import owns the object: an object holding a key is
+	// used only by its owner, an empty one is free whatever a stale claim
+	// says. A single-scope image keeps serving an unowned key an older image
+	// stored.
+	sc := s.callerOrImageScope()
+
+	held, err := s.objectKey(req.ColdKeyID)
+	if err != nil {
+		return ColdResponse{}, err
+	}
+
+	if held != nil {
+		if s.multi() {
+			err = s.requireOwner(req.ColdKeyID, sc)
+		} else {
+			err = s.refuseOtherOwner(req.ColdKeyID, sc)
+		}
+
+		if err != nil {
+			return ColdResponse{}, err
+		}
+	}
+
 	// a multi image keeps a key to one scope: the one of the host key that
 	// asked, so its public key may not belong to a profile of another
 	if s.multi() {
-		if !s.caller.known {
-			return ColdResponse{}, errHostAuthMissing
-		}
-
-		if err := coldInRange(s.caller.scope, req.ColdKeyID); err != nil {
+		if err = s.keyScopeConflict(sc, req.ColdKeyID, seedPublic(seed)); err != nil {
 			return ColdResponse{}, err
 		}
+	}
 
-		if err := s.keyScopeConflict(s.caller.scope, req.ColdKeyID, seedPublic(seed)); err != nil {
+	// claim before the key is written, so a key never exists without its
+	// claim; a failed import leaves an empty object, free to any scope
+	if held == nil {
+		if err = s.claim(req.ColdKeyID, sc); err != nil {
 			return ColdResponse{}, err
 		}
 	}

@@ -209,18 +209,17 @@ func profileScope(name string) string {
 	return device.ScopeTestnet.Name()
 }
 
-// scopeHelp names the scopes of a multi image and the cold key objects each
-// imports into and provisions profiles on.
+// scopeHelp names the scopes of a multi image. Any scope imports into any
+// free cold key object; the object then belongs to that scope.
 func scopeHelp() string {
-	scopes := device.MultiScopes()
-	parts := make([]string, 0, len(scopes))
+	names := make([]string, 0, len(device.MultiScopes()))
 
-	for _, sc := range scopes {
-		first, last, _ := device.ColdKeyRange(sc)
-		parts = append(parts, fmt.Sprintf("%s %#08x-%#08x", sc.Name(), first, last))
+	for _, sc := range device.MultiScopes() {
+		names = append(names, sc.Name())
 	}
 
-	return "scopes and their cold_key_id ranges: " + strings.Join(parts, ", ")
+	return "scopes: " + strings.Join(names, ", ") +
+		"; a cold_key_id is any free cold key object, which then belongs to the scope that imported it"
 }
 
 // checkScopeName refuses a scope that is not one of a multi image's, so it

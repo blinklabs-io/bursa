@@ -95,7 +95,7 @@ func armoryIDs() []uint32 {
 	}
 
 	add(bringupFirst, bringupLast)
-	add(coldKeyFirst, coldKeyLast)
+	ids = append(ids, coldKeyIDs()...)
 	ids = append(ids, hostKeysID)
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
@@ -108,8 +108,9 @@ func armoryIDs() []uint32 {
 		ids = append(ids, profile.Profile{Slot: slot}.PinsID(), profile.Profile{Slot: slot}.RecordID())
 	}
 
-	// the signing log head is chained to the identity key, so it goes with it
-	return append(ids, profile.SignLogHeadID, profile.IdentityKeyID)
+	// the ownership record goes after the cold keys it describes; the signing
+	// log head is chained to the identity key, so it goes with it
+	return append(ids, ownersID, profile.SignLogHeadID, profile.IdentityKeyID)
 }
 
 // armoryObjects returns the armory objects present on the chip.
@@ -252,7 +253,7 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 	}
 
 	// a stored record may name any object; delete only an armory cold key
-	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
+	if !isColdKeyID(p.ColdKeyID) {
 		return WipeResponse{}, errors.New("profile cold key id outside the cold key range; wipe the device instead")
 	}
 
@@ -272,6 +273,14 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 	deleted, err := s.remove(append(ids, p.PinsID(), p.RecordID()))
 	if err != nil {
 		return WipeResponse{}, err
+	}
+
+	// the claim on a deleted cold key is dropped; a stale one frees the empty
+	// object anyway, so a record that cannot be updated does not fail the wipe
+	if !shared {
+		if err = s.unclaim(p.ColdKeyID); err != nil {
+			s.logf("wipe: claim on %#08x not cleared: %v", p.ColdKeyID, err)
+		}
 	}
 
 	delete(s.profiles, p.Name)

@@ -43,13 +43,16 @@ no unfiltered `/sign`. The single-scope images build as before.
   provisioning image take that scope's first key unsigned again.
 - A cold key, or an imported owner key, that belongs to a profile of another
   scope is refused; two slots of one scope may hold the same key.
-- Each scope imports cold keys into, and provisions profiles on, only its own
-  cold key objects: testnet `0x20e50010`-`0x20e50017`, cardano-mainnet
-  `0x20e50018`-`0x20e5001b`, prime-mainnet `0x20e5001c`-`0x20e5001f`. A
-  profile an older image stored outside its scope's range is still served.
-  An unused cold key an older image left in another scope's range can be
-  taken by that scope: remove it before flashing (provision a profile on it
-  and wipe the profile with the older images, or wipe the device).
+- Any scope takes any free cold key object (32: `0x20e50010`-`0x20e5001f` and
+  `0x20e50600`-`0x20e5060f`); it then belongs to that scope, recorded in the
+  ownership object `0x20e50023`, and only that scope imports into it again or
+  provisions a profile on it. An empty object is free whatever an old claim
+  says. Every image keeps the record, single-scope images with their own
+  scope. A key an older image stored with no claim belongs to the scope of the
+  profile on it; a key with no claim and no profile belongs to no scope and is
+  refused to all: remove it with the wipe image (`/wipe/profile` after a
+  profile on it, or `/wipe/device`). A profile an older image stored is still
+  served.
 - A device that ran a testnet image keeps its profiles and host key: flash the
   multi image, then add the mainnet scopes' first keys with the provisioning
   image.
