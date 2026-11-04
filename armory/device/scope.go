@@ -123,6 +123,9 @@ var (
 	errFirstKey      = errors.New("an unsigned host key is accepted only by the provisioning image, for a scope of the image that has no host key")
 	errKeyOtherScope = errors.New("host key is already registered for another scope")
 	errScopeNeeded   = errors.New("a host key request names the scope it is for")
+	// errAddScopeMismatch refuses a host key add signed by a key of another
+	// scope than the one the request names
+	errAddScopeMismatch = errors.New("host key is not of the scope it adds a key for")
 )
 
 // caller is who an admin request has been authenticated as, for the handler
@@ -349,7 +352,7 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 	}
 
 	if s.caller.scope != sc {
-		return HostKeyResponse{}, errScopeMismatch
+		return HostKeyResponse{}, errAddScopeMismatch
 	}
 
 	for _, e := range s.hostEntries {

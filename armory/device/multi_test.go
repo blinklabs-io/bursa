@@ -480,8 +480,8 @@ func TestMultiSignedHostKeyAddNamesSigningScope(t *testing.T) {
 		key  ed25519.PrivateKey
 		want error
 	}{
-		"testnet key adds prime key": {HostKeyRequest{PublicKey: hostPub(extra), Scope: scopePrimeName}, multiKeyTestnet, errScopeMismatch},
-		"prime key adds cardano key": {HostKeyRequest{PublicKey: hostPub(extra), Scope: scopeCardanoName}, multiKeyPrime, errScopeMismatch},
+		"testnet key adds prime key": {HostKeyRequest{PublicKey: hostPub(extra), Scope: scopePrimeName}, multiKeyTestnet, errAddScopeMismatch},
+		"prime key adds cardano key": {HostKeyRequest{PublicKey: hostPub(extra), Scope: scopeCardanoName}, multiKeyPrime, errAddScopeMismatch},
 		"unnamed scope":              {HostKeyRequest{PublicKey: hostPub(extra)}, multiKeyPrime, errScopeNeeded},
 		"existing key, other scope":  {HostKeyRequest{PublicKey: hostPub(multiKeyCardano), Scope: scopePrimeName}, multiKeyPrime, errKeyOtherScope},
 	} {
