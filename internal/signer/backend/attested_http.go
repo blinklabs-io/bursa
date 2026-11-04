@@ -237,7 +237,7 @@ func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 		Challenge []byte `json:"challenge"`
 	}
 	if cerr := e.post(ctx, "/v1/challenge", struct{}{}, &ch); cerr != nil {
-		return AttestedInventory{}, err
+		return AttestedInventory{}, fmt.Errorf("%w; challenge: %w", err, cerr)
 	}
 	if ch.Version != AttestedProtocol || len(ch.Challenge) != attestedChallengeSize {
 		return AttestedInventory{}, err

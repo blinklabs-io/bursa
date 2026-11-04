@@ -195,24 +195,34 @@ func adminKeyFile(route, file, dir, scope string, in io.Reader) (string, io.Read
 	return file, bytes.NewReader(body), err
 }
 
-// profileScope is the scope a profile name belongs to: its "@<chain>-mainnet"
-// suffix, else testnet.
+// profileScope is the scope a profile name belongs to: the mainnet scope of a
+// multi image its "@<chain>-mainnet" suffix names, else testnet.
 func profileScope(name string) string {
-	if i := strings.LastIndexByte(name, '@'); i >= 0 && strings.HasSuffix(name[i+1:], "-mainnet") {
-		return name[i+1:]
+	if i := strings.LastIndexByte(name, '@'); i >= 0 {
+		for _, sc := range device.MultiScopes() {
+			if sc.Network != 0 && sc.Name() == name[i+1:] {
+				return sc.Name()
+			}
+		}
 	}
 
-	return "testnet"
+	return device.ScopeTestnet.Name()
 }
 
-// checkScopeName refuses a scope label that is not a plain name, so it can
-// not pick a path outside the key directory.
+// checkScopeName refuses a scope that is not one of a multi image's, so it
+// names a known key file and no path outside the key directory.
 func checkScopeName(scope string) error {
-	if scope == "" || strings.Trim(scope, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
-		return fmt.Errorf("scope %q must be testnet or a chain label such as prime-mainnet", scope)
+	names := []string{}
+
+	for _, sc := range device.MultiScopes() {
+		if sc.Name() == scope {
+			return nil
+		}
+
+		names = append(names, sc.Name())
 	}
 
-	return nil
+	return fmt.Errorf("scope %q is not one of %s", scope, strings.Join(names, ", "))
 }
 
 // scopedHostKeyFile is the host key file of scope in dir.

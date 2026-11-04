@@ -169,6 +169,8 @@ func TestScopeOfProfileName(t *testing.T) {
 		"pool@cardano-mainnet": "cardano-mainnet",
 		"pool@prime-mainnet":   "prime-mainnet",
 		"a@b@prime-mainnet":    "prime-mainnet",
+		// a label no multi image serves is no mainnet scope
+		"x@other-mainnet": "testnet",
 	} {
 		if got := profileScope(name); got != want {
 			t.Errorf("profileScope(%q) = %q, want %q", name, got, want)
@@ -179,9 +181,32 @@ func TestScopeOfProfileName(t *testing.T) {
 func TestHostKeyDirRefusesPathScope(t *testing.T) {
 	t.Parallel()
 
-	for _, sc := range []string{"", "../x", "a/b", "Testnet"} {
+	for _, sc := range []string{"", "../x", "a/b", "Testnet", "other-mainnet"} {
 		if _, err := scopedHostKeyFile(t.TempDir(), sc); err == nil {
 			t.Errorf("scope %q picked a key file", sc)
 		}
+	}
+}
+
+// When the challenge for the signed inventory retry fails, that failure is
+// reported alongside the refusal of the unsigned request.
+func TestInventoryRetryReportsChallengeFailure(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/challenge" {
+			http.Error(w, "challenge table full", http.StatusServiceUnavailable)
+			return
+		}
+
+		http.Error(w, "host key not registered", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	s := &session{c: newClient(srv.URL, ""), profile: "otg@preview", hostKey: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))}
+
+	_, err := s.inventory()
+	if err == nil || !strings.Contains(err.Error(), "host key not registered") || !strings.Contains(err.Error(), "challenge table full") {
+		t.Fatalf("err = %v, want both the refusal and the challenge failure", err)
 	}
 }

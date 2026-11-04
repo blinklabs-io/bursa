@@ -137,7 +137,7 @@ func (s *session) inventory() (map[string]ed25519.PublicKey, error) {
 		var ch device.ChallengeResponse
 
 		if cerr := s.c.post("/v1/challenge", struct{}{}, &ch); cerr != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w; challenge: %w", err, cerr)
 		}
 
 		req.Challenge = ch.Challenge
