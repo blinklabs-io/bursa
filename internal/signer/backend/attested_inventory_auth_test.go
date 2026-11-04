@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -170,5 +171,27 @@ func TestHostKeyEnclaveInventoryReportsChallengeFailure(t *testing.T) {
 	// the enclave client reports the status, not the body
 	if err == nil || !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "HTTP 503") {
 		t.Fatalf("err = %v, want both the refusal and the challenge failure", err)
+	}
+}
+
+// A malformed challenge for the signed retry is a protocol error.
+func TestHostKeyEnclaveInventoryMalformedChallenge(t *testing.T) {
+	t.Parallel()
+	_, key, _ := ed25519.GenerateKey(nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/challenge" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"version": "other/9", "challenge": []byte{1, 2}})
+			return
+		}
+		http.Error(w, "host key not registered", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+	e, err := NewHostKeyHTTPEnclave(srv.URL, "otg@preview", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.Inventory(t.Context(), bytes.Repeat([]byte{4}, 32))
+	if !errors.Is(err, ErrAttestedProtocol) || !strings.Contains(err.Error(), "HTTP 400") {
+		t.Fatalf("err = %v, want the refusal and %v", err, ErrAttestedProtocol)
 	}
 }

@@ -240,7 +240,7 @@ func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 		return AttestedInventory{}, fmt.Errorf("%w; challenge: %w", err, cerr)
 	}
 	if ch.Version != AttestedProtocol || len(ch.Challenge) != attestedChallengeSize {
-		return AttestedInventory{}, err
+		return AttestedInventory{}, fmt.Errorf("%w; %w: challenge response version %q with %d bytes", err, ErrAttestedProtocol, ch.Version, len(ch.Challenge))
 	}
 	req.Challenge = ch.Challenge
 	req.HostKey = e.hostKey.Public().(ed25519.PublicKey)
