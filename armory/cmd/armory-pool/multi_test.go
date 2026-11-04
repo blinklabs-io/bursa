@@ -114,13 +114,19 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 
 	// a mainnet profile by the key of its chain, named by profile or by name
 	seed2 := hex.EncodeToString(bytes.Repeat([]byte{0x62}, 32))
-	cold2 := `{"cold_key_id":551878674,"signing_key":"5820` + seed2 + `"}`
+	cold2 := `{"cold_key_id":551878684,"signing_key":"5820` + seed2 + `"}`
+
+	// a prime key imports only into the prime range
+	outside := `{"cold_key_id":551878674,"signing_key":"5820` + seed2 + `"}`
+	if _, err = adminRun(srv, outside, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err == nil || !strings.Contains(err.Error(), "cold key range") {
+		t.Fatalf("prime cold outside its range: %v", err)
+	}
 
 	if _, err = adminRun(srv, cold2, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err != nil {
 		t.Fatalf("prime cold: %v", err)
 	}
 
-	primeReq := `{"name":"pool@prime-mainnet","network_id":1,"slot":1,"cold_key_id":551878674,"chain_counter":3}`
+	primeReq := `{"name":"pool@prime-mainnet","network_id":1,"slot":1,"cold_key_id":551878684,"chain_counter":3}`
 
 	if _, err = adminRun(srv, primeReq, append(append([]string{}, keys...), "provision", "profile")...); err != nil {
 		t.Fatalf("prime profile: %v", err)
@@ -208,5 +214,17 @@ func TestInventoryRetryReportsChallengeFailure(t *testing.T) {
 	_, err := s.inventory()
 	if err == nil || !strings.Contains(err.Error(), "host key not registered") || !strings.Contains(err.Error(), "challenge table full") {
 		t.Fatalf("err = %v, want both the refusal and the challenge failure", err)
+	}
+}
+
+// The -scope help names each scope's cold key objects.
+func TestScopeHelpListsColdKeyRanges(t *testing.T) {
+	t.Parallel()
+
+	help := scopeHelp()
+	for _, want := range []string{"testnet 0x20e50010-0x20e50017", "cardano-mainnet 0x20e50018-0x20e5001b", "prime-mainnet 0x20e5001c-0x20e5001f"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("scope help %q lacks %q", help, want)
+		}
 	}
 }

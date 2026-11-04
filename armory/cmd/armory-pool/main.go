@@ -383,7 +383,7 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	profileName := fs.String("profile", "", "device profile holding the pool keys")
 	hostKeyFile := fs.String("host-key", "", "host signing key file authenticating signing requests")
 	hostKeyDir := fs.String("host-key-dir", "", "directory of host signing keys, one <scope>.key per scope; the key of the profile's scope signs")
-	scopeFlag := fs.String("scope", "", "scope of the host key to pick from -host-key-dir when the profile does not name it: testnet, cardano-mainnet or prime-mainnet")
+	scopeFlag := fs.String("scope", "", "scope of the host key to pick from -host-key-dir when the profile does not name it; "+scopeHelp())
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -528,7 +528,7 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		return s.signLog(*seq, wantHash, stdout)
 	case "host-key":
 		out := sf.String("out", "", "host signing key file to create")
-		hostScope := sf.String("scope", "", "scope the key is registered for on a multi image: testnet, cardano-mainnet or prime-mainnet; without it the printed request names none, as single-scope images take it")
+		hostScope := sf.String("scope", "", "scope the key is registered for on a multi image; without it the printed request names none, as single-scope images take it; "+scopeHelp())
 
 		if err := sf.Parse(rest); err != nil {
 			return err
