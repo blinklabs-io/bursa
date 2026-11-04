@@ -597,7 +597,9 @@ armory-pool wipe device < wipe-request.json
 For a multi image, `armory-pool host-key -scope prime-mainnet -out prime.key`
 prints a request that names the scope, and `-host-key-dir DIR` picks
 `DIR/<scope>.key` by the profile a request or `-profile` names (a name ending
-`@cardano-mainnet` or `@prime-mainnet` is that scope, any other is testnet).
+`@cardano-mainnet` or `@prime-mainnet` is that scope, any other is testnet;
+a network-0 profile an older image stored under such a name takes
+`-scope testnet`).
 A scope's first key is added unsigned, so send that request without
 `-host-key` or `-host-key-dir`. Requests that
 name no profile, such as `provision cold`, `provision identity`, `wipe
