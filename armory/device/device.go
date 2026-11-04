@@ -72,9 +72,16 @@ type Chip interface {
 }
 
 // InventoryRequest asks for a profile's keys.
+//
+// A multi image authenticates inventory requests too: the host key of the
+// profile's scope signs InventoryRequestBinding over the request and a
+// challenge from /v1/challenge. Single-scope images ignore these fields.
 type InventoryRequest struct {
-	Nonce   []byte `json:"nonce"`
-	Profile string `json:"profile"`
+	Nonce         []byte `json:"nonce"`
+	Profile       string `json:"profile"`
+	Challenge     []byte `json:"challenge,omitempty"`
+	HostKey       []byte `json:"host_key,omitempty"`
+	HostSignature []byte `json:"host_signature,omitempty"`
 }
 
 // Inventory lists a profile's keys, attested by the identity key.
@@ -499,6 +506,12 @@ func (s *Service) keys(p profile.Profile) (k profileKeys, err error) {
 func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 	if len(req.Nonce) == 0 || len(req.Nonce) > maxNonce {
 		return Inventory{}, errors.New("invalid nonce")
+	}
+
+	if s.multi() {
+		if err := s.authenticateInventory(req); err != nil {
+			return Inventory{}, err
+		}
 	}
 
 	p, err := s.profileFor(req.Profile)

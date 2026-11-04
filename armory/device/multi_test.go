@@ -774,3 +774,55 @@ func TestMultiSignLogReadIsDeviceWide(t *testing.T) {
 		}
 	}
 }
+
+func inventoryAs(t *testing.T, s *Service, p multiProfile, key ed25519.PrivateKey) (int, []byte) {
+	t.Helper()
+
+	req := InventoryRequest{Nonce: nonce(0x31), Profile: p.name}
+
+	if key != nil {
+		req.Challenge = challenge(t, s)
+		req.HostKey = hostPub(key)
+		req.HostSignature = ed25519.Sign(key, InventoryRequestBinding(req))
+	}
+
+	return post(t, s, "/v1/inventory", req)
+}
+
+// A multi image answers an inventory request only for a host key of the
+// profile's scope.
+func TestMultiInventoryNeedsKeyOfProfileScope(t *testing.T) {
+	t.Parallel()
+
+	_, s := seedMulti(t)
+
+	for _, p := range multiProfiles {
+		code, body := inventoryAs(t, s, p, nil)
+		refused(t, p.name+" unsigned", code, body, errHostKeyUnknown)
+
+		for _, k := range multiProfiles {
+			code, body = inventoryAs(t, s, p, k.key)
+
+			if p.scope == k.scope {
+				mustOK(t, p.name+" by "+k.scope, code, body)
+				continue
+			}
+
+			refused(t, p.name+" by "+k.scope, code, body, errScopeMismatch)
+		}
+	}
+}
+
+// The binding is fixed: a host built against another version must agree.
+func TestInventoryRequestBindingVector(t *testing.T) {
+	t.Parallel()
+
+	got := hex.EncodeToString(InventoryRequestBinding(InventoryRequest{
+		Nonce: bytes.Repeat([]byte{1}, 32), Profile: "otg@preview", Challenge: bytes.Repeat([]byte{2}, 32),
+	}))
+
+	const want = "25a68ec406d4ac5178c76c4362792d33c7bf8330af3efe1028db60d03a11860e"
+	if got != want {
+		t.Fatalf("binding %s", got)
+	}
+}

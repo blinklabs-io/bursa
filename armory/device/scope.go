@@ -198,22 +198,33 @@ func (s *Service) parseScope(name string) (Scope, error) {
 // lists the keys it trusts. A multi image lists the keys of the caller's
 // scope; a key of a mainnet scope, which may act device-wide, sees them all.
 func (s *Service) listedKeys() [][]byte {
-	keys := [][]byte{}
+	keys := make([][]byte, 0, len(s.hostEntries))
 
 	for _, e := range s.hostEntries {
-		sc, ok := s.entryScope(e)
-
-		switch {
-		case !s.trusts(e):
-			continue
-		case s.multi() && ok && !(s.caller.known && (s.caller.scope == sc || (!s.caller.unsigned && s.caller.scope.Network == 1))):
-			continue
+		if s.trusts(e) && s.callerSees(e) {
+			keys = append(keys, e.key)
 		}
-
-		keys = append(keys, e.key)
 	}
 
 	return keys
+}
+
+// callerSees reports whether the caller may list e. Every key is visible to a
+// single-scope image; a multi image shows a caller the keys of its own scope,
+// and a key of a mainnet scope, which may act device-wide, all of them. The
+// first key of a scope, added unsigned, is no authority over other scopes.
+func (s *Service) callerSees(e hostEntry) bool {
+	if !s.multi() {
+		return true
+	}
+
+	sc, _ := s.entryScope(e)
+
+	if !s.caller.known {
+		return false
+	}
+
+	return s.caller.scope == sc || (!s.caller.unsigned && s.caller.scope.Network == 1)
 }
 
 // authorizeMulti authenticates an admin request of a multi image.
@@ -446,4 +457,20 @@ func (s *Service) coldSlotKey(id uint32) ed25519.PublicKey {
 // seedPublic returns the public key of an Ed25519 seed.
 func seedPublic(seed []byte) ed25519.PublicKey {
 	return ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+}
+
+// authenticateInventory authenticates an inventory request of a multi image
+// with a host key of the scope of the profile asked for. An unknown profile
+// is refused by the caller once the key is known to be authentic.
+func (s *Service) authenticateInventory(req InventoryRequest) error {
+	sc, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, InventoryRequestBinding(req))
+	if err != nil {
+		return err
+	}
+
+	if target, err := s.profileScope(req.Profile); err == nil && target != sc {
+		return errScopeMismatch
+	}
+
+	return nil
 }
