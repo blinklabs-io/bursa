@@ -450,7 +450,14 @@ challenge from `/v1/challenge` before each signature and adds `challenge`,
 request fields and the challenge, length-prefixed as in the response binding.
 A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
-fails startup.
+fails startup. A multi image (below) authenticates inventory requests as well:
+a host-key enclave whose unauthenticated `/v1/inventory` request is refused
+asks again with `challenge`, `host_key` and `host_signature`, signed over
+`AttestedInventoryRequestBinding` (the domain `bursa-armory-inventory-request/1`,
+the nonce, the profile and the challenge, length-prefixed). The inventory
+attestation itself encodes no network or chain, so the pinned identity key
+verifies a multi image as any other. Point `host_key_file` at the key of the
+profile's scope.
 
 ### Cold key provisioning
 
@@ -508,6 +515,51 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   boot the wipe image and knows the identity public key can do this.
   `POST /wipe/objects` only lists object IDs.
 
+#### Multi image
+
+`make imx NETWORK=multi` builds one image that serves a set of scopes: every
+testnet (network id 0), `cardano-mainnet` and `prime-mainnet` (network id 1,
+profile names ending `@cardano-mainnet` or `@prime-mainnet`, because chains
+sharing network id 1 cannot be told apart otherwise). The single-scope images
+are unchanged. `TESTNET=1` is refused with it.
+
+- Scope binding. Every request that targets a profile needs a host key whose
+  scope equals the profile's: signing, inventory, `/provision/profile`,
+  `/provision/floor`, `/provision/reward`, `/provision/pins` and
+  `/wipe/profile`. A testnet key never signs or provisions for a mainnet
+  profile, and a cardano-mainnet key never for a prime-mainnet one. A key
+  registered by an image that did not scope host keys is a testnet key. No
+  request in a multi image is accepted without a host key, testnet profiles
+  included, except the first key of a scope.
+- First key per scope. Only the provisioning image (`PROVISION=1`) accepts an
+  unsigned `POST /provision/host-key`, and only when the request's `scope`
+  (`testnet`, `cardano-mainnet` or `prime-mainnet`) is one of the image's and
+  has no host key yet; the answer lists only that scope's keys. The signing
+  and wipe images never accept an unsigned request. A signed add names the
+  `scope`, which is part of the signed request, and the key that signs it is
+  of that scope. The list keeps its four slots and its stored format; a
+  scoped entry already holds the network id and a tag of the chain label.
+  A key is registered for one scope only.
+- Device-wide requests. `/provision/identity`, `/wipe/signlog`, the signing
+  log read and listing the keys of other scopes need a key of a mainnet scope
+  while the image serves one. A key revokes keys of its own scope; revoking
+  another scope's key is device-wide too. A mainnet key may thus revoke a
+  testnet key, and the provisioning image then takes that scope's first key
+  unsigned again.
+- One key, one scope. A cold key import or an imported owner key whose public
+  key already belongs to a profile of another scope is refused, as is a cold
+  key slot a profile of another scope names. Two slots of one scope may hold
+  the same key. A cold key object that no profile names has no scope until a
+  profile takes it, and is checked then.
+- Not changed: `/wipe/device` and `/wipe/objects`, which stay confirmed by the
+  identity public key alone as the recovery path when every host key is lost.
+  The unsigned firmware `/provision` cold key import is closed in a multi
+  image: import cold keys with a signed `/provision/cold`.
+- Moving a testnet device. Flashing the multi image over a device that ran a
+  testnet image keeps its profiles and host keys: the stored list is not
+  rewritten. Add the mainnet scopes' first keys with the multi provisioning
+  image.
+
 `armory-pool` signs these requests with its host key. The request JSON is read
 from standard input and the device's answer is printed. `armory-pool host-key
 -out host.skey` writes a new host key and prints the `/provision/host-key`
@@ -521,6 +573,15 @@ armory-pool -host-key host.skey provision profile < profile-request.json
 armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
+
+For a multi image, `armory-pool host-key -scope prime-mainnet -out prime.key`
+prints a request that names the scope, and `-host-key-dir DIR` picks
+`DIR/<scope>.key` by the profile a request or `-profile` names (a name ending
+`@<chain>-mainnet` is that chain's scope, any other is testnet). Requests that
+name no profile, such as `provision cold`, `provision identity`, `wipe
+signlog` and `signlog`, need `-scope`. `opcert-check -host-key` takes the key
+of the profile's scope. `signlog-verify` and `opcert-check` read no network or
+chain: a log with entries of several scopes verifies as one chain.
 
 `provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
 `host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
