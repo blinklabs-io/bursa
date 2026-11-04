@@ -130,6 +130,7 @@ func TestMultiScopeRefusalKeepsChallenge(t *testing.T) {
 	t.Parallel()
 
 	chip, s := seedMulti(t)
+	installLog(t, s)
 	h := s.Handler()
 	testnet := multiProfiles[0]
 
@@ -200,9 +201,8 @@ func TestMultiScopeRefusalKeepsChallenge(t *testing.T) {
 		code, body := as(multiKeyTestnet)
 		refused(t, "testnet key", code, body, errDeviceWide)
 
-		if code, body = as(multiKeyCardano); bytes.Contains(body, []byte("unknown or used challenge")) {
-			t.Fatalf("cardano key on the same challenge: %d %s", code, body)
-		}
+		code, body = as(multiKeyCardano)
+		mustOK(t, "cardano key on the same challenge", code, body)
 	})
 }
 

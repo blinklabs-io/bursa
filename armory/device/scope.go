@@ -458,12 +458,14 @@ func (s *Service) keyScopeConflict(sc Scope, slot uint32, pub ed25519.PublicKey)
 			continue
 		}
 
+		// a key that cannot be read cannot be shown to differ
 		for _, id := range []uint32{other.ColdKeyID, other.OwnerKeyID()} {
-			if ok, err := s.chip.Exists(id); err != nil || !ok {
-				continue
+			have, err := s.objectKey(id)
+			if err != nil {
+				return err
 			}
 
-			if have, err := s.chip.PublicKeyEd25519(id); err == nil && bytes.Equal(have, pub) {
+			if have != nil && bytes.Equal(have, pub) {
 				return errCrossScope
 			}
 		}
@@ -503,23 +505,26 @@ func (s *Service) mainnetName(name string) bool {
 	return false
 }
 
-// coldSlotKey returns the public key held in cold key object id, nil when
-// none is or id is not a cold key object.
-func (s *Service) coldSlotKey(id uint32) ed25519.PublicKey {
-	if id < coldKeyFirst || id > coldKeyLast {
-		return nil
+// objectKey returns the public key held in object id, nil when it holds
+// none, and errDevice when the chip cannot tell.
+func (s *Service) objectKey(id uint32) (ed25519.PublicKey, error) {
+	ok, err := s.chip.Exists(id)
+	if err != nil {
+		s.logf("exist check %#08x: %v", id, err)
+		return nil, errDevice
 	}
 
-	if ok, err := s.chip.Exists(id); err != nil || !ok {
-		return nil
+	if !ok {
+		return nil, nil
 	}
 
 	pub, err := s.chip.PublicKeyEd25519(id)
 	if err != nil {
-		return nil
+		s.logf("public key %#08x: %v", id, err)
+		return nil, errDevice
 	}
 
-	return pub
+	return pub, nil
 }
 
 // seedPublic returns the public key of an Ed25519 seed.

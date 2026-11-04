@@ -171,3 +171,30 @@ func TestMultiKeepsOutOfRangeProfile(t *testing.T) {
 	code, body = postAs(t, signing.Handler(), RouteProvisionFloor, FloorRequest{Profile: "old@preview", ChainCounter: 4}, multiKeyTestnet)
 	mustOK(t, "floor of the out-of-range profile", code, body)
 }
+
+// A key read that fails while checking another scope's keys refuses the
+// request instead of skipping the comparison.
+func TestMultiScopeConflictFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cold import", func(t *testing.T) {
+		chip, s := seedMulti(t)
+		cardano := multiProfiles[1]
+		chip.failPublic = map[uint32]bool{cardano.cold: true}
+
+		code, body := postAs(t, s.Handler(), RouteProvisionCold, coldReq(0x20e50014, cardano.seed), multiKeyTestnet)
+		refused(t, "testnet import of the cardano key, cardano key unreadable", code, body, errDevice)
+	})
+
+	t.Run("profile on an unreadable cold key", func(t *testing.T) {
+		chip, s := seedMulti(t)
+		counter := uint64(1)
+		chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{multiProfiles[1].seed}, 32))
+		chip.failPublic = map[uint32]bool{0x20e50014: true}
+
+		code, body := postAs(t, s.Handler(), RouteProvisionProfile, ProvisionRequest{
+			Name: "dup@preview", Slot: 5, ColdKeyID: 0x20e50014, ChainCounter: &counter,
+		}, multiKeyTestnet)
+		refused(t, "testnet profile on an unreadable cold key", code, body, errDevice)
+	})
+}

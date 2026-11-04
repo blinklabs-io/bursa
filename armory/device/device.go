@@ -863,7 +863,12 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 
 		// the cold key of the slot and an imported owner key must not be
 		// keys of a profile of another scope
-		if err = s.keyScopeConflict(sc, p.ColdKeyID, s.coldSlotKey(p.ColdKeyID)); err != nil {
+		cold, err := s.objectKey(p.ColdKeyID)
+		if err != nil {
+			return ProvisionResponse{}, err
+		}
+
+		if err = s.keyScopeConflict(sc, p.ColdKeyID, cold); err != nil {
 			return ProvisionResponse{}, err
 		}
 

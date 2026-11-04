@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
+	"github.com/blinklabs-io/bursa/armory/signlog"
 )
 
 const (
@@ -782,6 +783,7 @@ func TestMultiSignLogReadIsDeviceWide(t *testing.T) {
 	t.Parallel()
 
 	_, s := seedMulti(t)
+	installLog(t, s)
 
 	for _, c := range []struct {
 		key  ed25519.PrivateKey
@@ -793,12 +795,29 @@ func TestMultiSignLogReadIsDeviceWide(t *testing.T) {
 		req.HostSignature = ed25519.Sign(c.key, SignLogBinding(req))
 
 		code, body := post(t, s, "/v1/signlog", req)
-		isScope := strings.Contains(string(body), errDeviceWide.Error())
 
-		if code == http.StatusOK || isScope == c.wide {
-			t.Errorf("key wide=%v: %d %s", c.wide, code, body)
+		if c.wide {
+			mustOK(t, "mainnet key reads the log", code, body)
+			continue
 		}
+
+		refused(t, "testnet key reads the log", code, body, errDeviceWide)
 	}
+}
+
+// installLog gives s an empty signing log.
+func installLog(t *testing.T, s *Service) {
+	t.Helper()
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + 4*signlog.RecordBlocks)
+
+	w, err := signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), signlog.NewKeySigner(priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.SetSigningLog(w, m)
 }
 
 func inventoryAs(t *testing.T, s *Service, p multiProfile, key ed25519.PrivateKey) (int, []byte) {
