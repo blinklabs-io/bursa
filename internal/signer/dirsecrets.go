@@ -69,14 +69,20 @@ func validName(name string) bool {
 // List returns the names of the secrets in the directory, sorted. An entry
 // that looks like a secret but cannot be stat'ed, such as a dangling symlink,
 // fails the whole listing: skipping it would boot a signer that silently lacks
-// a configured key.
-func (s *DirSecretSource) List(_ context.Context) ([]string, error) {
+// a configured key. A cancelled ctx stops the listing.
+func (s *DirSecretSource) List(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, fmt.Errorf("read secret directory %q: %w", s.dir, err)
 	}
 	var names []string
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !validName(e.Name()) {
 			continue
 		}
@@ -93,10 +99,14 @@ func (s *DirSecretSource) List(_ context.Context) ([]string, error) {
 	return names, nil
 }
 
-// Get returns the contents of the named secret file.
-func (s *DirSecretSource) Get(_ context.Context, name string) ([]byte, error) {
+// Get returns the contents of the named secret file, unless ctx is already
+// cancelled.
+func (s *DirSecretSource) Get(ctx context.Context, name string) ([]byte, error) {
 	if !validName(name) {
 		return nil, fmt.Errorf("invalid secret name %q", name)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	f, err := openDirSecret(filepath.Join(s.dir, name))
 	if err != nil {

@@ -223,3 +223,22 @@ func TestDirSecretSource_ListFailsOnDanglingLink(t *testing.T) {
 		t.Fatal("expected List to fail on a dangling secret link")
 	}
 }
+
+// TestDirSecretSource_CancelledContext checks that a cancelled context stops
+// List and Get before they read the directory or a key file.
+func TestDirSecretSource_CancelledContext(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.json"), []byte("a"))
+	src, err := NewDirSecretSource(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if names, err := src.List(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("List = %v, %v; want context.Canceled", names, err)
+	}
+	if data, err := src.Get(ctx, "a.json"); !errors.Is(err, context.Canceled) || data != nil {
+		t.Fatalf("Get = %q, %v; want context.Canceled", data, err)
+	}
+}
