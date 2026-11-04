@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/blinklabs-io/bursa/armory/device"
 	"github.com/blinklabs-io/bursa/armory/hostkey"
@@ -35,8 +37,15 @@ const (
 
 // newHostKey writes a new host signing key to file, which must not exist,
 // and prints the /provision/host-key request body for its public key, which
-// /provision/host-key/revoke takes as well.
-func newHostKey(file string, out io.Writer) error {
+// /provision/host-key/revoke takes as well. A multi image needs the scope the
+// key is for in the request; scope is empty for a single-scope image.
+func newHostKey(file, scope string, out io.Writer) error {
+	if scope != "" {
+		if err := checkScopeName(scope); err != nil {
+			return err
+		}
+	}
+
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err
@@ -61,7 +70,7 @@ func newHostKey(file string, out io.Writer) error {
 		return err
 	}
 
-	req, err := json.Marshal(device.HostKeyRequest{PublicKey: pub})
+	req, err := json.Marshal(device.HostKeyRequest{PublicKey: pub, Scope: scope})
 	if err != nil {
 		return err
 	}
@@ -156,4 +165,99 @@ func adminRequest(c *client, route, hostKeyFile string, in io.Reader, out io.Wri
 	_, err = fmt.Fprintf(out, "%s\n", bytes.TrimSpace(resp))
 
 	return err
+}
+
+// adminKeyFile returns the host key file that signs the request on in for
+// route, and the request itself, read so its scope can be named: file when
+// given, else the key of the request's scope in dir. Requests the device does
+// not authenticate take no key.
+func adminKeyFile(route, file, dir, scope string, in io.Reader) (string, io.Reader, error) {
+	switch {
+	case dir == "":
+		return file, in, nil
+	case file != "":
+		return "", nil, errors.New("-host-key and -host-key-dir are exclusive")
+	case !device.AdminRoutes()[route]:
+		return "", in, nil
+	}
+
+	body, err := readAdminRequest(in)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if scope, err = requestScope(route, body, scope); err != nil {
+		return "", nil, err
+	}
+
+	file, err = scopedHostKeyFile(dir, scope)
+
+	return file, bytes.NewReader(body), err
+}
+
+// profileScope is the scope a profile name belongs to: its "@<chain>-mainnet"
+// suffix, else testnet.
+func profileScope(name string) string {
+	if i := strings.LastIndexByte(name, '@'); i >= 0 && strings.HasSuffix(name[i+1:], "-mainnet") {
+		return name[i+1:]
+	}
+
+	return "testnet"
+}
+
+// checkScopeName refuses a scope label that is not a plain name, so it can
+// not pick a path outside the key directory.
+func checkScopeName(scope string) error {
+	if scope == "" || strings.Trim(scope, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+		return fmt.Errorf("scope %q must be testnet or a chain label such as prime-mainnet", scope)
+	}
+
+	return nil
+}
+
+// scopedHostKeyFile is the host key file of scope in dir.
+func scopedHostKeyFile(dir, scope string) (string, error) {
+	if scope == "" {
+		return "", errors.New("-host-key-dir needs the scope: a profile name or -scope")
+	}
+
+	if err := checkScopeName(scope); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(dir, scope+".key"), nil
+}
+
+// requestScope is the scope of the host key that signs body, a request for
+// route: -scope when given, else the scope the request names (a host key's
+// scope, or a profile's). Requests that name none, cold keys and the
+// device-wide ones, need -scope.
+func requestScope(route string, body []byte, override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+
+	var req struct {
+		Scope     string `json:"scope"`
+		Profile   string `json:"profile"`
+		Name      string `json:"name"`
+		NetworkID uint8  `json:"network_id"`
+	}
+
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", fmt.Errorf("malformed request for %s", route)
+	}
+
+	switch {
+	case req.Scope != "":
+		return req.Scope, nil
+	case req.Profile != "":
+		return profileScope(req.Profile), nil
+	case req.Name != "" && route == device.RouteProvisionProfile && req.NetworkID == 0:
+		return "testnet", nil
+	case req.Name != "" && route == device.RouteProvisionProfile:
+		return profileScope(req.Name), nil
+	}
+
+	return "", fmt.Errorf("%s names no profile or scope: give -scope", route)
 }

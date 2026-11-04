@@ -214,13 +214,39 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 	return nil
 }
 
-// Inventory implements Enclave.
+// Inventory implements Enclave. A host-key enclave that is refused an
+// unauthenticated request asks again signed with its host key, as a multi
+// scope armory image requires; an image that answers the first request is
+// not asked twice.
 func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInventory, error) {
+	type inventoryRequest struct {
+		Nonce         []byte `json:"nonce"`
+		Profile       string `json:"profile,omitempty"`
+		Challenge     []byte `json:"challenge,omitempty"`
+		HostKey       []byte `json:"host_key,omitempty"`
+		HostSignature []byte `json:"host_signature,omitempty"`
+	}
+	req := inventoryRequest{Nonce: nonce, Profile: e.profile}
 	var inv AttestedInventory
-	err := e.post(ctx, "/v1/inventory", struct {
-		Nonce   []byte `json:"nonce"`
-		Profile string `json:"profile,omitempty"`
-	}{Nonce: nonce, Profile: e.profile}, &inv)
+	err := e.post(ctx, "/v1/inventory", req, &inv)
+	if err == nil || e.hostKey == nil {
+		return inv, err
+	}
+	var ch struct {
+		Version   string `json:"version"`
+		Challenge []byte `json:"challenge"`
+	}
+	if cerr := e.post(ctx, "/v1/challenge", struct{}{}, &ch); cerr != nil {
+		return AttestedInventory{}, err
+	}
+	if ch.Version != AttestedProtocol || len(ch.Challenge) != attestedChallengeSize {
+		return AttestedInventory{}, err
+	}
+	req.Challenge = ch.Challenge
+	req.HostKey = e.hostKey.Public().(ed25519.PublicKey)
+	req.HostSignature = ed25519.Sign(e.hostKey, AttestedInventoryRequestBinding(nonce, e.profile, ch.Challenge))
+	inv = AttestedInventory{}
+	err = e.post(ctx, "/v1/inventory", req, &inv)
 	return inv, err
 }
 
