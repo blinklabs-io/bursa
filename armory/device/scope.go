@@ -43,14 +43,39 @@ func (sc Scope) Name() string {
 	return sc.Chain
 }
 
+// multiScopes is the scope set of a multi image, each with the cold key
+// objects it imports into and provisions profiles on. The live testnet
+// device's cold key is in 0x20e50010, inside the testnet range.
+var multiScopes = []struct {
+	scope               Scope
+	coldFirst, coldLast uint32
+}{
+	{ScopeTestnet, 0x20e50010, 0x20e50017},
+	{Scope{Network: 1, Chain: "cardano-mainnet"}, 0x20e50018, 0x20e5001b},
+	{Scope{Network: 1, Chain: "prime-mainnet"}, 0x20e5001c, 0x20e5001f},
+}
+
 // MultiScopes is the scope set of a multi image: every testnet, the Cardano
 // mainnet and the Prime mainnet.
 func MultiScopes() []Scope {
-	return []Scope{
-		ScopeTestnet,
-		{Network: 1, Chain: "cardano-mainnet"},
-		{Network: 1, Chain: "prime-mainnet"},
+	scopes := make([]Scope, len(multiScopes))
+	for i, m := range multiScopes {
+		scopes[i] = m.scope
 	}
+
+	return scopes
+}
+
+// ColdKeyRange returns the cold key objects sc imports into and provisions
+// profiles on in a multi image; ok is false for a scope it does not serve.
+func ColdKeyRange(sc Scope) (first, last uint32, ok bool) {
+	for _, m := range multiScopes {
+		if m.scope == sc {
+			return m.coldFirst, m.coldLast, true
+		}
+	}
+
+	return 0, 0, false
 }
 
 // SetScopes makes the service a multi image serving scopes. A profile is
@@ -128,9 +153,8 @@ var (
 	errAddScopeMismatch = errors.New("host key is not of the scope it adds a key for")
 	// errMainnetName refuses a testnet profile named as a mainnet scope's
 	errMainnetName = errors.New("a testnet profile may not end with the label of a mainnet scope")
-	// errColdScope refuses a profile on a cold key that a key of its scope
-	// has not imported since the image started
-	errColdScope = errors.New("cold key was not imported by a host key of this profile's scope since the device started; import it again")
+	// errColdRange refuses a cold key object outside the range of a scope
+	errColdRange = errors.New("cold key id is outside the cold key range of the scope")
 )
 
 // caller is who an admin request has been authenticated as, for the handler
@@ -418,8 +442,8 @@ func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error
 }
 
 // keyScopeConflict refuses pub, or a cold key slot, that belongs to a profile
-// of a scope other than sc. A cold key object no profile names belongs to the
-// scope that imported it, which provisionProfile checks.
+// of a scope other than sc. Which cold key objects a scope may use at all is
+// fixed by ColdKeyRange.
 func (s *Service) keyScopeConflict(sc Scope, slot uint32, pub ed25519.PublicKey) error {
 	for _, other := range s.profiles {
 		if got, err := s.scopeOf(other.NetworkID, other.Name); err == nil && got == sc {
@@ -443,6 +467,20 @@ func (s *Service) keyScopeConflict(sc Scope, slot uint32, pub ed25519.PublicKey)
 				return errCrossScope
 			}
 		}
+	}
+
+	return nil
+}
+
+// coldInRange refuses cold key object id outside the range of sc.
+func coldInRange(sc Scope, id uint32) error {
+	first, last, ok := ColdKeyRange(sc)
+	if !ok {
+		return fmt.Errorf("%w (%s has no cold key range)", errColdRange, sc.Name())
+	}
+
+	if id < first || id > last {
+		return fmt.Errorf("%w (%#08x is not in %s's %#08x-%#08x)", errColdRange, id, sc.Name(), first, last)
 	}
 
 	return nil

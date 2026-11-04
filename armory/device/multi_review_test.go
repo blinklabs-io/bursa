@@ -215,19 +215,19 @@ func TestMultiSameColdKeyTwoScopesOneProfile(t *testing.T) {
 	h := multiImage(t, chip, true).Handler()
 	counter := uint64(1)
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(testColdID+8, 0x77), multiKeyTestnet)
+	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, 0x77), multiKeyTestnet)
 	mustOK(t, "testnet import", code, body)
 
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(testColdID+9, 0x77), multiKeyPrime)
+	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e5001d, 0x77), multiKeyPrime)
 	mustOK(t, "prime import of the same key into another slot", code, body)
 
 	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
-		Name: "first@preview", Slot: 8, ColdKeyID: testColdID + 8, ChainCounter: &counter,
+		Name: "first@preview", Slot: 8, ColdKeyID: 0x20e50014, ChainCounter: &counter,
 	}, multiKeyTestnet)
 	mustOK(t, "testnet profile", code, body)
 
 	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
-		Name: "second@prime-mainnet", NetworkID: 1, Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter,
+		Name: "second@prime-mainnet", NetworkID: 1, Slot: 9, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
 	}, multiKeyPrime)
 	refused(t, "prime profile on the same key", code, body, errCrossScope)
 }

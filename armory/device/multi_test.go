@@ -166,8 +166,8 @@ type multiProfile struct {
 
 var multiProfiles = []multiProfile{
 	{"otg@preview", scopeTestnetName, 0, 0, testColdID + 1, 0x01, multiKeyTestnet},
-	{"pool@cardano-mainnet", scopeCardanoName, 1, 1, testColdID + 2, 0x02, multiKeyCardano},
-	{"pool@prime-mainnet", scopePrimeName, 1, 2, testColdID + 3, 0x03, multiKeyPrime},
+	{"pool@cardano-mainnet", scopeCardanoName, 1, 1, 0x20e50018, 0x02, multiKeyCardano},
+	{"pool@prime-mainnet", scopePrimeName, 1, 2, 0x20e5001c, 0x03, multiKeyPrime},
 }
 
 func coldReq(slot uint32, seed byte) ColdRequest {
@@ -398,44 +398,6 @@ func TestMultiProvisionProfileNeedsKeyOfProfileScope(t *testing.T) {
 	}
 }
 
-// A cold key no profile names belongs to the scope that imported it: a
-// profile of another scope may not take it, and after a restart, which
-// forgets the importing scope, a profile takes it only once a key of its own
-// scope has imported the same key again.
-func TestMultiColdKeyKeepsImportScope(t *testing.T) {
-	t.Parallel()
-
-	chip, _ := seedMulti(t)
-	h := multiImage(t, chip, true).Handler()
-	counter := uint64(1)
-	slot := testColdID + 8
-
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(slot, 0x55), multiKeyPrime)
-	mustOK(t, "prime cold key", code, body)
-
-	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
-		Name: "taken@preview", Slot: 8, ColdKeyID: slot, ChainCounter: &counter,
-	}, multiKeyTestnet)
-	refused(t, "testnet profile on a prime-imported cold key", code, body, errColdScope)
-
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(slot, 0x56), multiKeyTestnet)
-	if code == http.StatusOK {
-		t.Fatalf("testnet key replaced the prime cold key: %s", body)
-	}
-
-	prime := ProvisionRequest{Name: "late@prime-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: slot, ChainCounter: &counter}
-
-	h = multiImage(t, chip, true).Handler()
-	code, body = postAs(t, h, RouteProvisionProfile, prime, multiKeyPrime)
-	refused(t, "prime profile on a cold key imported before the restart", code, body, errColdScope)
-
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(slot, 0x55), multiKeyPrime)
-	mustOK(t, "prime imports the same cold key again", code, body)
-
-	code, body = postAs(t, h, RouteProvisionProfile, prime, multiKeyPrime)
-	mustOK(t, "prime profile on its re-imported cold key", code, body)
-}
-
 // A testnet profile may not take the name of a mainnet scope's profile: the
 // name would be refused to that scope, and a host picking its key by the name
 // would pick the mainnet one.
@@ -446,18 +408,18 @@ func TestMultiTestnetProfileRefusesMainnetName(t *testing.T) {
 	h := s.Handler()
 	counter := uint64(1)
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(testColdID+9, 0x46), multiKeyTestnet)
+	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, 0x46), multiKeyTestnet)
 	mustOK(t, "testnet cold key", code, body)
 
 	for _, name := range []string{"squat@cardano-mainnet", "squat@prime-mainnet"} {
 		code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
-			Name: name, Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter,
+			Name: name, Slot: 9, ColdKeyID: 0x20e50014, ChainCounter: &counter,
 		}, multiKeyTestnet)
 		refused(t, name, code, body, errMainnetName)
 	}
 
 	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
-		Name: "fine@preview", Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter,
+		Name: "fine@preview", Slot: 9, ColdKeyID: 0x20e50014, ChainCounter: &counter,
 	}, multiKeyTestnet)
 	mustOK(t, "testnet profile with a testnet name", code, body)
 }
@@ -646,25 +608,28 @@ func TestMultiColdKeyNotSharedAcrossScopes(t *testing.T) {
 		seed byte
 		key  ed25519.PrivateKey
 	}{
-		"prime key, new slot":            {testColdID + 8, testnet.seed, multiKeyPrime},
-		"cardano key, new slot":          {testColdID + 8, testnet.seed, multiKeyCardano},
-		"prime key, slot of testnet":     {testnet.cold, testnet.seed, multiKeyPrime},
-		"testnet key, cardano's key":     {testColdID + 8, cardano.seed, multiKeyTestnet},
-		"cardano key, prime profile key": {testColdID + 8, prime.seed, multiKeyCardano},
+		"prime key, new slot":            {0x20e5001d, testnet.seed, multiKeyPrime},
+		"cardano key, new slot":          {0x20e50019, testnet.seed, multiKeyCardano},
+		"testnet key, cardano's key":     {0x20e50014, cardano.seed, multiKeyTestnet},
+		"cardano key, prime profile key": {0x20e50019, prime.seed, multiKeyCardano},
 	} {
 		code, body := postAs(t, h, RouteProvisionCold, coldReq(c.slot, c.seed), c.key)
 		refused(t, name, code, body, errCrossScope)
 	}
 
+	// the testnet profile's own slot is outside the prime range
+	code, body := postAs(t, h, RouteProvisionCold, coldReq(testnet.cold, testnet.seed), multiKeyPrime)
+	refused(t, "prime key, slot of testnet", code, body, errColdRange)
+
 	// the same testnet key twice, under two slots, is one scope
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(testColdID+8, testnet.seed), multiKeyTestnet)
+	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, testnet.seed), multiKeyTestnet)
 	mustOK(t, "same-scope duplicate cold key", code, body)
 
 	counter := uint64(1)
 
 	// a profile on that second slot is a same-scope duplicate as well
 	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
-		Name: "musashi@preview", Slot: 8, ColdKeyID: testColdID + 8, ChainCounter: &counter,
+		Name: "musashi@preview", Slot: 8, ColdKeyID: 0x20e50014, ChainCounter: &counter,
 	}, multiKeyTestnet)
 	mustOK(t, "same-scope profile on a duplicate cold key", code, body)
 }
@@ -681,17 +646,17 @@ func TestMultiProvisionRefusesCrossScopeKeys(t *testing.T) {
 	code, body := postAs(t, h, RouteProvisionProfile, ProvisionRequest{
 		Name: "x@prime-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: testnet.cold, ChainCounter: &counter,
 	}, multiKeyPrime)
-	refused(t, "cold slot of another scope's profile", code, body, errCrossScope)
+	refused(t, "cold slot of another scope's profile", code, body, errColdRange)
 
 	// a prime cold key whose slot holds a key the testnet profile owns too:
 	// the key shared by two slots, one of each scope, is refused at the
 	// second profile
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(testColdID+8, 0x44), multiKeyPrime)
+	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e5001d, 0x44), multiKeyPrime)
 	mustOK(t, "prime cold key", code, body)
 
 	// an imported owner key equal to another scope's cold key
 	own := ProvisionRequest{
-		Name: "x@prime-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: testColdID + 8, ChainCounter: &counter,
+		Name: "x@prime-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
 		OwnerSigningKey: coldReq(0, cardano.seed).SigningKey,
 	}
 	code, body = postAs(t, h, RouteProvisionProfile, own, multiKeyPrime)
@@ -699,10 +664,10 @@ func TestMultiProvisionRefusesCrossScopeKeys(t *testing.T) {
 
 	// within one scope it is allowed
 	same := ProvisionRequest{
-		Name: "y@preview", Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter,
+		Name: "y@preview", Slot: 9, ColdKeyID: 0x20e50015, ChainCounter: &counter,
 		OwnerSigningKey: coldReq(0, testnet.seed).SigningKey,
 	}
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(testColdID+9, 0x45), multiKeyTestnet)
+	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50015, 0x45), multiKeyTestnet)
 	mustOK(t, "testnet cold key", code, body)
 
 	code, body = postAs(t, h, RouteProvisionProfile, same, multiKeyTestnet)
@@ -775,16 +740,16 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 			}
 
 			// and a prime profile is provisioned and signed by the prime key
-			code, body = postAs(t, signing.Handler(), RouteProvisionCold, coldReq(testColdID+1, 0x55), multiKeyPrime)
+			code, body = postAs(t, signing.Handler(), RouteProvisionCold, coldReq(0x20e5001d, 0x55), multiKeyPrime)
 			mustOK(t, "prime cold key", code, body)
 
 			code, body = postAs(t, signing.Handler(), RouteProvisionProfile, ProvisionRequest{
-				Name: "pool@prime-mainnet", NetworkID: 1, Slot: 1, ColdKeyID: testColdID + 1, ChainCounter: &counter,
+				Name: "pool@prime-mainnet", NetworkID: 1, Slot: 1, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
 			}, multiKeyPrime)
 			mustOK(t, "prime profile", code, body)
 
 			signing = multiImage(t, chip, false)
-			prime := multiProfile{name: "pool@prime-mainnet", cold: testColdID + 1}
+			prime := multiProfile{name: "pool@prime-mainnet", cold: 0x20e5001d}
 
 			if resp := opcertFor(t, signing, chip, prime, multiKeyPrime, 4); resp.Error != "" {
 				t.Fatalf("prime key refused for its profile: %q", resp.Error)
