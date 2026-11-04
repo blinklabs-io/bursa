@@ -41,6 +41,14 @@ const opcertCounterScope = "opcert-counter"
 // rules differ: a chain counter may repeat, a legacy issue counter may not.
 const opcertChainFloorScope = "opcert-chain-floor"
 
+// opcertChainIssuedScope records the highest issue number SignOpCertFromChain
+// produced. The ledger only holds counters that were issued, so a reported
+// chain counter above it is refused: it would raise the floor past every
+// counter the ledger accepts and lock out renewals. With no record, as for a
+// key first signed before this record existed, the chain counter is not
+// bounded until the next opcert sets it.
+const opcertChainIssuedScope = "opcert-chain-issued"
+
 // opcertCounterRule is the anti-double-sign check for one request: the value
 // recorded under scope, and whether an equal value is accepted.
 type opcertCounterRule struct {
@@ -211,6 +219,26 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 			// warn mode: log and allow; the signature is still produced.
 			c.deps.Logger.Warn("sign", "type", "opcert", "caller-key", hash.String(), "issue-counter", issueCounter, "stored-counter", stored, "result", "warn", "reason", "issue counter is not strictly greater than the highest signed (warn mode)")
 		}
+		if rule.floor && !counterConflictReported {
+			issued, issuedExists, ierr := cw.CounterFor(ctx, hash, opcertChainIssuedScope)
+			if ierr != nil {
+				c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", ierr.Error())
+				c.deps.Metrics.observe("opcert", string(CodeBackend))
+				c.deps.Metrics.observeBackendError("watermark")
+				return nil, CodeBackend, fmt.Errorf("opcert issued counter lookup: %w", ierr)
+			}
+			if issuedExists && rule.value > issued {
+				counterConflictReported = true
+				c.deps.Metrics.observeWatermarkConflict()
+				if c.deps.WMMode == watermark.ModeEnforce {
+					c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "chain-counter", rule.value, "issued-counter", issued, "result", "denied", "reason", "chain counter above the last issued counter")
+					c.deps.Metrics.observe("opcert", string(CodeConflict))
+					c.deps.Metrics.observeDeny(string(CodeConflict))
+					return nil, CodeConflict, fmt.Errorf("opcert chain counter %d is above the last counter %d issued for this cold key", rule.value, issued)
+				}
+				c.deps.Logger.Warn("sign", "type", "opcert", "caller-key", hash.String(), "chain-counter", rule.value, "issued-counter", issued, "result", "warn", "reason", "chain counter above the last issued counter (warn mode)")
+			}
+		}
 	}
 
 	// The cold key signs the raw OCertSignable bytes directly (this is NOT a
@@ -304,6 +332,19 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 					c.deps.Metrics.observeBackendError("watermark")
 					return nil, CodeBackend, fmt.Errorf("opcert counter commit: %w", werr)
 				}
+			}
+		}
+	}
+
+	// Record the issue number for the chain-counter bound. A lower value means
+	// a concurrent request already recorded a higher one, which keeps the bound.
+	if counterWM != nil && rule.floor {
+		if werr := counterWM.CheckAndRaiseFloor(ctx, hash, opcertChainIssuedScope, issueCounter); werr != nil && !errors.Is(werr, watermark.ErrCounterRegression) {
+			c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", werr.Error())
+			if c.deps.WMMode == watermark.ModeEnforce {
+				c.deps.Metrics.observe("opcert", string(CodeBackend))
+				c.deps.Metrics.observeBackendError("watermark")
+				return nil, CodeBackend, fmt.Errorf("opcert issued counter commit: %w", werr)
 			}
 		}
 	}

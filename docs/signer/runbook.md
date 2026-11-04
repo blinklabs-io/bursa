@@ -269,6 +269,16 @@ lower value is refused. Use `chain_counter` for small pools; a strictly
 increasing counter would otherwise run two ahead of the chain, which nodes
 reject.
 
+The signer also records the last issue number it produced from a
+`chain_counter`, and refuses a chain counter above it with HTTP 409: the ledger
+only holds counters that were issued, so a higher value cannot be real and
+would raise the floor past every counter the ledger accepts. A key with no
+record (first use, or signed before this record existed) is not bounded until
+its next opcert. If opcerts for the same cold key are also issued by another
+signer, this record falls behind; remove the key's `|opcert-chain-issued` row
+from `signer_counter_watermark` (Postgres) or `counter_watermark` (SQLite)
+before the next request.
+
 ### High availability
 
 For a single active instance, a durable `file` (SQLite) watermark is sufficient.

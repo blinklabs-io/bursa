@@ -130,3 +130,60 @@ func TestSignOpCertFromChain_Concurrent(t *testing.T) {
 		t.Fatalf("floor = %d, want 9", v)
 	}
 }
+
+// TestSignOpCertFromChain_AboveIssued: the ledger holds only counters this
+// signer issued, so a chain counter above the last issued one is refused and
+// cannot raise the floor past every counter the ledger would accept.
+func TestSignOpCertFromChain_AboveIssued(t *testing.T) {
+	k := newFakeKey(t)
+	wm := watermark.NewMemWatermark()
+	c, _ := newOpCertCoordinator(t, k, wm, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	// no record yet: the first chain counter is not bounded
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 4, 100, k.hash.String()); err != nil {
+		t.Fatalf("chain 4: %v (code=%s)", err, code)
+	}
+	// issued 5: chain 6 cannot have been forged
+	if res, code, err := c.SignOpCertFromChain(ctx, kes, 6, 101, k.hash.String()); err == nil || code != CodeConflict || res != nil {
+		t.Fatalf("chain 6 after issuing 5: want CodeConflict, got (res=%v, code=%s, err=%v)", res, code, err)
+	}
+	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainFloorScope); v != 4 {
+		t.Fatalf("floor = %d after a refused raise, want 4", v)
+	}
+	// the pool forged with 5
+	res, code, err := c.SignOpCertFromChain(ctx, kes, 5, 102, k.hash.String())
+	if err != nil {
+		t.Fatalf("chain 5: %v (code=%s)", err, code)
+	}
+	verifyChainOpCert(t, res, kes, 6, 102)
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 6, 103, k.hash.String()); err != nil {
+		t.Fatalf("chain 6 after issuing 6: %v (code=%s)", err, code)
+	}
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 8, 104, k.hash.String()); err == nil || code != CodeConflict {
+		t.Fatalf("chain 8 after issuing 7: want CodeConflict, got (code=%s, err=%v)", code, err)
+	}
+}
+
+// TestSignOpCertFromChain_AboveIssuedWarn: warn mode signs and records the
+// higher issue counter.
+func TestSignOpCertFromChain_AboveIssuedWarn(t *testing.T) {
+	k := newFakeKey(t)
+	wm := watermark.NewMemWatermark()
+	c, _ := newOpCertCoordinator(t, k, wm, watermark.ModeWarn)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	if _, _, err := c.SignOpCertFromChain(ctx, kes, 4, 100, k.hash.String()); err != nil {
+		t.Fatalf("chain 4: %v", err)
+	}
+	res, _, err := c.SignOpCertFromChain(ctx, kes, 9, 101, k.hash.String())
+	if err != nil {
+		t.Fatalf("chain 9 in warn mode: %v", err)
+	}
+	verifyChainOpCert(t, res, kes, 10, 101)
+	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainIssuedScope); v != 10 {
+		t.Fatalf("issued = %d, want 10", v)
+	}
+}
