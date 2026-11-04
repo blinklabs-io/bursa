@@ -21,7 +21,7 @@
 #
 # Run from the repository root:
 #   armory/e2e/sim-signer-opcert.sh
-# Needs go, openssl, curl and jq.
+# Needs go, openssl, curl, jq and xxd.
 
 set -euo pipefail
 
@@ -50,6 +50,7 @@ fail() {
 }
 
 step "Build"
+mkdir -p "$W/bin"
 (cd "$ROOT/armory" && go build -o "$W/bin/" ./cmd/armory-sim ./cmd/armory-pool ./cmd/signlog-verify)
 (cd "$ROOT" && go build -o "$W/bin/bursa" ./cmd/bursa)
 PATH="$W/bin:$PATH"

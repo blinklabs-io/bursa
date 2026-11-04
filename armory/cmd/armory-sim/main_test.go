@@ -17,8 +17,10 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -263,6 +265,64 @@ func TestSigningLogOpens(t *testing.T) {
 	for _, l := range logged {
 		if strings.Contains(l, "NOT OPEN") {
 			t.Fatalf("signing log did not open: %v", logged)
+		}
+	}
+}
+
+// TestChipSaveFailureRollsBack checks that a change the chip cannot save is
+// not kept in memory either.
+func TestChipSaveFailureRollsBack(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+
+	dir := t.TempDir()
+
+	c, err := openChip(filepath.Join(dir, "chip.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.WriteBinary(1, []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := c.ImportEd25519(2, bytes.Repeat([]byte{1}, ed25519.SeedSize), false); err == nil {
+		t.Fatal("import saved into a read-only directory")
+	}
+
+	if ok, _ := c.Exists(2); ok {
+		t.Fatal("a key whose save failed is still in the chip")
+	}
+
+	if err := c.WriteBinary(1, []byte("new")); err == nil {
+		t.Fatal("write saved into a read-only directory")
+	}
+
+	if b, _ := c.ReadBinary(1); string(b) != "old" {
+		t.Fatalf("binary = %q after a failed write, want the old content", b)
+	}
+
+	if err := c.Delete(1); err == nil {
+		t.Fatal("delete saved into a read-only directory")
+	}
+
+	if ok, _ := c.Exists(1); !ok {
+		t.Fatal("an object whose delete failed is gone from the chip")
+	}
+}
+
+func TestCardSizeBounds(t *testing.T) {
+	// 1<<55+8 blocks is 1<<64+4096 bytes, which wraps to a 4096-byte image
+	for _, n := range []uint64{0, math.MaxInt64/signlog.BlockSize + 1, 1<<55 + 8, math.MaxUint64} {
+		if _, err := openCard(filepath.Join(t.TempDir(), "card.img"), n); err == nil {
+			t.Errorf("openCard accepted %d blocks", n)
 		}
 	}
 }

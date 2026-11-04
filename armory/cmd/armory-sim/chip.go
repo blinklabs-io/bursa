@@ -146,6 +146,39 @@ func (c *fileChip) save() error {
 	return os.Rename(tmp.Name(), c.path)
 }
 
+// commit applies a change to object id and saves the chip. If the save
+// fails, the object is restored, so the chip in memory never holds state
+// that a restart would lose. Callers hold c.mu.
+func (c *fileChip) commit(id uint32, change func()) error {
+	key, hadKey := c.keys[id]
+	bin, hadBin := c.bins[id]
+	transient := c.transient[id]
+
+	change()
+
+	if err := c.save(); err != nil {
+		delete(c.keys, id)
+		delete(c.bins, id)
+		delete(c.transient, id)
+
+		if hadKey {
+			c.keys[id] = key
+		}
+
+		if hadBin {
+			c.bins[id] = bin
+		}
+
+		if transient {
+			c.transient[id] = true
+		}
+
+		return err
+	}
+
+	return nil
+}
+
 func (c *fileChip) exists(id uint32) bool {
 	_, k := c.keys[id]
 	_, b := c.bins[id]
@@ -181,13 +214,14 @@ func (c *fileChip) ImportEd25519(id uint32, seed []byte, transient bool) error {
 		return errExists
 	}
 
-	c.keys[id] = bytes.Clone(seed)
 	if transient {
+		c.keys[id] = bytes.Clone(seed)
 		c.transient[id] = true
+
 		return nil
 	}
 
-	return c.save()
+	return c.commit(id, func() { c.keys[id] = bytes.Clone(seed) })
 }
 
 func (c *fileChip) PublicKeyEd25519(id uint32) (ed25519.PublicKey, error) {
@@ -222,9 +256,7 @@ func (c *fileChip) WriteBinary(id uint32, data []byte) error {
 		return errExists
 	}
 
-	c.bins[id] = bytes.Clone(data)
-
-	return c.save()
+	return c.commit(id, func() { c.bins[id] = bytes.Clone(data) })
 }
 
 func (c *fileChip) ReadBinary(id uint32) ([]byte, error) {
@@ -247,9 +279,9 @@ func (c *fileChip) Delete(id uint32) error {
 		return errNoObject
 	}
 
-	delete(c.keys, id)
-	delete(c.bins, id)
-	delete(c.transient, id)
-
-	return c.save()
+	return c.commit(id, func() {
+		delete(c.keys, id)
+		delete(c.bins, id)
+		delete(c.transient, id)
+	})
 }

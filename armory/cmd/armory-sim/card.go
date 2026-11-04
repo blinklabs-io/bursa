@@ -17,6 +17,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 
 	"github.com/blinklabs-io/bursa/armory/signlog"
@@ -33,6 +34,10 @@ type fileCard struct {
 // openCard opens the card image at path, creating a zeroed (sparse) image
 // of the given number of blocks if it does not exist.
 func openCard(path string, blocks uint64) (*fileCard, error) {
+	if blocks == 0 || blocks > math.MaxInt64/signlog.BlockSize {
+		return nil, fmt.Errorf("card size must be 1 to %d blocks, got %d", uint64(math.MaxInt64/signlog.BlockSize), blocks)
+	}
+
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, err
@@ -45,7 +50,7 @@ func openCard(path string, blocks uint64) (*fileCard, error) {
 	}
 
 	if info.Size() == 0 {
-		if err := f.Truncate(int64(blocks) * signlog.BlockSize); err != nil { //nolint:gosec // bounded by flag validation
+		if err := f.Truncate(int64(blocks) * signlog.BlockSize); err != nil { //nolint:gosec // bounded above
 			f.Close() //nolint:errcheck,gosec // the truncate error is returned
 			return nil, err
 		}
