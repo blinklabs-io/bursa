@@ -67,9 +67,13 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Addr:              o.listen,
-		Handler:           h,
+		Addr:    o.listen,
+		Handler: h,
+		// the firmware server's limits
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 
 	log.Printf("armory-sim: %s image, %s, serving %s; keys in %s are PLAINTEXT test keys", o.image, o.network, o.listen, o.state)
@@ -92,6 +96,12 @@ func build(o options, logf func(string, ...any)) (http.Handler, error) {
 	}
 
 	if err := os.MkdirAll(o.state, 0o700); err != nil {
+		return nil, err
+	}
+
+	// each process keeps the chip in memory and saves it whole, so a second
+	// simulator on the same state would overwrite the first one's objects
+	if err := lockState(o.state); err != nil {
 		return nil, err
 	}
 

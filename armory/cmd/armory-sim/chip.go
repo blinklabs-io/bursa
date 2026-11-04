@@ -89,6 +89,10 @@ func openChip(path string) (*fileChip, error) {
 			return nil, err
 		}
 
+		if _, ok := c.keys[id]; ok {
+			return nil, fmt.Errorf("chip state: object %s is both a key and a binary", k)
+		}
+
 		c.bins[id] = v
 	}
 

@@ -326,3 +326,33 @@ func TestCardSizeBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenChipRejectsKeyAndBinary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chip.json")
+	// a valid 32-byte seed, so only the overlap can make the load fail
+	seed := "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+	state := `{"keys":{"0x20e50010":"` + seed + `"},"bins":{"0x20e50010":"eA=="}}`
+
+	if err := os.WriteFile(path, []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := openChip(path); err == nil {
+		t.Fatal("openChip accepted an object that is both a key and a binary")
+	}
+}
+
+// TestStateLocked checks that a second simulator cannot use a state
+// directory another one holds.
+func TestStateLocked(t *testing.T) {
+	dir := t.TempDir()
+	o := options{listen: "127.0.0.1:0", state: dir, image: "provision", network: "testnet"}
+
+	if _, err := build(o, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := build(o, t.Logf); err == nil {
+		t.Fatal("a second simulator opened a state directory in use")
+	}
+}
