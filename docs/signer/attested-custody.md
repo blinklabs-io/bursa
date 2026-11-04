@@ -528,7 +528,9 @@ are unchanged. `TESTNET=1` is refused with it.
   `/provision/floor`, `/provision/reward`, `/provision/pins` and
   `/wipe/profile`. A testnet key never signs or provisions for a mainnet
   profile, and a cardano-mainnet key never for a prime-mainnet one. A key
-  registered by an image that did not scope host keys is a testnet key. No
+  registered by an image that did not scope host keys is a testnet key. A
+  new testnet profile may not take a name ending `@cardano-mainnet` or
+  `@prime-mainnet`. No
   request in a multi image is accepted without a host key, testnet profiles
   included, except the first key of a scope.
 - First key per scope. Only the provisioning image (`PROVISION=1`) accepts an

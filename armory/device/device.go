@@ -851,6 +851,10 @@ func (s *Service) provisionProfile(req ProvisionRequest) (ProvisionResponse, err
 			return ProvisionResponse{}, err
 		}
 
+		if sc == ScopeTestnet && s.mainnetName(p.Name) {
+			return ProvisionResponse{}, errMainnetName
+		}
+
 		// the cold key of the slot and an imported owner key must not be
 		// keys of a profile of another scope
 		if err = s.keyScopeConflict(sc, p.ColdKeyID, s.coldSlotKey(p.ColdKeyID)); err != nil {

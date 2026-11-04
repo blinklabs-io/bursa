@@ -398,6 +398,32 @@ func TestMultiProvisionProfileNeedsKeyOfProfileScope(t *testing.T) {
 	}
 }
 
+// A testnet profile may not take the name of a mainnet scope's profile: the
+// name would be refused to that scope, and a host picking its key by the name
+// would pick the mainnet one.
+func TestMultiTestnetProfileRefusesMainnetName(t *testing.T) {
+	t.Parallel()
+
+	_, s := seedMulti(t)
+	h := s.Handler()
+	counter := uint64(1)
+
+	code, body := postAs(t, h, RouteProvisionCold, coldReq(testColdID+9, 0x46), multiKeyTestnet)
+	mustOK(t, "testnet cold key", code, body)
+
+	for _, name := range []string{"squat@cardano-mainnet", "squat@prime-mainnet"} {
+		code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
+			Name: name, Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter,
+		}, multiKeyTestnet)
+		refused(t, name, code, body, errMainnetName)
+	}
+
+	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
+		Name: "fine@preview", Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter,
+	}, multiKeyTestnet)
+	mustOK(t, "testnet profile with a testnet name", code, body)
+}
+
 func hexOf(b []byte) string { return hex.EncodeToString(b) }
 
 // Device-wide requests need a key of a mainnet scope while the image serves

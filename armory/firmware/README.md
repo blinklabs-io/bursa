@@ -30,7 +30,8 @@ no unfiltered `/sign`. The single-scope images build as before.
   profile provisioning and profile wipes. A testnet key never signs or
   provisions for a mainnet profile, nor a cardano-mainnet key for a
   prime-mainnet one. A key registered by an older, unscoped image counts as a
-  testnet key.
+  testnet key. A new testnet profile may not take a name ending
+  `@cardano-mainnet` or `@prime-mainnet`.
 - The first host key of a scope is added unsigned, by the `PROVISION=1` image
   only, with `scope` naming a scope of the image that has no key yet. The
   signing and wipe images never take an unsigned request. A signed host key
@@ -44,7 +45,7 @@ no unfiltered `/sign`. The single-scope images build as before.
   multi image, then add the mainnet scopes' first keys with the provisioning
   image.
 
- `./hab_makefile_test.sh` dry-runs
+`./hab_makefile_test.sh` dry-runs
 the HAB targets below, and runs the signing step against a stub `habtool`; it
 needs only `make`.
 

@@ -126,6 +126,8 @@ var (
 	// errAddScopeMismatch refuses a host key add signed by a key of another
 	// scope than the one the request names
 	errAddScopeMismatch = errors.New("host key is not of the scope it adds a key for")
+	// errMainnetName refuses a testnet profile named as a mainnet scope's
+	errMainnetName = errors.New("a testnet profile may not end with the label of a mainnet scope")
 )
 
 // caller is who an admin request has been authenticated as, for the handler
@@ -436,6 +438,23 @@ func (s *Service) keyScopeConflict(sc Scope, slot uint32, pub ed25519.PublicKey)
 	}
 
 	return nil
+}
+
+// mainnetName reports whether a testnet profile's name ends with the label of
+// a mainnet scope of this image, so would be taken for that scope's profile.
+func (s *Service) mainnetName(name string) bool {
+	i := strings.LastIndexByte(name, '@')
+	if i < 0 {
+		return false
+	}
+
+	for _, sc := range s.scopes {
+		if sc.Network != 0 && sc.Chain == name[i+1:] {
+			return true
+		}
+	}
+
+	return false
 }
 
 // coldSlotKey returns the public key held in cold key object id, nil when
