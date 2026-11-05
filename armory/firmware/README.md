@@ -67,9 +67,13 @@ no unfiltered `/sign`. The single-scope images build as before.
   object another scope owns. Wipe with this image's wipe image first.
 - A device that ran a testnet image keeps its profiles and host key. A
   testnet key does not act device-wide on the multi image and the device's
-  last key cannot be revoked, so adding mainnet scopes takes a device wipe:
-  wipe it, register a mainnet key unsigned with the provisioning image, and
-  add the testnet key again with it.
+  last key cannot be revoked, so adding mainnet scopes takes a device wipe.
+  The wipe deletes every armory object: cold keys, profiles, owner keys,
+  pins, host keys, the signing log head and the identity key. With the
+  provisioning image, register a mainnet key unsigned, add the testnet key
+  with it, provision a new identity and pin its public key, import the
+  backed-up cold keys, and provision the profiles again. An owner key the
+  device generated is not recoverable.
 
 `./hab_makefile_test.sh` dry-runs
 the HAB targets below, and runs the signing step against a stub `habtool`; it

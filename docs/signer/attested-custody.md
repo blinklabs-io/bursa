@@ -614,9 +614,19 @@ are unchanged. `TESTNET=1` is refused with it.
 - Moving a testnet device. Flashing the multi image over a device that ran a
   testnet image keeps its profiles and host keys: the stored list is not
   rewritten. A testnet key does not act device-wide on the multi image and
-  the device's last key cannot be revoked, so to add mainnet scopes, wipe the
-  device, register a mainnet key unsigned on the multi provisioning image, and
-  add the testnet key again with it. The wipe removes the profiles.
+  the device's last key cannot be revoked, so adding mainnet scopes takes a
+  device wipe. `/wipe/device` deletes every armory object: the cold keys and
+  their ownership record, the profiles with their owner keys and pins, the
+  host keys, the signing log head and the identity key. Then, on the multi
+  provisioning image, register a mainnet key unsigned and add the testnet key
+  with it; send `/provision/identity`, which generates a new identity key, and
+  pin its public key as `identity_public_key` in place of the old one; import
+  the backed-up testnet cold keys with a signed `/provision/cold`; provision
+  each testnet profile again with `chain_counter` at the pool's on-chain
+  counter, and send its `/provision/pins` again.
+  An owner key the device generated is gone, so the profile gets a new one
+  unless its owner key is imported again. The signing log starts again on a
+  zeroed card, as for any device wipe.
 
 `armory-pool` signs these requests with its host key. The request JSON is read
 from standard input and the device's answer is printed. `armory-pool host-key
