@@ -187,6 +187,24 @@ func checkOpenFilePermissions(file *os.File) error {
 	return checkOpenSecurityDescriptor(file.Name(), descriptor)
 }
 
+// sddlTrustee returns how SDDL writes sid as an ACE trustee. SDDL replaces
+// some account SIDs with a two-letter alias, such as "LA" for the built-in
+// local Administrator account, so comparing an ACE against the numeric SID
+// alone rejects that account's own owner-only DACL.
+func sddlTrustee(sid string) (string, error) {
+	descriptor, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;" + sid + ")")
+	if err != nil {
+		return "", fmt.Errorf("failed to render SID %s as SDDL: %w", sid, err)
+	}
+	sddl := descriptor.String()
+	start := strings.LastIndexByte(sddl, ';')
+	end := strings.LastIndexByte(sddl, ')')
+	if start < 0 || end <= start {
+		return "", fmt.Errorf("unexpected SDDL %q for SID %s", sddl, sid)
+	}
+	return sddl[start+1 : end], nil
+}
+
 func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCRIPTOR) error {
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
@@ -244,6 +262,11 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 		"CO":        true, // Creator Owner
 		"OW":        true, // Owner Rights
 	}
+	alias, err := sddlTrustee(currentUser)
+	if err != nil {
+		return err
+	}
+	allowed[alias] = true
 	if saclStart := strings.Index(dacl, "S:"); saclStart >= 0 {
 		dacl = dacl[:saclStart]
 	}

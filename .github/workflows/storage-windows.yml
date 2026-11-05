@@ -1,7 +1,8 @@
 name: storage-windows
 
 # go-test runs on Linux only and cross-builds just ./cmd/bursa, so nothing else
-# executes the Windows SQLite permission code. Run its tests natively.
+# executes the Windows SQLite permission code or the owner-only checks it relies
+# on. Run their tests natively.
 on:
   pull_request:
 
@@ -30,3 +31,6 @@ jobs:
           check-latest: true
       - name: go test (SQLite permissions)
         run: go test -v -count=1 -run "^TestSQLiteStore(RestrictsFilesToOwnerUnderPermissiveDirectory|TightensExistingPermissiveDatabase|RejectsFilesOwnedByAnotherIdentity|ReadOnlyDSNSecuresDatabaseAndSidecars)$" ./internal/storage/
+      - name: go test (secret file permissions)
+        if: ${{ !cancelled() }}
+        run: go test -v -count=1 -run "^(TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile|TestLoadSecretKeyFromFileWindowsAllowsOwner)$" .
