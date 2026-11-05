@@ -384,16 +384,19 @@ func TestRevokeLastHostKeyRefused(t *testing.T) {
 		t.Error("host key list deleted by a refused revoke")
 	}
 
-	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
-		t.Fatal("unauthenticated sign accepted after revoking the last host key")
+	// each unsigned request is valid apart from its missing signature, so
+	// only host authentication refuses it
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); !strings.Contains(r.Error, errHostKeyUnknown.Error()) {
+		t.Errorf("unauthenticated sign after revoking the last host key: %+v", r)
 	}
 
-	if code, _ := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}); code == http.StatusOK {
-		t.Fatal("unsigned host key enrolled after revoking the last host key")
+	if code, body := post(t, s, "/provision/floor", FloorRequest{Profile: "otg@preview", ChainCounter: 9}); code == http.StatusOK || !strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Errorf("unsigned provisioning after revoking the last host key: %d %s", code, body)
 	}
 
-	if code, _ := post(t, s, "/provision/floor", struct{}{}); code == http.StatusOK {
-		t.Fatal("unsigned provisioning accepted after revoking the last host key")
+	// last, as an accepted enrollment would refill the list
+	if code, body := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}); code == http.StatusOK || !strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Errorf("unsigned host key after revoking the last host key: %d %s", code, body)
 	}
 
 	// a restart reads the same list
@@ -402,8 +405,8 @@ func TestRevokeLastHostKeyRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(s2.hostKeys) != 1 || s2.hostKeysBad {
-		t.Fatalf("reloaded keys %d bad %v", len(s2.hostKeys), s2.hostKeysBad)
+	if len(s2.hostKeys) != 1 || !bytes.Equal(s2.hostKeys[0], hostPub(testHostKey)) || s2.hostKeysBad {
+		t.Fatalf("reloaded keys %x bad %v", s2.hostKeys, s2.hostKeysBad)
 	}
 }
 
@@ -423,12 +426,12 @@ func TestRevokeNonLastHostKey(t *testing.T) {
 		t.Fatalf("revoke with another key left: %d %s", code, body)
 	}
 
-	if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey2); code == http.StatusOK {
-		t.Fatal("last key revoked")
+	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey2); code == http.StatusOK || !strings.Contains(string(body), errLastHostKey.Error()) {
+		t.Fatalf("revoking the last key: %d %s", code, body)
 	}
 
-	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
-		t.Fatal("unauthenticated sign accepted")
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); !strings.Contains(r.Error, errHostKeyUnknown.Error()) {
+		t.Fatalf("unauthenticated sign with a host key left: %+v", r)
 	}
 
 	if code, body := rawPost(s.WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`)); code != http.StatusOK {
