@@ -188,6 +188,9 @@ func TestSQLiteStoreRejectsFilesOwnedByAnotherIdentity(t *testing.T) {
 				_ = store.Close()
 			}
 			require.ErrorIs(t, err, bursa.ErrInsecureFileMode)
+			// Any secure-file failure satisfies ErrorIs, so pin the rejection
+			// to the owner check rather than to an unrelated earlier step.
+			require.ErrorContains(t, err, "is owned by")
 			assert.Equal(t, before, securityDescriptorString(t, foreign))
 		})
 	}
