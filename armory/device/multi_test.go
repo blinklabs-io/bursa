@@ -976,3 +976,32 @@ func TestMultiRevokeKeepsOtherScopesLastKey(t *testing.T) {
 	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb4)), Scope: scopePrimeName}, multiKeyCardano)
 	mustOK(t, "cardano key adds prime's first key again", code, body)
 }
+
+// A key older single-scope images registered for two scopes keeps both on a
+// multi image: a request is authorized under whichever of its scopes allows
+// it, not only the first entry in the stored list.
+func TestMultiMigratedKeyKeepsEveryScope(t *testing.T) {
+	t.Parallel()
+
+	chip := newFakeChip()
+	k := scopeKey(0xb1)
+
+	// a testnet image, then a prime-mainnet image, register the same key
+	if _, err := imageOn(t, chip, 0, "").addHostKey(HostKeyRequest{PublicKey: hostPub(k)}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := imageOn(t, chip, 1, "prime-mainnet").addHostKey(HostKeyRequest{PublicKey: hostPub(k)}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := multiImage(t, chip, true).Handler()
+
+	// prime-mainnet: the key adds a replacement key for its scope
+	code, body := postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb2)), Scope: scopePrimeName}, k)
+	mustOK(t, "migrated key adds a prime-mainnet key", code, body)
+
+	// testnet: the same key still acts for its testnet registration
+	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb3)), Scope: scopeTestnetName}, k)
+	mustOK(t, "migrated key adds a testnet key", code, body)
+}

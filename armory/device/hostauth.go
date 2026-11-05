@@ -406,18 +406,35 @@ func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte,
 		return Scope{}, errors.New("host signature does not verify")
 	}
 
-	sc := s.imageScope()
+	candidates := []Scope{s.imageScope()}
 
 	if s.multi() {
-		var ok bool
-		if sc, ok = s.hostKeyScope(hostKey); !ok {
+		if candidates = s.hostKeyScopes(hostKey); len(candidates) == 0 {
 			return Scope{}, errHostKeyUnknown
 		}
 	}
 
+	// a key registered for several scopes acts under the first that allows
+	// the request; the refusal reported is the first scope's
+	sc := candidates[0]
+
 	if authorize != nil {
-		if err := authorize(sc); err != nil {
-			return Scope{}, err
+		var refusal error
+
+		for _, c := range candidates {
+			err := authorize(c)
+			if err == nil {
+				sc, refusal = c, nil
+				break
+			}
+
+			if refusal == nil {
+				refusal = err
+			}
+		}
+
+		if refusal != nil {
+			return Scope{}, refusal
 		}
 	}
 

@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -170,21 +171,24 @@ func (s *Service) entryScope(e hostEntry) (Scope, bool) {
 	return Scope{}, false
 }
 
-// hostKeyScope returns the scope of this image key is registered for. An
-// entry of a scope the image does not serve is skipped, so it never stands
-// for the zero Scope, which is testnet.
-func (s *Service) hostKeyScope(key []byte) (Scope, bool) {
+// hostKeyScopes returns the scopes of this image key is registered for, in
+// list order. Older single-scope images may have registered one key for
+// several scopes. An entry of a scope the image does not serve is skipped, so
+// it never stands for the zero Scope, which is testnet.
+func (s *Service) hostKeyScopes(key []byte) []Scope {
+	var out []Scope
+
 	for _, e := range s.hostEntries {
 		if !bytes.Equal(e.key, key) {
 			continue
 		}
 
-		if sc, ok := s.entryScope(e); ok {
-			return sc, true
+		if sc, ok := s.entryScope(e); ok && !slices.Contains(out, sc) {
+			out = append(out, sc)
 		}
 	}
 
-	return Scope{}, false
+	return out
 }
 
 // scopeHasKey reports whether a host key is registered for sc.
@@ -278,7 +282,30 @@ func (s *Service) authorizeMulti(route string, req hostAuthed) error {
 	}
 
 	sc, err := s.authenticateHostScope(a.HostKey, a.HostSignature, a.Challenge, AdminBinding(route, canonical, a.Challenge), func(sc Scope) error {
-		return s.authorizeScope(req, sc)
+		if err := s.authorizeScope(req, sc); err != nil {
+			return err
+		}
+
+		// host key changes check their scope rules here too, so a key
+		// registered for several scopes acts under one they allow
+		hk, ok := req.(*HostKeyRequest)
+		if !ok {
+			return nil
+		}
+
+		switch route {
+		case RouteProvisionHostKey:
+			target, err := s.parseScope(hk.Scope)
+			if err != nil {
+				return err
+			}
+
+			return s.mayAddHostKey(caller{known: true, scope: sc}, target)
+		case RouteProvisionHostRevoke:
+			return s.mayRevokeHostKey(sc, hk.PublicKey)
+		}
+
+		return nil
 	})
 	if err != nil {
 		return err
@@ -371,10 +398,8 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 		return HostKeyResponse{}, err
 	}
 
-	// a key of a mainnet scope adds the first key of another scope
-	if s.caller.scope != sc &&
-		(s.caller.unsigned || s.needDeviceWide(s.caller.scope) != nil || s.scopeHasKey(sc)) {
-		return HostKeyResponse{}, errAddScopeMismatch
+	if err := s.mayAddHostKey(s.caller, sc); err != nil {
+		return HostKeyResponse{}, err
 	}
 
 	for _, e := range s.hostEntries {
@@ -402,50 +427,78 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 // scope, its last one included; a key of a mainnet scope also revokes the
 // keys of other scopes, but never a scope's last key, which would lock that
 // scope out and let the mainnet key choose its next key.
-func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
-	if !s.caller.known {
-		return HostKeyResponse{}, errHostAuthMissing
+// mayAddHostKey checks that c may add a key for scope sc: a key of sc, or a
+// signed key of a mainnet scope adding the first key of another scope.
+func (s *Service) mayAddHostKey(c caller, sc Scope) error {
+	if c.scope != sc && (c.unsigned || s.needDeviceWide(c.scope) != nil || s.scopeHasKey(sc)) {
+		return errAddScopeMismatch
 	}
 
-	entries := []hostEntry{}
-	revoked := []Scope{}
+	return nil
+}
+
+// mayRevokeHostKey checks that a key of scope by may revoke pub: a key
+// revokes keys of its own scope; a key of a mainnet scope also revokes
+// another scope's key, but never that scope's last one.
+func (s *Service) mayRevokeHostKey(by Scope, pub []byte) error {
+	var revoked []Scope
 
 	for _, e := range s.hostEntries {
 		sc, ok := s.entryScope(e)
-
-		if !ok || !bytes.Equal(e.key, req.PublicKey) {
-			entries = append(entries, e)
+		if !ok || !bytes.Equal(e.key, pub) {
 			continue
 		}
 
-		if sc != s.caller.scope && s.caller.scope.Network != 1 {
-			return HostKeyResponse{}, errDeviceWide
+		if sc != by && by.Network != 1 {
+			return errDeviceWide
 		}
 
 		revoked = append(revoked, sc)
 	}
 
 	if len(revoked) == 0 {
-		return HostKeyResponse{}, errHostKeyUnknown
+		return errHostKeyUnknown
 	}
 
 	for _, sc := range revoked {
-		if sc == s.caller.scope {
+		if sc == by {
 			continue
 		}
 
 		kept := false
 
-		for _, e := range entries {
-			if got, ok := s.entryScope(e); ok && got == sc {
+		for _, e := range s.hostEntries {
+			if got, ok := s.entryScope(e); ok && got == sc && !bytes.Equal(e.key, pub) {
 				kept = true
 				break
 			}
 		}
 
 		if !kept {
-			return HostKeyResponse{}, errLastKeyOtherScope
+			return errLastKeyOtherScope
 		}
+	}
+
+	return nil
+}
+
+func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
+	if !s.caller.known {
+		return HostKeyResponse{}, errHostAuthMissing
+	}
+
+	if err := s.mayRevokeHostKey(s.caller.scope, req.PublicKey); err != nil {
+		return HostKeyResponse{}, err
+	}
+
+	entries := []hostEntry{}
+
+	for _, e := range s.hostEntries {
+		if _, ok := s.entryScope(e); ok && bytes.Equal(e.key, req.PublicKey) {
+			continue
+		}
+
+		entries = append(entries, e)
 	}
 
 	return s.writeHostKeys(entries)
