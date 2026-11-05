@@ -806,9 +806,7 @@ func (s *Service) applyDelegationTx(
 			if err != nil {
 				return nil, err
 			}
-			deposit := int64(
-				params.DRepDeposit,
-			) //nolint:gosec // deposit from node params
+			deposit := int64(params.DRepDeposit) //nolint:gosec // deposit from node params
 			a = a.RegisterDRep(
 				drepCred,
 				deposit,

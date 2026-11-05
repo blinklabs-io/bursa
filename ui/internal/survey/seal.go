@@ -58,11 +58,8 @@ func CurrentRound(now time.Time) uint64 {
 	}
 	elapsed := now.Unix() - quicknetGenesis
 	period := int64(quicknetPeriod / time.Second)
-	return uint64(
-		elapsed,
-	)/uint64(
-		period,
-	) + 1 //nolint:gosec // checked non-negative
+	//nolint:gosec // checked non-negative
+	return uint64(elapsed)/uint64(period) + 1
 }
 
 func quicknetScheme() (*crypto.Scheme, kyber.Point, error) {
