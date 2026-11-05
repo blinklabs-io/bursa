@@ -519,3 +519,74 @@ func TestColdOwnershipRecordWriteFailureFailsClosed(t *testing.T) {
 		t.Error("the key was imported without a claim")
 	}
 }
+
+// Signing a pool key checks the record: a claim by another scope than the
+// profile's is refused, and a record that cannot be read does not stop
+// signing, which the record was never needed for.
+func TestColdOwnershipCheckedAtSigning(t *testing.T) {
+	t.Parallel()
+
+	chip, s := seedMulti(t)
+	prime := multiProfiles[2]
+	cardano := Scope{Network: 1, Chain: scopeCardanoName}
+	primeScope := Scope{Network: 1, Chain: scopePrimeName}
+
+	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{prime.cold: cardano})
+	if resp := opcertFor(t, s, chip, prime, multiKeyPrime, 1); resp.Error != errColdOwner.Error() {
+		t.Fatalf("prime signed with a key the record gives cardano: %q", resp.Error)
+	}
+
+	chip.bins[ownersID] = []byte{9}
+	if resp := opcertFor(t, s, chip, prime, multiKeyPrime, 2); resp.Error != "" {
+		t.Fatalf("an unreadable record stopped signing: %q", resp.Error)
+	}
+
+	delete(chip.bins, ownersID)
+	if resp := opcertFor(t, s, chip, prime, multiKeyPrime, 3); resp.Error != "" {
+		t.Fatalf("no record stopped signing: %q", resp.Error)
+	}
+
+	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{prime.cold: primeScope})
+	if resp := opcertFor(t, s, chip, prime, multiKeyPrime, 4); resp.Error != "" {
+		t.Fatalf("prime refused with its own claim: %q", resp.Error)
+	}
+}
+
+// A single-network image checks the claim against its own scope.
+func TestColdOwnershipCheckedAtSigningSingleImage(t *testing.T) {
+	t.Parallel()
+
+	chip := newFakeChip()
+	s := imageOn(t, chip, 0, "")
+
+	code, body := post(t, s, "/provision/cold", coldReq(0x20e50600, 0x68))
+	mustOK(t, "import", code, body)
+
+	chain := uint64(3)
+	code, body = post(t, s, "/provision/profile", ProvisionRequest{
+		Name: "x@preview", Slot: 1, ColdKeyID: 0x20e50600, ChainCounter: &chain, RewardAccount: testReward,
+	})
+	mustOK(t, "profile", code, body)
+
+	p := multiProfile{name: "x@preview", cold: 0x20e50600}
+
+	if resp := opcertUnsigned(t, s, chip, p, 1); resp.Error != "" {
+		t.Fatalf("signing with the image's own claim: %q", resp.Error)
+	}
+
+	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{0x20e50600: {Network: 1, Chain: scopeCardanoName}})
+	if resp := opcertUnsigned(t, s, chip, p, 2); resp.Error != errColdOwner.Error() {
+		t.Fatalf("testnet image signed with cardano's key: %q", resp.Error)
+	}
+}
+
+func opcertUnsigned(t *testing.T, s *Service, chip *fakeChip, p multiProfile, n byte) SignResponse {
+	t.Helper()
+
+	cold, _ := chip.PublicKeyEd25519(p.cold)
+
+	return postSign(t, s, SignRequest{
+		Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+		Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: p.name,
+	})
+}

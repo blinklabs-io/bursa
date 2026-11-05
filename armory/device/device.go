@@ -646,6 +646,10 @@ func (s *Service) signRequest(req SignRequest) (signed, error) {
 		return signed{}, errors.New("key hash does not match the profile key for this role")
 	}
 
+	if err := s.checkSignOwner(p, id); err != nil {
+		return signed{}, err
+	}
+
 	switch req.Purpose {
 	case "tx-body":
 		sig, summary, err := s.signTxBody(p, k, role, id, req)

@@ -17,6 +17,8 @@ package device
 import (
 	"bytes"
 	"errors"
+
+	"github.com/blinklabs-io/bursa/armory/profile"
 )
 
 // Cold key objects: the block older images used and a second one, 32 in all.
@@ -308,6 +310,40 @@ func (s *Service) refuseOtherOwner(id uint32, sc Scope) error {
 	}
 
 	if ok && tag != tagOf(sc) {
+		return errColdOwner
+	}
+
+	return nil
+}
+
+// checkSignOwner refuses to sign with cold key object id for profile p when
+// the record gives the object to another scope than p's, as after an
+// interrupted wipe and an image change. Only a claim refuses: a record that
+// cannot be read, or no claim, leaves signing as it was before the record.
+func (s *Service) checkSignOwner(p profile.Profile, id uint32) error {
+	i, ok := coldKeyIndex(id)
+	if !ok {
+		return nil
+	}
+
+	o, err := s.readOwners()
+	if err != nil {
+		s.logf("sign: ownership record unreadable, not checked: %v", err)
+		return nil
+	}
+
+	if !o[i].claimed {
+		return nil
+	}
+
+	sc := s.imageScope()
+	if s.multi() {
+		if sc, err = s.scopeOf(p.NetworkID, p.Name); err != nil {
+			return err
+		}
+	}
+
+	if o[i].tag != tagOf(sc) {
 		return errColdOwner
 	}
 

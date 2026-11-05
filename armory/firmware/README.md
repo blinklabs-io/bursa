@@ -48,8 +48,9 @@ no unfiltered `/sign`. The single-scope images build as before.
 - Any scope takes any free cold key object (32: `0x20e50010`-`0x20e5001f` and
   `0x20e50600`-`0x20e5060f`); it then belongs to that scope, recorded in the
   ownership object `0x20e50023`, and only that scope imports into it again or
-  provisions a profile on it. An empty object is free whatever an old claim
-  says. Every image keeps the record, single-scope images with their own
+  provisions a profile on it. Signing refuses a key the record gives to
+  another scope; a record that cannot be read does not stop signing. An
+  empty object is free whatever an old claim says. Every image keeps the record, single-scope images with their own
   scope. A key an older image stored with no claim belongs to the scope of the
   profile on it; a key with no claim and no profile belongs to no scope and is
   refused to all: remove it with the wipe image (`/wipe/profile` after a

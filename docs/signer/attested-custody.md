@@ -565,7 +565,9 @@ are unchanged. `TESTNET=1` is refused with it.
   scope's, so a cold key imported by one scope cannot be taken by a profile of
   another, across restarts too. An empty object is free whatever a stale claim
   says. Single-scope images keep the record with their own scope. A corrupt
-  record is refused with an error until the device is wiped. A profile stored
+  record is refused with an error until the device is wiped. Signing refuses
+  a cold key the record gives to another scope than the profile's; a record
+  that cannot be read, or no claim, does not stop signing. A profile stored
   by an older image is still served.
 - Legacy and unowned keys. A cold key an older image stored has no claim; it
   belongs to the scope of the profile that names it. A key with no claim and no
