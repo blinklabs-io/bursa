@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,9 +83,12 @@ func TestSQLiteStoreRestrictsFilesToOwnerUnderPermissiveDirectory(t *testing.T) 
 		require.NoError(t, err, suffix)
 	}
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
-		if _, err := os.Stat(dbPath + suffix); err == nil {
-			requireOwnerOnly(t, dbPath+suffix)
+		_, err := os.Stat(dbPath + suffix)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
+		require.NoError(t, err, suffix)
+		requireOwnerOnly(t, dbPath+suffix)
 	}
 }
 
@@ -154,31 +158,74 @@ func setOwnerToLocalSystem(t *testing.T, path string) {
 	require.NoError(t, err)
 }
 
-// A sidecar another identity created can still be open in that identity's
-// process, and a handle survives any later DACL change, so taking ownership
-// and tightening the DACL would hand that process the WAL's contents. Not
-// parallel: the owner change enables a process-wide privilege.
-func TestSQLiteStoreRejectsSidecarOwnedByAnotherIdentity(t *testing.T) {
-	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
-	require.NoError(t, os.WriteFile(dbPath+"-wal", nil, 0o600))
-	setOwnerToLocalSystem(t, dbPath+"-wal")
-
-	store, err := NewSQLiteStore(dbPath)
-	if store != nil {
-		_ = store.Close()
-	}
-	require.ErrorIs(t, err, bursa.ErrInsecureFileMode)
+func securityDescriptorString(t *testing.T, path string) string {
+	t.Helper()
+	sd, err := windows.GetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
+	require.NoError(t, err, path)
+	return sd.String()
 }
 
-func TestSQLiteStoreReadOnlyDSNTightensExistingDatabaseOnly(t *testing.T) {
+// A database or sidecar another identity created can still be open in that
+// identity's process, and a handle survives any later DACL change, so taking
+// ownership and tightening the DACL would hand that process what SQLite
+// writes. The file must be rejected before its owner or DACL is changed. Not
+// parallel: the owner change enables a process-wide privilege.
+func TestSQLiteStoreRejectsFilesOwnedByAnotherIdentity(t *testing.T) {
+	for _, suffix := range []string{"", "-wal"} {
+		t.Run("suffix="+suffix, func(t *testing.T) {
+			dbPath := filepath.Join(permissiveDir(t), "wallets.db")
+			foreign := dbPath + suffix
+			require.NoError(t, os.WriteFile(foreign, nil, 0o600))
+			setOwnerToLocalSystem(t, foreign)
+			before := securityDescriptorString(t, foreign)
+
+			store, err := NewSQLiteStore(dbPath)
+			if store != nil {
+				_ = store.Close()
+			}
+			require.ErrorIs(t, err, bursa.ErrInsecureFileMode)
+			assert.Equal(t, before, securityDescriptorString(t, foreign))
+		})
+	}
+}
+
+// A read-only connection to a WAL database creates -wal and -shm itself when
+// the directory allows it, so a read-only open must still secure them, and
+// must not fail for a database whose sidecars are absent.
+func TestSQLiteStoreReadOnlyDSNSecuresDatabaseAndSidecars(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
 	store, err := NewSQLiteStore(dbPath)
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		_, err := os.Stat(dbPath + suffix)
+		require.ErrorIs(t, err, fs.ErrNotExist, suffix)
+	}
+	everyone, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;WD)")
+	require.NoError(t, err)
+	dacl, _, err := everyone.DACL()
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(
+		dbPath,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	))
+	requireNotOwnerOnly(t, dbPath)
 
 	ro, err := NewSQLiteStore("file:" + filepath.ToSlash(dbPath) + "?mode=ro")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ro.Close() })
+	_, err = ro.ListWallets(context.Background())
+	require.NoError(t, err)
+
 	requireOwnerOnly(t, dbPath)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		requireOwnerOnly(t, dbPath+suffix)
+	}
 }
