@@ -1872,7 +1872,7 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	}
 
 	if ms != nil {
-		registerMultiSigRoutes(mux, st, vlt, ms, network, bindActive)
+		registerMultiSigRoutes(mux, st, vlt, sp, ms, network, bindActive)
 	}
 
 	if cfg.connector != nil {
@@ -2461,6 +2461,7 @@ func registerMultiSigRoutes(
 	mux *http.ServeMux,
 	st Statuser,
 	vlt Vault,
+	sp Spender,
 	ms MultiSig,
 	network string,
 	bindActive func(vault.WalletMeta),
@@ -2575,6 +2576,10 @@ func registerMultiSigRoutes(
 		if !decodeBody(w, r, &req) {
 			return
 		}
+		if err := requireCompleteEffects(r.Context(), sp, req.UnsignedTxCBOR); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
 		v, err := ms.Sign(req.UnsignedTxCBOR, req.Password)
 		serve(w, v, err)
 	})
@@ -2624,12 +2629,31 @@ func importDecode(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (
 	return resp, nil
 }
 
+// requireCompleteEffects applies the vkey path's signing gate to a
+// transaction the multisig service is about to sign or broadcast: every input
+// and collateral input must resolve and no effect may be unsupported. It runs
+// before the multisig service so the keystore is never unlocked, and nothing is
+// submitted, for a transaction whose effects the wallet cannot account for.
+func requireCompleteEffects(ctx context.Context, sp Spender, txCbor string) error {
+	summary, err := sp.DecodeTx(ctx, txCbor)
+	if err != nil {
+		return err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return fmt.Errorf("%w: transaction effects are incomplete: %w", spend.ErrInvalidTx, err)
+	}
+	return nil
+}
+
 func importCosign(ctx context.Context, sp Spender, ms MultiSig, txCbor, password string, partial bool) (any, error) {
 	info, err := ms.InspectTx(txCbor)
 	if err != nil {
 		return nil, err
 	}
 	if info.IsMultiSig {
+		if err := requireCompleteEffects(ctx, sp, txCbor); err != nil {
+			return nil, err
+		}
 		return ms.CosignImported(txCbor, password)
 	}
 	return sp.CosignTx(ctx, txCbor, password, partial)
@@ -2641,6 +2665,9 @@ func importSubmit(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (
 		return nil, err
 	}
 	if info.IsMultiSig {
+		if err := requireCompleteEffects(ctx, sp, txCbor); err != nil {
+			return nil, err
+		}
 		return ms.SubmitImported(ctx, txCbor)
 	}
 	return sp.SubmitTxCbor(ctx, txCbor)
