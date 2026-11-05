@@ -166,7 +166,8 @@ signer:
     - hash: "0000000000000000000000000000000000000000000000000000000000"  # 56 hex chars
       # Name of the configured backend (backends[].name) that must hold this
       # key. A request is denied when the key resolves from another backend.
-      # Omit to accept any backend.
+      # Must match exactly one configured backend name. Omit to accept any
+      # backend.
       backend: "vault-prod"
       allowed_requests: ["tx", "cip8"]
       # tx_policy: { ... }     # optional typed transaction policy

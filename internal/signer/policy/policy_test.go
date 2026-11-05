@@ -604,3 +604,23 @@ func TestEngine_BackendPin(t *testing.T) {
 		})
 	}
 }
+
+func TestEngine_BackendPinStillRequiresAllowedRequests(t *testing.T) {
+	t.Parallel()
+	e, h := engineWith(t, KeyPolicy{
+		Backend: "vault-prod",
+		Tx:      &TxPolicy{},
+		CIP8:    &CIP8Policy{},
+	})
+	opts := []EvalOption{WithBackend("vault-prod")}
+	got := map[string]Decision{
+		"tx":     e.EvaluateTx(h, &bursa.TxInspection{}, opts...),
+		"opcert": e.EvaluateOpCert(h, opts...),
+		"cip8":   e.EvaluateCIP8(h, 1, true, opts...),
+	}
+	for kind, d := range got {
+		if d.Allow {
+			t.Errorf("%s: a matching backend allowed a request kind absent from allowed_requests", kind)
+		}
+	}
+}

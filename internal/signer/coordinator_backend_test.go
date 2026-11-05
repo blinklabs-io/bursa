@@ -74,6 +74,9 @@ func TestSignTx_PolicyBackend(t *testing.T) {
 			if !strings.Contains(perr[0].Reason, "backend") {
 				t.Fatalf("denial reason does not name the backend: %q", perr[0].Reason)
 			}
+			if n := k.signCalls.Load(); n != 0 {
+				t.Fatalf("custody signing ran %d times for a denied request", n)
+			}
 		})
 	}
 }
@@ -121,6 +124,9 @@ func TestSignOpCert_PolicyBackend(t *testing.T) {
 			if !strings.Contains(err.Error(), "backend") {
 				t.Fatalf("denial reason does not name the backend: %v", err)
 			}
+			if n := k.signCalls.Load(); n != 0 {
+				t.Fatalf("custody signing ran %d times for a denied request", n)
+			}
 		})
 	}
 }
@@ -165,6 +171,9 @@ func TestSignCIP8_PolicyBackend(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "backend") {
 				t.Fatalf("denial reason does not name the backend: %v", err)
+			}
+			if n := k.signCalls.Load(); n != 0 {
+				t.Fatalf("custody signing ran %d times for a denied request", n)
 			}
 		})
 	}

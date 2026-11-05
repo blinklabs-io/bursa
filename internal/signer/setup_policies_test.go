@@ -17,10 +17,12 @@ package signer
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/policy"
 )
 
 const testKeyHash = "00000000000000000000000000000000000000000000000000000001"
@@ -103,5 +105,46 @@ func TestBuildPolicyHookRejectsPlaintextAllowEndpoint(t *testing.T) {
 			t.Fatal("plaintext policy hook allow response authorized signing")
 		}
 		t.Fatal("plaintext policy hook URL was accepted")
+	}
+}
+
+type namedBackend struct {
+	backend.Backend
+	name string
+}
+
+func (b namedBackend) Name() string { return b.name }
+
+func TestCheckPolicyBackends(t *testing.T) {
+	t.Parallel()
+	backends := []backend.Backend{
+		namedBackend{name: "vault-prod"},
+		namedBackend{name: "software"},
+		namedBackend{name: "software"},
+	}
+	cases := []struct {
+		name    string
+		pin     string
+		wantErr string
+	}{
+		{"empty pin", "", ""},
+		{"configured backend", "vault-prod", ""},
+		{"unknown backend", "vault-prd", "not a configured backend"},
+		{"ambiguous backend name", "software", "names 2 configured backends"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := CheckPolicyBackends([]policy.KeyPolicy{{Hash: testKeyHash, Backend: tc.pin}}, backends)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }

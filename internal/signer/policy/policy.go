@@ -240,8 +240,9 @@ type evalConfig struct {
 	backendSet bool
 }
 
-// EvalOption configures an Evaluate call. Absent WithCaller and WithOps
-// preserve the original behavior (no caller override, no per-kind gating).
+// EvalOption configures an Evaluate call. Absent WithCaller applies no caller
+// override. Absent WithOps leaves certificate and voter kinds unknown, so a transaction
+// carrying certificates or votes is denied when the matching allow-list is set.
 // Absent WithBackend denies any key whose policy pins a custody backend.
 type EvalOption func(*evalConfig)
 
@@ -568,11 +569,14 @@ func evaluateValuePath(
 // EvaluateTx authorizes (or denies) signing the inspected transaction with the
 // key identified by hash. Deny-by-default: absent policy denies.
 //
-// With no options this preserves the original coarse boolean gating. Supplying
-// WithOps enables per-kind allow-list gating (allowed_certificates /
-// allowed_voter_kinds / allowed_drep_ids); supplying WithCaller applies any
-// per-caller override, which can only further restrict the decision (the
-// effective result is the intersection of the base policy and the override).
+// The coarse booleans apply when no allow-list is set. Allow-list gating
+// (allowed_certificates / allowed_voter_kinds / allowed_drep_ids) needs the
+// per-kind details from WithOps; without them, a transaction carrying
+// certificates or votes is denied when the matching allow-list is set.
+// WithCaller applies any per-caller override, which can only further restrict
+// the decision (the effective result is the intersection of the base policy and
+// the override). WithBackend supplies the resolved custody backend; a policy
+// that pins a backend is denied without it.
 func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts ...EvalOption) Decision {
 	var cfg evalConfig
 	for _, o := range opts {
