@@ -18,10 +18,12 @@ package storage
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -92,6 +94,23 @@ func TestSQLiteStoreRestrictsFilesToOwnerUnderPermissiveDirectory(t *testing.T) 
 	}
 }
 
+// grantEveryone replaces path's DACL with an unprotected one granting Everyone
+// full control, as a file created by an older version inherited.
+func grantEveryone(t *testing.T, path string) {
+	t.Helper()
+	everyone, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;WD)")
+	require.NoError(t, err)
+	dacl, _, err := everyone.DACL()
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	))
+	requireNotOwnerOnly(t, path)
+}
+
 func TestSQLiteStoreTightensExistingPermissiveDatabase(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
@@ -102,18 +121,102 @@ func TestSQLiteStoreTightensExistingPermissiveDatabase(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, wallet.Save(context.Background()))
 	require.NoError(t, store.Close())
-
-	// Re-grant the directory's inherited ACL to the database, as a store
-	// created by an older version would have.
-	require.NoError(t, os.Remove(dbPath))
-	require.NoError(t, os.WriteFile(dbPath, nil, 0o600))
-	requireNotOwnerOnly(t, dbPath)
+	grantEveryone(t, dbPath)
 
 	store, err = NewSQLiteStore(dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	requireOwnerOnly(t, dbPath)
-	_, err = store.CreateWallet("again")
+	_, err = store.GetWallet(context.Background(), "persisted")
+	require.NoError(t, err)
+}
+
+// The files must already be owner-only when SQLite first opens them, not only
+// after the store tightens them again.
+func TestSQLiteFilesAreOwnerOnlyBeforeSQLiteOpensThem(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
+	require.NoError(t, ensureSQLiteFilePermissions(dbPath, ""))
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		requireOwnerOnly(t, dbPath+suffix)
+	}
+}
+
+// A path longer than MAX_PATH has to reach CreateFile in extended-length form.
+func TestSQLiteFilePermissionsAcceptLongPaths(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(permissiveDir(t), strings.Repeat("d", 200), strings.Repeat("e", 60))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	dbPath := filepath.Join(dir, "wallets.db")
+	require.Greater(t, len(dbPath), windows.MAX_PATH)
+	require.NoError(t, ensureSQLiteFilePermissions(dbPath, ""))
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		requireOwnerOnly(t, dbPath+suffix)
+	}
+}
+
+// The pool replaces a discarded connection, and closing the last connection
+// deletes -wal and -shm, so the replacement recreates them. They must come
+// back owner-only.
+func TestSQLiteStoreSecuresSidecarsRecreatedForANewConnection(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	conn, err := store.db.Conn(context.Background())
+	require.NoError(t, err)
+	require.ErrorIs(t, conn.Raw(func(any) error { return driver.ErrBadConn }), driver.ErrBadConn)
+	_ = conn.Close()
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_, err := os.Stat(dbPath + suffix)
+		require.ErrorIs(t, err, fs.ErrNotExist, "closing the connection should delete %s", suffix)
+	}
+
+	wallet, err := store.CreateWallet("after-reconnect")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		requireOwnerOnly(t, dbPath+suffix)
+	}
+}
+
+// An open WAL database needs no new file, so a directory that refuses file
+// creation must not stop it opening. Here only -journal is missing.
+func TestSQLiteStoreOpensExistingWALDatabaseWhereCreationIsDenied(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "wallets.db")
+	first, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = first.Close() })
+	_, err = os.Stat(dbPath + "-journal")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	require.NoError(t, err)
+	sid := user.User.Sid.String()
+	// Deny FILE_ADD_FILE on the directory itself; existing files keep their
+	// own owner-only DACLs.
+	sd, err := windows.SecurityDescriptorFromString(
+		"D:P(D;;0x2;;;" + sid + ")(A;OICI;GA;;;" + sid + ")",
+	)
+	require.NoError(t, err)
+	dacl, _, err := sd.DACL()
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	))
+	require.Error(t, os.WriteFile(filepath.Join(dir, "probe"), nil, 0o600))
+
+	second, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	_, err = second.ListWallets(context.Background())
 	require.NoError(t, err)
 }
 
@@ -209,17 +312,7 @@ func TestSQLiteStoreReadOnlyDSNSecuresDatabaseAndSidecars(t *testing.T) {
 		_, err := os.Stat(dbPath + suffix)
 		require.ErrorIs(t, err, fs.ErrNotExist, suffix)
 	}
-	everyone, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;WD)")
-	require.NoError(t, err)
-	dacl, _, err := everyone.DACL()
-	require.NoError(t, err)
-	require.NoError(t, windows.SetNamedSecurityInfo(
-		dbPath,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
-	))
-	requireNotOwnerOnly(t, dbPath)
+	grantEveryone(t, dbPath)
 
 	ro, err := NewSQLiteStore("file:" + filepath.ToSlash(dbPath) + "?mode=ro")
 	require.NoError(t, err)
