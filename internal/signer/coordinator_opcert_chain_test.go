@@ -220,3 +220,25 @@ func TestSignOpCert_RaisesChainIssued(t *testing.T) {
 	}
 	verifyChainOpCert(t, res, kes, 8, 102)
 }
+
+// TestSignOpCertFromChain_StaleWarnNoIssued: warn mode signs a chain counter
+// below the floor, but does not record its issue number, which would set the
+// bound below the floor and refuse every later chain counter.
+func TestSignOpCertFromChain_StaleWarnNoIssued(t *testing.T) {
+	k := newFakeKey(t)
+	wm := watermark.NewMemWatermark()
+	c, _ := newOpCertCoordinator(t, k, wm, watermark.ModeWarn)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	// a floor recorded before the issued record existed
+	if err := wm.CheckAndRaiseFloor(ctx, k.hash, opcertChainFloorScope, 9); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.SignOpCertFromChain(ctx, kes, 3, 100, k.hash.String()); err != nil {
+		t.Fatalf("chain 3 in warn mode: %v", err)
+	}
+	if v, ok, _ := wm.CounterFor(ctx, k.hash, opcertChainIssuedScope); ok {
+		t.Fatalf("issued = %d after a stale request, want no record", v)
+	}
+}

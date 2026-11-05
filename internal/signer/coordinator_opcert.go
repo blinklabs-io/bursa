@@ -296,6 +296,8 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 		return nil, CodeInternal, errors.New("produced signature failed verification")
 	}
 
+	recordIssued := !counterConflictReported
+
 	// Persist the new highest counter only after a verified signature. The commit
 	// is an atomic advance-if-greater, so if a concurrent request advanced the
 	// counter past ours between the pre-sign check and here, we lose the race and
@@ -311,6 +313,7 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 					c.deps.Metrics.observeWatermarkConflict()
 					return nil, CodeConflict, rule.conflict(0, false)
 				}
+				recordIssued = false
 				// warn mode: the stored counter already meets or exceeds ours;
 				// nothing to advance. The signature is still returned. Only log
 				// and meter here if the pre-sign check did not already do so for
@@ -343,9 +346,10 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 	// Record the issue number for the chain-counter bound, from either request
 	// form: an opcert issued with an explicit counter reaches the chain too. A
 	// lower value means a concurrent request already recorded a higher one,
-	// which keeps the bound. It is written after the floor so that a failure
+	// which keeps the bound. A request warn mode signed despite a conflict is
+	// not recorded. It is written after the floor so that a failure
 	// here leaves the bound lower, never above an opcert that was not returned.
-	if counterWM != nil && !aboveIssued {
+	if counterWM != nil && recordIssued {
 		if werr := counterWM.CheckAndRaiseFloor(ctx, hash, opcertChainIssuedScope, issueCounter); werr != nil && !errors.Is(werr, watermark.ErrCounterRegression) {
 			c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", werr.Error())
 			if c.deps.WMMode == watermark.ModeEnforce {
