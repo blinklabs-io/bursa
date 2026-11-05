@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
 	"net/url"
 	"os"
@@ -38,7 +37,9 @@ type SQLiteStore struct {
 	mu sync.RWMutex
 }
 
-const sqliteFileMode = 0o600
+// sqliteFileMode is the Unix mode of the database and its sidecars. Windows
+// uses an owner-only DACL instead, so only tests reference it there.
+const sqliteFileMode = 0o600 //nolint:unused
 
 // NewSQLiteStore creates a new SQLite-based storage backend.
 // The dsn specifies the database file path or connection string.
@@ -197,45 +198,6 @@ func nativeSQLitePath(path string) string {
 		return path[1:]
 	}
 	return path
-}
-
-func ensureSQLiteFilePermissions(path, mode string) error {
-	// A DSN that says how it wants the file opened is entitled to that: "ro"
-	// must not be opened for writing, and "rw" opens only what already exists,
-	// so creating it here would answer a missing-database error with an empty
-	// database. In both cases a file that is not there is SQLite's to report.
-	flags := os.O_RDWR | os.O_CREATE
-	switch mode {
-	case "ro":
-		if !sqliteFileExists(path) {
-			return nil
-		}
-		flags = os.O_RDONLY
-	case "rw":
-		if !sqliteFileExists(path) {
-			return nil
-		}
-		flags = os.O_RDWR
-	}
-	f, err := os.OpenFile(path, flags, sqliteFileMode)
-	if err != nil {
-		return err
-	}
-	if err := f.Chmod(sqliteFileMode); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-func secureSQLiteSidecars(path string) error {
-	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
-		if err := os.Chmod(path+suffix, sqliteFileMode); err != nil &&
-			!errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%s: %w", suffix, err)
-		}
-	}
-	return nil
 }
 
 // migrate creates the database schema if it does not exist.
