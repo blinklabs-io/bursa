@@ -287,9 +287,33 @@ its next opcert.
 If opcerts for the same cold key are also issued by another signer, this
 record falls behind. To clear it, stop opcert requests for the key on
 every signer instance and let in-flight requests finish, then delete the row
-whose `record_key` is `<56-character hex key hash>|opcert-chain-issued` from
+whose `record_key` is `<56-character hex key hash>|opcert-chain-issued` (for a
+key served by a profiled backend, `<hash>|opcert-chain-issued|<profile>`) from
 `signer_counter_watermark` (Postgres) or `counter_watermark` (SQLite), and
 resume requests.
+
+### Profile routing
+
+One cold key may be held by several armory backends, each with its own
+`profile` (for example `otg@preview`, `otg@musashi`, `otg@preprod` on one
+device). Startup accepts a key hash in several backends only when every holder
+has a non-empty profile and the profiles are distinct. A hash in a profiled and
+an unprofiled backend, in two backends with one profile, or in two unprofiled
+backends is refused. Configure one `keys:` entry per hash; its `backend` field
+is informational.
+
+A sign request names the profile in `profile`; `GET /v1/keys/<hash>` takes it as
+the `profile` query parameter. Without it, a key held by one backend is served
+as before, and a key held by several is refused with HTTP 400. A profile that
+no holder of the key has is refused with HTTP 404. The profile only routes: the
+caller is authorized by key hash.
+
+Records of a key served by a profiled backend carry the profile:
+`<hash>|<scope>|<profile>` for the opcert counter, floor and issued scopes and
+for tx records, so each network keeps its own history. Records of an
+unprofiled backend are unchanged. Records an armory-backed key wrote before
+profile scoping are keyed without the profile and are no longer consulted; the
+device's own counter bound covers that gap.
 
 ### High availability
 

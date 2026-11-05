@@ -42,7 +42,13 @@ func (c *Coordinator) SignCIP8(ctx context.Context, payload []byte, address, key
 		c.deps.Metrics.observeDeny(string(CodeBadRequest))
 		return nil, CodeBadRequest, fmt.Errorf("invalid key id: %w", err)
 	}
-	ref, err := c.deps.Resolver.Resolve(ctx, hash)
+	ref, err := c.deps.Resolver.Resolve(ctx, hash, profileFromContext(ctx))
+	if errors.Is(err, backend.ErrProfileRequired) {
+		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", err.Error())
+		c.deps.Metrics.observe("cip8", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
+		return nil, CodeBadRequest, err
+	}
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", "key not found")
 		c.deps.Metrics.observe("cip8", string(CodeNotFound))

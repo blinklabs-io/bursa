@@ -379,6 +379,7 @@ func (k *attestedKey) PublicKey() ed25519.PublicKey { return k.pub }
 func (k *attestedKey) Type() KeyType                { return k.typ }
 func (k *attestedKey) Extended() bool               { return false }
 func (k *attestedKey) Backend() string              { return k.backendName }
+func (k *attestedKey) Profile() string              { return k.profile }
 
 func (k *attestedKey) Sign(context.Context, []byte) ([]byte, error) {
 	return nil, ErrPurposeRequired
@@ -638,6 +639,11 @@ func NewProfiledAttestedBackend(name, profile string, enclave Enclave, verifier 
 	return &AttestedBackend{name: name, profile: profile, enclave: enclave, verifier: verifier, keys: map[KeyHash]*attestedKey{}}
 }
 
+var (
+	_ Profiled = (*AttestedBackend)(nil)
+	_ Profiled = (*attestedKey)(nil)
+)
+
 // Load attests the enclave and replaces the served key set with its verified
 // inventory. It drops every key first, so a failed or repeated attestation
 // (for example after an enclave restart) never leaves stale keys in service.
@@ -701,6 +707,9 @@ func (b *AttestedBackend) serves(k *attestedKey) bool {
 
 // Name returns the configured backend name.
 func (b *AttestedBackend) Name() string { return b.name }
+
+// Profile reports the workload profile the backend is bound to, or "".
+func (b *AttestedBackend) Profile() string { return b.profile }
 
 // GetKey resolves an attested key by hash.
 func (b *AttestedBackend) GetKey(_ context.Context, hash KeyHash) (KeyRef, error) {

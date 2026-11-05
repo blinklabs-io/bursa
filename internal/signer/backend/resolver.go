@@ -30,16 +30,48 @@ func NewResolver(backends ...Backend) *Resolver {
 	return &Resolver{backends: backends}
 }
 
-// Resolve returns the first backend's KeyRef for hash, or ErrKeyNotFound.
-func (r *Resolver) Resolve(ctx context.Context, hash KeyHash) (KeyRef, error) {
+// profileOf reports the profile a backend is bound to, or "".
+func profileOf(b Backend) string {
+	if p, ok := b.(Profiled); ok {
+		return p.Profile()
+	}
+	return ""
+}
+
+// Resolve returns the KeyRef for hash from the backend selected by profile.
+//
+// With no profile, the single backend holding hash serves it; if several hold
+// it, Resolve returns ErrProfileRequired. With a profile, only the backend
+// holding hash under exactly that profile serves it; a holder with no profile
+// or another profile does not match, and the result is ErrKeyNotFound. The
+// profile selects a route and never authorizes.
+func (r *Resolver) Resolve(ctx context.Context, hash KeyHash, profile string) (KeyRef, error) {
+	var found KeyRef
+	matches := 0
 	for _, b := range r.backends {
-		ref, err := b.GetKey(ctx, hash)
-		if err == nil {
-			return ref, nil
+		if profile != "" && profileOf(b) != profile {
+			continue
 		}
-		if !errors.Is(err, ErrKeyNotFound) {
+		ref, err := b.GetKey(ctx, hash)
+		if errors.Is(err, ErrKeyNotFound) {
+			continue
+		}
+		if err != nil {
 			return nil, err
 		}
+		if profile != "" {
+			return ref, nil
+		}
+		if found == nil {
+			found = ref
+		}
+		matches++
+	}
+	switch {
+	case matches > 1:
+		return nil, ErrProfileRequired
+	case found != nil:
+		return found, nil
 	}
 	return nil, ErrKeyNotFound
 }
@@ -57,26 +89,38 @@ func (r *Resolver) ListKeys(ctx context.Context) ([]KeyRef, error) {
 	return out, nil
 }
 
-// CheckAmbiguous returns an error if any KeyHash appears in more than one
-// backend. Ambiguous duplicates are a configuration error: the operator has
-// loaded the same key into multiple backends, and routing would be
-// non-deterministic. This should be called once at startup before serving.
+// CheckAmbiguous returns an error if a KeyHash is routed ambiguously. The same
+// hash may appear in several backends only when every backend holding it has a
+// non-empty profile and the profiles are distinct; requests then select a
+// backend by profile. A hash in an unprofiled backend and any other backend, or
+// in two backends with the same profile, is a configuration error. This should
+// be called once at startup before serving.
 func (r *Resolver) CheckAmbiguous(ctx context.Context) error {
-	seen := make(map[KeyHash]string) // hash → backend name
+	type holder struct{ backend, profile string }
+	seen := make(map[KeyHash][]holder)
 	for _, b := range r.backends {
 		keys, err := b.ListKeys(ctx)
 		if err != nil {
 			return fmt.Errorf("list keys from backend %q: %w", b.Name(), err)
 		}
+		profile := profileOf(b)
 		for _, k := range keys {
 			h := k.Hash()
-			if prev, ok := seen[h]; ok {
-				return fmt.Errorf(
-					"key hash %s appears in both backend %q and %q; remove the duplicate",
-					h.String(), prev, b.Name(),
-				)
+			for _, prev := range seen[h] {
+				if prev.profile == "" || profile == "" {
+					return fmt.Errorf(
+						"key hash %s appears in both backend %q and %q; a key may be held by several backends only when each has a distinct profile",
+						h.String(), prev.backend, b.Name(),
+					)
+				}
+				if prev.profile == profile {
+					return fmt.Errorf(
+						"key hash %s appears in both backend %q and %q under the same profile %q",
+						h.String(), prev.backend, b.Name(), profile,
+					)
+				}
 			}
-			seen[h] = b.Name()
+			seen[h] = append(seen[h], holder{b.Name(), profile})
 		}
 	}
 	return nil

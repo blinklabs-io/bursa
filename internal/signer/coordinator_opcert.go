@@ -154,7 +154,13 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 		c.deps.Metrics.observeDeny(string(CodeBadRequest))
 		return nil, CodeBadRequest, fmt.Errorf("invalid key id: %w", err)
 	}
-	ref, err := c.deps.Resolver.Resolve(ctx, hash)
+	ref, err := c.deps.Resolver.Resolve(ctx, hash, profileFromContext(ctx))
+	if errors.Is(err, backend.ErrProfileRequired) {
+		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "denied", "reason", err.Error())
+		c.deps.Metrics.observe("opcert", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
+		return nil, CodeBadRequest, err
+	}
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "denied", "reason", "key not found")
 		c.deps.Metrics.observe("opcert", string(CodeNotFound))
@@ -167,6 +173,11 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 		c.deps.Metrics.observeBackendError("resolver")
 		return nil, CodeBackend, err
 	}
+
+	// Counter records are per profile for a key served by a profiled backend,
+	// so one cold key held under several profiles keeps one history each.
+	rule.scope = profileScope(ref, rule.scope)
+	issuedScope := profileScope(ref, opcertChainIssuedScope)
 
 	if dec := c.deps.Policy.EvaluateOpCert(hash); !dec.Allow {
 		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "denied", "reason", dec.Reason)
@@ -227,7 +238,7 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 		// Both request forms are checked against the one issued record, so
 		// switching forms cannot go back below a counter already issued.
 		if !counterConflictReported {
-			issued, issuedExists, ierr := cw.CounterFor(ctx, hash, opcertChainIssuedScope)
+			issued, issuedExists, ierr := cw.CounterFor(ctx, hash, issuedScope)
 			if ierr != nil {
 				c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", ierr.Error())
 				c.deps.Metrics.observe("opcert", string(CodeBackend))
@@ -375,9 +386,9 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 	if counterWM != nil && recordIssued {
 		var werr error
 		if rule.floor {
-			werr = counterWM.CheckAndRaiseFloor(ctx, hash, opcertChainIssuedScope, issueCounter)
+			werr = counterWM.CheckAndRaiseFloor(ctx, hash, issuedScope, issueCounter)
 		} else {
-			werr = counterWM.CheckAndCommitCounter(ctx, hash, opcertChainIssuedScope, issueCounter)
+			werr = counterWM.CheckAndCommitCounter(ctx, hash, issuedScope, issueCounter)
 		}
 		if errors.Is(werr, watermark.ErrCounterRegression) {
 			c.deps.Metrics.observeWatermarkConflict()

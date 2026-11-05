@@ -17,6 +17,7 @@ package signer
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -93,7 +94,7 @@ func (p *pausingCounterWatermark) CounterFor(ctx context.Context, key backend.Ke
 	v, ok, err := p.counter.CounterFor(ctx, key, scope)
 	// the issued record is the last lookup before signing, so the paused
 	// request has passed every pre-sign check when the other one runs
-	if scope == opcertChainIssuedScope && p.didPause.CompareAndSwap(false, true) {
+	if (scope == opcertChainIssuedScope || strings.HasPrefix(scope, opcertChainIssuedScope+"|")) && p.didPause.CompareAndSwap(false, true) {
 		close(p.paused)
 		<-p.release
 	}

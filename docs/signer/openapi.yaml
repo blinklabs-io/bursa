@@ -102,7 +102,9 @@ paths:
                   - $ref: '#/components/schemas/SignCIP8Response'
                   - $ref: '#/components/schemas/SignOpCertResponse'
         '400':
-          description: Malformed request (bad JSON, unknown type, bad hex).
+          description: |
+            Malformed request (bad JSON, unknown type, bad hex), or several
+            backends hold the key and the request names no profile.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -120,7 +122,9 @@ paths:
                   - $ref: '#/components/schemas/SignTxResponse'
                   - $ref: '#/components/schemas/Error'
         '404':
-          description: Requested key not found.
+          description: |
+            Requested key not found, or no backend holds it under the
+            requested profile.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -198,6 +202,12 @@ paths:
           schema:
             type: string
             pattern: '^[0-9a-fA-F]{56}$'
+        - name: profile
+          in: query
+          required: false
+          description: Selects the backend when several hold the key, as the sign request's profile field.
+          schema:
+            type: string
       responses:
         '200':
           description: Key detail.
@@ -205,7 +215,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/KeyInfo' }
         '400':
-          description: Invalid key hash.
+          description: |
+            Invalid key hash, or several backends hold the key and no profile
+            query parameter names one.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -317,6 +329,18 @@ components:
         key:
           type: string
           description: cip8/opcert - cold/signing key hash (hex blake2b-224).
+        profile:
+          type: string
+          description: |
+            Any type - selects the backend when several hold the key hash,
+            each under a distinct profile. It routes the request and never
+            authorizes it; callers stay authorized by key hash. With no
+            profile, a key held by one backend is served by it, and a key held
+            by several is refused with 400. With a profile, only the backend
+            holding the key under exactly that profile serves the request; a
+            holder with no profile or another profile does not match (404).
+            Anti-double-sign records of a profiled backend are kept per
+            profile.
         kes_vkey:
           type: string
           description: opcert - hex-encoded 32-byte KES verification key.
