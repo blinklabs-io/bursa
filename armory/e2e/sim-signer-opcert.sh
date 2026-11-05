@@ -205,9 +205,11 @@ pass "opcert issued: chain $CHAIN -> issue $ISSUE, signature verifies under the 
 
 [ "$(sign operator $((CHAIN - 2)))" = 409 ] || fail "chain counter below the floor was not refused: $(cat "$W/resp.json")"
 pass "chain counter below the recorded one: 409"
+# the device refuses this one; the signer reports it as a conflict, not a
+# backend failure
 code=$(sign operator $((ISSUE + 1)))
-[ "$code" != 200 ] || fail "chain counter above the last issued counter was accepted"
-pass "chain counter above the last issued counter refused ($code: $(jq -r .error "$W/resp.json" 2> /dev/null))"
+[ "$code" = 409 ] || fail "chain counter above the last issued counter: $code, want 409: $(cat "$W/resp.json")"
+pass "chain counter above the last issued counter: 409 ($(jq -r .error "$W/resp.json" 2> /dev/null))"
 
 step "Signing log"
 stop_sim
