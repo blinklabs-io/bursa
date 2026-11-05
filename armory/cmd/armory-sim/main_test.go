@@ -368,3 +368,43 @@ func TestStateLocked(t *testing.T) {
 		}
 	}
 }
+
+// TestLoopbackHostOnly checks that the simulator refuses a request whose Host
+// is not a loopback name, as a browser sends after DNS rebinding.
+func TestLoopbackHostOnly(t *testing.T) {
+	h, err := build(options{
+		listen: "127.0.0.1:0", state: t.TempDir(), image: "provision",
+		network: "testnet", cardBlocks: 1 << 10,
+	}, t.Logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		host string
+		want int
+	}{
+		{"127.0.0.1:18080", http.StatusOK},
+		{"127.0.0.1", http.StatusOK},
+		{"[::1]:18080", http.StatusOK},
+		{"localhost:18080", http.StatusOK},
+		{"LOCALHOST", http.StatusOK},
+		{"rebind.example:18080", http.StatusForbidden},
+		{"rebind.example", http.StatusForbidden},
+		{"10.0.0.1:18080", http.StatusForbidden},
+		{"localhost.rebind.example", http.StatusForbidden},
+		{"", http.StatusForbidden},
+	}
+
+	for _, c := range cases {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/challenge", strings.NewReader("{}"))
+		r.Host = c.host
+		r.Header.Set("Content-Type", "application/json")
+		h.ServeHTTP(w, r)
+
+		if w.Code != c.want {
+			t.Errorf("Host %q: %d %s, want %d", c.host, w.Code, w.Body, c.want)
+		}
+	}
+}

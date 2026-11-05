@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,11 +144,34 @@ func build(o options, logf func(string, ...any)) (http.Handler, error) {
 	guarded := device.Guard(device.Address, mux)
 
 	// the device only answers requests addressed to its own link address;
-	// the simulator is reached on loopback instead
+	// the simulator is reached on loopback instead, and refuses any other
+	// Host, as a browser sends after DNS rebinding
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, "unexpected host", http.StatusForbidden)
+			return
+		}
+
 		r.Host = device.Address
 		guarded.ServeHTTP(w, r)
 	}), nil
+}
+
+// loopbackHost reports whether a request Host names this machine's loopback
+// interface: localhost or a loopback IP address, with or without a port.
+func loopbackHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }
 
 func loopback(addr string) error {
