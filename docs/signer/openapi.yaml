@@ -326,8 +326,8 @@ components:
           description: |
             opcert - operational certificate issue counter. Must be greater
             than every counter already signed for the key, by either request
-            form; otherwise refused with 409. Ignored when chain_counter is
-            set.
+            form; otherwise refused with 409 in enforce mode (the default;
+            warn mode logs and signs). Ignored when chain_counter is set.
         chain_counter:
           type: integer
           format: int64
@@ -339,7 +339,8 @@ components:
             pool has not forged with the new certificate. A chain counter
             lower than already reported, above the last issue counter signed
             for the key, or whose chain_counter + 1 is below that issue
-            counter, is refused with 409.
+            counter, is refused with 409 in enforce mode (the default; warn
+            mode logs and signs).
         kes_period:
           type: integer
           format: int64
