@@ -586,6 +586,11 @@ are unchanged. `TESTNET=1` is refused with it.
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
   The unsigned firmware `/provision` cold key import is closed in a multi
   image: import cold keys with a signed `/provision/cold`.
+- No downgrade. An image older than this one does not know the second cold
+  key block (`0x20e50600`-`0x20e5060f`) or the ownership record: its
+  `/wipe/device` leaves them on the chip, and it imports into an object
+  another scope owns. Wipe with this version's wipe image before flashing an
+  older one.
 - Moving a testnet device. Flashing the multi image over a device that ran a
   testnet image keeps its profiles and host keys: the stored list is not
   rewritten. A testnet key does not act device-wide on the multi image, so to
