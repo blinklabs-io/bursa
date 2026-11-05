@@ -31,24 +31,20 @@ import (
 // carry an owner-only DACL before SQLite writes secrets into it.
 var sqliteSidecarSuffixes = []string{"-wal", "-shm", "-journal"}
 
-// openSQLiteSecurityHandle opens path for DACL changes only. Requesting no data
-// access keeps the open compatible with the share mode SQLite holds the file
-// under, so a live database can be re-secured.
-func openSQLiteSecurityHandle(path string, create bool) (*os.File, error) {
+// openSQLiteSecurityHandle opens an existing path for DACL changes only.
+// Requesting no data access keeps the open compatible with the share mode
+// SQLite holds the file under, so a live database can be re-secured.
+func openSQLiteSecurityHandle(path string) (*os.File, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
-	}
-	disposition := uint32(windows.OPEN_EXISTING)
-	if create {
-		disposition = windows.OPEN_ALWAYS
 	}
 	handle, err := windows.CreateFile(
 		name,
 		windows.READ_CONTROL|windows.WRITE_DAC,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
-		disposition,
+		windows.OPEN_EXISTING,
 		windows.FILE_ATTRIBUTE_NORMAL,
 		0,
 	)
@@ -62,12 +58,59 @@ func openSQLiteSecurityHandle(path string, create bool) (*os.File, error) {
 	return os.NewFile(uintptr(handle), path), nil
 }
 
+// checkSQLiteFileOwner accepts a file owned by the current user, or by
+// Administrators as a file created from an elevated process is. Any other
+// owner may still hold a handle opened under the file's earlier DACL, and a
+// handle outlives a DACL change, so adopting the file would give that holder
+// whatever SQLite writes into it.
+func checkSQLiteFileOwner(f *os.File) error {
+	descriptor, err := windows.GetSecurityInfo(
+		windows.Handle(f.Fd()),
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to read owner of %q: %w", f.Name(), err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil {
+		return fmt.Errorf("%q has no readable owner: %w", f.Name(), bursa.ErrInsecureFileMode)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("failed to get current user SID: %w", err)
+	}
+	if owner.Equals(user.User.Sid) ||
+		owner.IsWellKnown(windows.WinBuiltinAdministratorsSid) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%q is owned by %s, not the current user: %w",
+		f.Name(), owner, bursa.ErrInsecureFileMode,
+	)
+}
+
+// secureSQLiteFile leaves path with an owner-only DACL. When create is set, a
+// missing file is created with that DACL already applied, so no other
+// identity can open it before it is restricted.
 func secureSQLiteFile(path string, create bool) error {
-	f, err := openSQLiteSecurityHandle(path, create)
+	if create {
+		f, err := bursa.CreateSecretKeyFile(path)
+		if err == nil {
+			return f.Close()
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+	}
+	f, err := openSQLiteSecurityHandle(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if err := checkSQLiteFileOwner(f); err != nil {
+		return err
+	}
 	if err := bursa.RestrictSecretKeyFilePermissions(f); err != nil {
 		return err
 	}
@@ -77,9 +120,12 @@ func secureSQLiteFile(path string, create bool) error {
 // ensureSQLiteFilePermissions gives the database and its sidecars an
 // owner-only, non-inherited DACL before SQLite opens the database. The
 // sidecars are created empty here because SQLite would otherwise create them
-// itself with the directory's inherited ACL and write secrets through them; an
-// empty -wal or -shm is a valid starting state. An existing database with a
-// permissive DACL is tightened, as the Unix path narrows the mode.
+// itself with the directory's inherited ACL and write secrets through them;
+// SQLite's Windows VFS treats a zero-length file as absent and opens an
+// existing one without replacing its DACL. An existing database with a
+// permissive DACL is tightened, as the Unix path narrows the mode, but only
+// when its owner passes checkSQLiteFileOwner, as chmod on Unix fails for a
+// file another user owns.
 func ensureSQLiteFilePermissions(path, mode string) error {
 	// A DSN that says how it wants the file opened is entitled to that: "ro"
 	// and "rw" open only a database that already exists, and "ro" must not
