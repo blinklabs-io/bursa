@@ -159,3 +159,15 @@ func TestWindowsRejectsDifferentOwner(t *testing.T) {
 	require.NoError(t, err)
 	assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", descriptor), ErrInsecureFileMode)
 }
+
+// SDDL writes the built-in local Administrator as "LA" rather than its SID, so
+// that account's own owner-only DACL must pass without depending on which
+// account runs the test.
+func TestCheckSecurityDescriptorAcceptsTheUserSDDLAlias(t *testing.T) {
+	descriptor, err := windows.SecurityDescriptorFromString("O:LAD:P(A;;GA;;;LA)")
+	require.NoError(t, err)
+	require.Contains(t, descriptor.String(), ";;;LA)")
+	owner, _, err := descriptor.Owner()
+	require.NoError(t, err)
+	assert.NoError(t, checkSecurityDescriptorForUser("alias", descriptor, owner.String()))
+}

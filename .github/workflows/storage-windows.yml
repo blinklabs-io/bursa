@@ -33,4 +33,4 @@ jobs:
         run: go test -v -count=1 -run "^TestSQLite(Store(RestrictsFilesToOwnerUnderPermissiveDirectory|TightensExistingPermissiveDatabase|RejectsFilesOwnedByAnotherIdentity|ReadOnlyDSNSecuresDatabaseAndSidecars|SecuresSidecarsRecreatedForANewConnection|OpensExistingWALDatabaseWhereCreationIsDenied)|FilesAreOwnerOnlyBeforeSQLiteOpensThem|FilePermissionsAcceptLongPaths)$" ./internal/storage/
       - name: go test (secret file permissions)
         if: ${{ !cancelled() }}
-        run: go test -v -count=1 -run "^(TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile|TestLoadSecretKeyFromFileWindowsAllowsOwner)$" .
+        run: go test -v -count=1 -run "^(TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile|TestLoadSecretKeyFromFileWindowsAllowsOwner|TestCheckSecurityDescriptorAcceptsTheUserSDDLAlias)$" .

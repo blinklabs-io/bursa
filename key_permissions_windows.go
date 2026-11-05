@@ -206,16 +206,26 @@ func sddlTrustee(sid string) (string, error) {
 }
 
 func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCRIPTOR) error {
+	_, currentUser, err := ownerOnlySecurityDescriptor()
+	if err != nil {
+		return err
+	}
+	return checkSecurityDescriptorForUser(path, descriptor, currentUser)
+}
+
+// checkSecurityDescriptorForUser applies the secret-file policy for the
+// account whose numeric SID is currentUser.
+func checkSecurityDescriptorForUser(
+	path string,
+	descriptor *windows.SECURITY_DESCRIPTOR,
+	currentUser string,
+) error {
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
 		return fmt.Errorf(
 			"secret key file %q has no readable owner: %w",
 			path, ErrInsecureFileMode,
 		)
-	}
-	_, currentUser, err := ownerOnlySecurityDescriptor()
-	if err != nil {
-		return err
 	}
 	if owner.String() != currentUser {
 		return fmt.Errorf(
