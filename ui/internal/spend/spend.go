@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -150,6 +152,36 @@ type TxSummaryDRep struct {
 	Hash string `json:"hash,omitempty"`
 }
 
+// TxSummaryPoolRelay is one relay announced by a pool registration. Type is
+// "single_host_addr", "single_host_name", "multi_host_name", or "unknown".
+type TxSummaryPoolRelay struct {
+	Type     string  `json:"type"`
+	Port     *uint32 `json:"port,omitempty"`
+	IPv4     string  `json:"ipv4,omitempty"`
+	IPv6     string  `json:"ipv6,omitempty"`
+	Hostname string  `json:"hostname,omitempty"`
+}
+
+// TxSummaryPoolMetadata is the off-chain metadata anchor of a pool.
+type TxSummaryPoolMetadata struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash"`
+}
+
+// TxSummaryPoolParams carries the terms a pool registration commits the
+// operator to. The margin is an exact rational. Relays is always present and
+// Metadata is null when the certificate has none, so absence is explicit.
+type TxSummaryPoolParams struct {
+	Pledge            string                 `json:"pledge_lovelace"`
+	Cost              string                 `json:"cost_lovelace"`
+	MarginNumerator   string                 `json:"margin_numerator"`
+	MarginDenominator string                 `json:"margin_denominator"`
+	VrfKeyHash        string                 `json:"vrf_key_hash"`
+	LeiosPublicKey    string                 `json:"leios_public_key,omitempty"`
+	Relays            []TxSummaryPoolRelay   `json:"relays"`
+	Metadata          *TxSummaryPoolMetadata `json:"metadata"`
+}
+
 // TxSummaryCertificate describes the public ledger identities and value
 // affected by a transaction certificate.
 type TxSummaryCertificate struct {
@@ -167,6 +199,7 @@ type TxSummaryCertificate struct {
 	RefundImplicit          bool                 `json:"refund_implicit,omitempty"`
 	RewardAccount           *TxSummaryCredential `json:"reward_account,omitempty"`
 	PoolOwners              []string             `json:"pool_owners,omitempty"`
+	PoolParams              *TxSummaryPoolParams `json:"pool_params,omitempty"`
 	RetirementEpoch         *uint64              `json:"retirement_epoch,omitempty"`
 	CommitteeColdCredential *TxSummaryCredential `json:"committee_cold_credential,omitempty"`
 	CommitteeHotCredential  *TxSummaryCredential `json:"committee_hot_credential,omitempty"`
@@ -2097,6 +2130,7 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	for _, c := range tx.Body.Certificates() {
 		out.Certificates = append(out.Certificates, certificateSummary(c))
 	}
+	out.UnsupportedEffects = certificateUnsupportedEffects(out.Certificates, out.UnsupportedEffects)
 	if out.VotingCount != 0 {
 		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance vote details")
 	}
@@ -2611,6 +2645,7 @@ func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
 		for _, owner := range cert.PoolOwners {
 			ret.PoolOwners = append(ret.PoolOwners, hex.EncodeToString(owner.Bytes()))
 		}
+		ret.PoolParams = poolParamsSummary(cert)
 	case *lcommon.PoolRetirementCertificate:
 		setPool(cert.PoolKeyHash)
 		epoch := cert.Epoch
@@ -2656,6 +2691,87 @@ func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
 		ret.DRepCredential = credentialSummary(cert.DrepCredential)
 	}
 	return ret
+}
+
+func poolParamsSummary(cert *lcommon.PoolRegistrationCertificate) *TxSummaryPoolParams {
+	params := &TxSummaryPoolParams{
+		Pledge:            strconv.FormatUint(cert.Pledge, 10),
+		Cost:              strconv.FormatUint(cert.Cost, 10),
+		MarginNumerator:   "0",
+		MarginDenominator: "1",
+		VrfKeyHash:        hex.EncodeToString(cert.VrfKeyHash[:]),
+		Relays:            []TxSummaryPoolRelay{},
+	}
+	if cert.Margin.Rat != nil {
+		params.MarginNumerator = cert.Margin.Num().String()
+		params.MarginDenominator = cert.Margin.Denom().String()
+	}
+	if cert.LeiosKey != nil {
+		params.LeiosPublicKey = hex.EncodeToString(cert.LeiosKey.PublicKey)
+	}
+	for _, relay := range cert.Relays {
+		r := TxSummaryPoolRelay{Port: relay.Port}
+		switch relay.Type {
+		case lcommon.PoolRelayTypeSingleHostAddress:
+			r.Type = "single_host_addr"
+		case lcommon.PoolRelayTypeSingleHostName:
+			r.Type = "single_host_name"
+		case lcommon.PoolRelayTypeMultiHostName:
+			r.Type = "multi_host_name"
+		default:
+			r.Type = "unknown"
+		}
+		if relay.Ipv4 != nil {
+			r.IPv4 = relay.Ipv4.String()
+		}
+		if relay.Ipv6 != nil {
+			r.IPv6 = ledgerIPv6(*relay.Ipv6).String()
+		}
+		if relay.Hostname != nil {
+			r.Hostname = *relay.Hostname
+		}
+		params.Relays = append(params.Relays, r)
+	}
+	if cert.PoolMetadata != nil {
+		params.Metadata = &TxSummaryPoolMetadata{
+			URL:  cert.PoolMetadata.Url,
+			Hash: hex.EncodeToString(cert.PoolMetadata.Hash),
+		}
+	}
+	return params
+}
+
+// ledgerIPv6 converts a pool relay IPv6 between wire and network byte order.
+// The ledger writes the address as four little-endian 32-bit words
+// (ipv6ToBytes in cardano-ledger-binary), while gouroboros keeps the raw wire
+// bytes, so reading them as a net.IP would show a different address than the
+// one the certificate registers. Reversing each word is its own inverse.
+func ledgerIPv6(wire net.IP) net.IP {
+	if len(wire) != net.IPv6len {
+		return wire
+	}
+	out := make(net.IP, net.IPv6len)
+	for i := 0; i < net.IPv6len; i += 4 {
+		binary.BigEndian.PutUint32(out[i:i+4], binary.LittleEndian.Uint32(wire[i:i+4]))
+	}
+	return out
+}
+
+// certificateUnsupportedEffects flags certificate terms the summary cannot
+// represent, so ValidateForSigning refuses them rather than approving a
+// witness over terms the user was never shown.
+func certificateUnsupportedEffects(certs []TxSummaryCertificate, effects []string) []string {
+	for _, cert := range certs {
+		if cert.PoolParams == nil {
+			continue
+		}
+		for _, relay := range cert.PoolParams.Relays {
+			if relay.Type == "unknown" {
+				return append(effects, "pool registration relay of unknown type")
+			}
+		}
+	}
+	return effects
 }
 
 // neededKeyHashes builds the set of addr-key-hash credentials (hex-encoded)

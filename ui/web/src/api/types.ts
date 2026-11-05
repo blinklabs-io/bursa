@@ -973,6 +973,25 @@ export interface TxSummaryDRep {
   hash?: string;
 }
 
+export interface TxSummaryPoolRelay {
+  type: "single_host_addr" | "single_host_name" | "multi_host_name" | "unknown";
+  port?: number;
+  ipv4?: string;
+  ipv6?: string;
+  hostname?: string;
+}
+
+export interface TxSummaryPoolParams {
+  pledge_lovelace: string;
+  cost_lovelace: string;
+  margin_numerator: string;
+  margin_denominator: string;
+  vrf_key_hash: string;
+  leios_public_key?: string;
+  relays: TxSummaryPoolRelay[];
+  metadata: { url: string; hash: string } | null;
+}
+
 export interface TxSummaryCertificate {
   kind: string;
   stake_credential?: TxSummaryCredential;
@@ -985,6 +1004,7 @@ export interface TxSummaryCertificate {
   refund_implicit?: boolean;
   reward_account?: TxSummaryCredential;
   pool_owners?: string[];
+  pool_params?: TxSummaryPoolParams;
   retirement_epoch?: number;
   committee_cold_credential?: TxSummaryCredential;
   committee_hot_credential?: TxSummaryCredential;
