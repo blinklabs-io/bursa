@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -367,4 +368,61 @@ func TestStateLocked(t *testing.T) {
 			t.Fatal("the state lock was released after garbage collection")
 		}
 	}
+}
+
+// TestLoopbackHostOnly checks that the simulator refuses a request whose Host
+// is not a loopback name, as a browser sends after DNS rebinding.
+func TestLoopbackHostOnly(t *testing.T) {
+	h, err := build(options{
+		listen: "127.0.0.1:0", state: t.TempDir(), image: "provision",
+		network: "testnet", cardBlocks: 1 << 10,
+	}, t.Logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		host string
+		want int
+	}{
+		{"127.0.0.1:18080", http.StatusOK},
+		{"127.0.0.1", http.StatusOK},
+		{"[::1]:18080", http.StatusOK},
+		{"localhost:18080", http.StatusOK},
+		{"LOCALHOST", http.StatusOK},
+		{"rebind.example:18080", http.StatusForbidden},
+		{"rebind.example", http.StatusForbidden},
+		{"10.0.0.1:18080", http.StatusForbidden},
+		{"localhost.rebind.example", http.StatusForbidden},
+		{"", http.StatusForbidden},
+	}
+
+	for _, c := range cases {
+		body := &countingReader{r: strings.NewReader("{}")}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/challenge", body)
+		r.Host = c.host
+		r.Header.Set("Content-Type", "application/json")
+		h.ServeHTTP(w, r)
+
+		if w.Code != c.want {
+			t.Errorf("Host %q: %d %s, want %d", c.host, w.Code, w.Body, c.want)
+		}
+
+		if c.want == http.StatusForbidden && body.reads != 0 {
+			t.Errorf("Host %q: body read %d times before the refusal", c.host, body.reads)
+		}
+	}
+}
+
+// countingReader counts Read calls on a request body.
+type countingReader struct {
+	r     io.Reader
+	reads int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	c.reads++
+
+	return c.r.Read(p)
 }
