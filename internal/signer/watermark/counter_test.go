@@ -129,6 +129,49 @@ func runRaiseFloor(t *testing.T, wm counterStore) {
 	}
 }
 
+func runRaiseFloorFrom(t *testing.T, wm counterStore) {
+	t.Helper()
+	ctx := context.Background()
+	var key backend.KeyHash
+	key[0] = 0xBC
+	scope := "opcert-chain-issued"
+
+	// no record: recorded whatever the lower bound
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); err != nil {
+		t.Fatalf("first raise to 5: %v", err)
+	}
+	// equal and next values from a record at or above min
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); err != nil {
+		t.Fatalf("equal raise to 5: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 6, 5); err != nil {
+		t.Fatalf("raise to 6: %v", err)
+	}
+	// a record below min refuses, as does a value below the record
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 9, 8); !errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("raise to 9 from 6 with min 8: expected ErrCounterRegression, got %v", err)
+	}
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); !errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("raise to 5 below 6: expected ErrCounterRegression, got %v", err)
+	}
+	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok || v != 6 {
+		t.Fatalf("after refused raises: got (v=%d, ok=%v, err=%v), want 6", v, ok, err)
+	}
+}
+
+func TestMemWatermark_RaiseFloorFrom(t *testing.T) {
+	runRaiseFloorFrom(t, NewMemWatermark())
+}
+
+func TestSqliteWatermark_RaiseFloorFrom(t *testing.T) {
+	wm, err := NewSqliteWatermark(filepath.Join(t.TempDir(), "wm.db"))
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	defer wm.Close()
+	runRaiseFloorFrom(t, wm)
+}
+
 func TestMemWatermark_RaiseFloor(t *testing.T) {
 	runRaiseFloor(t, NewMemWatermark())
 }

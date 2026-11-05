@@ -375,7 +375,10 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 	if counterWM != nil && recordIssued {
 		var werr error
 		if rule.floor {
-			werr = counterWM.CheckAndRaiseFloor(ctx, hash, opcertChainIssuedScope, issueCounter)
+			// the record may not be below the chain counter: a concurrent
+			// issue_counter request on a key with no record could have
+			// written one there after the pre-sign check
+			werr = counterWM.CheckAndRaiseFloorFrom(ctx, hash, opcertChainIssuedScope, issueCounter, rule.value)
 		} else {
 			werr = counterWM.CheckAndCommitCounter(ctx, hash, opcertChainIssuedScope, issueCounter)
 		}

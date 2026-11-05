@@ -395,6 +395,36 @@ func TestSignOpCertFromChain_ConcurrentIssueAbove(t *testing.T) {
 	}
 }
 
+// On a key's first opcert, a chain_counter request whose pre-sign check found
+// no issued record is refused at commit when an issue_counter request
+// recorded a counter below its chain counter meanwhile.
+func TestSignOpCertFromChain_ConcurrentFirstIssueBelow(t *testing.T) {
+	c, pw, k := newPausingOpCert(t, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	var (
+		wg   sync.WaitGroup
+		res  *OpCertResult
+		code ErrorCode
+		err  error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res, code, err = c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
+	}()
+	<-pw.paused
+	if _, icode, ierr := c.SignOpCert(ctx, kes, 5, 101, k.hash.String()); ierr != nil {
+		t.Fatalf("issue 5: %v (code=%s)", ierr, icode)
+	}
+	close(pw.release)
+	wg.Wait()
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+	}
+}
+
 // Warn mode leaves the request form's own record alone after an issued-record
 // conflict, as it does for a chain counter above the record.
 func TestSignOpCertFromChain_BelowIssuedWarnKeepsFloor(t *testing.T) {
