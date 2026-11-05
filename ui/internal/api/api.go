@@ -2455,8 +2455,9 @@ func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
 // registerMultiSigRoutes wires the native multi-signature endpoints under
 // /wallet/multisig. Account management (list/create/get/delete) and sharing the
 // wallet's own participant key are local/offline; balance is a node read
-// (gated); build and submit need a synced node (readyGate); sign is pure crypto
-// over the keystore (ungated).
+// (gated); build and submit need a synced node (readyGate). sign is ungated,
+// but it resolves the transaction's inputs through the chain before signing, so
+// it fails while the node cannot answer UTxO lookups.
 func registerMultiSigRoutes(
 	mux *http.ServeMux,
 	st Statuser,
@@ -2567,7 +2568,7 @@ func registerMultiSigRoutes(
 	}))
 
 	// Co-sign an unsigned multi-sig tx with the wallet's CIP-1854 key. Ungated
-	// (pure crypto over the keystore, no node), like sign-tx.
+	// like sign-tx; the effect check needs chain UTxO lookups, not a synced tip.
 	mux.HandleFunc("POST /wallet/multisig/sign", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
@@ -2591,6 +2592,10 @@ func registerMultiSigRoutes(
 			Witnesses      []string `json:"witnesses"`
 		}
 		if !decodeBody(w, r, &req) {
+			return
+		}
+		if err := requireCompleteEffects(r.Context(), sp, req.UnsignedTxCBOR); err != nil {
+			serve(w, struct{}{}, err)
 			return
 		}
 		v, err := ms.Submit(r.Context(), r.PathValue("id"), req.UnsignedTxCBOR, req.Witnesses)

@@ -25,8 +25,8 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 )
 
-// multisigEffectRoutes are the multisig paths that sign or broadcast a pasted
-// or unsigned transaction. Each must refuse an incomplete effect summary
+// multisigEffectRoutes are the multisig paths that sign or broadcast a
+// caller-supplied transaction. Each must refuse an incomplete effect summary
 // before the multisig service is reached (which is what unlocks the keystore
 // or submits).
 var multisigEffectRoutes = []struct {
@@ -52,6 +52,12 @@ var multisigEffectRoutes = []struct {
 		path:    "/wallet/multisig/sign",
 		body:    `{"unsigned_tx_cbor":"84a4","password":"pw"}`,
 		reached: func(ms *fakeMultiSig) bool { return ms.gotSignTxCBOR != "" || ms.gotSignPassword != "" },
+	},
+	{
+		name:    "multisig-submit",
+		path:    "/wallet/multisig/acct-1/submit",
+		body:    `{"unsigned_tx_cbor":"84a4","witnesses":["80"]}`,
+		reached: func(ms *fakeMultiSig) bool { return ms.gotSubmitID != "" || ms.gotSubmitTxCBOR != "" },
 	},
 }
 
