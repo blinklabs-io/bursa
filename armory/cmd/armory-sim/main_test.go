@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -397,8 +398,9 @@ func TestLoopbackHostOnly(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		body := &countingReader{r: strings.NewReader("{}")}
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/challenge", strings.NewReader("{}"))
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/challenge", body)
 		r.Host = c.host
 		r.Header.Set("Content-Type", "application/json")
 		h.ServeHTTP(w, r)
@@ -406,5 +408,21 @@ func TestLoopbackHostOnly(t *testing.T) {
 		if w.Code != c.want {
 			t.Errorf("Host %q: %d %s, want %d", c.host, w.Code, w.Body, c.want)
 		}
+
+		if c.want == http.StatusForbidden && body.reads != 0 {
+			t.Errorf("Host %q: body read %d times before the refusal", c.host, body.reads)
+		}
 	}
+}
+
+// countingReader counts Read calls on a request body.
+type countingReader struct {
+	r     io.Reader
+	reads int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	c.reads++
+
+	return c.r.Read(p)
 }
