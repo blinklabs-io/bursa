@@ -257,6 +257,18 @@ test("renders imported certificate details", async () => {
         pool_id: "33".repeat(28),
         reward_account: { type: "script_hash", hash: "44".repeat(28) },
         pool_owners: ["55".repeat(28), "66".repeat(28)],
+        pool_params: {
+          pledge_lovelace: "500000000",
+          cost_lovelace: "340000000",
+          margin_numerator: "3",
+          margin_denominator: "100",
+          vrf_key_hash: "77".repeat(32),
+          relays: [
+            { type: "single_host_name", hostname: "relay.example.test", port: 3001 },
+            { type: "multi_host_name", hostname: "pool.example.test" },
+          ],
+          metadata: { url: "https://example.test/pool.json", hash: "99".repeat(32) },
+        },
       },
       { kind: "pool_retirement", pool_id: "33".repeat(28), retirement_epoch: 0 },
       {
@@ -295,6 +307,13 @@ test("renders imported certificate details", async () => {
   const poolReg = screen.getByText("pool_registration").closest("li")!;
   expect(poolReg).toHaveTextContent(`rewards to script hash ${"44".repeat(28)}`);
   expect(poolReg).toHaveTextContent(`owners ${"55".repeat(28)}, ${"66".repeat(28)}`);
+  expect(poolReg).toHaveTextContent("pledge 500 ADA");
+  expect(poolReg).toHaveTextContent("cost 340 ADA");
+  expect(poolReg).toHaveTextContent("margin 3/100");
+  expect(poolReg).toHaveTextContent(`VRF key ${"77".repeat(32)}`);
+  expect(poolReg).toHaveTextContent("single host name relay.example.test:3001");
+  expect(poolReg).toHaveTextContent("multi host name pool.example.test");
+  expect(poolReg).toHaveTextContent(`metadata https://example.test/pool.json ${"99".repeat(32)}`);
 
   expect(screen.getByText("pool_retirement").closest("li")!).toHaveTextContent("retires at epoch 0");
 

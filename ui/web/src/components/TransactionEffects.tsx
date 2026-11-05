@@ -3,6 +3,8 @@ import type {
   TxSummaryCertificate,
   TxSummaryInput,
   TxSummaryOutput,
+  TxSummaryPoolParams,
+  TxSummaryPoolRelay,
 } from "../api/types";
 import { formatAda } from "../format";
 
@@ -48,6 +50,25 @@ function InputEffects({ inputs }: { inputs: TxSummaryInput[] }) {
   );
 }
 
+function formatRelay(relay: TxSummaryPoolRelay): string {
+  const port = relay.port !== undefined ? `:${relay.port}` : "";
+  const label = relay.type.replace(/_/g, " ");
+  const target = [relay.ipv4, relay.ipv6, relay.hostname].filter(Boolean).join(" / ");
+  return `${label} ${target}${port}`.trim();
+}
+
+function PoolParamsEffects({ params }: { params: TxSummaryPoolParams }) {
+  return (
+    <>
+      {" "}· pledge {formatAda(params.pledge_lovelace)} ADA · cost {formatAda(params.cost_lovelace)} ADA
+      {" "}· margin {params.margin_numerator}/{params.margin_denominator} · VRF key <code className="tx-hash">{params.vrf_key_hash}</code>
+      {params.leios_public_key ? <> · Leios key <code className="tx-hash">{params.leios_public_key}</code></> : null}
+      {" "}· relays {params.relays.length === 0 ? "none" : params.relays.map(formatRelay).join(", ")}
+      {" "}· metadata {params.metadata ? <>{params.metadata.url} <code className="tx-hash">{params.metadata.hash}</code></> : "none"}
+    </>
+  );
+}
+
 function CertificateEffects({ certificates }: { certificates: TxSummaryCertificate[] }) {
   return (
     <ul className="signer-list">
@@ -82,6 +103,7 @@ function CertificateEffects({ certificates }: { certificates: TxSummaryCertifica
               <span key={owner}>{ownerIndex > 0 ? ", " : null}<code className="tx-hash">{owner}</code></span>
             ))}</>
           ) : null}
+          {cert.pool_params ? <PoolParamsEffects params={cert.pool_params} /> : null}
           {cert.retirement_epoch !== undefined ? <> · retires at epoch {cert.retirement_epoch}</> : null}
           {cert.committee_cold_credential ? (
             <> · committee cold {cert.committee_cold_credential.type.replace("_", " ")} <code className="tx-hash">{cert.committee_cold_credential.hash}</code></>

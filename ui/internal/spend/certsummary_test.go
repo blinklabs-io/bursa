@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
+	"net"
 	"strings"
 	"testing"
 
@@ -138,7 +139,9 @@ func TestDecodeTx_CertificateDetails(t *testing.T) {
 			cert: poolReg,
 			want: `{"kind":"pool_registration",` + pool +
 				`,"reward_account":{"type":"script_hash","hash":"` + testHex28(0x44) + `"}` +
-				`,"pool_owners":["` + testHex28(0x55) + `","` + testHex28(0x66) + `"]}`,
+				`,"pool_owners":["` + testHex28(0x55) + `","` + testHex28(0x66) + `"]` +
+				`,"pool_params":{"pledge_lovelace":"1","cost_lovelace":"340000000","margin_numerator":"1","margin_denominator":"100"` +
+				`,"vrf_key_hash":"` + strings.Repeat("00", 32) + `","relays":[],"metadata":null}}`,
 		},
 		{
 			name: "pool retirement names the epoch",
@@ -260,5 +263,93 @@ func TestDecodeTx_CertificateDetails(t *testing.T) {
 				t.Errorf("certificate summary\n got: %s\nwant: %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func poolRegistrationFixture(relays []lcommon.PoolRelay, meta *lcommon.PoolMetadata) *lcommon.PoolRegistrationCertificate {
+	cert := &lcommon.PoolRegistrationCertificate{
+		CertType:     uint(lcommon.CertificateTypePoolRegistration),
+		Operator:     testHash28(0x33),
+		VrfKeyHash:   lcommon.VrfKeyHash(bytesRepeat(0x77, 32)),
+		Pledge:       500_000_000,
+		Cost:         340_000_000,
+		Margin:       cbor.Rat{Rat: big.NewRat(3, 100)},
+		PoolOwners:   []lcommon.AddrKeyHash{testHash28(0x55)},
+		Relays:       relays,
+		PoolMetadata: meta,
+	}
+	if err := cert.SetRewardAccountCredential(testKeyCred(0x44), lcommon.AddressNetworkTestnet); err != nil {
+		panic(err)
+	}
+	return cert
+}
+
+func TestDecodeTx_PoolRegistrationShowsTerms(t *testing.T) {
+	t.Parallel()
+	port := uint32(3001)
+	ip4 := net.ParseIP("192.0.2.7").To4()
+	ip6 := net.ParseIP("2001:db8::1")
+	host := "relay.example.test"
+	multi := "pool.example.test"
+	cert := poolRegistrationFixture([]lcommon.PoolRelay{
+		{Type: lcommon.PoolRelayTypeSingleHostAddress, Port: &port, Ipv4: &ip4, Ipv6: &ip6},
+		{Type: lcommon.PoolRelayTypeSingleHostName, Port: &port, Hostname: &host},
+		{Type: lcommon.PoolRelayTypeMultiHostName, Hostname: &multi},
+	}, &lcommon.PoolMetadata{Url: "https://example.test/pool.json", Hash: lcommon.PoolMetadataHash(bytesRepeat(0x99, 32))})
+
+	raw := decodeWithCertificate(t, lcommon.CertificateWrapper{Type: uint(lcommon.CertificateTypePoolRegistration), Certificate: cert})
+	var got struct {
+		PoolParams *struct {
+			Pledge      string `json:"pledge_lovelace"`
+			Cost        string `json:"cost_lovelace"`
+			MarginNum   string `json:"margin_numerator"`
+			MarginDen   string `json:"margin_denominator"`
+			VrfKeyHash  string `json:"vrf_key_hash"`
+			Relays      []map[string]any
+			Metadata    *struct{ URL, Hash string }
+			MetadataSet bool
+		} `json:"pool_params"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.PoolParams == nil {
+		t.Fatalf("pool registration summary has no pool_params: %s", raw)
+	}
+	p := got.PoolParams
+	if p.Pledge != "500000000" || p.Cost != "340000000" || p.MarginNum != "3" || p.MarginDen != "100" {
+		t.Errorf("economic terms wrong: %+v", p)
+	}
+	if p.VrfKeyHash != strings.Repeat("77", 32) {
+		t.Errorf("vrf key hash = %q", p.VrfKeyHash)
+	}
+	for _, want := range []string{
+		`"type":"single_host_addr"`, `"ipv4":"192.0.2.7"`, `"ipv6":"2001:db8::1"`, `"port":3001`,
+		`"type":"single_host_name"`, `"hostname":"relay.example.test"`,
+		`"type":"multi_host_name"`, `"hostname":"pool.example.test"`,
+		`"url":"https://example.test/pool.json"`, `"hash":"` + strings.Repeat("99", 32) + `"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("summary missing %s: %s", want, raw)
+		}
+	}
+}
+
+func TestDecodeTx_PoolRegistrationWithoutMetadataIsExplicit(t *testing.T) {
+	t.Parallel()
+	cert := poolRegistrationFixture([]lcommon.PoolRelay{}, nil)
+	raw := decodeWithCertificate(t, lcommon.CertificateWrapper{Type: uint(lcommon.CertificateTypePoolRegistration), Certificate: cert})
+	if !strings.Contains(raw, `"pool_params":`) || !strings.Contains(raw, `"relays":[]`) || !strings.Contains(raw, `"metadata":null`) {
+		t.Errorf("absent relays/metadata must be explicit: %s", raw)
+	}
+}
+
+func TestPoolRegistrationUnknownRelayFailsClosed(t *testing.T) {
+	t.Parallel()
+	cert := poolRegistrationFixture([]lcommon.PoolRelay{{Type: 9}}, nil)
+	sum := TxSummary{Certificates: []TxSummaryCertificate{certificateSummary(cert)}}
+	sum.UnsupportedEffects = certificateUnsupportedEffects(sum.Certificates, sum.UnsupportedEffects)
+	if err := sum.ValidateForSigning(); err == nil || !strings.Contains(err.Error(), "relay") {
+		t.Fatalf("ValidateForSigning = %v, want relay refusal", err)
 	}
 }
