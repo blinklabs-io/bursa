@@ -672,3 +672,33 @@ func TestColdOwnershipWipeCold(t *testing.T) {
 		})
 	}
 }
+
+// A legacy cold key that profiles of two scopes name, from older images, has
+// no owner rather than whichever profile is seen first.
+func TestColdOwnershipLegacyKeySharedAcrossScopes(t *testing.T) {
+	t.Parallel()
+
+	chip := newFakeChip()
+	chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x66}, 32))
+	storeRecord(t, chip, profile.Profile{Name: "t@preview", NetworkID: 0, Slot: 7, ColdKeyID: 0x20e50014})
+	storeRecord(t, chip, profile.Profile{Name: "c@cardano-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: 0x20e50014})
+
+	s := multiImage(t, chip, true)
+
+	for range 20 {
+		if tag, ok, err := s.coldOwner(0x20e50014); err != nil || ok {
+			t.Fatalf("shared legacy key owner = %v %v %v, want none", tag, ok, err)
+		}
+	}
+
+	// profiles of one scope sharing it still give that scope
+	chip = newFakeChip()
+	chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x66}, 32))
+	storeRecord(t, chip, profile.Profile{Name: "a@preview", NetworkID: 0, Slot: 7, ColdKeyID: 0x20e50014})
+	storeRecord(t, chip, profile.Profile{Name: "b@preview", NetworkID: 0, Slot: 8, ColdKeyID: 0x20e50014})
+
+	s = multiImage(t, chip, true)
+	if tag, ok, err := s.coldOwner(0x20e50014); err != nil || !ok || tag != tagOf(ScopeTestnet) {
+		t.Fatalf("legacy key of one scope owner = %v %v %v, want testnet", tag, ok, err)
+	}
+}

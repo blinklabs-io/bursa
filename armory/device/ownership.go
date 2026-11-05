@@ -248,8 +248,8 @@ func profileTag(network uint8, name string) scopeTag {
 }
 
 // coldOwner returns the owner of cold key object id, which holds a key: the
-// claim in the record, else the scope of a profile whose cold key it is, else
-// none (ok false).
+// claim in the record, else the scope of the profiles whose cold key it is,
+// else none (ok false), as when profiles of two scopes name it.
 func (s *Service) coldOwner(id uint32) (tag scopeTag, ok bool, err error) {
 	i, isCold := coldKeyIndex(id)
 	if !isCold {
@@ -265,13 +265,22 @@ func (s *Service) coldOwner(id uint32) (tag scopeTag, ok bool, err error) {
 		return o[i].tag, true, nil
 	}
 
+	// profiles of two scopes naming one key leave it with no owner, rather
+	// than whichever the map yields first
 	for _, p := range s.profiles {
-		if p.ColdKeyID == id {
-			return profileTag(p.NetworkID, p.Name), true, nil
+		if p.ColdKeyID != id {
+			continue
 		}
+
+		got := profileTag(p.NetworkID, p.Name)
+		if ok && got != tag {
+			return scopeTag{}, false, nil
+		}
+
+		tag, ok = got, true
 	}
 
-	return tag, false, nil
+	return tag, ok, nil
 }
 
 // requireOwner refuses cold key object id, which holds a key, unless sc owns

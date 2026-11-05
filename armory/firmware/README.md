@@ -52,8 +52,9 @@ no unfiltered `/sign`. The single-scope images build as before.
   another scope; a record that cannot be read does not stop signing. An
   empty object is free whatever an old claim says. Every image keeps the
   record, single-scope images with their own scope. A key an older image
-  stored with no claim belongs to the scope of the profile on it; a key with
-  no claim and no profile belongs to no scope and is refused to all. A profile
+  stored with no claim belongs to the scope of the profiles on it; a key with
+  no claim and no profile, or profiles of two scopes, belongs to no scope and
+  is refused to all. A profile
   an older image stored is still served.
 - The wipe image's signed `/wipe/cold` deletes a cold key no profile names,
   and its claim: its owner may, and a mainnet key may delete a testnet key or

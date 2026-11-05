@@ -570,7 +570,8 @@ are unchanged. `TESTNET=1` is refused with it.
   that cannot be read, or no claim, does not stop signing. A profile stored
   by an older image is still served.
 - Legacy and unowned keys. A cold key an older image stored has no claim; it
-  belongs to the scope of the profile that names it. A key with no claim and no
+  belongs to the scope of the profiles that name it, and to none when
+  profiles of two scopes name it. A key with no claim and no
   profile belongs to no scope and every scope is refused; a mainnet key
   removes it with the wipe image's `/wipe/cold`. A multi image refuses it,
   and a single-scope image keeps serving it as before.
