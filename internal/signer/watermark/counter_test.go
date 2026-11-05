@@ -129,11 +129,9 @@ func runRaiseFloor(t *testing.T, wm counterStore) {
 	}
 }
 
-func runRaiseFloorFrom(t *testing.T, wm counterStore) {
+func runRaiseFloorFrom(t *testing.T, wm counterStore, key backend.KeyHash) {
 	t.Helper()
 	ctx := context.Background()
-	var key backend.KeyHash
-	key[0] = 0xBC
 	scope := "opcert-chain-issued"
 
 	// no record: recorded whatever the lower bound
@@ -160,7 +158,7 @@ func runRaiseFloorFrom(t *testing.T, wm counterStore) {
 }
 
 func TestMemWatermark_RaiseFloorFrom(t *testing.T) {
-	runRaiseFloorFrom(t, NewMemWatermark())
+	runRaiseFloorFrom(t, NewMemWatermark(), backend.KeyHash{0xBC})
 }
 
 func TestSqliteWatermark_RaiseFloorFrom(t *testing.T) {
@@ -169,7 +167,7 @@ func TestSqliteWatermark_RaiseFloorFrom(t *testing.T) {
 		t.Fatalf("NewSqliteWatermark: %v", err)
 	}
 	defer wm.Close()
-	runRaiseFloorFrom(t, wm)
+	runRaiseFloorFrom(t, wm, backend.KeyHash{0xBC})
 }
 
 func TestMemWatermark_RaiseFloor(t *testing.T) {
