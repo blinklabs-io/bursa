@@ -18,6 +18,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -110,6 +111,63 @@ func TestSQLiteStoreTightensExistingPermissiveDatabase(t *testing.T) {
 	requireOwnerOnly(t, dbPath)
 	_, err = store.CreateWallet("again")
 	require.NoError(t, err)
+}
+
+// setOwnerToLocalSystem makes path belong to another identity, standing in for
+// a sidecar a different user pre-created in a shared directory. Assigning an
+// owner other than the caller needs SeRestorePrivilege, which this enables
+// only for the call and only when the process holds it.
+func setOwnerToLocalSystem(t *testing.T, path string) {
+	t.Helper()
+	var token windows.Token
+	require.NoError(t, windows.OpenProcessToken(
+		windows.CurrentProcess(),
+		windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY,
+		&token,
+	))
+	defer token.Close()
+	var luid windows.LUID
+	require.NoError(t, windows.LookupPrivilegeValue(
+		nil, windows.StringToUTF16Ptr("SeRestorePrivilege"), &luid,
+	))
+	privileges := windows.Tokenprivileges{PrivilegeCount: 1}
+	privileges.Privileges[0] = windows.LUIDAndAttributes{
+		Luid:       luid,
+		Attributes: windows.SE_PRIVILEGE_ENABLED,
+	}
+	require.NoError(t, windows.AdjustTokenPrivileges(token, false, &privileges, 0, nil, nil))
+	defer func() {
+		privileges.Privileges[0].Attributes = 0
+		_ = windows.AdjustTokenPrivileges(token, false, &privileges, 0, nil, nil)
+	}()
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	require.NoError(t, err)
+	err = windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION,
+		system, nil, nil, nil,
+	)
+	if errors.Is(err, windows.ERROR_INVALID_OWNER) {
+		t.Skip("SeRestorePrivilege is not held; cannot assign another owner")
+	}
+	require.NoError(t, err)
+}
+
+// A sidecar another identity created can still be open in that identity's
+// process, and a handle survives any later DACL change, so taking ownership
+// and tightening the DACL would hand that process the WAL's contents. Not
+// parallel: the owner change enables a process-wide privilege.
+func TestSQLiteStoreRejectsSidecarOwnedByAnotherIdentity(t *testing.T) {
+	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
+	require.NoError(t, os.WriteFile(dbPath+"-wal", nil, 0o600))
+	setOwnerToLocalSystem(t, dbPath+"-wal")
+
+	store, err := NewSQLiteStore(dbPath)
+	if store != nil {
+		_ = store.Close()
+	}
+	require.ErrorIs(t, err, bursa.ErrInsecureFileMode)
 }
 
 func TestSQLiteStoreReadOnlyDSNTightensExistingDatabaseOnly(t *testing.T) {
