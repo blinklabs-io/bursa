@@ -562,3 +562,65 @@ func TestEvaluateOpCert(t *testing.T) {
 		t.Fatalf("expected allow when opcert is in allowed_requests")
 	}
 }
+
+func TestEngine_BackendPin(t *testing.T) {
+	t.Parallel()
+	insp := &bursa.TxInspection{}
+	cases := []struct {
+		name    string
+		pin     string
+		opts    []EvalOption
+		allowed bool
+	}{
+		{"match", "vault-prod", []EvalOption{WithBackend("vault-prod")}, true},
+		{"mismatch", "vault-prod", []EvalOption{WithBackend("software")}, false},
+		{"mismatch against empty resolved name", "vault-prod", []EvalOption{WithBackend("")}, false},
+		{"empty pin accepts any backend", "", []EvalOption{WithBackend("software")}, true},
+		{"option omitted denies a pinned key", "vault-prod", nil, false},
+		{"option omitted with no pin allows", "", nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, h := engineWith(t, KeyPolicy{
+				Backend:         tc.pin,
+				AllowedRequests: []string{"tx", "opcert", "cip8"},
+				Tx:              &TxPolicy{},
+				CIP8:            &CIP8Policy{},
+			})
+			got := map[string]Decision{
+				"tx":     e.EvaluateTx(h, insp, tc.opts...),
+				"opcert": e.EvaluateOpCert(h, tc.opts...),
+				"cip8":   e.EvaluateCIP8(h, 1, true, tc.opts...),
+			}
+			for kind, d := range got {
+				if d.Allow != tc.allowed {
+					t.Errorf("%s: Allow=%v reason=%q, want Allow=%v", kind, d.Allow, d.Reason, tc.allowed)
+				}
+				if !tc.allowed && !strings.Contains(d.Reason, "backend") {
+					t.Errorf("%s: reason does not name the backend: %q", kind, d.Reason)
+				}
+			}
+		})
+	}
+}
+
+func TestEngine_BackendPinStillRequiresAllowedRequests(t *testing.T) {
+	t.Parallel()
+	e, h := engineWith(t, KeyPolicy{
+		Backend: "vault-prod",
+		Tx:      &TxPolicy{},
+		CIP8:    &CIP8Policy{},
+	})
+	opts := []EvalOption{WithBackend("vault-prod")}
+	got := map[string]Decision{
+		"tx":     e.EvaluateTx(h, &bursa.TxInspection{}, opts...),
+		"opcert": e.EvaluateOpCert(h, opts...),
+		"cip8":   e.EvaluateCIP8(h, 1, true, opts...),
+	}
+	for kind, d := range got {
+		if d.Allow {
+			t.Errorf("%s: a matching backend allowed a request kind absent from allowed_requests", kind)
+		}
+	}
+}
