@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"unsafe"
 
 	"github.com/blinklabs-io/bursa"
@@ -114,6 +115,25 @@ func checkSQLiteFileOwner(f *os.File) error {
 	)
 }
 
+// sqliteWin32Path returns path in extended-length form, which CreateFile
+// needs for a path longer than MAX_PATH. os.OpenFile adds the prefix itself;
+// the direct CreateFile calls here and in bursa.CreateSecretKeyFile do not.
+// The path is made absolute first, which also turns forward slashes into
+// separators, since the prefix disables that normalization.
+func sqliteWin32Path(path string) (string, error) {
+	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\\.\`) {
+		return path, nil
+	}
+	full, err := windows.FullPath(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(full, `\\`) {
+		return `\\?\UNC\` + full[2:], nil
+	}
+	return `\\?\` + full, nil
+}
+
 // sqliteCreate says whether secureSQLiteFile may create a missing file.
 type sqliteCreate int
 
@@ -123,7 +143,8 @@ const (
 	// sqliteCreateRequired creates a missing file and fails if it cannot.
 	sqliteCreateRequired
 	// sqliteCreateIfPermitted creates a missing file, and leaves it missing
-	// when the directory refuses the creation.
+	// when the directory refuses the creation, since SQLite cannot create it
+	// there either.
 	sqliteCreateIfPermitted
 )
 
@@ -133,7 +154,11 @@ const (
 // then reopened without following reparse points and its owner is checked
 // before its DACL is touched, so a foreign-owned file is rejected unchanged.
 func secureSQLiteFile(path string, create sqliteCreate) error {
-	createDenied := false
+	path, err := sqliteWin32Path(path)
+	if err != nil {
+		return err
+	}
+	var createErr error
 	if create != sqliteOpenExisting {
 		f, err := bursa.CreateSecretKeyFile(path)
 		switch {
@@ -142,15 +167,19 @@ func secureSQLiteFile(path string, create sqliteCreate) error {
 				return err
 			}
 		case errors.Is(err, fs.ErrExist):
-		case create == sqliteCreateIfPermitted && errors.Is(err, fs.ErrPermission):
-			createDenied = true
+		case errors.Is(err, fs.ErrPermission):
+			// A directory that refuses new files may still hold this one.
+			createErr = err
 		default:
 			return err
 		}
 	}
 	f, err := openSQLiteSecurityHandle(path)
-	if createDenied && errors.Is(err, fs.ErrNotExist) {
-		return nil
+	if createErr != nil && errors.Is(err, fs.ErrNotExist) {
+		if create == sqliteCreateIfPermitted {
+			return nil
+		}
+		return createErr
 	}
 	if err != nil {
 		return err
@@ -188,15 +217,12 @@ func ensureSQLiteFilePermissions(path, mode string) error {
 	if err := secureSQLiteFile(path, createDB); err != nil {
 		return err
 	}
-	// A read-only connection to a WAL database still creates -wal and -shm
-	// when the directory allows it, so they are created here for "ro" too.
-	// Where the directory refuses, SQLite cannot create them either.
-	createSidecar := sqliteCreateRequired
-	if mode == "ro" {
-		createSidecar = sqliteCreateIfPermitted
-	}
+	// Sidecars are created in every mode, "ro" included: a read-only
+	// connection to a WAL database still creates -wal and -shm when the
+	// directory allows it. Where the directory refuses, SQLite cannot create
+	// them either, and an open WAL database needs no new file.
 	for _, suffix := range sqliteSidecarSuffixes {
-		if err := secureSQLiteFile(path+suffix, createSidecar); err != nil {
+		if err := secureSQLiteFile(path+suffix, sqliteCreateIfPermitted); err != nil {
 			return fmt.Errorf("%s: %w", suffix, err)
 		}
 	}

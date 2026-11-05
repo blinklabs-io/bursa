@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"maps"
@@ -65,6 +66,17 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 			err,
 		)
 	}
+	if fileBacked {
+		// sql.Open connects lazily, so nothing has been opened yet.
+		connector := &sqliteConnector{
+			dsn:    dsn,
+			path:   dbPath,
+			mode:   mode,
+			driver: db.Driver(),
+		}
+		_ = db.Close()
+		db = sql.OpenDB(connector)
+	}
 
 	// Enable WAL mode for better concurrent read performance
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
@@ -111,6 +123,29 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	}
 
 	return store, nil
+}
+
+// sqliteConnector secures a file-backed database before every connection the
+// pool opens, not only the first. The pool replaces a connection it discards,
+// and SQLite deletes -wal and -shm when the last connection closes, so the
+// replacement recreates them; on Windows a recreated file would otherwise
+// inherit the directory's ACL.
+type sqliteConnector struct {
+	dsn    string
+	path   string
+	mode   string
+	driver driver.Driver
+}
+
+func (c *sqliteConnector) Connect(context.Context) (driver.Conn, error) {
+	if err := ensureSQLiteFilePermissions(c.path, c.mode); err != nil {
+		return nil, fmt.Errorf("failed to secure sqlite database: %w", err)
+	}
+	return c.driver.Open(c.dsn)
+}
+
+func (c *sqliteConnector) Driver() driver.Driver {
+	return c.driver
 }
 
 // sqliteDatabasePath returns the filesystem path for a file-backed SQLite DSN.
