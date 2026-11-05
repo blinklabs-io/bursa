@@ -75,7 +75,25 @@ var (
 	}()
 )
 
-// payload is the signed content of an entry, a CBOR array.
+// payloadV1 is the signed content of an entry on a format version 1 medium,
+// a CBOR array. It has no cold key hash.
+type payloadV1 struct {
+	_            struct{} `cbor:",toarray"`
+	Seq          uint64
+	Prev         []byte
+	Profile      string
+	Role         string
+	Purpose      string
+	BodyHash     []byte
+	Summary      string
+	IssueCounter uint64
+	KESPeriod    uint64
+	KESKeyHash   []byte
+	Truncated    bool
+}
+
+// payload is the signed content of an entry on a format version 2 medium, a
+// CBOR array: payloadV1 with the cold key hash after the KES key hash.
 type payload struct {
 	_            struct{} `cbor:",toarray"`
 	Seq          uint64
@@ -88,6 +106,7 @@ type payload struct {
 	IssueCounter uint64
 	KESPeriod    uint64
 	KESKeyHash   []byte
+	ColdKeyHash  []byte
 	Truncated    bool
 }
 
@@ -122,9 +141,14 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// normalize validates rec for its purpose and cuts the summary.
-func normalize(rec Record) (Record, error) {
+// versionOK reports whether ver is a format version this package reads.
+func versionOK(ver uint32) bool { return ver == formatV1 || ver == FormatVersion }
+
+// normalize validates rec for its purpose under format version ver and cuts
+// the summary. A version 1 record has no cold key hash.
+func normalize(rec Record, ver uint32) (Record, error) {
 	rec.BodyHash, rec.KESKeyHash = orNil(rec.BodyHash), orNil(rec.KESKeyHash)
+	rec.ColdKeyHash = orNil(rec.ColdKeyHash)
 
 	if cut := truncate(rec.Summary, MaxSummary); len(cut) < len(rec.Summary) {
 		rec.Summary, rec.SummaryTruncated = cut, true
@@ -138,12 +162,20 @@ func normalize(rec Record) (Record, error) {
 
 	switch rec.Purpose {
 	case PurposeTxBody, PurposeRaw:
-		if len(rec.BodyHash) != HashSize || rec.IssueCounter != 0 || rec.KESPeriod != 0 || rec.KESKeyHash != nil {
+		if len(rec.BodyHash) != HashSize || rec.IssueCounter != 0 || rec.KESPeriod != 0 || rec.KESKeyHash != nil || rec.ColdKeyHash != nil {
 			return rec, fmt.Errorf("%w: %s needs a %d-byte body hash and no opcert fields", ErrInvalidRecord, rec.Purpose, HashSize)
 		}
 	case PurposeOpCertNext:
 		if len(rec.KESKeyHash) != HashSize || rec.BodyHash != nil {
 			return rec, fmt.Errorf("%w: opcert-next needs a %d-byte KES key hash and no body hash", ErrInvalidRecord, HashSize)
+		}
+
+		if ver == formatV1 && rec.ColdKeyHash != nil {
+			return rec, fmt.Errorf("%w: a version 1 record has no cold key hash", ErrInvalidRecord)
+		}
+
+		if ver != formatV1 && len(rec.ColdKeyHash) != ColdHashSize {
+			return rec, fmt.Errorf("%w: opcert-next needs a %d-byte cold key hash", ErrInvalidRecord, ColdHashSize)
 		}
 	default:
 		return rec, fmt.Errorf("%w: purpose %q", ErrInvalidRecord, rec.Purpose)
@@ -152,13 +184,77 @@ func normalize(rec Record) (Record, error) {
 	return rec, nil
 }
 
-func (e Entry) payload() payload {
-	return payload{
+// version is the format version e is encoded under; an entry that was not
+// read from a medium is encoded as the current one.
+func (e Entry) version() uint32 {
+	if e.ver == 0 {
+		return FormatVersion
+	}
+
+	return e.ver
+}
+
+// encode returns e's canonical payload encoding under its format version.
+func (e Entry) encode() ([]byte, error) {
+	if e.version() == formatV1 {
+		return encMode.Marshal(payloadV1{
+			Seq: e.Seq, Prev: e.Prev[:], Profile: e.Profile, Role: e.Role,
+			Purpose: e.Purpose, BodyHash: orNil(e.BodyHash), Summary: e.Summary,
+			IssueCounter: e.IssueCounter, KESPeriod: e.KESPeriod, KESKeyHash: orNil(e.KESKeyHash),
+			Truncated: e.SummaryTruncated,
+		})
+	}
+
+	return encMode.Marshal(payload{
 		Seq: e.Seq, Prev: e.Prev[:], Profile: e.Profile, Role: e.Role,
 		Purpose: e.Purpose, BodyHash: orNil(e.BodyHash), Summary: e.Summary,
 		IssueCounter: e.IssueCounter, KESPeriod: e.KESPeriod, KESKeyHash: orNil(e.KESKeyHash),
-		Truncated: e.SummaryTruncated,
+		ColdKeyHash: orNil(e.ColdKeyHash), Truncated: e.SummaryTruncated,
+	})
+}
+
+// decodePayload parses enc as a version ver payload.
+func decodePayload(enc []byte, ver uint32) (Entry, error) {
+	e := Entry{ver: ver}
+
+	var prev []byte
+
+	if ver == formatV1 {
+		var p payloadV1
+		if err := cbor.Unmarshal(enc, &p); err != nil {
+			return e, err
+		}
+
+		e.Record = Record{
+			Profile: p.Profile, Role: p.Role, Purpose: p.Purpose,
+			BodyHash: orNil(p.BodyHash), Summary: p.Summary,
+			IssueCounter: p.IssueCounter, KESPeriod: p.KESPeriod,
+			KESKeyHash: orNil(p.KESKeyHash), SummaryTruncated: p.Truncated,
+		}
+		e.Seq, prev = p.Seq, p.Prev
+	} else {
+		var p payload
+		if err := cbor.Unmarshal(enc, &p); err != nil {
+			return e, err
+		}
+
+		e.Record = Record{
+			Profile: p.Profile, Role: p.Role, Purpose: p.Purpose,
+			BodyHash: orNil(p.BodyHash), Summary: p.Summary,
+			IssueCounter: p.IssueCounter, KESPeriod: p.KESPeriod,
+			KESKeyHash: orNil(p.KESKeyHash), ColdKeyHash: orNil(p.ColdKeyHash),
+			SummaryTruncated: p.Truncated,
+		}
+		e.Seq, prev = p.Seq, p.Prev
 	}
+
+	if len(prev) != HashSize {
+		return e, fmt.Errorf("previous hash of %d bytes", len(prev))
+	}
+
+	copy(e.Prev[:], prev)
+
+	return e, nil
 }
 
 func signDigest(enc []byte) []byte {
@@ -181,14 +277,14 @@ func linkHash(enc, sig []byte) (out [HashSize]byte) {
 
 // frameEntry encodes, signs and frames e into one record.
 func frameEntry(e Entry, id Identity) ([]byte, error) {
-	rec, err := normalize(e.Record)
+	rec, err := normalize(e.Record, e.version())
 	if err != nil {
 		return nil, err
 	}
 
 	e.Record = rec
 
-	enc, err := encMode.Marshal(e.payload())
+	enc, err := e.encode()
 	if err != nil {
 		return nil, fmt.Errorf("signlog: encode entry: %w", err)
 	}
@@ -221,7 +317,7 @@ func frameEntry(e Entry, id Identity) ([]byte, error) {
 // decodeRecord parses one slot. It returns errBlankSlot for an all-zero
 // slot and errTorn when the checksum fails; any other failure is ErrCorrupt.
 // It does not check the signature.
-func decodeRecord(slot []byte) (Entry, error) {
+func decodeRecord(slot []byte, ver uint32) (Entry, error) {
 	var e Entry
 
 	if isZero(slot) {
@@ -244,34 +340,20 @@ func decodeRecord(slot []byte) (Entry, error) {
 
 	enc := slot[recPayloadOff : recPayloadOff+n]
 
-	var p payload
-	if err := cbor.Unmarshal(enc, &p); err != nil {
-		return e, fmt.Errorf("%w: record payload: %w", ErrCorrupt, err)
+	e, err := decodePayload(enc, ver)
+	if err != nil {
+		return Entry{}, fmt.Errorf("%w: record payload: %w", ErrCorrupt, err)
 	}
 
-	if len(p.Prev) != HashSize {
-		return e, fmt.Errorf("%w: previous hash of %d bytes", ErrCorrupt, len(p.Prev))
-	}
-
-	e = Entry{
-		Record: Record{
-			Profile: p.Profile, Role: p.Role, Purpose: p.Purpose,
-			BodyHash: orNil(p.BodyHash), Summary: p.Summary,
-			IssueCounter: p.IssueCounter, KESPeriod: p.KESPeriod,
-			KESKeyHash: orNil(p.KESKeyHash), SummaryTruncated: p.Truncated,
-		},
-		Seq:       p.Seq,
-		Signature: bytes.Clone(slot[recSigOff:recSumOff]),
-	}
-	copy(e.Prev[:], p.Prev)
+	e.Signature = bytes.Clone(slot[recSigOff:recSumOff])
 
 	// only the canonical encoding of the fields is accepted, so the signed
 	// bytes are exactly what was decoded
-	if again, err := encMode.Marshal(e.payload()); err != nil || !bytes.Equal(again, enc) {
+	if again, err := e.encode(); err != nil || !bytes.Equal(again, enc) {
 		return Entry{}, fmt.Errorf("%w: non-canonical payload", ErrCorrupt)
 	}
 
-	if _, err := normalize(e.Record); err != nil || len(e.Summary) > MaxSummary {
+	if _, err := normalize(e.Record, ver); err != nil || len(e.Summary) > MaxSummary {
 		return Entry{}, fmt.Errorf("%w: invalid record content", ErrCorrupt)
 	}
 
@@ -282,7 +364,7 @@ func decodeRecord(slot []byte) (Entry, error) {
 
 // verifyEntry checks e's signature under pub.
 func verifyEntry(e Entry, pub ed25519.PublicKey) error {
-	enc, err := encMode.Marshal(e.payload())
+	enc, err := e.encode()
 	if err != nil {
 		return fmt.Errorf("signlog: encode entry: %w", err)
 	}
@@ -303,7 +385,7 @@ func headerDigest(signed []byte) []byte {
 }
 
 // formatHeader builds the signed header block for a card of n slots.
-func formatHeader(id Identity, n uint64) ([]byte, error) {
+func formatHeader(id Identity, n uint64, ver uint32) ([]byte, error) {
 	pub := id.Public()
 	if len(pub) != ed25519.PublicKeySize {
 		return nil, errors.New("signlog: invalid identity public key")
@@ -311,7 +393,7 @@ func formatHeader(id Identity, n uint64) ([]byte, error) {
 
 	out := make([]byte, BlockSize)
 	copy(out, headerMagic)
-	binary.BigEndian.PutUint32(out[hdrVersionOff:], FormatVersion)
+	binary.BigEndian.PutUint32(out[hdrVersionOff:], ver)
 	binary.BigEndian.PutUint32(out[hdrBlockOff:], BlockSize)
 	binary.BigEndian.PutUint32(out[hdrRecBlocksOf:], RecordBlocks)
 	binary.BigEndian.PutUint64(out[hdrEntriesOff:], n)
@@ -347,7 +429,7 @@ func parseHeader(b []byte, pub ed25519.PublicKey) (Header, error) {
 	}
 
 	h.Version = binary.BigEndian.Uint32(b[hdrVersionOff:])
-	if h.Version != FormatVersion {
+	if !versionOK(h.Version) {
 		return h, fmt.Errorf("%w: format version %d", ErrCorrupt, h.Version)
 	}
 

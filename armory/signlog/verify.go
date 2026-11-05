@@ -36,7 +36,7 @@ func scan(m Medium, h Header, allSigs, strict bool) (entries []Entry, torn bool,
 			return nil, false, fmt.Errorf("%w: read entry %d: %w", ErrMedium, seq, err)
 		}
 
-		e, derr := decodeRecord(buf)
+		e, derr := decodeRecord(buf, h.Version)
 		if errors.Is(derr, errBlankSlot) || errors.Is(derr, errTorn) {
 			torn = errors.Is(derr, errTorn)
 			end = seq

@@ -34,9 +34,11 @@ type SigningLog interface {
 	// Check confirms the medium and the head store still match the log,
 	// without writing.
 	Check() error
-	// LastOpCert is the issue counter and KES period of the profile's latest
-	// opcert-next entry, false when the log holds none.
-	LastOpCert(profile string) (issue, period uint64, ok bool)
+	// LastOpCert is the issue counter and KES period of the latest
+	// opcert-next entry for the profile and the cold key with hash cold,
+	// false when the log holds none. An entry that records no cold key counts
+	// for every cold key of its profile.
+	LastOpCert(profile string, cold []byte) (issue, period uint64, ok bool)
 }
 
 // MaxLogBlocks bounds the blocks one signing log read returns.
@@ -180,7 +182,9 @@ func (s *Service) lastOpCertRepeat(rec signlog.Record) bool {
 
 	return ok && e.Profile == rec.Profile && e.Role == rec.Role && e.Purpose == rec.Purpose &&
 		e.IssueCounter == rec.IssueCounter && e.KESPeriod == rec.KESPeriod &&
-		bytes.Equal(e.KESKeyHash, rec.KESKeyHash)
+		bytes.Equal(e.KESKeyHash, rec.KESKeyHash) &&
+		// an entry of a version 1 medium records no cold key
+		(len(e.ColdKeyHash) == 0 || bytes.Equal(e.ColdKeyHash, rec.ColdKeyHash))
 }
 
 // signLogRead serves a range of the log medium. Reads and appends share the

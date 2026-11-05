@@ -55,7 +55,8 @@ func card(t *testing.T, n int) (path, identity string, pub ed25519.PublicKey, w 
 			rec = signlog.Record{
 				Profile: "otg@preview", Role: "pool", Purpose: signlog.PurposeOpCertNext,
 				IssueCounter: 5, KESPeriod: 700, KESKeyHash: bytes.Repeat([]byte{0xab}, 32),
-				Summary: "chain 4 issue 5 period 700",
+				ColdKeyHash: bytes.Repeat([]byte{0xcd}, signlog.ColdHashSize),
+				Summary:     "chain 4 issue 5 period 700",
 			}
 		}
 

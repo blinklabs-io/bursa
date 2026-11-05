@@ -58,8 +58,17 @@ const (
 	RecordBlocks = 4
 	// RecordSize is the size of one entry record in bytes.
 	RecordSize = BlockSize * RecordBlocks
-	// FormatVersion is the on-medium format version.
-	FormatVersion = 1
+	// FormatVersion is the on-medium format version a new medium is
+	// formatted with. Version 2 adds the cold key hash to opcert-next
+	// records. A version 1 medium is still read, verified and appended to; its
+	// records keep the version 1 encoding, so its opcert entries carry no cold
+	// key hash.
+	FormatVersion = 2
+	// formatV1 is the first on-medium format version.
+	formatV1 = 1
+	// ColdHashSize is the size of the cold key hash, the blake2b-224 of the
+	// cold verification key (the pool ID).
+	ColdHashSize = 28
 	// DefaultMaxEntries bounds the record slots a freshly formatted medium
 	// gets, so a large card does not make every open scan gigabytes.
 	DefaultMaxEntries = 1 << 15
@@ -159,9 +168,10 @@ type Identity interface {
 }
 
 // Record is what the device knows when it signs. A tx-body record carries
-// BodyHash; an opcert-next record carries IssueCounter, KESPeriod and
-// KESKeyHash, the blake2b-256 of the KES verification key. Summary is the
-// parameter summary the policy computed.
+// BodyHash; an opcert-next record carries IssueCounter, KESPeriod,
+// KESKeyHash, the blake2b-256 of the KES verification key, and ColdKeyHash,
+// the blake2b-224 of the cold verification key (absent on a version 1
+// medium). Summary is the parameter summary the policy computed.
 type Record struct {
 	Profile      string
 	Role         string
@@ -171,6 +181,7 @@ type Record struct {
 	IssueCounter uint64
 	KESPeriod    uint64
 	KESKeyHash   []byte
+	ColdKeyHash  []byte
 	// SummaryTruncated is set when Summary was cut to MaxSummary bytes.
 	SummaryTruncated bool
 }
@@ -183,6 +194,8 @@ type Entry struct {
 	Signature []byte
 	// Hash chains the next entry to this one.
 	Hash [HashSize]byte
+	// ver is the format version the entry was read under; zero is current.
+	ver uint32
 }
 
 // Header identifies the device and the format.

@@ -64,9 +64,10 @@ func (l *fakeLog) Last() (signlog.Entry, bool) {
 	return signlog.Entry{Record: l.records[len(l.records)-1], Seq: uint64(len(l.records))}, true
 }
 
-func (l *fakeLog) LastOpCert(profile string) (issue, period uint64, ok bool) {
+func (l *fakeLog) LastOpCert(profile string, cold []byte) (issue, period uint64, ok bool) {
 	for i := len(l.records) - 1; i >= 0; i-- {
-		if r := l.records[i]; r.Profile == profile && r.Purpose == signlog.PurposeOpCertNext {
+		if r := l.records[i]; r.Profile == profile && r.Purpose == signlog.PurposeOpCertNext &&
+			(len(r.ColdKeyHash) == 0 || bytes.Equal(r.ColdKeyHash, cold)) {
 			return r.IssueCounter, r.KESPeriod, true
 		}
 	}
@@ -811,5 +812,62 @@ func TestOpCertNextBackdatedAfterProfileWriteFailure(t *testing.T) {
 	chip.failWrite = false
 	if r := issue(2, 1099); r.Error != errKESBackdated.Error() || len(r.Signature) != 0 {
 		t.Fatalf("backdated retry after a failed profile write: %+v", r)
+	}
+}
+
+// A profile name reprovisioned with another cold key does not inherit the
+// KES period the log holds for the old key; the same cold key keeps it, a
+// profile of another name does not share it, and an entry that records no
+// cold key (a version 1 medium) binds every cold key of its profile.
+func TestOpCertNextBackdatedFloorIsPerColdKey(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		profile string
+		cold    func(real []byte) []byte
+		want    string
+	}{
+		{"same name, same cold key", "otg@preview", func(real []byte) []byte { return real }, errKESBackdated.Error()},
+		{"same name, another cold key", "otg@preview", func([]byte) []byte { return bytes.Repeat([]byte{0x77}, 28) }, ""},
+		{"other profile, same cold key", "otg@other", func(real []byte) []byte { return real }, ""},
+		{"same name, entry without a cold key", "otg@preview", func([]byte) []byte { return nil }, errKESBackdated.Error()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, chip := newTestService(t)
+			provisionTestProfile(t, s)
+
+			cold, _ := chip.PublicKeyEd25519(testColdID)
+			realHash := keyHash(cold)
+
+			l := &fakeLog{chip: chip}
+			l.records = append(l.records, signlog.Record{
+				Profile: tc.profile, Role: "pool", Purpose: signlog.PurposeOpCertNext,
+				IssueCounter: 4, KESPeriod: 1100, KESKeyHash: bytes.Repeat([]byte{1}, 32),
+				ColdKeyHash: tc.cold(realHash[:]),
+			})
+
+			s.RequireSigningLog()
+			s.SetSigningLog(l, nil)
+
+			r := sign(t, s, SignRequest{
+				Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(1),
+				Payload: opCertPayload(bytes.Repeat([]byte{2}, 32), 3, 1000), Profile: "otg@preview",
+			})
+			if r.Error != tc.want {
+				t.Fatalf("error %q, want %q", r.Error, tc.want)
+			}
+
+			if tc.want == "" {
+				got := l.records[len(l.records)-1]
+				if !bytes.Equal(got.ColdKeyHash, realHash[:]) {
+					t.Fatalf("logged cold hash %x, want %x", got.ColdKeyHash, realHash)
+				}
+			}
+		})
 	}
 }
