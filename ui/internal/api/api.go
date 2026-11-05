@@ -1613,9 +1613,10 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 
 	// Import transaction: paste a full tx CBOR built elsewhere to inspect it
 	// (decode-tx), add this wallet's witness(es) (cosign-tx), and broadcast the
-	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx —
-	// pure crypto over the keystore/tx bytes, no node needed; submit-tx needs a
-	// synced node like submit-signed. Each handler classifies the pasted tx via
+	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx; they
+	// need no synced tip, but cosign-tx on either path refuses a transaction
+	// whose inputs the chain cannot resolve. submit-tx needs a synced node like
+	// submit-signed. Each handler classifies the pasted tx via
 	// ms.InspectTx and routes native-script multisig txs to the multisig
 	// service, ordinary vkey txs straight to the spender (see importDecode/
 	// importCosign/importSubmit below).

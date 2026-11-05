@@ -87,6 +87,16 @@ func TestBuiltTransactionsPassSpendEffectGate(t *testing.T) {
 				if len(summary.Inputs) == 0 {
 					t.Errorf("%s: summary has no inputs", label)
 				}
+				var wantTTL, wantStart uint64
+				if tc.invalidAfter != nil {
+					wantTTL = *tc.invalidAfter
+				}
+				if tc.invalidBefore != nil {
+					wantStart = *tc.invalidBefore
+				}
+				if summary.TTL != wantTTL || summary.ValidityStart != wantStart {
+					t.Errorf("%s: validity interval = [%d, %d), want [%d, %d)", label, summary.ValidityStart, summary.TTL, wantStart, wantTTL)
+				}
 			}
 		})
 	}

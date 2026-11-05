@@ -15,6 +15,7 @@ package api
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,9 +64,20 @@ var multisigEffectRoutes = []struct {
 
 func TestMultisigRoutes_RejectIncompleteEffects(t *testing.T) {
 	t.Parallel()
+	resolvedInput := []spend.TxSummaryInput{{TxHash: strings.Repeat("a", 64), Index: 1, Resolved: true}}
+	totalCollateral := "5000000"
 	summaries := map[string]spend.TxSummary{
 		"unresolved input": {
 			Inputs: []spend.TxSummaryInput{{TxHash: strings.Repeat("a", 64), Index: 1}},
+		},
+		"unresolved collateral": {
+			Inputs:           resolvedInput,
+			CollateralInputs: []spend.TxSummaryInput{{TxHash: strings.Repeat("b", 64), Index: 2}},
+			TotalCollateral:  &totalCollateral,
+		},
+		"collateral without total": {
+			Inputs:           resolvedInput,
+			CollateralInputs: []spend.TxSummaryInput{{TxHash: strings.Repeat("b", 64), Index: 2, Resolved: true}},
 		},
 		"unsupported effect": {
 			UnsupportedEffects: []string{"governance proposal details"},
@@ -118,6 +130,29 @@ func TestMultisigRoutes_CompleteEffectsStillProceed(t *testing.T) {
 			}
 			if !route.reached(ms) {
 				t.Errorf("%s did not reach the multisig service", route.name)
+			}
+		})
+	}
+}
+
+func TestMultisigRoutes_RejectUndecodableTx(t *testing.T) {
+	t.Parallel()
+	for _, route := range multisigEffectRoutes {
+		t.Run(route.name, func(t *testing.T) {
+			t.Parallel()
+			ms := &fakeMultiSig{
+				inspect: multisig.TxInfo{IsMultiSig: true, Threshold: 1},
+			}
+			sp := &fakeSpender{decodeErr: fmt.Errorf("%w: truncated body", spend.ErrInvalidTx)}
+			st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
+			h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, localReq(http.MethodPost, route.path, bytes.NewBufferString(route.body)))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s status = %d, want 400, body=%s", route.name, rec.Code, rec.Body.String())
+			}
+			if route.reached(ms) {
+				t.Errorf("%s reached the multisig service despite a decode failure", route.name)
 			}
 		})
 	}
