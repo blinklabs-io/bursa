@@ -57,3 +57,13 @@ func TestNextOpCert(t *testing.T) {
 		}
 	}
 }
+
+// TestOpCertRefusalText pins the refusal text: the host's attested backend
+// (internal/signer/backend/attested.go) matches it to report a counter
+// conflict instead of a backend failure.
+func TestOpCertRefusalText(t *testing.T) {
+	if errBelowFloor.Error() != "chain counter below the recorded on-chain counter" ||
+		errAboveIssued.Error() != "chain counter above the last counter the device issued" {
+		t.Fatal("opcert-next refusal text changed; update the host's attested backend")
+	}
+}
