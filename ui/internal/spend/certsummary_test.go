@@ -368,3 +368,27 @@ func TestDecodeTx_PoolRelayIPv6UsesLedgerWordOrder(t *testing.T) {
 		t.Fatalf("summary does not show the ledger IPv6 address: %s", raw)
 	}
 }
+
+func TestPoolRegistrationSummaryShowsLeiosKey(t *testing.T) {
+	t.Parallel()
+	cert := poolRegistrationFixture([]lcommon.PoolRelay{}, nil)
+	without, err := json.Marshal(certificateSummary(cert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(without), "leios_public_key") {
+		t.Errorf("summary without a Leios key must omit it: %s", without)
+	}
+	cert.LeiosKey = &lcommon.LeiosKey{
+		PublicKey:       bytesRepeat(0xbb, lcommon.LeiosBlsPublicKeySize),
+		PossessionProof: bytesRepeat(0xcc, lcommon.LeiosBlsPossessionProofSize),
+	}
+	with, err := json.Marshal(certificateSummary(cert))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"leios_public_key":"` + strings.Repeat("bb", lcommon.LeiosBlsPublicKeySize) + `"`
+	if !strings.Contains(string(with), want) {
+		t.Errorf("summary missing %s: %s", want, with)
+	}
+}

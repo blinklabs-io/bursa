@@ -263,6 +263,7 @@ test("renders imported certificate details", async () => {
           margin_numerator: "3",
           margin_denominator: "100",
           vrf_key_hash: "77".repeat(32),
+          leios_public_key: "bb".repeat(96),
           relays: [
             { type: "single_host_addr", ipv4: "192.0.2.7", ipv6: "2001:db8::1", port: 3001 },
             { type: "single_host_addr", ipv6: "2001:db8::2" },
@@ -313,6 +314,7 @@ test("renders imported certificate details", async () => {
   expect(poolReg).toHaveTextContent("cost 340 ADA");
   expect(poolReg).toHaveTextContent("margin 3/100");
   expect(poolReg).toHaveTextContent(`VRF key ${"77".repeat(32)}`);
+  expect(poolReg).toHaveTextContent(`Leios key ${"bb".repeat(96)}`);
   expect(poolReg).toHaveTextContent("single host addr 192.0.2.7:3001 / [2001:db8::1]:3001");
   expect(poolReg).toHaveTextContent("single host addr 2001:db8::2,");
   expect(poolReg).toHaveTextContent("single host name relay.example.test:3001");
