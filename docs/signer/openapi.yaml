@@ -336,9 +336,11 @@ components:
             each under a distinct profile. It routes the request and never
             authorizes it; callers stay authorized by key hash. With no
             profile, a key held by one backend is served by it, and a key held
-            by several is refused with 400. With a profile, only the backend
-            holding the key under exactly that profile serves the request; a
-            holder with no profile or another profile does not match (404).
+            by several is refused with 400. With a profile, a profiled holder
+            serves the request only under exactly that profile; a holder with
+            another profile does not match (404). A key held by an unprofiled
+            backend is served by it whatever the profile, so one tx can name
+            the profile of its armory signer and still reach other signers.
             Anti-double-sign records of a profiled backend are kept per
             profile.
         kes_vkey:

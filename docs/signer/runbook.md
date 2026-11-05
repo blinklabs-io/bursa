@@ -304,9 +304,12 @@ is informational.
 
 A sign request names the profile in `profile`; `GET /v1/keys/<hash>` takes it as
 the `profile` query parameter. Without it, a key held by one backend is served
-as before, and a key held by several is refused with HTTP 400. A profile that
-no holder of the key has is refused with HTTP 404. The profile only routes: the
-caller is authorized by key hash.
+as before, and a key held by several is refused with HTTP 400. A key held by
+profiled backends is served only under the named profile; a profile none of
+them has is refused with HTTP 404. A key held by an unprofiled backend is not
+network scoped and is served whatever the profile, so one tx can name the
+profile for its armory signer and still reach its other signers. The profile
+only routes: the caller is authorized by key hash.
 
 Records of a key served by a profiled backend carry the profile:
 `<hash>|<scope>|<profile>` for the opcert counter, floor and issued scopes and

@@ -242,3 +242,15 @@ func TestProfiledRouting_Coordinator(t *testing.T) {
 		}
 	})
 }
+
+// A key held only by an unprofiled backend is not network scoped, so a tx
+// that names a profile for its armory signer still gets that key's witness.
+func TestProfiledRouting_UnprofiledSignerIgnoresProfile(t *testing.T) {
+	t.Parallel()
+	k := newFakeKey(t)
+	c, _ := newProfiledCoordinator(t, k, profiledFakeBackend{"plain", "", k})
+	res, perr, err := c.SignTx(WithProfile(context.Background(), profPreview), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
+		t.Fatalf("res=%+v perr=%+v err=%v", res, perr, err)
+	}
+}

@@ -172,11 +172,20 @@ func TestResolver_ProfileRouting(t *testing.T) {
 			}
 		}
 	})
+	t.Run("profile with an unprofiled holder only", func(t *testing.T) {
+		t.Parallel()
+		// a key no profiled backend holds is not network scoped, so a
+		// request profile does not apply to it: a tx naming a profile for its
+		// armory signer still reaches its unprofiled signers
+		ref, err := NewResolver(plain).Resolve(ctx, h, "otg@preprod")
+		if err != nil || ref.Backend() != "plain-dev" {
+			t.Fatalf("got %v, %v", ref, err)
+		}
+	})
 	t.Run("profile with no matching holder", func(t *testing.T) {
 		t.Parallel()
 		for name, r := range map[string]*Resolver{
 			"other profile only": NewResolver(preview),
-			"unprofiled only":    NewResolver(plain),
 			"unknown profile":    NewResolver(preview, musashi),
 		} {
 			if _, err := r.Resolve(ctx, h, "otg@preprod"); !errors.Is(err, ErrKeyNotFound) {

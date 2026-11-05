@@ -41,15 +41,18 @@ func profileOf(b Backend) string {
 // Resolve returns the KeyRef for hash from the backend selected by profile.
 //
 // With no profile, the single backend holding hash serves it; if several hold
-// it, Resolve returns ErrProfileRequired. With a profile, only the backend
-// holding hash under exactly that profile serves it; a holder with no profile
-// or another profile does not match, and the result is ErrKeyNotFound. The
-// profile selects a route and never authorizes.
+// it, Resolve returns ErrProfileRequired. With a profile, a profiled holder
+// serves it only under exactly that profile; a holder with another profile
+// does not match, and the result is ErrKeyNotFound. A hash held by an
+// unprofiled backend is not network scoped (CheckAmbiguous keeps it out of
+// every profiled backend), so that backend serves it whatever the profile, and
+// a tx naming a profile for one signer still reaches its unprofiled signers.
+// The profile selects a route and never authorizes.
 func (r *Resolver) Resolve(ctx context.Context, hash KeyHash, profile string) (KeyRef, error) {
 	var found KeyRef
 	matches := 0
 	for _, b := range r.backends {
-		if profile != "" && profileOf(b) != profile {
+		if bp := profileOf(b); profile != "" && bp != "" && bp != profile {
 			continue
 		}
 		ref, err := b.GetKey(ctx, hash)
