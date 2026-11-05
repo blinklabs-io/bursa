@@ -199,7 +199,9 @@ Configure:
 `signer.keys` attaches a policy to each key hash (deny-by-default: a key with no
 entry can sign nothing). `allowed_requests` lists the permitted request kinds
 (`tx`, `cip8`, `opcert`); `tx_policy` / `cip8_policy` add typed constraints.
-Unknown policy fields fail at boot.
+`backend`, when set, names the configured backend (`backends[].name`) that
+must hold the key; a request is denied when the key resolves from any other
+backend. Omit it to accept any backend. Unknown policy fields fail at boot.
 
 ### External transaction-policy hook
 

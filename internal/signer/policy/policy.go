@@ -121,9 +121,17 @@ type KeyPolicy struct {
 }
 
 // backendDecision denies when the policy pins a custody backend and the
-// resolved key is held by a different one.
+// resolved key is held by a different one. A pinned policy evaluated without
+// WithBackend is denied: the pin cannot be checked, and a caller that forgot
+// the option must not bypass it.
 func (p KeyPolicy) backendDecision(cfg evalConfig) Decision {
-	if p.Backend != "" && cfg.backendSet && cfg.backend != p.Backend {
+	if p.Backend == "" {
+		return allow()
+	}
+	if !cfg.backendSet {
+		return deny("key %s policy requires backend %q, resolved backend unknown", p.Hash, p.Backend)
+	}
+	if cfg.backend != p.Backend {
 		return deny("key %s is held in backend %q, policy requires backend %q", p.Hash, cfg.backend, p.Backend)
 	}
 	return allow()
@@ -232,15 +240,15 @@ type evalConfig struct {
 	backendSet bool
 }
 
-// EvalOption configures an Evaluate call. Absent options preserve the
-// original behavior (no caller override, no per-kind gating, no custody
-// backend check).
+// EvalOption configures an Evaluate call. Absent WithCaller and WithOps
+// preserve the original behavior (no caller override, no per-kind gating).
+// Absent WithBackend denies any key whose policy pins a custody backend.
 type EvalOption func(*evalConfig)
 
 // WithBackend supplies the name of the backend that custodies the resolved key.
 // A key policy that names a backend denies every request whose resolved key is
 // held elsewhere. Callers that resolve the key must always pass it: omitting
-// the option skips the check.
+// the option denies every key whose policy pins a backend.
 func WithBackend(name string) EvalOption {
 	return func(c *evalConfig) {
 		c.backend = name

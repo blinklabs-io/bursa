@@ -576,7 +576,8 @@ func TestEngine_BackendPin(t *testing.T) {
 		{"mismatch", "vault-prod", []EvalOption{WithBackend("software")}, false},
 		{"mismatch against empty resolved name", "vault-prod", []EvalOption{WithBackend("")}, false},
 		{"empty pin accepts any backend", "", []EvalOption{WithBackend("software")}, true},
-		{"option omitted skips the check", "vault-prod", nil, true},
+		{"option omitted denies a pinned key", "vault-prod", nil, false},
+		{"option omitted with no pin allows", "", nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
