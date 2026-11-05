@@ -731,6 +731,14 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	kesHash := blake2b.Sum256(payload[:32])
 	period := binary.BigEndian.Uint64(payload[40:])
 
+	// a reissue of the last issued counter keeps at least its logged KES
+	// period
+	if s.log != nil && p.LastIssued == issue {
+		if logged, loggedPeriod, ok := s.log.LastOpCert(p.Name); ok && logged == issue && period < loggedPeriod {
+			return nil, nil, errKESBackdated
+		}
+	}
+
 	rec := signlog.Record{
 		Profile: p.Name, Role: "pool", Purpose: signlog.PurposeOpCertNext,
 		Summary:      fmt.Sprintf("chain %d issue %d period %d", chain, issue, period),

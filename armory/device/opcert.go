@@ -23,6 +23,12 @@ var errBelowFloor = errors.New("chain counter below the recorded on-chain counte
 
 var errAboveIssued = errors.New("chain counter above the last counter the device issued")
 
+// errKESBackdated refuses a reissue of the last issued counter at a KES period
+// below the one the signing log holds for it. Both opcerts stay valid until
+// one forges, so a backdated reissue would only extend an older KES key's
+// window.
+var errKESBackdated = errors.New("KES period below the logged opcert at this counter")
+
 // nextOpCert picks the opcert issue number from the on-chain counter chain:
 // the last counter seen in a block the pool forged, 0 if none. A header's
 // counter must be at least that and at most one more, so the next opcert is

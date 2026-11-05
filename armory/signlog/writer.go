@@ -33,6 +33,38 @@ type Writer struct {
 	last *Entry
 	// pending is a head that reached the medium but not yet the head store
 	pending *Head
+	// opcerts is each profile's latest opcert-next entry on the medium
+	opcerts map[string]opCertMark
+}
+
+// opCertMark is the issue counter and KES period of an opcert-next entry.
+type opCertMark struct {
+	issue, period uint64
+}
+
+// noteOpCert records e as its profile's latest opcert when it is one.
+func (w *Writer) noteOpCert(e Entry) {
+	if e.Purpose != PurposeOpCertNext {
+		return
+	}
+
+	if w.opcerts == nil {
+		w.opcerts = make(map[string]opCertMark)
+	}
+
+	w.opcerts[e.Profile] = opCertMark{issue: e.IssueCounter, period: e.KESPeriod}
+}
+
+// LastOpCert returns the issue counter and KES period of the latest
+// opcert-next entry on the medium for profile, false when it has none. An
+// entry whose head update is still pending counts: it reached the medium.
+func (w *Writer) LastOpCert(profile string) (issue, period uint64, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	m, ok := w.opcerts[profile]
+
+	return m.issue, m.period, ok
 }
 
 // Open checks the medium against the head store and returns a writer.
@@ -91,6 +123,10 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 
 	w.hdr = hdr
 	last := headOf(hdr, entries)
+
+	for _, e := range entries {
+		w.noteOpCert(e)
+	}
 
 	if n := len(entries); n > 0 {
 		e := cloneEntry(entries[n-1])
@@ -298,6 +334,7 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 	next := Head{Seq: e.Seq, Hash: e.Hash}
 	last := cloneEntry(e)
 	w.head, w.pending, w.last = next, &next, &last
+	w.noteOpCert(e)
 
 	if err = w.heads.Store(next); err != nil {
 		return Entry{}, fmt.Errorf("signlog: store head: %w", err)

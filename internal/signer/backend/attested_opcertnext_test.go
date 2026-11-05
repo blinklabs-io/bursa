@@ -197,9 +197,11 @@ func TestPurposeOpCertNextValidate(t *testing.T) {
 // or the same text for another purpose, stays untyped.
 func TestAttestedKeySignOpCertNextCounterConflict(t *testing.T) {
 	t.Parallel()
-	// pinned to armory/device/opcert.go errBelowFloor and errAboveIssued
+	// pinned to armory/device/opcert.go errBelowFloor, errAboveIssued and
+	// errKESBackdated
 	if custodyBelowFloor != "chain counter below the recorded on-chain counter" ||
-		custodyAboveIssued != "chain counter above the last counter the device issued" {
+		custodyAboveIssued != "chain counter above the last counter the device issued" ||
+		custodyKESBackdated != "KES period below the logged opcert at this counter" {
 		t.Fatal("device counter refusal strings changed")
 	}
 	kes := bytes.Repeat([]byte{7}, 32)
@@ -209,6 +211,7 @@ func TestAttestedKeySignOpCertNextCounterConflict(t *testing.T) {
 	}{
 		{custodyBelowFloor, true},
 		{custodyAboveIssued, true},
+		{custodyKESBackdated, true},
 		{"opcert-next requires the pool key", false},
 		{custodyBelowFloor + " ", false},
 	} {

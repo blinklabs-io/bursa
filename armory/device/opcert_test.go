@@ -63,7 +63,8 @@ func TestNextOpCert(t *testing.T) {
 // conflict instead of a backend failure.
 func TestOpCertRefusalText(t *testing.T) {
 	if errBelowFloor.Error() != "chain counter below the recorded on-chain counter" ||
-		errAboveIssued.Error() != "chain counter above the last counter the device issued" {
+		errAboveIssued.Error() != "chain counter above the last counter the device issued" ||
+		errKESBackdated.Error() != "KES period below the logged opcert at this counter" {
 		t.Fatal("opcert-next refusal text changed; update the host's attested backend")
 	}
 }

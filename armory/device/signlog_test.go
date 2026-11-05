@@ -64,6 +64,16 @@ func (l *fakeLog) Last() (signlog.Entry, bool) {
 	return signlog.Entry{Record: l.records[len(l.records)-1], Seq: uint64(len(l.records))}, true
 }
 
+func (l *fakeLog) LastOpCert(profile string) (issue, period uint64, ok bool) {
+	for i := len(l.records) - 1; i >= 0; i-- {
+		if r := l.records[i]; r.Profile == profile && r.Purpose == signlog.PurposeOpCertNext {
+			return r.IssueCounter, r.KESPeriod, true
+		}
+	}
+
+	return 0, 0, false
+}
+
 // loggedService is a provisioned service with a fake signing log installed.
 func loggedService(t *testing.T) (*Service, *fakeChip, *fakeLog, ProvisionResponse) {
 	t.Helper()
@@ -683,5 +693,82 @@ func TestOpCertNextRepeatOnFullLog(t *testing.T) {
 
 	if r := sign(t, s, req(3, 1101)); !strings.Contains(r.Error, "full") || r.Signature != nil {
 		t.Fatalf("new opcert on a full log: %+v", r)
+	}
+}
+
+// A reissue of the last issued counter may not take a KES period below the
+// one the log holds for it; a new counter, or an equal or later period, may.
+func TestOpCertNextRefusesBackdatedReissue(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	id := signlog.NewKeySigner(priv)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+	hs := signlog.NewMemHeadStore(signlog.Head{})
+
+	w, err := signlog.Open(m, hs, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kesA := bytes.Repeat([]byte{0x4b}, 32)
+	kesB := bytes.Repeat([]byte{0x4c}, 32)
+	n := byte(0)
+
+	issue := func(svc *Service, kes []byte, chain, period uint64) SignResponse {
+		t.Helper()
+
+		n++
+
+		return sign(t, svc, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(kes, chain, period), Profile: "otg@preview",
+		})
+	}
+
+	if r := issue(s, kesA, 3, 1100); r.Error != "" {
+		t.Fatalf("first: %+v", r)
+	}
+
+	if r := issue(s, kesB, 3, 1099); r.Error != errKESBackdated.Error() || len(r.Signature) != 0 {
+		t.Fatalf("backdated reissue: %+v", r)
+	}
+
+	if r := issue(s, kesB, 3, 1100); r.Error != "" {
+		t.Fatalf("reissue at the same period: %+v", r)
+	}
+
+	// a restart rebuilds the bound from the log
+	w2, err := signlog.Open(m, hs, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := New(&sync.Mutex{}, t.Logf)
+	if err = s2.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	s2.RequireSigningLog()
+	s2.SetSigningLog(w2, m)
+
+	if r := issue(s2, kesA, 3, 1050); r.Error != errKESBackdated.Error() {
+		t.Fatalf("backdated reissue after restart: %+v", r)
+	}
+
+	// the next counter is not a reissue
+	if r := issue(s2, kesA, 4, 1050); r.Error != "" || r.IssueCounter == nil || *r.IssueCounter != 5 {
+		t.Fatalf("next counter: %+v", r)
+	}
+
+	if got := w2.Head().Seq; got != 3 {
+		t.Fatalf("head at entry %d, want 3: a refusal is not logged", got)
 	}
 }

@@ -34,6 +34,9 @@ type SigningLog interface {
 	// Check confirms the medium and the head store still match the log,
 	// without writing.
 	Check() error
+	// LastOpCert is the issue counter and KES period of the profile's latest
+	// opcert-next entry, false when the log holds none.
+	LastOpCert(profile string) (issue, period uint64, ok bool)
 }
 
 // MaxLogBlocks bounds the blocks one signing log read returns.

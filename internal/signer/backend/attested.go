@@ -95,16 +95,19 @@ var (
 	// verify under the key admitted by the attestation.
 	ErrInvalidSignature = errors.New("attested signature does not verify")
 	// ErrCustodyCounterConflict is returned when custody refuses an opcert-next
-	// request because the chain counter is outside the bounds it recorded.
+	// request because the chain counter is outside the bounds it recorded, or
+	// a reissue would backdate the KES period.
 	ErrCustodyCounterConflict = errors.New("custody refused the opcert chain counter")
 )
 
 // The armory device's opcert-next refusals for a chain counter below its
-// recorded floor or above its last issued counter (armory/device/opcert.go).
+// recorded floor or above its last issued counter, and for a reissue at a KES
+// period below the logged one (armory/device/opcert.go).
 // A refusal carries only this text, so it is matched exactly.
 const (
-	custodyBelowFloor  = "chain counter below the recorded on-chain counter"
-	custodyAboveIssued = "chain counter above the last counter the device issued"
+	custodyBelowFloor   = "chain counter below the recorded on-chain counter"
+	custodyAboveIssued  = "chain counter above the last counter the device issued"
+	custodyKESBackdated = "KES period below the logged opcert at this counter"
 )
 
 // Purpose binds a signature request to the Cardano operation it authorizes.
@@ -557,7 +560,7 @@ func (k *attestedKey) exchangeAt(ctx context.Context, version string, purpose Pu
 		return AttestedResponse{}, false, fmt.Errorf("%w: response version %q, requested %q", ErrAttestedProtocol, resp.Version, version)
 	}
 	if resp.Error != "" {
-		if purpose == PurposeOpCertNext && (resp.Error == custodyBelowFloor || resp.Error == custodyAboveIssued) {
+		if purpose == PurposeOpCertNext && (resp.Error == custodyBelowFloor || resp.Error == custodyAboveIssued || resp.Error == custodyKESBackdated) {
 			return AttestedResponse{}, false, fmt.Errorf("%w: %s", ErrCustodyCounterConflict, resp.Error)
 		}
 		return AttestedResponse{}, false, fmt.Errorf("attested sign: enclave refused: %s", resp.Error)

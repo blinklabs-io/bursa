@@ -1405,3 +1405,47 @@ func TestWriterLastIsACopy(t *testing.T) {
 	check(r, "after reopen")
 	check(r, "after changing a returned entry on reopen")
 }
+
+func TestLastOpCert(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+
+	if _, _, ok := w.LastOpCert("otg@preview"); ok {
+		t.Fatal("empty log reports an opcert")
+	}
+
+	at := func(profile string, issue, period uint64) Record {
+		r := opcertRecord(issue)
+		r.Profile, r.KESPeriod = profile, period
+
+		return r
+	}
+
+	for _, r := range []Record{at("otg@preview", 4, 100), bodyRecord(1), at("otg@musashi", 2, 50), at("otg@preview", 4, 120)} {
+		if _, err := w.Append(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	check := func(w *Writer) {
+		t.Helper()
+
+		if issue, period, ok := w.LastOpCert("otg@preview"); !ok || issue != 4 || period != 120 {
+			t.Fatalf("otg@preview: issue %d period %d ok %v, want 4 120", issue, period, ok)
+		}
+
+		if issue, period, ok := w.LastOpCert("otg@musashi"); !ok || issue != 2 || period != 50 {
+			t.Fatalf("otg@musashi: issue %d period %d ok %v, want 2 50", issue, period, ok)
+		}
+
+		if _, _, ok := w.LastOpCert("otg@preprod"); ok {
+			t.Fatal("a profile with no opcert reports one")
+		}
+	}
+
+	check(w)
+	// reopening rebuilds the index from the medium
+	check(f.open(t))
+}
