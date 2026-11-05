@@ -28,6 +28,8 @@ import (
 
 var testHostKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x48}, 32))
 
+var testHostKey2 = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x49}, 32))
+
 func hostPub(k ed25519.PrivateKey) []byte { return []byte(k.Public().(ed25519.PublicKey)) }
 
 func registerHostKey(t *testing.T, s *Service, pub []byte) {
@@ -365,38 +367,90 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 	}
 }
 
-// TestRevokeLastHostKeyDeletesList checks revoking the last host key frees
-// the key list object and returns to serving unauthenticated requests.
-func TestRevokeLastHostKeyDeletesList(t *testing.T) {
+// TestRevokeLastHostKeyRefused checks the last host key cannot be revoked:
+// an emptied list reads as the bootstrap state, which accepts unsigned
+// provisioning and key enrollment. Only a device wipe returns to it.
+func TestRevokeLastHostKeyRefused(t *testing.T) {
+	t.Parallel()
+
 	s, chip := newHostAuthService(t)
 
-	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey); code != http.StatusOK {
-		t.Fatalf("revoke: %d %s", code, body)
+	code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey)
+	if code == http.StatusOK || !strings.Contains(string(body), errLastHostKey.Error()) {
+		t.Errorf("revoking the last host key: %d %s", code, body)
 	}
 
-	if _, ok := chip.bins[hostKeysID]; ok {
-		t.Fatal("empty host key list left on the chip")
+	if _, ok := chip.bins[hostKeysID]; !ok {
+		t.Error("host key list deleted by a refused revoke")
 	}
 
-	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error != "" {
-		t.Fatalf("unauthenticated request refused with no host key left: %+v", r)
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
+		t.Fatal("unauthenticated sign accepted after revoking the last host key")
 	}
 
+	if code, _ := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}); code == http.StatusOK {
+		t.Fatal("unsigned host key enrolled after revoking the last host key")
+	}
+
+	if code, _ := post(t, s, "/provision/floor", struct{}{}); code == http.StatusOK {
+		t.Fatal("unsigned provisioning accepted after revoking the last host key")
+	}
+
+	// a restart reads the same list
 	s2 := New(&sync.Mutex{}, t.Logf)
 	if err := s2.SetChip(chip); err != nil {
 		t.Fatal(err)
 	}
 
-	if len(s2.hostKeys) != 0 || s2.hostKeysBad {
+	if len(s2.hostKeys) != 1 || s2.hostKeysBad {
 		t.Fatalf("reloaded keys %d bad %v", len(s2.hostKeys), s2.hostKeysBad)
 	}
 }
 
-func TestRevokeLastHostKeyDeleteFailureRefusesSigning(t *testing.T) {
+// TestRevokeNonLastHostKey checks a key still revokes while another remains,
+// and that a device wipe, not a revoke, returns to the bootstrap state.
+func TestRevokeNonLastHostKey(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newHostAuthService(t)
+
+	code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey)
+	if code != http.StatusOK {
+		t.Fatalf("add second key: %d %s", code, body)
+	}
+
+	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey2); code != http.StatusOK {
+		t.Fatalf("revoke with another key left: %d %s", code, body)
+	}
+
+	if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey2); code == http.StatusOK {
+		t.Fatal("last key revoked")
+	}
+
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
+		t.Fatal("unauthenticated sign accepted")
+	}
+
+	if code, body := rawPost(s.WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`)); code != http.StatusOK {
+		t.Fatalf("device wipe: %d %s", code, body)
+	}
+
+	if _, ok := chip.bins[hostKeysID]; ok {
+		t.Fatal("wipe left the host key list")
+	}
+
+	registerHostKey(t, s, hostPub(testHostKey))
+}
+
+// TestWriteHostKeysEmptyDeleteFailureRefusesSigning checks a failed delete of
+// an emptied list leaves the stored list unknown.
+func TestWriteHostKeysEmptyDeleteFailureRefusesSigning(t *testing.T) {
+	t.Parallel()
+
 	s, chip := newHostAuthService(t)
 	chip.failDelete = true
 
-	if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey); code == http.StatusOK {
+	if _, err := s.writeHostKeys(nil); err == nil {
 		t.Fatal("failed delete reported success")
 	}
 

@@ -116,9 +116,14 @@ func requestFor(t *testing.T, s *Service, route string) any {
 	case RouteProvisionHostKey:
 		return HostKeyRequest{PublicKey: hostPub(scopeKey(0x70))}
 	case RouteProvisionHostRevoke:
-		// a registered key, so an unsigned request is refused for its
-		// missing signature and not for an unknown key
-		return HostKeyRequest{PublicKey: hostPub(testHostKey)}
+		// a registered key other than the last, so an unsigned request is
+		// refused for its missing signature and not for an unknown key
+		extra := HostKeyRequest{PublicKey: hostPub(scopeKey(0x71))}
+		if code, b := postAs(t, h, RouteProvisionHostKey, extra, testHostKey); code != http.StatusOK {
+			t.Fatalf("second host key: %d %s", code, b)
+		}
+
+		return extra
 	case RouteWipeProfile:
 		return WipeProfileRequest{IdentityPublicKey: id, Profile: "otg@preview"}
 	case RouteWipeSignLog:

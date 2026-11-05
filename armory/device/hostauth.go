@@ -83,6 +83,9 @@ var (
 	errHostKeyUnknown  = errors.New("host key not registered")
 	errHostKeysBad     = errors.New("host key list unreadable; wipe the device to reset it")
 	errHostAuthMissing = errors.New("signing requires host authentication")
+	// errLastHostKey refuses a revoke that would empty the key list: an
+	// empty list is the bootstrap state, which accepts unsigned requests
+	errLastHostKey = errors.New("the last host key may not be revoked; wipe the device to return to the bootstrap state")
 )
 
 // RequireHostAuth refuses every signing request that is not authenticated
@@ -483,7 +486,9 @@ func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 }
 
 // revokeHostKey removes a registered host key this build trusts; keys of
-// other networks and chains are not visible to it.
+// other networks and chains are not visible to it. The last key of the device
+// stays: an empty list is the bootstrap state, so only a device wipe empties
+// it.
 func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	if s.multi() {
 		return s.revokeHostKeyMulti(req)
@@ -503,6 +508,10 @@ func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 
 	if !found {
 		return HostKeyResponse{}, errHostKeyUnknown
+	}
+
+	if len(entries) == 0 {
+		return HostKeyResponse{}, errLastHostKey
 	}
 
 	return s.writeHostKeys(entries)

@@ -41,7 +41,8 @@ no unfiltered `/sign`. The single-scope images build as before.
   scope has no key.
 - `/provision/identity`, `/wipe/signlog`, the signing log read, listing the
   keys of other scopes and revoking one need a key of a mainnet scope. A key
-  revokes keys of its own scope, its last one included; a mainnet key does
+  revokes keys of its own scope, its last one included unless it is the
+  device's last key, which only a device wipe removes; a mainnet key does
   not revoke the last key of another scope.
 - A cold key, or an imported owner key, that belongs to a profile of another
   scope is refused; two slots of one scope may hold the same key.
@@ -65,9 +66,10 @@ no unfiltered `/sign`. The single-scope images build as before.
   record: its `/wipe/device` leaves them on the chip, and it imports into an
   object another scope owns. Wipe with this image's wipe image first.
 - A device that ran a testnet image keeps its profiles and host key. A
-  testnet key does not act device-wide on the multi image: with the
-  provisioning image, revoke the testnet keys with a testnet key, register a
-  mainnet key unsigned, and add the testnet key again with it.
+  testnet key does not act device-wide on the multi image and the device's
+  last key cannot be revoked, so adding mainnet scopes takes a device wipe:
+  wipe it, register a mainnet key unsigned with the provisioning image, and
+  add the testnet key again with it.
 
 `./hab_makefile_test.sh` dry-runs
 the HAB targets below, and runs the signing step against a stub `habtool`; it
