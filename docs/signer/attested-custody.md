@@ -531,9 +531,9 @@ are unchanged. `TESTNET=1` is refused with it.
   registered by an image that did not scope host keys is a testnet key. A
   new testnet profile may not take a name ending `@cardano-mainnet` or
   `@prime-mainnet`. Every profile request and every device-wide request
-  needs a host key, testnet profiles included. The exceptions are the first
-  key of a scope, `/v1/challenge`, and the wipe image's `/wipe/device` and
-  `/wipe/objects`.
+  needs a host key, testnet profiles included. The exceptions are the
+  device's first host key, `/v1/challenge`, and the wipe image's
+  `/wipe/device` and `/wipe/objects`.
 - First keys. Only the provisioning image (`PROVISION=1`) accepts an
   unsigned `POST /provision/host-key`, and only while the device holds no
   host key at all, for a `scope` (`testnet`, `cardano-mainnet` or
@@ -545,7 +545,9 @@ are unchanged. `TESTNET=1` is refused with it.
   signed request; the key that signs it is of that scope, or, while the
   scope has no key, of a mainnet scope. The list keeps its four slots and its stored format; a
   scoped entry already holds the network id and a tag of the chain label.
-  A key is registered for one scope only.
+  This image registers a key for one scope only and refuses a key another
+  scope already holds. A key that an older image registered for several
+  scopes keeps every one of them and acts under each.
 - Device-wide requests. `/provision/identity`, `/wipe/signlog`, the signing
   log read and listing the keys of other scopes need a key of a mainnet scope
   while the image serves one. A key revokes keys of its own scope; revoking
