@@ -169,6 +169,10 @@ func TestPostgres_RaiseFloor(t *testing.T) {
 	}
 }
 
+func TestPostgres_RaiseFloorFrom(t *testing.T) {
+	runRaiseFloorFrom(t, newTestPG(t, testPGDSN(t)))
+}
+
 func TestPostgres_CounterPerKeyIsolation(t *testing.T) {
 	dsn := testPGDSN(t)
 	wm := newTestPG(t, dsn)

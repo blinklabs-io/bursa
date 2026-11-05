@@ -84,6 +84,10 @@ type CounterWatermark interface {
 	// ErrCounterRegression, recording nothing, when value is lower. Equal
 	// values succeed, so a floor can be reported again unchanged.
 	CheckAndRaiseFloor(ctx context.Context, key backend.KeyHash, scope string, value uint64) error
+	// CheckAndRaiseFloorFrom is CheckAndRaiseFloor that also refuses, with
+	// ErrCounterRegression, a recorded value below min: it records value if no
+	// record exists or min <= recorded <= value, in one atomic operation.
+	CheckAndRaiseFloorFrom(ctx context.Context, key backend.KeyHash, scope string, value, min uint64) error
 }
 
 // Pinger is an optional interface a Watermark store implements when it has a
@@ -222,6 +226,17 @@ func (m *MemWatermark) CheckAndCommitCounter(_ context.Context, key backend.KeyH
 		return ErrCounterRegression
 	}
 	m.counters[k] = counter
+	return nil
+}
+
+func (m *MemWatermark) CheckAndRaiseFloorFrom(_ context.Context, key backend.KeyHash, scope string, value, min uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := recordKey(key, scope)
+	if prev, ok := m.counters[k]; ok && (value < prev || prev < min) {
+		return ErrCounterRegression
+	}
+	m.counters[k] = value
 	return nil
 }
 

@@ -346,12 +346,14 @@ func TestSignOpCert_ConcurrentChainIssued(t *testing.T) {
 
 	var (
 		wg   sync.WaitGroup
+		res  *OpCertResult
 		code ErrorCode
+		err  error
 	)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, code, _ = c.SignOpCert(ctx, kes, 9, 100, k.hash.String())
+		res, code, err = c.SignOpCert(ctx, kes, 9, 100, k.hash.String())
 	}()
 	<-pw.paused
 	if _, ccode, err := c.SignOpCertFromChain(ctx, kes, 8, 101, k.hash.String()); err != nil {
@@ -359,8 +361,8 @@ func TestSignOpCert_ConcurrentChainIssued(t *testing.T) {
 	}
 	close(pw.release)
 	wg.Wait()
-	if code != CodeConflict {
-		t.Fatalf("issue 9 racing chain 8: code=%s, want %s", code, CodeConflict)
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("issue 9 racing chain 8: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
 	}
 }
 
@@ -373,12 +375,14 @@ func TestSignOpCertFromChain_ConcurrentIssueAbove(t *testing.T) {
 
 	var (
 		wg   sync.WaitGroup
+		res  *OpCertResult
 		code ErrorCode
+		err  error
 	)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, code, _ = c.SignOpCertFromChain(ctx, kes, 8, 100, k.hash.String())
+		res, code, err = c.SignOpCertFromChain(ctx, kes, 8, 100, k.hash.String())
 	}()
 	<-pw.paused
 	if _, icode, err := c.SignOpCert(ctx, kes, 10, 101, k.hash.String()); err != nil {
@@ -386,8 +390,38 @@ func TestSignOpCertFromChain_ConcurrentIssueAbove(t *testing.T) {
 	}
 	close(pw.release)
 	wg.Wait()
-	if code != CodeConflict {
-		t.Fatalf("chain 8 racing issue 10: code=%s, want %s", code, CodeConflict)
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("chain 8 racing issue 10: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+	}
+}
+
+// On a key's first opcert, a chain_counter request whose pre-sign check found
+// no issued record is refused at commit when an issue_counter request
+// recorded a counter below its chain counter meanwhile.
+func TestSignOpCertFromChain_ConcurrentFirstIssueBelow(t *testing.T) {
+	c, pw, k := newPausingOpCert(t, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	var (
+		wg   sync.WaitGroup
+		res  *OpCertResult
+		code ErrorCode
+		err  error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res, code, err = c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
+	}()
+	<-pw.paused
+	if _, icode, ierr := c.SignOpCert(ctx, kes, 5, 101, k.hash.String()); ierr != nil {
+		t.Fatalf("issue 5: %v (code=%s)", ierr, icode)
+	}
+	close(pw.release)
+	wg.Wait()
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
 	}
 }
 
