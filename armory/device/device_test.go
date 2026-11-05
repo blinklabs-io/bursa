@@ -59,6 +59,8 @@ type fakeChip struct {
 	// refuses the next one
 	failDeleteAfter int
 	deletes         int
+	// failPublic fails the public key read of these objects
+	failPublic map[uint32]bool
 }
 
 func newFakeChip() *fakeChip {
@@ -109,6 +111,10 @@ func (c *fakeChip) ImportEd25519(id uint32, seed []byte, _ bool) error {
 }
 
 func (c *fakeChip) PublicKeyEd25519(id uint32) (ed25519.PublicKey, error) {
+	if c.failPublic[id] {
+		return nil, errors.New("i2c failure")
+	}
+
 	k, ok := c.keys[id]
 
 	if !ok {

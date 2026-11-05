@@ -43,6 +43,7 @@ const (
 	RouteProvisionHostRevoke = "/provision/host-key/revoke"
 	RouteWipeProfile         = "/wipe/profile"
 	RouteWipeSignLog         = "/wipe/signlog"
+	RouteWipeCold            = "/wipe/cold"
 )
 
 // HostAuth authenticates a provisioning or wipe request: the host key signs
@@ -73,6 +74,14 @@ type WipeSignLogRequest struct {
 	HostAuth
 }
 
+// WipeColdRequest confirms the removal of one cold key that no profile
+// names, as WipeDeviceRequest, and authenticates it with a host key.
+type WipeColdRequest struct {
+	IdentityPublicKey string `json:"identity_public_key"`
+	ColdKeyID         uint32 `json:"cold_key_id"`
+	HostAuth
+}
+
 // adminRequests creates the request type of each authenticated route.
 var adminRequests = map[string]func() hostAuthed{
 	RouteProvisionProfile:    func() hostAuthed { return &ProvisionRequest{} },
@@ -85,6 +94,7 @@ var adminRequests = map[string]func() hostAuthed{
 	RouteProvisionHostRevoke: func() hostAuthed { return &HostKeyRequest{} },
 	RouteWipeProfile:         func() hostAuthed { return &WipeProfileRequest{} },
 	RouteWipeSignLog:         func() hostAuthed { return &WipeSignLogRequest{} },
+	RouteWipeCold:            func() hostAuthed { return &WipeColdRequest{} },
 }
 
 // AdminRoutes returns the routes that take host authentication.
@@ -204,6 +214,9 @@ func handleAdmin[Req any, P interface {
 	return handle(s, func(req Req) (Resp, error) {
 		var zero Resp
 
+		// the caller is known only while this request runs
+		defer func() { s.caller = caller{} }()
+
 		if err := s.authorizeAdmin(route, P(&req)); err != nil {
 			return zero, err
 		}
@@ -216,10 +229,15 @@ func handleAdmin[Req any, P interface {
 // a host key is registered.
 var errProvisioningClosed = errors.New("a host key is registered: send a signed /provision/cold request")
 
+// errUnsignedImportMulti refuses the firmware's unsigned cold key import in a
+// multi image, which has none.
+var errUnsignedImportMulti = errors.New("a multi image takes no unsigned cold key import: add the scope's first host key with /provision/host-key, then send a signed /provision/cold request")
+
 // UnsignedProvisioningLocked reports why provisioning requests cannot be taken
 // unsigned, or nil when they can: no host key of any network or chain is
-// registered and the stored list is readable. The firmware's unsigned cold
-// key import (/provision) is served only then. The caller holds the lock
+// registered, the stored list is readable and the image is not a multi image,
+// which has no unsigned import. The firmware's unsigned cold key import
+// (/provision) is served only then. The caller holds the lock
 // passed to New across this check and the import, so a host key registered
 // in between cannot let the import through.
 func (s *Service) UnsignedProvisioningLocked() error {
@@ -228,6 +246,10 @@ func (s *Service) UnsignedProvisioningLocked() error {
 		return errNoChip
 	case s.hostKeysBad:
 		return errHostKeysBad
+	case s.multi():
+		// a multi image authenticates every request, so there is no
+		// unsigned import; the first key of a scope is its way in
+		return errUnsignedImportMulti
 	case len(s.hostEntries) > 0:
 		return errProvisioningClosed
 	}
@@ -239,6 +261,12 @@ func (s *Service) UnsignedProvisioningLocked() error {
 func (s *Service) authorizeAdmin(route string, req hostAuthed) error {
 	if s.hostKeysBad {
 		return errHostKeysBad
+	}
+
+	s.caller = caller{}
+
+	if s.multi() {
+		return s.authorizeMulti(route, req)
 	}
 
 	// no host key of any scope: the bootstrap state

@@ -16,6 +16,12 @@
 
 package main
 
+import (
+	"log"
+
+	"github.com/blinklabs-io/bursa/armory/device"
+)
+
 // network is the only network id whose profiles this build serves.
 const (
 	network     uint8 = 1
@@ -26,3 +32,13 @@ const (
 // Makefile from CHAIN. Mainnets share network id 1, so the label keeps one
 // chain's profiles per device.
 var chain string
+
+// configureScope fixes the image to one mainnet chain.
+func configureScope(svc *device.Service, report *Report) {
+	if chain == "" {
+		log.Fatal("a mainnet build needs a chain label")
+	}
+
+	svc.SetNetwork(network, chain)
+	report.Logf("network: %s (id %d), chain %s; other chains' profiles are refused", networkName, network, chain)
+}

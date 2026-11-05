@@ -27,6 +27,9 @@ variants=(
 	"armory-prime-mainnet|NETWORK=mainnet CHAIN=prime"
 	"armory-provision-cardano-mainnet|PROVISION=1 NETWORK=mainnet CHAIN=cardano"
 	"armory-wipe-prime-mainnet|WIPE=1 NETWORK=mainnet CHAIN=prime"
+	"armory-multi|NETWORK=multi"
+	"armory-provision-multi|PROVISION=1 NETWORK=multi"
+	"armory-wipe-multi|WIPE=1 NETWORK=multi"
 )
 for v in "${variants[@]}"; do
 	app=${v%%|*}
@@ -72,6 +75,42 @@ has "$out" 'armory-testnet-signed-sdp.imx'; check "signed TESTNET=1 HAB_SDP=1 im
 out=$(dry imx TESTNET=1); rc=$?
 [ $rc -eq 0 ] && ! has "$out" habtool; check "unsigned TESTNET=1 build is unaffected" $?
 
+# A multi image serves testnet, cardano-mainnet and prime-mainnet from one
+# build: its tag, names and refusals. The refusals are matched by their own
+# message, so another error (an unknown NETWORK) does not pass for them.
+for v in "armory-multi|" "armory-provision-multi|PROVISION=1" "armory-wipe-multi|WIPE=1"; do
+	app=${v%%|*}
+	# shellcheck disable=SC2086
+	out=$(dry all NETWORK=multi ${v#*|}); rc=$?
+	[ $rc -eq 0 ]; check "$app: builds" $?
+	has "$out" '-tags [a-z,]*multi'; check "$app: builds with the multi tag" $?
+	has "$out" "-o $app\$"; check "$app: is named $app" $?
+done
+out=$(dry all NETWORK=multi TESTNET=1); rc=$?
+[ $rc -ne 0 ]; check "NETWORK=multi TESTNET=1 is refused" $?
+has "$out" 'a multi image serves mainnet scopes and must not'; check "NETWORK=multi TESTNET=1 is refused for the unfiltered /sign endpoint" $?
+out=$(dry all NETWORK=multi TESTNET=1 PROVISION=1); rc=$?
+[ $rc -ne 0 ]; check "NETWORK=multi TESTNET=1 PROVISION=1 is refused" $?
+has "$out" 'a multi image serves mainnet scopes and must not'; check "NETWORK=multi TESTNET=1 PROVISION=1 names the multi refusal" $?
+out=$(dry imx NETWORK=multi TESTNET=1 HAB_KEYS=/keys HAB_ALLOW_TESTNET=1); rc=$?
+[ $rc -ne 0 ]; check "HAB_ALLOW_TESTNET does not allow a TESTNET=1 multi image" $?
+has "$out" 'a multi image serves mainnet scopes and must not'; check "HAB_ALLOW_TESTNET=1 multi refusal is the multi one" $?
+out=$(dry all NETWORK=multi CHAIN=prime); rc=$?
+[ $rc -ne 0 ]; check "NETWORK=multi CHAIN=prime is refused" $?
+has "$out" 'CHAIN does not apply to NETWORK=multi'; check "NETWORK=multi CHAIN=prime names the CHAIN refusal" $?
+out=$(dry all NETWORK=both); rc=$?
+[ $rc -ne 0 ] && has "$out" 'testnet, mainnet or multi'; check "an unknown NETWORK is refused" $?
+# the existing single-scope images keep their names and tags
+out=$(dry all); has "$out" "-o armory\$"; check "NETWORK default still builds armory" $?
+has "$out" 'multi'; [ $? -ne 0 ]; check "the default image has no multi tag" $?
+out=$(dry all NETWORK=mainnet CHAIN=prime); has "$out" "-o armory-prime-mainnet\$"; check "NETWORK=mainnet CHAIN=prime still builds armory-prime-mainnet" $?
+has "$out" 'multi'; [ $? -ne 0 ]; check "a single mainnet image has no multi tag" $?
+# clean removes every image name, the multi ones included
+out=$(dry clean)
+for a in armory-multi armory-provision-multi armory-wipe-multi; do
+	has "$out" "$a\.imx"; check "clean removes $a" $?
+	has "$out" "$a-signed\.imx"; check "clean removes $a-signed.imx" $?
+done
 
 # The signing recipe itself, with the unsigned image taken as built (-o).
 tmp=$(mktemp -d)

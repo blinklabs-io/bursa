@@ -187,7 +187,14 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 		return SignLogResponse{}, errors.New("invalid nonce")
 	}
 
-	if err := s.authenticateHost(req.HostKey, req.HostSignature, req.Challenge, SignLogBinding(req)); err != nil {
+	// the log covers every profile on the device
+	if _, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, SignLogBinding(req), func(sc Scope) error {
+		if !s.multi() {
+			return nil
+		}
+
+		return s.needDeviceWide(sc)
+	}); err != nil {
 		return SignLogResponse{}, err
 	}
 

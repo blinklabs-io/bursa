@@ -123,6 +123,8 @@ func requestFor(t *testing.T, s *Service, route string) any {
 		return WipeProfileRequest{IdentityPublicKey: id, Profile: "otg@preview"}
 	case RouteWipeSignLog:
 		return WipeSignLogRequest{IdentityPublicKey: id}
+	case RouteWipeCold:
+		return WipeColdRequest{IdentityPublicKey: id, ColdKeyID: testColdID + 2}
 	}
 
 	t.Fatalf("no request for %s", route)

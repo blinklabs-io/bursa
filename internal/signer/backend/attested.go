@@ -330,6 +330,25 @@ func AttestedRequestBinding(req AttestedRequest) []byte {
 	return h.Sum(nil)
 }
 
+// attestedInventoryRequestDomain separates host signatures over inventory
+// requests from every other signature a host key could make.
+const attestedInventoryRequestDomain = "bursa-armory-inventory-request/1"
+
+// AttestedInventoryRequestBinding is the digest a host key signs to
+// authenticate an inventory request to an armory multi image: the domain
+// string, the nonce, the profile and the challenge, length-prefixed as in
+// AttestedRequestBinding.
+func AttestedInventoryRequestBinding(nonce []byte, profile string, challenge []byte) []byte {
+	h := sha256.New()
+	for _, field := range [][]byte{
+		[]byte(attestedInventoryRequestDomain), nonce, []byte(profile), challenge,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+	return h.Sum(nil)
+}
+
 // Enclave is the host-side view of a workload that custodies keys inside a
 // trusted execution environment. Implementations carry the messages over a
 // host proxy that is NOT trusted: authenticity comes from the attestation

@@ -17,10 +17,25 @@ PROVISION ?= 0
 # and profile, or the signing log head, on request, and neither signs nor
 # provisions.
 WIPE ?= 0
-# NETWORK fixes the one network whose profiles the image provisions and
-# serves: testnet (network id 0, the default, every testnet) or mainnet
-# (network id 1). A mainnet image also needs CHAIN, the one chain whose
-# profiles ("name@<chain>-mainnet") it serves: cardano or prime.
+# NETWORK fixes the scopes whose profiles the image provisions and serves:
+#   testnet  network id 0, the default, every testnet;
+#   mainnet  network id 1; it also needs CHAIN, the one chain whose profiles
+#            ("name@<chain>-mainnet") it serves: cardano or prime;
+#   multi    one image serving three scopes: every testnet (network id 0),
+#            cardano-mainnet and prime-mainnet (network id 1, profile names
+#            ending "@cardano-mainnet" or "@prime-mainnet"). CHAIN does not
+#            apply and TESTNET=1 is refused. Every request, testnet
+#            profiles included, needs a host key registered for the scope of
+#            the profile it acts on, so a testnet key never signs or
+#            provisions for a mainnet profile, nor a cardano key for a prime
+#            one. The first key of a scope is added unsigned, only by the
+#            PROVISION=1 image, and only for a scope without a key; the
+#            signing and wipe images never take an unsigned request.
+#            /provision/identity, /wipe/signlog, the signing log read and
+#            listing or revoking keys of another scope need a key of a
+#            mainnet scope. A device
+#            that ran a testnet image keeps its profiles and its testnet
+#            host key on this image.
 NETWORK ?= testnet
 CHAIN ?=
 
@@ -53,7 +68,15 @@ GOENV := GOOS=tamago GOOSPKG=github.com/usbarmory/tamago GOARM=7 GOARCH=arm
 LDFLAGS := -s -w -T $(TEXT_START) -R 0x1000
 GOFLAGS = -trimpath -ldflags "$(LDFLAGS)"
 TAGS :=
-ifeq ($(NETWORK),mainnet)
+ifeq ($(NETWORK),multi)
+ifeq ($(TESTNET),1)
+$(error TESTNET=1 adds bring-up key tests and an unfiltered /sign endpoint; a multi image serves mainnet scopes and must not)
+endif
+ifneq ($(CHAIN),)
+$(error CHAIN does not apply to NETWORK=multi; the image serves cardano-mainnet and prime-mainnet)
+endif
+TAGS += multi
+else ifeq ($(NETWORK),mainnet)
 ifeq ($(TESTNET),1)
 $(error TESTNET=1 adds bring-up key tests and an unfiltered /sign endpoint; a mainnet image must not)
 endif
@@ -63,7 +86,7 @@ endif
 TAGS += mainnet
 LDFLAGS += -X main.chain=$(CHAIN)-mainnet
 else ifneq ($(NETWORK),testnet)
-$(error NETWORK must be testnet or mainnet)
+$(error NETWORK must be testnet, mainnet or multi)
 else ifneq ($(CHAIN),)
 $(error CHAIN applies only to NETWORK=mainnet; a testnet image serves every testnet)
 endif
@@ -86,6 +109,9 @@ APP := armory-wipe
 endif
 ifeq ($(NETWORK),mainnet)
 APP := $(APP)-$(CHAIN)-mainnet
+endif
+ifeq ($(NETWORK),multi)
+APP := $(APP)-multi
 endif
 ifneq ($(strip $(TAGS)),)
 GOFLAGS += -tags $(subst $(space),$(comma),$(strip $(TAGS)))
@@ -160,4 +186,4 @@ $(HAB_SIGNED).imx: $(APP).imx
 	cat $(APP).imx $(HAB_SIGNED).csf > $@
 
 clean:
-	rm -f $(foreach a,armory armory-provision armory-wipe $(foreach c,cardano prime,armory-$(c)-mainnet armory-provision-$(c)-mainnet armory-wipe-$(c)-mainnet),$(a) $(a).bin $(a).dcd $(a).imx $(foreach s,signed signed-sdp testnet-signed testnet-signed-sdp,$(a)-$(s).imx $(a)-$(s).csf))
+	rm -f $(foreach a,armory armory-provision armory-wipe armory-multi armory-provision-multi armory-wipe-multi $(foreach c,cardano prime,armory-$(c)-mainnet armory-provision-$(c)-mainnet armory-wipe-$(c)-mainnet),$(a) $(a).bin $(a).dcd $(a).imx $(foreach s,signed signed-sdp testnet-signed testnet-signed-sdp,$(a)-$(s).imx $(a)-$(s).csf))

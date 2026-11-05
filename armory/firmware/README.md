@@ -9,10 +9,67 @@ make imx                                  # signing image, unsigned
 make imx PROVISION=1                      # provisioning image
 make imx WIPE=1                           # wipe image
 make imx NETWORK=mainnet CHAIN=cardano    # mainnet signing image
+make imx NETWORK=multi                    # multi image: testnet, cardano-mainnet, prime-mainnet
+make imx NETWORK=multi PROVISION=1        # its provisioning image (also WIPE=1)
 make imx TESTNET=1                        # bring-up image, unfiltered /sign
 ```
 
-The Makefile header documents each variable. `./hab_makefile_test.sh` dry-runs
+The Makefile header documents each variable.
+
+### Multi image
+
+`NETWORK=multi` builds one image that serves three scopes: every testnet
+(network id 0), `cardano-mainnet` and `prime-mainnet` (network id 1; profile
+names end in `@cardano-mainnet` or `@prime-mainnet`). It builds as
+`armory-multi`, `armory-provision-multi` and `armory-wipe-multi`. `CHAIN` does
+not apply, and `TESTNET=1` is refused: a multi image serves mainnet scopes and
+no unfiltered `/sign`. The single-scope images build as before.
+
+- Every request needs a host key registered for the scope of the profile it
+  acts on, testnet profiles included: signing, inventory, floor, reward, pins,
+  profile provisioning and profile wipes. A testnet key never signs or
+  provisions for a mainnet profile, nor a cardano-mainnet key for a
+  prime-mainnet one. A key registered by an older, unscoped image counts as a
+  testnet key. A new testnet profile may not take a name ending
+  `@cardano-mainnet` or `@prime-mainnet`.
+- The device's first host key is added unsigned, by the `PROVISION=1` image
+  only, while the device holds no host key, with `scope` naming a scope of
+  the image; register a mainnet scope's key first. A key of a mainnet scope
+  then adds the first key of each other scope. The signing and wipe images
+  never take an unsigned request. A signed host key add names the scope, and
+  the key that signs it is of that scope, or of a mainnet scope while the
+  scope has no key.
+- `/provision/identity`, `/wipe/signlog`, the signing log read, listing the
+  keys of other scopes and revoking one need a key of a mainnet scope. A key
+  revokes keys of its own scope, its last one included; a mainnet key does
+  not revoke the last key of another scope.
+- A cold key, or an imported owner key, that belongs to a profile of another
+  scope is refused; two slots of one scope may hold the same key.
+- Any scope takes any free cold key object (32: `0x20e50010`-`0x20e5001f` and
+  `0x20e50600`-`0x20e5060f`); it then belongs to that scope, recorded in the
+  ownership object `0x20e50023`, and only that scope imports into it again or
+  provisions a profile on it. Signing refuses a key the record gives to
+  another scope; a record that cannot be read does not stop signing. An
+  empty object is free whatever an old claim says. Every image keeps the
+  record, single-scope images with their own scope. A key an older image
+  stored with no claim belongs to the scope of the profiles on it; a key with
+  no claim and no profile, or profiles of two scopes, belongs to no scope and
+  is refused to all. A profile
+  an older image stored is still served.
+- The wipe image's signed `/wipe/cold` deletes a cold key no profile names,
+  and its claim: its owner may, and a mainnet key may delete a testnet key or
+  one with no owner, never the other mainnet scope's. A mainnet key also
+  removes a testnet profile with `/wipe/profile`.
+- Do not flash an image older than this one over a device it has used. An
+  older image does not know the second cold key block or the ownership
+  record: its `/wipe/device` leaves them on the chip, and it imports into an
+  object another scope owns. Wipe with this image's wipe image first.
+- A device that ran a testnet image keeps its profiles and host key. A
+  testnet key does not act device-wide on the multi image: with the
+  provisioning image, revoke the testnet keys with a testnet key, register a
+  mainnet key unsigned, and add the testnet key again with it.
+
+`./hab_makefile_test.sh` dry-runs
 the HAB targets below, and runs the signing step against a stub `habtool`; it
 needs only `make`.
 
@@ -80,6 +137,7 @@ make imx HAB_KEYS=/path/to/hab-keys                           # armory-signed.im
 make imx PROVISION=1 HAB_KEYS=...                             # armory-provision-signed.imx
 make imx WIPE=1 HAB_KEYS=...                                  # armory-wipe-signed.imx
 make imx NETWORK=mainnet CHAIN=cardano HAB_KEYS=...           # armory-cardano-mainnet-signed.imx
+make imx NETWORK=multi HAB_KEYS=...                           # armory-multi-signed.imx
 make imx HAB_SDP=1 HAB_KEYS=...                               # armory-signed-sdp.imx
 ```
 

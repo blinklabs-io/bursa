@@ -174,3 +174,26 @@ func SignLogResponseBinding(req SignLogRequest, resp SignLogResponse) []byte {
 
 	return h.Sum(nil)
 }
+
+// inventoryRequestDomain separates host signatures over inventory requests
+// from every other signature the host key could make.
+const inventoryRequestDomain = "bursa-armory-inventory-request/1"
+
+// InventoryRequestBinding is the digest a host key signs to authenticate an
+// inventory request to a multi image: the domain string, the nonce, the
+// profile and the challenge, length-prefixed as in RequestBinding.
+func InventoryRequestBinding(req InventoryRequest) []byte {
+	h := sha256.New()
+
+	for _, field := range [][]byte{
+		[]byte(inventoryRequestDomain),
+		req.Nonce,
+		[]byte(req.Profile),
+		req.Challenge,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+
+	return h.Sum(nil)
+}
