@@ -23,6 +23,7 @@ import (
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -158,7 +159,7 @@ func (c *Coordinator) SignCIP8(
 		addressMatches = addrKeyHash == ref.Hash()
 	}
 
-	if dec := c.deps.Policy.EvaluateCIP8(hash, len(payload), addressMatches); !dec.Allow {
+	if dec := c.deps.Policy.EvaluateCIP8(hash, len(payload), addressMatches, policy.WithBackend(ref.Backend())); !dec.Allow {
 		c.deps.Logger.Info(
 			"sign",
 			"type",

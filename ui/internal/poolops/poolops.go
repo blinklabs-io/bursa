@@ -36,6 +36,7 @@ package poolops
 
 import (
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -413,6 +414,18 @@ type Relay struct {
 	Port     *uint32 `json:"port,omitempty"`
 }
 
+// ledgerIPv6Bytes reorders a network-order IPv6 address into the ledger wire
+// form, four little-endian 32-bit words (ipv6ToBytes in
+// cardano-ledger-binary). gouroboros writes PoolRelay.Ipv6 verbatim, so the
+// network-order bytes would register a different address.
+func ledgerIPv6Bytes(ip net.IP) net.IP {
+	out := make(net.IP, net.IPv6len)
+	for i := 0; i < net.IPv6len; i += 4 {
+		binary.LittleEndian.PutUint32(out[i:i+4], binary.BigEndian.Uint32(ip[i:i+4]))
+	}
+	return out
+}
+
 // toPoolRelay converts a wallet Relay into a gouroboros PoolRelay.
 func (r Relay) toPoolRelay() (lcommon.PoolRelay, error) {
 	if r.Port != nil && *r.Port > 65535 {
@@ -454,7 +467,7 @@ func (r Relay) toPoolRelay() (lcommon.PoolRelay, error) {
 					r.IPv6,
 				)
 			}
-			v6 := ip.To16()
+			v6 := ledgerIPv6Bytes(ip.To16())
 			pr.Ipv6 = &v6
 		}
 		return pr, nil

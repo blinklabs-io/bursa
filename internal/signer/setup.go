@@ -65,6 +65,29 @@ func BuildPolicies(keys []config.SignerKeyConfig) ([]policy.KeyPolicy, error) {
 	return out, nil
 }
 
+// CheckPolicyBackends rejects a key policy whose backend pin matches no
+// configured backend name, which would deny every request for the key, or
+// matches several, which would accept the key from any of them.
+func CheckPolicyBackends(pols []policy.KeyPolicy, backends []backend.Backend) error {
+	names := make(map[string]int, len(backends))
+	for _, b := range backends {
+		names[b.Name()]++
+	}
+	for _, p := range pols {
+		if p.Backend == "" {
+			continue
+		}
+		switch n := names[p.Backend]; n {
+		case 1:
+		case 0:
+			return fmt.Errorf("key %s: policy backend %q is not a configured backend", p.Hash, p.Backend)
+		default:
+			return fmt.Errorf("key %s: policy backend %q names %d configured backends", p.Hash, p.Backend, n)
+		}
+	}
+	return nil
+}
+
 // remap converts a decoded map into a typed struct via a JSON round-trip.
 // The policy structs carry both yaml and json tags (same names), so map keys
 // from YAML decode bind correctly through JSON.

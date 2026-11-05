@@ -11,7 +11,7 @@ protect them:
 |-------|--------|---------|
 | Private key material | Exfiltration from the signer host | Prefer custody where the key never enters the signer process - a PKCS#11 HSM token or Vault Transit; keep the plaintext software backend on loopback/dev only |
 | The signing capability | Unauthorized callers | mTLS client certificates, authorized-keys Ed25519 request signing (timestamp window + nonce replay cache), or bearer JWT (HS256/JWKS) with configured `iss`/`aud` checks; per-subject caller ACL over the resolved identity |
-| Correct-but-unwanted signatures | Over-broad key use | Deny-by-default per-key policy (`allowed_requests`, tx/cip8 policy) |
+| Correct-but-unwanted signatures | Over-broad key use | Deny-by-default per-key policy (`allowed_requests`, `backend`, tx/cip8 policy) |
 | Consensus safety / key reuse | Double-signing, period rollback | Watermark store in `enforce` mode; KES period guard in the KES agent |
 | Request contents | Leakage via logs/errors | No secrets or raw CBOR logged; 5xx bodies masked; audit IDs correlate |
 | Transport | Eavesdropping / tampering | Server-side TLS required off-loopback |

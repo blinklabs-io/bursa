@@ -15,6 +15,7 @@
 package poolops
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -583,5 +584,18 @@ func TestRelayConversion(t *testing.T) {
 				t.Fatalf("toPoolRelay err = %v, wantErr %v", err, c.wantErr)
 			}
 		})
+	}
+}
+
+func TestRelayIPv6UsesLedgerWordOrder(t *testing.T) {
+	t.Parallel()
+	pr, err := (Relay{Type: "single_host_address", IPv6: "2001:db8::1"}).toPoolRelay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ledger reads an IPv6 relay as four little-endian 32-bit words.
+	want := []byte{0xb8, 0x0d, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0, 0, 0}
+	if pr.Ipv6 == nil || !bytes.Equal(*pr.Ipv6, want) {
+		t.Fatalf("ipv6 wire bytes = %v, want %x", pr.Ipv6, want)
 	}
 }

@@ -67,7 +67,10 @@ type loadedFakeKey struct {
 	lk *bursa.LoadedKey
 }
 
-func (k *loadedFakeKey) LoadedKey() *bursa.LoadedKey { return k.lk }
+func (k *loadedFakeKey) LoadedKey() *bursa.LoadedKey {
+	k.signCalls.Add(1)
+	return k.lk
+}
 
 // fakeKey does NOT implement LoadedKeyProvider, so it stands in for a remote
 // (Vault) key: CIP-8 must be rejected as unsupported.

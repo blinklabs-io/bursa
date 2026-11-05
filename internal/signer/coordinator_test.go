@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -105,6 +106,9 @@ type fakeKey struct {
 	hash    backend.KeyHash
 	typ     backend.KeyType
 	signErr error
+	// signCalls counts custody signing, so a denied request can assert it
+	// never reached the key.
+	signCalls atomic.Int64
 }
 
 func (k *fakeKey) Hash() backend.KeyHash        { return k.hash }
@@ -118,6 +122,7 @@ func (k *fakeKey) Type() backend.KeyType {
 func (k *fakeKey) Extended() bool  { return false }
 func (k *fakeKey) Backend() string { return "fake" }
 func (k *fakeKey) Sign(_ context.Context, d []byte) ([]byte, error) {
+	k.signCalls.Add(1)
 	if k.signErr != nil {
 		return nil, k.signErr
 	}

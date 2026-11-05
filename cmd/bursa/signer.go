@@ -254,6 +254,10 @@ key.`,
 				logger.Error("failed to build policies", "error", err)
 				os.Exit(1)
 			}
+			if err := signer.CheckPolicyBackends(pols, backends); err != nil {
+				logger.Error("invalid policy backend", "error", err)
+				os.Exit(1)
+			}
 			eng, err := policy.NewEngine(pols)
 			if err != nil {
 				logger.Error("invalid policy", "error", err)
