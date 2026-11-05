@@ -166,8 +166,9 @@ func TestSignOpCertFromChain_AboveIssued(t *testing.T) {
 	}
 }
 
-// TestSignOpCertFromChain_AboveIssuedWarn: warn mode signs and records the
-// higher issue counter.
+// TestSignOpCertFromChain_AboveIssuedWarn: warn mode signs, but leaves the
+// floor and the issued record unchanged, so the bogus counter cannot lock out
+// later renewals.
 func TestSignOpCertFromChain_AboveIssuedWarn(t *testing.T) {
 	k := newFakeKey(t)
 	wm := watermark.NewMemWatermark()
@@ -183,7 +184,39 @@ func TestSignOpCertFromChain_AboveIssuedWarn(t *testing.T) {
 		t.Fatalf("chain 9 in warn mode: %v", err)
 	}
 	verifyChainOpCert(t, res, kes, 10, 101)
-	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainIssuedScope); v != 10 {
-		t.Fatalf("issued = %d, want 10", v)
+	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainFloorScope); v != 4 {
+		t.Fatalf("floor = %d, want 4", v)
 	}
+	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainIssuedScope); v != 5 {
+		t.Fatalf("issued = %d, want 5", v)
+	}
+	if _, _, err := c.SignOpCertFromChain(ctx, kes, 5, 102, k.hash.String()); err != nil {
+		t.Fatalf("chain 5 after the warned request: %v", err)
+	}
+}
+
+// TestSignOpCert_RaisesChainIssued: an opcert issued with an explicit
+// issue_counter is on the chain once the pool forges with it, so it raises the
+// bound on later chain_counter requests.
+func TestSignOpCert_RaisesChainIssued(t *testing.T) {
+	k := newFakeKey(t)
+	wm := watermark.NewMemWatermark()
+	c, _ := newOpCertCoordinator(t, k, wm, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 4, 100, k.hash.String()); err != nil {
+		t.Fatalf("chain 4: %v (code=%s)", err, code)
+	}
+	if _, code, err := c.SignOpCert(ctx, kes, 7, 101, k.hash.String()); err != nil {
+		t.Fatalf("issue 7: %v (code=%s)", err, code)
+	}
+	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainIssuedScope); v != 7 {
+		t.Fatalf("issued = %d, want 7", v)
+	}
+	res, code, err := c.SignOpCertFromChain(ctx, kes, 7, 102, k.hash.String())
+	if err != nil {
+		t.Fatalf("chain 7 after issuing 7: %v (code=%s)", err, code)
+	}
+	verifyChainOpCert(t, res, kes, 8, 102)
 }

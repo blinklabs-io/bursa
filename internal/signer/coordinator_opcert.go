@@ -191,6 +191,9 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 	var (
 		counterWM               watermark.CounterWatermark
 		counterConflictReported bool
+		// aboveIssued marks a chain counter above the issued record that warn
+		// mode signs anyway; it leaves the floor and the record unchanged.
+		aboveIssued bool
 	)
 	if c.deps.WMMode != watermark.ModeOff {
 		cw, ok := c.deps.Watermark.(watermark.CounterWatermark)
@@ -229,6 +232,7 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 			}
 			if issuedExists && rule.value > issued {
 				counterConflictReported = true
+				aboveIssued = true
 				c.deps.Metrics.observeWatermarkConflict()
 				if c.deps.WMMode == watermark.ModeEnforce {
 					c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "chain-counter", rule.value, "issued-counter", issued, "result", "denied", "reason", "chain counter above the last issued counter")
@@ -297,7 +301,7 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 	// counter past ours between the pre-sign check and here, we lose the race and
 	// must discard this signature rather than return a second opcert for a
 	// now-stale counter.
-	if counterWM != nil {
+	if counterWM != nil && !aboveIssued {
 		if werr := rule.commit(ctx, counterWM, hash); werr != nil {
 			if errors.Is(werr, watermark.ErrCounterRegression) {
 				if c.deps.WMMode == watermark.ModeEnforce {
@@ -336,9 +340,12 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 		}
 	}
 
-	// Record the issue number for the chain-counter bound. A lower value means
-	// a concurrent request already recorded a higher one, which keeps the bound.
-	if counterWM != nil && rule.floor {
+	// Record the issue number for the chain-counter bound, from either request
+	// form: an opcert issued with an explicit counter reaches the chain too. A
+	// lower value means a concurrent request already recorded a higher one,
+	// which keeps the bound. It is written after the floor so that a failure
+	// here leaves the bound lower, never above an opcert that was not returned.
+	if counterWM != nil && !aboveIssued {
 		if werr := counterWM.CheckAndRaiseFloor(ctx, hash, opcertChainIssuedScope, issueCounter); werr != nil && !errors.Is(werr, watermark.ErrCounterRegression) {
 			c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", werr.Error())
 			if c.deps.WMMode == watermark.ModeEnforce {
