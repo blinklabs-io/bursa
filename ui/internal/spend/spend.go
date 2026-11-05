@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -2723,7 +2725,7 @@ func poolParamsSummary(cert *lcommon.PoolRegistrationCertificate) *TxSummaryPool
 			r.IPv4 = relay.Ipv4.String()
 		}
 		if relay.Ipv6 != nil {
-			r.IPv6 = relay.Ipv6.String()
+			r.IPv6 = ledgerIPv6(*relay.Ipv6).String()
 		}
 		if relay.Hostname != nil {
 			r.Hostname = *relay.Hostname
@@ -2737,6 +2739,22 @@ func poolParamsSummary(cert *lcommon.PoolRegistrationCertificate) *TxSummaryPool
 		}
 	}
 	return params
+}
+
+// ledgerIPv6 converts a pool relay IPv6 between wire and network byte order.
+// The ledger writes the address as four little-endian 32-bit words
+// (ipv6ToBytes in cardano-ledger-binary), while gouroboros keeps the raw wire
+// bytes, so reading them as a net.IP would show a different address than the
+// one the certificate registers. Reversing each word is its own inverse.
+func ledgerIPv6(wire net.IP) net.IP {
+	if len(wire) != net.IPv6len {
+		return wire
+	}
+	out := make(net.IP, net.IPv6len)
+	for i := 0; i < net.IPv6len; i += 4 {
+		binary.BigEndian.PutUint32(out[i:i+4], binary.LittleEndian.Uint32(wire[i:i+4]))
+	}
+	return out
 }
 
 // certificateUnsupportedEffects flags certificate terms the summary cannot

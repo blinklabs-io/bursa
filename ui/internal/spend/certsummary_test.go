@@ -288,7 +288,8 @@ func TestDecodeTx_PoolRegistrationShowsTerms(t *testing.T) {
 	t.Parallel()
 	port := uint32(3001)
 	ip4 := net.ParseIP("192.0.2.7").To4()
-	ip6 := net.ParseIP("2001:db8::1")
+	// 2001:db8::1 as the ledger writes it: four little-endian 32-bit words.
+	ip6 := net.IP{0xb8, 0x0d, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0, 0, 0}
 	host := "relay.example.test"
 	multi := "pool.example.test"
 	cert := poolRegistrationFixture([]lcommon.PoolRelay{
@@ -351,5 +352,19 @@ func TestPoolRegistrationUnknownRelayFailsClosed(t *testing.T) {
 	sum.UnsupportedEffects = certificateUnsupportedEffects(sum.Certificates, sum.UnsupportedEffects)
 	if err := sum.ValidateForSigning(); err == nil || !strings.Contains(err.Error(), "relay") {
 		t.Fatalf("ValidateForSigning = %v, want relay refusal", err)
+	}
+}
+
+func TestDecodeTx_PoolRelayIPv6UsesLedgerWordOrder(t *testing.T) {
+	t.Parallel()
+	// The ledger encodes an IPv6 relay as four little-endian 32-bit words, so
+	// these wire bytes register 2001:db8::1, not b80d:120::100:0.
+	ip6 := net.IP{0xb8, 0x0d, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0, 0, 0}
+	cert := poolRegistrationFixture([]lcommon.PoolRelay{
+		{Type: lcommon.PoolRelayTypeSingleHostAddress, Ipv6: &ip6},
+	}, nil)
+	raw := decodeWithCertificate(t, lcommon.CertificateWrapper{Type: uint(lcommon.CertificateTypePoolRegistration), Certificate: cert})
+	if !strings.Contains(raw, `"ipv6":"2001:db8::1"`) {
+		t.Fatalf("summary does not show the ledger IPv6 address: %s", raw)
 	}
 }
