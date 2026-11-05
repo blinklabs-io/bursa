@@ -264,6 +264,8 @@ test("renders imported certificate details", async () => {
           margin_denominator: "100",
           vrf_key_hash: "77".repeat(32),
           relays: [
+            { type: "single_host_addr", ipv4: "192.0.2.7", ipv6: "2001:db8::1", port: 3001 },
+            { type: "single_host_addr", ipv6: "2001:db8::2" },
             { type: "single_host_name", hostname: "relay.example.test", port: 3001 },
             { type: "multi_host_name", hostname: "pool.example.test" },
           ],
@@ -311,6 +313,8 @@ test("renders imported certificate details", async () => {
   expect(poolReg).toHaveTextContent("cost 340 ADA");
   expect(poolReg).toHaveTextContent("margin 3/100");
   expect(poolReg).toHaveTextContent(`VRF key ${"77".repeat(32)}`);
+  expect(poolReg).toHaveTextContent("single host addr 192.0.2.7:3001 / [2001:db8::1]:3001");
+  expect(poolReg).toHaveTextContent("single host addr 2001:db8::2,");
   expect(poolReg).toHaveTextContent("single host name relay.example.test:3001");
   expect(poolReg).toHaveTextContent("multi host name pool.example.test");
   expect(poolReg).toHaveTextContent(`metadata https://example.test/pool.json ${"99".repeat(32)}`);

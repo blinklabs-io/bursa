@@ -50,11 +50,16 @@ function InputEffects({ inputs }: { inputs: TxSummaryInput[] }) {
   );
 }
 
+// The port is attached to each address, and an IPv6 address is bracketed when
+// it carries one, so "2001:db8::1" port 3001 cannot read as "2001:db8::1:3001".
 function formatRelay(relay: TxSummaryPoolRelay): string {
-  const port = relay.port !== undefined ? `:${relay.port}` : "";
   const label = relay.type.replace(/_/g, " ");
-  const target = [relay.ipv4, relay.ipv6, relay.hostname].filter(Boolean).join(" / ");
-  return `${label} ${target}${port}`.trim();
+  const withPort = (host: string) => (relay.port !== undefined ? `${host}:${relay.port}` : host);
+  const targets: string[] = [];
+  if (relay.ipv4) targets.push(withPort(relay.ipv4));
+  if (relay.ipv6) targets.push(relay.port !== undefined ? `[${relay.ipv6}]:${relay.port}` : relay.ipv6);
+  if (relay.hostname) targets.push(withPort(relay.hostname));
+  return `${label} ${targets.join(" / ")}`.trim();
 }
 
 function PoolParamsEffects({ params }: { params: TxSummaryPoolParams }) {
