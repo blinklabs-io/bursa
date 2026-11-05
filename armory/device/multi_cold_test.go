@@ -29,10 +29,7 @@ func multiFirstKeys(t *testing.T) (*fakeChip, http.Handler) {
 	chip := newFakeChip()
 	h := multiImage(t, chip, true).Handler()
 
-	for _, p := range multiProfiles {
-		code, body := firstKey(t, h, p.key, p.scope)
-		mustOK(t, "first key "+p.scope, code, body)
-	}
+	seedHostKeys(t, h)
 
 	return chip, h
 }

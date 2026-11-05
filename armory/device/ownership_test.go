@@ -104,10 +104,7 @@ func ownerHandler(t *testing.T, chip *fakeChip) http.Handler {
 
 	h := multiImage(t, chip, true).Handler()
 
-	for _, o := range ownerScopes {
-		code, body := firstKey(t, h, o.key, o.name)
-		mustOK(t, "first key "+o.name, code, body)
-	}
+	seedHostKeys(t, h)
 
 	return h
 }

@@ -32,15 +32,17 @@ no unfiltered `/sign`. The single-scope images build as before.
   prime-mainnet one. A key registered by an older, unscoped image counts as a
   testnet key. A new testnet profile may not take a name ending
   `@cardano-mainnet` or `@prime-mainnet`.
-- The first host key of a scope is added unsigned, by the `PROVISION=1` image
-  only, with `scope` naming a scope of the image that has no key yet. The
-  signing and wipe images never take an unsigned request. A signed host key
-  add names the scope, and the key that signs it is of that scope.
+- The device's first host key is added unsigned, by the `PROVISION=1` image
+  only, while the device holds no host key, with `scope` naming a scope of
+  the image; register a mainnet scope's key first. A key of a mainnet scope
+  then adds the first key of each other scope. The signing and wipe images
+  never take an unsigned request. A signed host key add names the scope, and
+  the key that signs it is of that scope, or of a mainnet scope while the
+  scope has no key.
 - `/provision/identity`, `/wipe/signlog`, the signing log read, listing the
   keys of other scopes and revoking one need a key of a mainnet scope. A key
   revokes keys of its own scope, its last one included; a mainnet key does
-  not revoke the last key of another scope, which would let the
-  provisioning image take that scope's first key unsigned again.
+  not revoke the last key of another scope.
 - A cold key, or an imported owner key, that belongs to a profile of another
   scope is refused; two slots of one scope may hold the same key.
 - Any scope takes any free cold key object (32: `0x20e50010`-`0x20e5001f` and
@@ -53,9 +55,10 @@ no unfiltered `/sign`. The single-scope images build as before.
   refused to all: remove it with the wipe image (`/wipe/profile` after a
   profile on it, or `/wipe/device`). A profile an older image stored is still
   served.
-- A device that ran a testnet image keeps its profiles and host key: flash the
-  multi image, then add the mainnet scopes' first keys with the provisioning
-  image.
+- A device that ran a testnet image keeps its profiles and host key. A
+  testnet key does not act device-wide on the multi image: with the
+  provisioning image, revoke the testnet keys with a testnet key, register a
+  mainnet key unsigned, and add the testnet key again with it.
 
 `./hab_makefile_test.sh` dry-runs
 the HAB targets below, and runs the signing step against a stub `habtool`; it

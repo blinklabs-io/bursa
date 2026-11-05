@@ -61,9 +61,14 @@ func TestMultiAddRefusesKeyOfUnservedScope(t *testing.T) {
 	k := scopeKey(0xd1)
 	otherChainKey(t, chip, k, 0, "")
 
+	// the device holds a key, so the testnet key is stored directly
+	if _, err := imageOn(t, chip, 0, "").addHostKey(HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)}); err != nil {
+		t.Fatal(err)
+	}
+
 	h := multiImage(t, chip, true).Handler()
-	code, body := firstKey(t, h, multiKeyTestnet, scopeTestnetName)
-	mustOK(t, "first testnet key", code, body)
+	code, body := firstKey(t, h, scopeKey(0xd2), scopeTestnetName)
+	refused(t, "unsigned key on a device holding keys", code, body, errFirstKeyHeld)
 
 	stored := bytes.Clone(chip.bins[hostKeysID])
 

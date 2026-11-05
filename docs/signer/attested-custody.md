@@ -534,21 +534,24 @@ are unchanged. `TESTNET=1` is refused with it.
   needs a host key, testnet profiles included. The exceptions are the first
   key of a scope, `/v1/challenge`, and the wipe image's `/wipe/device` and
   `/wipe/objects`.
-- First key per scope. Only the provisioning image (`PROVISION=1`) accepts an
-  unsigned `POST /provision/host-key`, and only when the request's `scope`
-  (`testnet`, `cardano-mainnet` or `prime-mainnet`) is one of the image's and
-  has no host key yet; the answer lists only that scope's keys. The signing
-  and wipe images never accept an unsigned request. A signed add names the
-  `scope`, which is part of the signed request, and the key that signs it is
-  of that scope. The list keeps its four slots and its stored format; a
+- First keys. Only the provisioning image (`PROVISION=1`) accepts an
+  unsigned `POST /provision/host-key`, and only while the device holds no
+  host key at all, for a `scope` (`testnet`, `cardano-mainnet` or
+  `prime-mainnet`) of the image; the answer lists only that scope's keys.
+  The first key of every other scope is a signed add by a key of a mainnet
+  scope, so an unsigned key never gains device-wide power over scopes
+  already on the device. The signing and wipe images never accept an
+  unsigned request. A signed add names the `scope`, which is part of the
+  signed request; the key that signs it is of that scope, or, while the
+  scope has no key, of a mainnet scope. The list keeps its four slots and its stored format; a
   scoped entry already holds the network id and a tag of the chain label.
   A key is registered for one scope only.
 - Device-wide requests. `/provision/identity`, `/wipe/signlog`, the signing
   log read and listing the keys of other scopes need a key of a mainnet scope
   while the image serves one. A key revokes keys of its own scope; revoking
-  another scope's key is device-wide too. A mainnet key may thus revoke a
-  testnet key, and the provisioning image then takes that scope's first key
-  unsigned again.
+  another scope's key is device-wide too, and never removes that scope's
+  last key. A scope that revokes its own last key gets its next first key
+  from a mainnet key.
 - One key, one scope. A cold key import or an imported owner key whose public
   key already belongs to a profile of another scope is refused, as is a cold
   key slot a profile of another scope names. Two slots of one scope may hold
@@ -577,8 +580,10 @@ are unchanged. `TESTNET=1` is refused with it.
   image: import cold keys with a signed `/provision/cold`.
 - Moving a testnet device. Flashing the multi image over a device that ran a
   testnet image keeps its profiles and host keys: the stored list is not
-  rewritten. Add the mainnet scopes' first keys with the multi provisioning
-  image.
+  rewritten. A testnet key does not act device-wide on the multi image, so to
+  add mainnet scopes, revoke the testnet keys with a testnet key on the multi
+  provisioning image, register a mainnet key unsigned, and add the testnet
+  key again with it. The profiles are kept.
 
 `armory-pool` signs these requests with its host key. The request JSON is read
 from standard input and the device's answer is printed. `armory-pool host-key
@@ -600,8 +605,10 @@ prints a request that names the scope, and `-host-key-dir DIR` picks
 `@cardano-mainnet` or `@prime-mainnet` is that scope, any other is testnet;
 a network-0 profile an older image stored under such a name takes
 `-scope testnet`).
-A scope's first key is added unsigned, so send that request without
-`-host-key` or `-host-key-dir`. Requests that
+The device's first key is added unsigned, so send that request without
+`-host-key` or `-host-key-dir`; register a mainnet scope's key first. Add
+every other scope's first key with that key, e.g. `-host-key-dir DIR -scope
+cardano-mainnet provision host-key < testnet.pub`. Requests that
 name no profile, such as `provision cold`, `provision identity`, `wipe
 signlog` and `signlog`, need `-scope`. `opcert-check -host-key` takes the key
 of the profile's scope. `signlog-verify` and `opcert-check` read no network or

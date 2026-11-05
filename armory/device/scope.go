@@ -70,7 +70,7 @@ func (s *Service) SetScopes(scopes []Scope) {
 }
 
 // AllowFirstHostKey lets the provisioning image of a multi service take the
-// first host key of a scope unsigned. Signing and wipe images never call it.
+// device's first host key unsigned. Signing and wipe images never call it.
 func (s *Service) AllowFirstHostKey() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -123,17 +123,18 @@ var (
 	errScopeMismatch = errors.New("host key is not of the scope of this profile")
 	errDeviceWide    = errors.New("this request is device-wide: it needs a host key of a mainnet scope")
 	errCrossScope    = errors.New("key already belongs to a profile of another scope")
-	errFirstKey      = errors.New("an unsigned host key is accepted only by the provisioning image, for a scope of the image that has no host key")
+	errFirstKey      = errors.New("an unsigned host key is accepted only by the provisioning image, for a scope of the image")
+	errFirstKeyHeld  = errors.New("an unsigned host key is accepted only while the device holds no host key; a key of a mainnet scope adds the first key of another scope")
 	errKeyOtherScope = errors.New("host key is already registered for another scope")
 	errScopeNeeded   = errors.New("a host key request names the scope it is for")
 	// errAddScopeMismatch refuses a host key add signed by a key of another
-	// scope than the one the request names
+	// scope than the one the request names, unless a mainnet key adds the
+	// first key of a scope
 	errAddScopeMismatch = errors.New("host key is not of the scope it adds a key for")
 	// errMainnetName refuses a testnet profile named as a mainnet scope's
 	errMainnetName = errors.New("a testnet profile may not end with the label of a mainnet scope")
 	// errLastKeyOtherScope refuses revoking the last host key of another
-	// scope, which would let the provisioning image take that scope's first
-	// key unsigned again
+	// scope, which would lock that scope out
 	errLastKeyOtherScope = errors.New("a key of another scope may not revoke the last host key of a scope")
 )
 
@@ -249,7 +250,7 @@ func (s *Service) callerSees(e hostEntry) bool {
 func (s *Service) authorizeMulti(route string, req hostAuthed) error {
 	a := req.hostAuth()
 
-	// the first key of a scope is the only unsigned request
+	// the device's first host key is the only unsigned request
 	if route == RouteProvisionHostKey && s.firstHostKeyOpen &&
 		len(a.HostKey) == 0 && len(a.HostSignature) == 0 && len(a.Challenge) == 0 {
 		hk, _ := req.(*HostKeyRequest)
@@ -259,8 +260,10 @@ func (s *Service) authorizeMulti(route string, req hostAuthed) error {
 			return err
 		}
 
-		if s.scopeHasKey(sc) {
-			return fmt.Errorf("%w (%s already has a host key)", errFirstKey, sc.Name())
+		// one unsigned key per device: a key of a second mainnet scope taken
+		// unsigned would act device-wide over the scopes already on it
+		if len(s.hostEntries) != 0 {
+			return errFirstKeyHeld
 		}
 
 		s.caller = caller{known: true, scope: sc, unsigned: true}
@@ -352,8 +355,9 @@ func (s *Service) needDeviceWide(sc Scope) error {
 }
 
 // addHostKeyMulti registers a host key for the scope the request names. The
-// key that signs the request must be of the same scope, so a scope's first
-// key can only come from the provisioning image.
+// key that signs the request is of the same scope, or, for a scope with no
+// key yet, of a mainnet scope. Only a device with no host key takes one
+// unsigned, on the provisioning image.
 func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 	if !s.caller.known {
 		return HostKeyResponse{}, errHostAuthMissing
@@ -364,7 +368,9 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 		return HostKeyResponse{}, err
 	}
 
-	if s.caller.scope != sc {
+	// a key of a mainnet scope adds the first key of another scope
+	if s.caller.scope != sc &&
+		(s.caller.unsigned || s.needDeviceWide(s.caller.scope) != nil || s.scopeHasKey(sc)) {
 		return HostKeyResponse{}, errAddScopeMismatch
 	}
 
@@ -391,8 +397,8 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 
 // revokeHostKeyMulti removes a host key. A key revokes keys of its own
 // scope, its last one included; a key of a mainnet scope also revokes the
-// keys of other scopes, but never a scope's last key, since a scope with no
-// key takes an unsigned first key on the provisioning image.
+// keys of other scopes, but never a scope's last key, which would lock that
+// scope out and let the mainnet key choose its next key.
 func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 	if !s.caller.known {
 		return HostKeyResponse{}, errHostAuthMissing

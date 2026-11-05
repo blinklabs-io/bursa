@@ -60,11 +60,12 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 
 	srv := multiServer(t)
 	dir := t.TempDir()
-	scopes := []string{"testnet", "cardano-mainnet", "prime-mainnet"}
+	scopes := []string{"cardano-mainnet", "testnet", "prime-mainnet"}
 
-	// each key is made for its scope and its printed request registers it,
-	// unsigned: the first key of a scope
-	for _, sc := range scopes {
+	// each key is made for its scope and its printed request registers it:
+	// the device's first key unsigned, then the others signed by that
+	// mainnet key, picked from the directory with -scope
+	for i, sc := range scopes {
 		var out bytes.Buffer
 
 		if err := run([]string{"host-key", "-scope", sc, "-out", filepath.Join(dir, sc+".key")}, &out); err != nil {
@@ -75,7 +76,12 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 			t.Fatalf("host-key request does not name %s: %s", sc, out.String())
 		}
 
-		if _, err := adminRun(srv, out.String(), "provision", "host-key"); err != nil {
+		args := []string{"provision", "host-key"}
+		if i > 0 {
+			args = append([]string{"-host-key-dir", dir, "-scope", scopes[0]}, args...)
+		}
+
+		if _, err := adminRun(srv, out.String(), args...); err != nil {
 			t.Fatalf("first %s key: %v", sc, err)
 		}
 	}
