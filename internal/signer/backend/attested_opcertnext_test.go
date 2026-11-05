@@ -192,9 +192,10 @@ func TestPurposeOpCertNextValidate(t *testing.T) {
 }
 
 // TestAttestedKeySignOpCertNextCounterConflict: the armory device refuses a
-// chain counter outside its recorded bounds with one of two fixed strings,
-// which the backend reports as ErrCustodyCounterConflict. Any other refusal,
-// or the same text for another purpose, stays untyped.
+// chain counter outside its recorded bounds, or a reissue at a KES period
+// below the logged one, with one of three fixed strings, which the backend
+// reports as ErrCustodyCounterConflict. Any other refusal, or the same text
+// for another purpose, stays untyped.
 func TestAttestedKeySignOpCertNextCounterConflict(t *testing.T) {
 	t.Parallel()
 	// pinned to armory/device/opcert.go errBelowFloor, errAboveIssued and

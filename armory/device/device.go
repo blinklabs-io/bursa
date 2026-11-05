@@ -731,9 +731,10 @@ func (s *Service) signOpCertNext(p profile.Profile, payload []byte) ([]byte, *ui
 	kesHash := blake2b.Sum256(payload[:32])
 	period := binary.BigEndian.Uint64(payload[40:])
 
-	// a reissue of the last issued counter keeps at least its logged KES
-	// period
-	if s.log != nil && p.LastIssued == issue {
+	// a reissue of the logged counter keeps at least its logged KES period.
+	// The log is the record: it is written before the profile, so after a
+	// failed profile write it holds the counter the profile does not.
+	if s.log != nil {
 		if logged, loggedPeriod, ok := s.log.LastOpCert(p.Name); ok && logged == issue && period < loggedPeriod {
 			return nil, nil, errKESBackdated
 		}

@@ -772,3 +772,44 @@ func TestOpCertNextRefusesBackdatedReissue(t *testing.T) {
 		t.Fatalf("head at entry %d, want 3: a refusal is not logged", got)
 	}
 }
+
+// A request whose profile write failed after its log entry leaves the log
+// ahead of the profile record; a retry of that counter at an older KES period
+// is still refused.
+func TestOpCertNextBackdatedAfterProfileWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+
+	w, err := signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), signlog.NewKeySigner(priv))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	issue := func(n byte, period uint64) SignResponse {
+		t.Helper()
+
+		return sign(t, s, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(bytes.Repeat([]byte{n}, 32), 3, period), Profile: "otg@preview",
+		})
+	}
+
+	chip.failWrite = true
+	if r := issue(1, 1100); r.Error == "" || len(r.Signature) != 0 {
+		t.Fatalf("signed although the profile write failed: %+v", r)
+	}
+
+	chip.failWrite = false
+	if r := issue(2, 1099); r.Error != errKESBackdated.Error() || len(r.Signature) != 0 {
+		t.Fatalf("backdated retry after a failed profile write: %+v", r)
+	}
+}
