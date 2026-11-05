@@ -77,8 +77,18 @@ func TestLoadSecretKeyFromFileWindowsChecksOpenHandle(t *testing.T) {
 func TestLoadSecretKeyFromFileWindowsAllowsOwner(t *testing.T) {
 	path := writeBursaSecretKey(t)
 	setBursaDACL(t, path, fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)))
+	// An elevated process's default owner is BUILTIN\Administrators, which
+	// the policy rejects, so make the current user the owner explicitly.
+	owner, err := windows.StringToSid(bursaCurrentUserSID(t))
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION,
+		owner, nil, nil, nil,
+	))
 
-	_, err := LoadSecretKeyFromFile(path)
+	_, err = LoadSecretKeyFromFile(path)
 	assert.NoError(t, err)
 }
 
