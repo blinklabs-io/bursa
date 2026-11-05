@@ -335,8 +335,9 @@ components:
             last block it forged, 0 if none). When set, the signer issues the
             certificate at chain_counter + 1 and returns that number in
             issue_counter. The same chain counter may be sent again while the
-            pool has not forged with the new certificate; a lower one than
-            already reported is refused with 409.
+            pool has not forged with the new certificate. A chain counter
+            lower than already reported, or above the last issue counter
+            signed for the key, is refused with 409.
         kes_period:
           type: integer
           format: int64
