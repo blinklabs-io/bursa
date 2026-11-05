@@ -65,6 +65,8 @@ type stubEnclave struct {
 	// leaves it out, modelling custody that misreports the counter.
 	issueSkew uint64
 	omitIssue bool
+	// refuse, when set, is returned as the enclave's refusal.
+	refuse string
 }
 
 func (e *stubEnclave) Inventory(
@@ -88,6 +90,9 @@ func (e *stubEnclave) Sign(
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, req)
+	if e.refuse != "" {
+		return backend.AttestedResponse{Version: backend.AttestedProtocol, Nonce: req.Nonce, Error: e.refuse}, nil
+	}
 	key := e.priv
 	if e.forge != nil {
 		key = e.forge
@@ -317,6 +322,31 @@ func TestAttestedKeySignsOpCertFromChain(t *testing.T) {
 	// refusals did not raise the floor past chain counter 4
 	enc.issueSkew, enc.omitIssue, enc.forge = 0, false, nil
 	if _, code, err := c.SignOpCertFromChain(t.Context(), kes, 5, 100, hash.String()); err != nil {
+		t.Fatalf("after refusals: code=%s err=%v", code, err)
+	}
+}
+
+// TestAttestedKeyCustodyCounterConflict: custody refusing the chain counter
+// is a conflict (HTTP 409), not a backend failure (HTTP 502), and leaves the
+// floor where it was.
+func TestAttestedKeyCustodyCounterConflict(t *testing.T) {
+	t.Parallel()
+	c, enc, hash, _ := newAttestedCoordinator(t, backend.KeyTypePool, "opcert", fakeCardano{})
+	kes := bytes.Repeat([]byte{9}, kesVkeySize)
+
+	for refusal, want := range map[string]ErrorCode{
+		"chain counter below the recorded on-chain counter":      CodeConflict,
+		"chain counter above the last counter the device issued": CodeConflict,
+		"opcert-next requires the pool key":                      CodeBackend,
+	} {
+		enc.refuse = refusal
+		if res, code, err := c.SignOpCertFromChain(t.Context(), kes, 6, 100, hash.String()); err == nil || res != nil || code != want {
+			t.Fatalf("%q: code=%s err=%v res=%+v, want %s", refusal, code, err, res, want)
+		}
+	}
+
+	enc.refuse = ""
+	if _, code, err := c.SignOpCertFromChain(t.Context(), kes, 4, 100, hash.String()); err != nil {
 		t.Fatalf("after refusals: code=%s err=%v", code, err)
 	}
 }

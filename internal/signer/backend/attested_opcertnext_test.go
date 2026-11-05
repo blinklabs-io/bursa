@@ -190,3 +190,47 @@ func TestPurposeOpCertNextValidate(t *testing.T) {
 		}
 	}
 }
+
+// TestAttestedKeySignOpCertNextCounterConflict: the armory device refuses a
+// chain counter outside its recorded bounds with one of two fixed strings,
+// which the backend reports as ErrCustodyCounterConflict. Any other refusal,
+// or the same text for another purpose, stays untyped.
+func TestAttestedKeySignOpCertNextCounterConflict(t *testing.T) {
+	t.Parallel()
+	// pinned to armory/device/opcert.go errBelowFloor and errAboveIssued
+	if custodyBelowFloor != "chain counter below the recorded on-chain counter" ||
+		custodyAboveIssued != "chain counter above the last counter the device issued" {
+		t.Fatal("device counter refusal strings changed")
+	}
+	kes := bytes.Repeat([]byte{7}, 32)
+	for _, tc := range []struct {
+		refusal  string
+		conflict bool
+	}{
+		{custodyBelowFloor, true},
+		{custodyAboveIssued, true},
+		{"opcert-next requires the pool key", false},
+		{custodyBelowFloor + " ", false},
+	} {
+		t.Run(tc.refusal, func(t *testing.T) {
+			t.Parallel()
+			e := newFakeEnclave(t, KeyTypePool)
+			e.tamperResp = func(_ AttestedRequest, resp *AttestedResponse) {
+				*resp = AttestedResponse{Version: resp.Version, Nonce: resp.Nonce, Error: tc.refusal}
+			}
+			ref, s := opCertNextKey(t, e, "")
+			_, _, err := s.SignOpCertNext(t.Context(), kes, 5, 300)
+			if err == nil {
+				t.Fatal("refusal signed")
+			}
+			if got := errors.Is(err, ErrCustodyCounterConflict); got != tc.conflict {
+				t.Fatalf("errors.Is(%v, ErrCustodyCounterConflict) = %v, want %v", err, got, tc.conflict)
+			}
+			// the same text refusing another purpose is not a counter conflict
+			_, err = SignFor(t.Context(), ref, PurposeOpCert, opCertNextSignable(kes, 6, 300))
+			if err == nil || errors.Is(err, ErrCustodyCounterConflict) {
+				t.Fatalf("opcert refusal: %v", err)
+			}
+		})
+	}
+}

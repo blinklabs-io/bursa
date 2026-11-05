@@ -361,7 +361,9 @@ serves this protocol at `/v1/inventory` and `/v1/sign`.
 
 For `opcert-next`, the profile record also holds the last counter the device
 issued, and a chain counter above it is refused: the ledger only holds
-counters the device issued. A record written before this counter existed has
+counters the device issued. `bursa signer` answers a request the device
+refuses for its floor or its last issued counter with HTTP 409, whatever its
+watermark mode: the device signs nothing. A record written before this counter existed has
 none until its next `opcert-next`. `POST /provision/floor` on the provisioning
 firmware sets the floor to the operator's chain counter and clears the last
 issued counter. Firmware without this counter refuses a record that carries

@@ -271,6 +271,8 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 			code = CodeInternal
 		} else if errors.Is(err, backend.ErrUnsupportedExtended) {
 			code = CodeUnsupported
+		} else if errors.Is(err, backend.ErrCustodyCounterConflict) {
+			code = CodeConflict
 		}
 		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", err.Error())
 		c.deps.Metrics.observe("opcert", string(code))

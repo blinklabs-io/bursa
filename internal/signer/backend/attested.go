@@ -94,6 +94,17 @@ var (
 	// ErrInvalidSignature is returned when an attested signer response does not
 	// verify under the key admitted by the attestation.
 	ErrInvalidSignature = errors.New("attested signature does not verify")
+	// ErrCustodyCounterConflict is returned when custody refuses an opcert-next
+	// request because the chain counter is outside the bounds it recorded.
+	ErrCustodyCounterConflict = errors.New("custody refused the opcert chain counter")
+)
+
+// The armory device's opcert-next refusals for a chain counter below its
+// recorded floor or above its last issued counter (armory/device/opcert.go).
+// A refusal carries only this text, so it is matched exactly.
+const (
+	custodyBelowFloor  = "chain counter below the recorded on-chain counter"
+	custodyAboveIssued = "chain counter above the last counter the device issued"
 )
 
 // Purpose binds a signature request to the Cardano operation it authorizes.
@@ -527,6 +538,9 @@ func (k *attestedKey) exchangeAt(ctx context.Context, version string, purpose Pu
 		return AttestedResponse{}, false, fmt.Errorf("%w: response version %q, requested %q", ErrAttestedProtocol, resp.Version, version)
 	}
 	if resp.Error != "" {
+		if purpose == PurposeOpCertNext && (resp.Error == custodyBelowFloor || resp.Error == custodyAboveIssued) {
+			return AttestedResponse{}, false, fmt.Errorf("%w: %s", ErrCustodyCounterConflict, resp.Error)
+		}
 		return AttestedResponse{}, false, fmt.Errorf("attested sign: enclave refused: %s", resp.Error)
 	}
 	if version != AttestedProtocolSummary && resp.Summary != "" {
