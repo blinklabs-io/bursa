@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
@@ -166,7 +167,7 @@ func (c *Coordinator) signOpCert(ctx context.Context, kesVkey []byte, issueCount
 		return nil, CodeBackend, err
 	}
 
-	if dec := c.deps.Policy.EvaluateOpCert(hash); !dec.Allow {
+	if dec := c.deps.Policy.EvaluateOpCert(hash, policy.WithBackend(ref.Backend())); !dec.Allow {
 		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "denied", "reason", dec.Reason)
 		c.deps.Metrics.observe("opcert", string(CodeDenied))
 		c.deps.Metrics.observeDeny(string(CodeDenied))

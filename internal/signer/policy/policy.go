@@ -110,11 +110,23 @@ type CIP8Policy struct {
 
 // KeyPolicy is the per-key authorization rule set.
 type KeyPolicy struct {
-	Hash            string      `yaml:"hash"`
+	Hash string `yaml:"hash"`
+	// Backend is the configured name of the custody backend that must hold the
+	// key. When set, a request is denied unless the resolved key's backend
+	// matches it. When empty, any backend is accepted.
 	Backend         string      `yaml:"backend"`
 	AllowedRequests []string    `yaml:"allowed_requests"`
 	Tx              *TxPolicy   `yaml:"tx_policy"`
 	CIP8            *CIP8Policy `yaml:"cip8_policy"`
+}
+
+// backendDecision denies when the policy pins a custody backend and the
+// resolved key is held by a different one.
+func (p KeyPolicy) backendDecision(cfg evalConfig) Decision {
+	if p.Backend != "" && cfg.backendSet && cfg.backend != p.Backend {
+		return deny("key %s is held in backend %q, policy requires backend %q", p.Hash, cfg.backend, p.Backend)
+	}
+	return allow()
 }
 
 func (p KeyPolicy) allows(reqType string) bool {
@@ -212,15 +224,29 @@ func IsDrepVoterKind(kind string) bool {
 	return kind == VoterDrepKey || kind == VoterDrepScript
 }
 
-// evalConfig holds the optional inputs threaded into EvaluateTx.
+// evalConfig holds the optional inputs threaded into the Evaluate methods.
 type evalConfig struct {
-	caller string
-	ops    TxOps
+	caller     string
+	ops        TxOps
+	backend    string
+	backendSet bool
 }
 
-// EvalOption configures an EvaluateTx call. Absent options preserve the
-// original two-argument behavior (no caller override, no per-kind gating).
+// EvalOption configures an Evaluate call. Absent options preserve the
+// original behavior (no caller override, no per-kind gating, no custody
+// backend check).
 type EvalOption func(*evalConfig)
+
+// WithBackend supplies the name of the backend that custodies the resolved key.
+// A key policy that names a backend denies every request whose resolved key is
+// held elsewhere. Callers that resolve the key must always pass it: omitting
+// the option skips the check.
+func WithBackend(name string) EvalOption {
+	return func(c *evalConfig) {
+		c.backend = name
+		c.backendSet = true
+	}
+}
 
 // WithCaller threads the authenticated caller into policy evaluation so that a
 // configured per-caller override (see SetCallerPolicies) can further restrict
@@ -551,6 +577,9 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 	if !ok {
 		return deny("no policy configured for key %s", hash)
 	}
+	if d := p.backendDecision(cfg); !d.Allow {
+		return d
+	}
 	if !p.allows("tx") {
 		return deny("key %s may not sign transactions", hash)
 	}
@@ -772,10 +801,17 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 // that lists "opcert" in allowed_requests. Unlike tx/cip8 there is no bounded
 // sub-policy: the KES vkey, issue counter, and KES period are operator-supplied
 // values with no ledger-value semantics to constrain here.
-func (e *Engine) EvaluateOpCert(hash backend.KeyHash) Decision {
+func (e *Engine) EvaluateOpCert(hash backend.KeyHash, opts ...EvalOption) Decision {
+	var cfg evalConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	p, ok := e.byHash[hash]
 	if !ok {
 		return deny("no policy configured for key %s", hash)
+	}
+	if d := p.backendDecision(cfg); !d.Allow {
+		return d
 	}
 	if !p.allows("opcert") {
 		return deny("key %s may not sign operational certificates", hash)
@@ -784,10 +820,17 @@ func (e *Engine) EvaluateOpCert(hash backend.KeyHash) Decision {
 }
 
 // EvaluateCIP8 authorizes (or denies) a CIP-8/CIP-30 data-signing request.
-func (e *Engine) EvaluateCIP8(hash backend.KeyHash, payloadLen int, addressMatches bool) Decision {
+func (e *Engine) EvaluateCIP8(hash backend.KeyHash, payloadLen int, addressMatches bool, opts ...EvalOption) Decision {
+	var cfg evalConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	p, ok := e.byHash[hash]
 	if !ok {
 		return deny("no policy configured for key %s", hash)
+	}
+	if d := p.backendDecision(cfg); !d.Allow {
+		return d
 	}
 	if !p.allows("cip8") {
 		return deny("key %s may not perform data signing", hash)

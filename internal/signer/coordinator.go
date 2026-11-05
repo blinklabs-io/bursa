@@ -264,7 +264,7 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			c.deps.Metrics.observeBackendError("resolver")
 			continue
 		}
-		if dec := c.deps.Policy.EvaluateTx(hash, insp, policy.WithCaller(caller), policy.WithOps(ops)); !dec.Allow {
+		if dec := c.deps.Policy.EvaluateTx(hash, insp, policy.WithCaller(caller), policy.WithOps(ops), policy.WithBackend(ref.Backend())); !dec.Allow {
 			errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: dec.Reason})
 			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", dec.Reason)
 			c.deps.Metrics.observe("tx", string(CodeDenied))
