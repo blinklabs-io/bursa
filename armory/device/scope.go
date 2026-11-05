@@ -319,7 +319,10 @@ func (s *Service) authorizeScope(req hostAuthed, sc Scope) error {
 	case *PinsRequest:
 		target, err = s.profileScope(r.Profile)
 	case *WipeProfileRequest:
-		target, err = s.profileScope(r.Profile)
+		// a key of a mainnet scope also removes a testnet profile
+		if target, err = s.profileScope(r.Profile); err == nil && target.Network == 0 && sc.Network == 1 {
+			return nil
+		}
 	case *IdentityRequest, *WipeSignLogRequest:
 		return s.needDeviceWide(sc)
 	default:

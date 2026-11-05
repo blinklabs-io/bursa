@@ -43,6 +43,7 @@ const (
 	RouteProvisionHostRevoke = "/provision/host-key/revoke"
 	RouteWipeProfile         = "/wipe/profile"
 	RouteWipeSignLog         = "/wipe/signlog"
+	RouteWipeCold            = "/wipe/cold"
 )
 
 // HostAuth authenticates a provisioning or wipe request: the host key signs
@@ -73,6 +74,14 @@ type WipeSignLogRequest struct {
 	HostAuth
 }
 
+// WipeColdRequest confirms the removal of one cold key that no profile
+// names, as WipeDeviceRequest, and authenticates it with a host key.
+type WipeColdRequest struct {
+	IdentityPublicKey string `json:"identity_public_key"`
+	ColdKeyID         uint32 `json:"cold_key_id"`
+	HostAuth
+}
+
 // adminRequests creates the request type of each authenticated route.
 var adminRequests = map[string]func() hostAuthed{
 	RouteProvisionProfile:    func() hostAuthed { return &ProvisionRequest{} },
@@ -85,6 +94,7 @@ var adminRequests = map[string]func() hostAuthed{
 	RouteProvisionHostRevoke: func() hostAuthed { return &HostKeyRequest{} },
 	RouteWipeProfile:         func() hostAuthed { return &WipeProfileRequest{} },
 	RouteWipeSignLog:         func() hostAuthed { return &WipeSignLogRequest{} },
+	RouteWipeCold:            func() hostAuthed { return &WipeColdRequest{} },
 }
 
 // AdminRoutes returns the routes that take host authentication.

@@ -50,12 +50,15 @@ no unfiltered `/sign`. The single-scope images build as before.
   ownership object `0x20e50023`, and only that scope imports into it again or
   provisions a profile on it. Signing refuses a key the record gives to
   another scope; a record that cannot be read does not stop signing. An
-  empty object is free whatever an old claim says. Every image keeps the record, single-scope images with their own
-  scope. A key an older image stored with no claim belongs to the scope of the
-  profile on it; a key with no claim and no profile belongs to no scope and is
-  refused to all: remove it with the wipe image (`/wipe/profile` after a
-  profile on it, or `/wipe/device`). A profile an older image stored is still
-  served.
+  empty object is free whatever an old claim says. Every image keeps the
+  record, single-scope images with their own scope. A key an older image
+  stored with no claim belongs to the scope of the profile on it; a key with
+  no claim and no profile belongs to no scope and is refused to all. A profile
+  an older image stored is still served.
+- The wipe image's signed `/wipe/cold` deletes a cold key no profile names,
+  and its claim: its owner may, and a mainnet key may delete a testnet key or
+  one with no owner, never the other mainnet scope's. A mainnet key also
+  removes a testnet profile with `/wipe/profile`.
 - A device that ran a testnet image keeps its profiles and host key. A
   testnet key does not act device-wide on the multi image: with the
   provisioning image, revoke the testnet keys with a testnet key, register a

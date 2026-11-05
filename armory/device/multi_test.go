@@ -388,6 +388,8 @@ func TestMultiProfileRoutesNeedKeyOfProfileScope(t *testing.T) {
 	}
 }
 
+// Removing a profile needs a key of the profile's scope, or a mainnet key for
+// a testnet profile.
 func TestMultiWipeProfileNeedsKeyOfProfileScope(t *testing.T) {
 	t.Parallel()
 
@@ -412,8 +414,9 @@ func TestMultiWipeProfileNeedsKeyOfProfileScope(t *testing.T) {
 				req := WipeProfileRequest{Profile: p.name, IdentityPublicKey: hexOf(id.PublicKey)}
 				code, body = postAs(t, h, RouteWipeProfile, req, k.key)
 
-				if p.scope == k.scope {
-					mustOK(t, "same scope", code, body)
+				// a mainnet key also removes a testnet profile
+				if p.scope == k.scope || (p.net == 0 && k.net == 1) {
+					mustOK(t, "same scope, or testnet by mainnet", code, body)
 					return
 				}
 

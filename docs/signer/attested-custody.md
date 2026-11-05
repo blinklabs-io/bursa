@@ -491,7 +491,7 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
   `/provision/reward`, `/provision/pins`, `/provision/cold`,
   `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
-  `/wipe/profile` and
+  `/wipe/profile`, `/wipe/cold` and
   `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
@@ -571,10 +571,15 @@ are unchanged. `TESTNET=1` is refused with it.
   by an older image is still served.
 - Legacy and unowned keys. A cold key an older image stored has no claim; it
   belongs to the scope of the profile that names it. A key with no claim and no
-  profile belongs to no scope and every scope is refused; remove it with the
-  wipe image: provision a profile on it with an older image and `/wipe/profile`
-  it, or `/wipe/device`. A multi image refuses it, and a single-scope image
-  keeps serving it as before.
+  profile belongs to no scope and every scope is refused; a mainnet key
+  removes it with the wipe image's `/wipe/cold`. A multi image refuses it,
+  and a single-scope image keeps serving it as before.
+- Removing cold keys and profiles. `POST /wipe/cold` on the wipe image, with
+  `identity_public_key` and `cold_key_id` and signed by a host key, deletes a
+  cold key no profile names and its claim. The owner's key may; a key of a
+  mainnet scope may delete a testnet key or one with no owner, never the
+  other mainnet scope's. A key a profile names goes with `/wipe/profile`,
+  which a mainnet key also sends for a testnet profile.
 - Not changed: `/wipe/device`, which stays confirmed by the identity public
   key alone as the recovery path when every host key is lost, and
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
@@ -617,8 +622,8 @@ of the profile's scope. `signlog-verify` and `opcert-check` read no network or
 chain: a log with entries of several scopes verifies as one chain.
 
 `provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
-`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
-`signlog`. Without `-host-key` a request is sent unsigned, which the device
+`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile`,
+`cold` or `signlog`. Without `-host-key` a request is sent unsigned, which the device
 accepts only in the bootstrap state, and always for `wipe device` and `wipe
 objects`. Register the first host key before the other provisioning steps.
 

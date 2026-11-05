@@ -590,3 +590,85 @@ func opcertUnsigned(t *testing.T, s *Service, chip *fakeChip, p multiProfile, n 
 		Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: p.name,
 	})
 }
+
+// /wipe/cold deletes a cold key that no profile names: its owner may, and a
+// mainnet key may delete a testnet one or one with no owner, never the other
+// mainnet chain's.
+func TestColdOwnershipWipeCold(t *testing.T) {
+	t.Parallel()
+
+	const (
+		unowned = 0x20e50601
+		testnet = 0x20e50602
+		cardano = 0x20e50603
+		prime   = 0x20e50604
+	)
+
+	for _, c := range []struct {
+		name string
+		id   uint32
+		by   ed25519.PrivateKey
+		want error
+	}{
+		{"testnet deletes its own", testnet, multiKeyTestnet, nil},
+		{"cardano deletes testnet's", testnet, multiKeyCardano, nil},
+		{"prime deletes an unowned key", unowned, multiKeyPrime, nil},
+		{"cardano deletes its own", cardano, multiKeyCardano, nil},
+		{"testnet deletes an unowned key", unowned, multiKeyTestnet, errColdOwner},
+		{"testnet deletes cardano's", cardano, multiKeyTestnet, errColdOwner},
+		{"prime deletes cardano's", cardano, multiKeyPrime, errColdOwner},
+		{"cardano deletes prime's", prime, multiKeyCardano, errColdOwner},
+		{"a profile's key", multiProfiles[0].cold, multiKeyTestnet, errColdInUse},
+		{"not a cold key object", profile.IdentityKeyID, multiKeyCardano, errColdOwner},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			chip, s := seedMulti(t)
+			h := s.Handler()
+
+			plant(chip, unowned)
+
+			for id, k := range map[uint32]ed25519.PrivateKey{testnet: multiKeyTestnet, cardano: multiKeyCardano, prime: multiKeyPrime} {
+				code, body := postAs(t, h, RouteProvisionCold, coldReq(id, 0x70+byte(id&0xf)), k)
+				mustOK(t, "import", code, body)
+			}
+
+			code, body := postAs(t, h, RouteProvisionIdentity, IdentityRequest{}, multiKeyCardano)
+			mustOK(t, "identity", code, body)
+
+			var ident IdentityResponse
+			if err := json.Unmarshal(body, &ident); err != nil {
+				t.Fatal(err)
+			}
+
+			before := objectIDs(chip)
+			req := WipeColdRequest{IdentityPublicKey: hexOf(ident.PublicKey), ColdKeyID: c.id}
+			code, body = postAs(t, s.WipeHandler(), RouteWipeCold, req, c.by)
+
+			if c.want != nil {
+				refused(t, c.name, code, body, c.want)
+
+				if after := objectIDs(chip); len(after) != len(before) {
+					t.Fatal("a refused wipe deleted an object")
+				}
+
+				return
+			}
+
+			mustOK(t, c.name, code, body)
+
+			if _, ok := chip.keys[c.id]; ok {
+				t.Fatalf("%#08x still holds a key", c.id)
+			}
+
+			if _, ok := claimOf(t, chip, c.id); ok {
+				t.Fatalf("%#08x keeps its claim", c.id)
+			}
+
+			// the emptied object is free to any scope
+			code, body = postAs(t, h, RouteProvisionCold, coldReq(c.id, 0x7e), multiKeyPrime)
+			mustOK(t, "prime imports into the freed object", code, body)
+		})
+	}
+}

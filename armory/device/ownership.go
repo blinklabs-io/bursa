@@ -49,9 +49,11 @@ const (
 var (
 	// errColdOwner refuses a cold key object another scope owns, or one that
 	// holds a key nobody owns
-	errColdOwner = errors.New("cold key object belongs to another scope, or holds a key with no owner; wipe it")
+	errColdOwner = errors.New("cold key object belongs to another scope, or holds a key with no owner; a mainnet key removes it with /wipe/cold")
 	// errOwnersRecord is the ownership record that cannot be trusted
 	errOwnersRecord = errors.New("cold key ownership record is corrupt; wipe the device")
+	// errColdInUse refuses /wipe/cold for a cold key a profile names
+	errColdInUse = errors.New("a profile names this cold key; remove the profile with /wipe/profile")
 )
 
 // isColdKeyID reports whether id is a cold key object.
@@ -348,4 +350,23 @@ func (s *Service) checkSignOwner(p profile.Profile, id uint32) error {
 	}
 
 	return nil
+}
+
+// mayWipeCold reports whether a key of scope sc may delete cold key object
+// id, which holds a key: its owner may, and a key of a mainnet scope may
+// delete a testnet key or one with no owner, never another mainnet chain's.
+func (s *Service) mayWipeCold(id uint32, sc Scope) error {
+	tag, ok, err := s.coldOwner(id)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case ok && tag == tagOf(sc):
+		return nil
+	case sc.Network == 1 && (!ok || tag.network == 0):
+		return nil
+	}
+
+	return errColdOwner
 }
