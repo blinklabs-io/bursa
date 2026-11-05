@@ -97,7 +97,10 @@ func Load(path string) (*Store, error) {
 			return s, nil
 		}
 		if errors.Is(err, errSettingsTooLarge) {
-			return nil, fmt.Errorf("settings file exceeds %d bytes", maxSettingsLen)
+			return nil, fmt.Errorf(
+				"settings file exceeds %d bytes",
+				maxSettingsLen,
+			)
 		}
 		return nil, fmt.Errorf("read settings: %w", err)
 	}

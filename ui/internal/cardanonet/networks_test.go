@@ -26,7 +26,13 @@ func TestProtocolMagic(t *testing.T) {
 	for name, magic := range want {
 		got, err := ProtocolMagic(name)
 		if err != nil || got != magic {
-			t.Fatalf("ProtocolMagic(%q) = %d, %v; want %d", name, got, err, magic)
+			t.Fatalf(
+				"ProtocolMagic(%q) = %d, %v; want %d",
+				name,
+				got,
+				err,
+				magic,
+			)
 		}
 	}
 	if _, err := ProtocolMagic("nope"); err == nil {

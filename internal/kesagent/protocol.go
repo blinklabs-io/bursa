@@ -150,7 +150,9 @@ func (k KeyPush) marshalFrame() ([]byte, error) {
 	// move the signing key to a new array and leave the old one unwiped.
 	const (
 		maxUintLen = 20
-		fixedLen   = len(`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`)
+		fixedLen   = len(
+			`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`,
+		)
 	)
 	// Bounding every term first keeps the sum from overflowing, and rejects an
 	// oversized push before the signing key is encoded at all.
@@ -159,7 +161,9 @@ func (k KeyPush) marshalFrame() ([]byte, error) {
 		return nil, errFrameTooLarge
 	}
 	size := fixedLen + len(typ) + 2*maxUintLen +
-		jsonBytesLen(k.KESSignKey) + jsonBytesLen(k.KESVKey) + jsonBytesLen(k.OpCert)
+		jsonBytesLen(
+			k.KESSignKey,
+		) + jsonBytesLen(k.KESVKey) + jsonBytesLen(k.OpCert)
 	if size > maxFrameLen {
 		return nil, errFrameTooLarge
 	}
@@ -290,7 +294,10 @@ func writeFrame(w deadlineWriter, v any) (retErr error) {
 		}
 	}()
 	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload))) // #nosec G115 -- bounded by maxFrameLen
+	binary.BigEndian.PutUint32(
+		hdr[:],
+		uint32(len(payload)),
+	) // #nosec G115 -- bounded by maxFrameLen
 	n, err := w.Write(hdr[:])
 	if err != nil {
 		return fmt.Errorf("kesagent: write frame header: %w", err)

@@ -25,17 +25,26 @@ import (
 // it opens without issuing any TPM command.
 type closerStub struct{ closed bool }
 
-func (c *closerStub) Send([]byte) ([]byte, error) { return nil, errors.New("not used") }
-func (c *closerStub) Close() error                { c.closed = true; return nil }
+func (c *closerStub) Send(
+	[]byte,
+) ([]byte, error) {
+	return nil, errors.New("not used")
+}
+
+func (c *closerStub) Close() error { c.closed = true; return nil }
 
 func TestAvailableViaSuccess(t *testing.T) {
 	stub := &closerStub{}
-	ok, reason := availableVia(func() (transport.TPMCloser, error) { return stub, nil })
+	ok, reason := availableVia(
+		func() (transport.TPMCloser, error) { return stub, nil },
+	)
 	if !ok {
 		t.Fatalf("availableVia success = (false, %q), want true", reason)
 	}
 	if !stub.closed {
-		t.Fatal("availableVia must close the transport it opened (side-effect-free probe)")
+		t.Fatal(
+			"availableVia must close the transport it opened (side-effect-free probe)",
+		)
 	}
 }
 

@@ -43,12 +43,20 @@ func TestMultiKeepsLegacyProfile(t *testing.T) {
 	old := imageOn(t, chip, 0, "")
 	counter := uint64(3)
 
-	code, body := rawPost(old.Handler(), RouteProvisionCold, jsonOf(t, coldReq(0x20e5001d, 0x92)))
+	code, body := rawPost(
+		old.Handler(),
+		RouteProvisionCold,
+		jsonOf(t, coldReq(0x20e5001d, 0x92)),
+	)
 	mustOK(t, "cold key on the testnet image", code, body)
 
-	code, body = rawPost(old.Handler(), RouteProvisionProfile, jsonOf(t, ProvisionRequest{
-		Name: "old@preview", Slot: 0, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
-	}))
+	code, body = rawPost(
+		old.Handler(),
+		RouteProvisionProfile,
+		jsonOf(t, ProvisionRequest{
+			Name: "old@preview", Slot: 0, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
+		}),
+	)
 	mustOK(t, "profile on the testnet image", code, body)
 
 	if _, err := old.addHostKey(HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)}); err != nil {
@@ -59,10 +67,19 @@ func TestMultiKeepsLegacyProfile(t *testing.T) {
 	p := multiProfile{name: "old@preview", cold: 0x20e5001d}
 
 	if resp := opcertFor(t, signing, chip, p, multiKeyTestnet, 1); resp.Error != "" {
-		t.Fatalf("the out-of-range testnet profile no longer signs: %q", resp.Error)
+		t.Fatalf(
+			"the out-of-range testnet profile no longer signs: %q",
+			resp.Error,
+		)
 	}
 
-	code, body = postAs(t, signing.Handler(), RouteProvisionFloor, FloorRequest{Profile: "old@preview", ChainCounter: 4}, multiKeyTestnet)
+	code, body = postAs(
+		t,
+		signing.Handler(),
+		RouteProvisionFloor,
+		FloorRequest{Profile: "old@preview", ChainCounter: 4},
+		multiKeyTestnet,
+	)
 	mustOK(t, "floor of the out-of-range profile", code, body)
 }
 
@@ -76,19 +93,45 @@ func TestMultiScopeConflictFailsClosed(t *testing.T) {
 		cardano := multiProfiles[1]
 		chip.failPublic = map[uint32]bool{cardano.cold: true}
 
-		code, body := postAs(t, s.Handler(), RouteProvisionCold, coldReq(0x20e50014, cardano.seed), multiKeyTestnet)
-		refused(t, "testnet import of the cardano key, cardano key unreadable", code, body, errDevice)
+		code, body := postAs(
+			t,
+			s.Handler(),
+			RouteProvisionCold,
+			coldReq(0x20e50014, cardano.seed),
+			multiKeyTestnet,
+		)
+		refused(
+			t,
+			"testnet import of the cardano key, cardano key unreadable",
+			code,
+			body,
+			errDevice,
+		)
 	})
 
 	t.Run("profile on an unreadable cold key", func(t *testing.T) {
 		chip, s := seedMulti(t)
 		counter := uint64(1)
-		chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{multiProfiles[1].seed}, 32))
+		chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(
+			bytes.Repeat([]byte{multiProfiles[1].seed}, 32),
+		)
 		chip.failPublic = map[uint32]bool{0x20e50014: true}
 
-		code, body := postAs(t, s.Handler(), RouteProvisionProfile, ProvisionRequest{
-			Name: "dup@preview", Slot: 5, ColdKeyID: 0x20e50014, ChainCounter: &counter,
-		}, multiKeyTestnet)
-		refused(t, "testnet profile on an unreadable cold key", code, body, errDevice)
+		code, body := postAs(
+			t,
+			s.Handler(),
+			RouteProvisionProfile,
+			ProvisionRequest{
+				Name: "dup@preview", Slot: 5, ColdKeyID: 0x20e50014, ChainCounter: &counter,
+			},
+			multiKeyTestnet,
+		)
+		refused(
+			t,
+			"testnet profile on an unreadable cold key",
+			code,
+			body,
+			errDevice,
+		)
 	})
 }

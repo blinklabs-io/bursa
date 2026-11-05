@@ -47,7 +47,13 @@ func newColdKey(t *testing.T) coldKeyPair {
 
 // testAgent builds an Agent with a fixed clock. slotLen is 1s and
 // slotsPerKESPeriod is 10, so a KES period is 10s. clockAt sets now().
-func testAgent(t *testing.T, mode string, cold coldKeyPair, depth uint64, clockAt time.Time) *Agent {
+func testAgent(
+	t *testing.T,
+	mode string,
+	cold coldKeyPair,
+	depth uint64,
+	clockAt time.Time,
+) *Agent {
 	t.Helper()
 	cfg := Config{
 		Mode:              mode,
@@ -79,7 +85,12 @@ func atPeriod(p uint64) time.Time {
 
 // makeOpCert builds a canonical node operational certificate CBOR envelope
 // [[kes_vkey, issue, period, cold_sig], cold_vkey] signed by cold.
-func makeOpCert(t *testing.T, kesVkey []byte, issue, period uint64, cold coldKeyPair) []byte {
+func makeOpCert(
+	t *testing.T,
+	kesVkey []byte,
+	issue, period uint64,
+	cold coldKeyPair,
+) []byte {
 	t.Helper()
 	oc, err := ledger.CreateOpCert(kesVkey, issue, period, cold.priv)
 	if err != nil {

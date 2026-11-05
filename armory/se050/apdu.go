@@ -23,14 +23,20 @@ import (
 // are not needed for Ed25519 operations and are not supported.
 func command(cla, ins, p1, p2 byte, data []byte, le bool) ([]byte, error) {
 	if len(data) > 0xff {
-		return nil, fmt.Errorf("se050: command data too long (%d bytes)", len(data))
+		return nil, fmt.Errorf(
+			"se050: command data too long (%d bytes)",
+			len(data),
+		)
 	}
 
 	apdu := []byte{cla, ins, p1, p2}
 
 	if len(data) > 0 {
 		if len(data) > 0xff {
-			return nil, fmt.Errorf("se050: command data too long (%d bytes)", len(data))
+			return nil, fmt.Errorf(
+				"se050: command data too long (%d bytes)",
+				len(data),
+			)
 		}
 		apdu = append(apdu, byte(len(data))) //nolint:gosec // checked above
 		apdu = append(apdu, data...)
@@ -53,7 +59,9 @@ func appendTLV(b []byte, tag byte, val []byte) []byte {
 	case n <= 0xff:
 		b = append(b, 0x81, byte(n)) //nolint:gosec // checked above
 	default:
-		b = append(b, 0x82, byte(n>>8), byte(n)) //nolint:gosec // range guaranteed by default branch conditions
+		hi := byte(n >> 8) //nolint:gosec // range guaranteed by default branch conditions
+		lo := byte(n)      //nolint:gosec // low byte truncation by design
+		b = append(b, 0x82, hi, lo)
 	}
 
 	return append(b, val...)
@@ -87,7 +95,10 @@ func findTLV(b []byte, tag byte) ([]byte, error) {
 			b = b[2:]
 		default:
 			if n >= 0x80 {
-				return nil, fmt.Errorf("se050: unsupported TLV length encoding %#02x", n)
+				return nil, fmt.Errorf(
+					"se050: unsupported TLV length encoding %#02x",
+					n,
+				)
 			}
 		}
 

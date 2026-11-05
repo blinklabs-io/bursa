@@ -26,9 +26,11 @@ import (
 )
 
 func TestWaitReachableReturnsWhenURLAnswers(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	)
 	defer server.Close()
 
 	if err := waitReachable(context.Background(), server.URL, time.Second, make(chan error)); err != nil {
@@ -58,9 +60,15 @@ func TestWaitReachableReturnsStartupErrorDuringPoll(t *testing.T) {
 		t.Fatal("waitReachable() error = nil, want startup error")
 	}
 	if !strings.Contains(err.Error(), "control surface: listen failed") {
-		t.Fatalf("waitReachable() error = %q, want control surface startup error", err)
+		t.Fatalf(
+			"waitReachable() error = %q, want control surface startup error",
+			err,
+		)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("waitReachable() took %s, want prompt return after startup error", elapsed)
+		t.Fatalf(
+			"waitReachable() took %s, want prompt return after startup error",
+			elapsed,
+		)
 	}
 }

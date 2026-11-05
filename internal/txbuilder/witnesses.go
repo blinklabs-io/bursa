@@ -46,7 +46,10 @@ type RequiredWitness struct {
 // witnesses of the Conway ledger rules, and the voter of every voting
 // procedure. Hashes are deduplicated, keeping the role of their first
 // occurrence.
-func requiredWitnessSet(body conway.ConwayTransactionBody, inputs []UTxO) []RequiredWitness {
+func requiredWitnessSet(
+	body conway.ConwayTransactionBody,
+	inputs []UTxO,
+) []RequiredWitness {
 	var out []RequiredWitness
 	seen := map[[28]byte]bool{}
 	add := func(hash [28]byte, role string) {

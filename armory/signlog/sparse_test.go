@@ -43,7 +43,10 @@ func TestSparseMediumVerifiesAPrefix(t *testing.T) {
 
 	// a prefix that stops short of the real entries is a shorter log, and
 	// its head differs from the writer's
-	short, _ := NewSparseMedium(f.medium.NumBlocks(), img[:(1+2*RecordBlocks)*BlockSize])
+	short, _ := NewSparseMedium(
+		f.medium.NumBlocks(),
+		img[:(1+2*RecordBlocks)*BlockSize],
+	)
 
 	log, err = Verify(short, f.pub)
 	if err != nil || len(log.Entries) != 2 || log.Head() == w.Head() {
@@ -75,11 +78,17 @@ func TestSparseMediumBounds(t *testing.T) {
 		}
 	}
 
-	if _, err = NewSparseMedium(1, make([]byte, 2*BlockSize)); !errors.Is(err, ErrMedium) {
+	if _, err = NewSparseMedium(1, make([]byte, 2*BlockSize)); !errors.Is(
+		err,
+		ErrMedium,
+	) {
 		t.Errorf("oversize prefix: %v", err)
 	}
 
-	if _, err = NewSparseMedium(8, make([]byte, 100)); !errors.Is(err, ErrMedium) {
+	if _, err = NewSparseMedium(8, make([]byte, 100)); !errors.Is(
+		err,
+		ErrMedium,
+	) {
 		t.Errorf("partial block prefix: %v", err)
 	}
 }

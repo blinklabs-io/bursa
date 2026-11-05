@@ -45,7 +45,10 @@ var (
 )
 
 func habEvent() []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(&habEventBuf[0])), hab.MaxEventLen)
+	return unsafe.Slice(
+		(*byte)(unsafe.Pointer(&habEventBuf[0])),
+		hab.MaxEventLen,
+	)
 }
 
 // habStackGuard grows the goroutine stack ahead of the ROM calls, which run
@@ -96,7 +99,15 @@ func habStatus() (status, config, state uint8, events [][]byte, more bool, err e
 	var hdr [hab.RVTHeaderLen]byte
 
 	word := habRead32(hab.RVTBase)
-	hdr[0], hdr[1], hdr[2], hdr[3] = byte(word), byte(word>>8), byte(word>>16), byte(word>>24)
+	hdr[0], hdr[1], hdr[2], hdr[3] = byte(
+		word,
+	), byte(
+		word>>8,
+	), byte(
+		word>>16,
+	), byte(
+		word>>24,
+	)
 
 	if err = hab.CheckRVT(hdr[:]); err != nil {
 		return
@@ -112,7 +123,13 @@ func habStatus() (status, config, state uint8, events [][]byte, more bool, err e
 
 	// a warning or failure status still reports the configuration and
 	// state; the status is reported with them
-	ret := romCall(reportStatus, addr(&habConfigState[0]), addr(&habConfigState[1]), 0, 0)
+	ret := romCall(
+		reportStatus,
+		addr(&habConfigState[0]),
+		addr(&habConfigState[1]),
+		0,
+		0,
+	)
 	config, state = uint8(habConfigState[0]), uint8(habConfigState[1])
 
 	if err = hab.CheckStatus(ret, config, state); err != nil {
@@ -124,7 +141,13 @@ func habStatus() (status, config, state uint8, events [][]byte, more bool, err e
 	events, more = hab.ReadEvents(func(index uint32) ([]byte, bool) {
 		habEventLen = hab.MaxEventLen
 
-		if romCall(reportEvent, hab.StatusAny, index, addr(&habEventBuf[0]), addr(&habEventLen)) != hab.StatusSuccess {
+		if romCall(
+			reportEvent,
+			hab.StatusAny,
+			index,
+			addr(&habEventBuf[0]),
+			addr(&habEventLen),
+		) != hab.StatusSuccess {
 			return nil, false
 		}
 

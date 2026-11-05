@@ -113,9 +113,17 @@ func (p *tpmProtector) Available() (bool, string) {
 // WrapTPM seals vek to the TPM with auth derived from password, returning the
 // tpmSection to persist. pcrBound additionally binds the seal to a PCR policy
 // (brittle; the caller MUST keep the password protector as recovery).
-func (p *tpmProtector) WrapTPM(vek []byte, password string, pcrBound bool) (tpmSection, error) {
+func (p *tpmProtector) WrapTPM(
+	vek []byte,
+	password string,
+	pcrBound bool,
+) (tpmSection, error) {
 	if len(vek) != vekLen {
-		return tpmSection{}, fmt.Errorf("vault: VEK must be %d bytes, got %d", vekLen, len(vek))
+		return tpmSection{}, fmt.Errorf(
+			"vault: VEK must be %d bytes, got %d",
+			vekLen,
+			len(vek),
+		)
 	}
 	sealed, err := p.seal(vek, password, pcrBound)
 	if err != nil {
@@ -135,9 +143,15 @@ func (p *tpmProtector) WrapTPM(vek []byte, password string, pcrBound bool) (tpmS
 // with password. A wrong password maps to ErrWrongPassword; any other failure
 // (device gone, load error, PCR mismatch) is returned wrapped so the caller can
 // fall back to the password protector.
-func (p *tpmProtector) UnwrapTPM(sec tpmSection, password string) ([]byte, error) {
+func (p *tpmProtector) UnwrapTPM(
+	sec tpmSection,
+	password string,
+) ([]byte, error) {
 	if sec.SRKTemplate != srkTemplateID {
-		return nil, fmt.Errorf("vault: unsupported TPM SRK template %q", sec.SRKTemplate)
+		return nil, fmt.Errorf(
+			"vault: unsupported TPM SRK template %q",
+			sec.SRKTemplate,
+		)
 	}
 	pub, err := hex.DecodeString(sec.Public)
 	if err != nil {
@@ -166,7 +180,11 @@ func (p *tpmProtector) UnwrapTPM(sec tpmSection, password string) ([]byte, error
 	}
 	if len(vek) != vekLen {
 		keystore.Zero(vek)
-		return nil, fmt.Errorf("vault: TPM unseal returned invalid VEK length: got %d want %d", len(vek), vekLen)
+		return nil, fmt.Errorf(
+			"vault: TPM unseal returned invalid VEK length: got %d want %d",
+			len(vek),
+			vekLen,
+		)
 	}
 	return vek, nil
 }

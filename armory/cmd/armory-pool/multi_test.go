@@ -46,10 +46,12 @@ func multiServer(t *testing.T) *httptest.Server {
 	mux.Handle("/wipe/", svc.WipeHandler())
 	mux.Handle("/", svc.Handler())
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = device.Address
-		mux.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Host = device.Address
+			mux.ServeHTTP(w, r)
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	return srv
@@ -78,7 +80,9 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 
 		args := []string{"provision", "host-key"}
 		if i > 0 {
-			args = append([]string{"-host-key-dir", dir, "-scope", scopes[0]}, args...)
+			args = append(
+				[]string{"-host-key-dir", dir, "-scope", scopes[0]},
+				args...)
 		}
 
 		if _, err := adminRun(srv, out.String(), args...); err != nil {
@@ -91,7 +95,16 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 	// device-wide and cold requests name no profile: -scope picks the key
 	var ident device.IdentityResponse
 
-	out, err := adminRun(srv, "{}", append(append([]string{}, keys...), "-scope", "cardano-mainnet", "provision", "identity")...)
+	out, err := adminRun(
+		srv,
+		"{}",
+		append(
+			append([]string{}, keys...),
+			"-scope",
+			"cardano-mainnet",
+			"provision",
+			"identity",
+		)...)
 	if err != nil {
 		t.Fatalf("identity: %v", err)
 	}
@@ -124,7 +137,8 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 
 	// a prime key does not import into an object the testnet key owns
 	outside := `{"cold_key_id":551878673,"signing_key":"5820` + seed2 + `"}`
-	if _, err = adminRun(srv, outside, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err == nil || !strings.Contains(err.Error(), "belongs to another scope") {
+	if _, err = adminRun(srv, outside, append(append([]string{}, keys...), "-scope", "prime-mainnet", "provision", "cold")...); err == nil ||
+		!strings.Contains(err.Error(), "belongs to another scope") {
 		t.Fatalf("prime cold into the testnet's object: %v", err)
 	}
 
@@ -143,8 +157,14 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 	}
 
 	// with the key of another scope the device refuses it
-	_, err = adminRun(srv, strings.Replace(profileReq, "otg@preview", "x@preview", 1),
-		"-host-key", filepath.Join(dir, "prime-mainnet.key"), "provision", "profile")
+	_, err = adminRun(
+		srv,
+		strings.Replace(profileReq, "otg@preview", "x@preview", 1),
+		"-host-key",
+		filepath.Join(dir, "prime-mainnet.key"),
+		"provision",
+		"profile",
+	)
 	if err == nil || !strings.Contains(err.Error(), "not of the scope") {
 		t.Fatalf("a prime key provisioned a testnet profile: %v", err)
 	}
@@ -161,7 +181,10 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 		t.Fatalf("keys with the scope's key: %v", err)
 	}
 
-	err = run(args("-host-key", filepath.Join(dir, "prime-mainnet.key")), &bytes.Buffer{})
+	err = run(
+		args("-host-key", filepath.Join(dir, "prime-mainnet.key")),
+		&bytes.Buffer{},
+	)
 	if err == nil || !strings.Contains(err.Error(), "not of the scope") {
 		t.Fatalf("keys with a prime key: %v", err)
 	}
@@ -205,21 +228,36 @@ func TestHostKeyDirRefusesPathScope(t *testing.T) {
 func TestInventoryRetryReportsChallengeFailure(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/challenge" {
-			http.Error(w, "challenge table full", http.StatusServiceUnavailable)
-			return
-		}
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/challenge" {
+				http.Error(
+					w,
+					"challenge table full",
+					http.StatusServiceUnavailable,
+				)
+				return
+			}
 
-		http.Error(w, "host key not registered", http.StatusBadRequest)
-	}))
+			http.Error(w, "host key not registered", http.StatusBadRequest)
+		}),
+	)
 	t.Cleanup(srv.Close)
 
-	s := &session{c: newClient(srv.URL, ""), profile: "otg@preview", hostKey: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))}
+	s := &session{
+		c:       newClient(srv.URL, ""),
+		profile: "otg@preview",
+		hostKey: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32)),
+	}
 
 	_, err := s.inventory()
-	if err == nil || !strings.Contains(err.Error(), "host key not registered") || !strings.Contains(err.Error(), "challenge table full") {
-		t.Fatalf("err = %v, want both the refusal and the challenge failure", err)
+	if err == nil ||
+		!strings.Contains(err.Error(), "host key not registered") ||
+		!strings.Contains(err.Error(), "challenge table full") {
+		t.Fatalf(
+			"err = %v, want both the refusal and the challenge failure",
+			err,
+		)
 	}
 }
 

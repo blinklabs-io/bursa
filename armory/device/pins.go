@@ -85,7 +85,9 @@ func (s *Service) pinsFor(p profile.Profile) (*profile.Pins, error) {
 	pins, err := profile.DecodePins(b)
 	if err != nil {
 		s.logf("pins %q: invalid object: %v", p.Name, err)
-		return nil, errors.New("registration pins are unreadable; provision them again")
+		return nil, errors.New(
+			"registration pins are unreadable; provision them again",
+		)
 	}
 
 	return &pins, nil
@@ -135,7 +137,9 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 	// refused while any record is unreadable or inconsistent, as provisioning
 	// is
 	if len(s.badSlots) > 0 {
-		return PinsResponse{}, errors.New("a profile record is unreadable or inconsistent; pins are refused until it is repaired")
+		return PinsResponse{}, errors.New(
+			"a profile record is unreadable or inconsistent; pins are refused until it is repaired",
+		)
 	}
 
 	var pins profile.Pins
@@ -149,7 +153,9 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 	pins.PinRelays = req.RelaysDigest != ""
 
 	if !pins.PinRelays && req.MetadataHash != "" {
-		return PinsResponse{}, errors.New("metadata_hash needs relays_digest: metadata is pinned only with the relays")
+		return PinsResponse{}, errors.New(
+			"metadata_hash needs relays_digest: metadata is pinned only with the relays",
+		)
 	}
 
 	if pins.PinRelays {
@@ -190,9 +196,18 @@ func (s *Service) setPins(req PinsRequest) (PinsResponse, error) {
 		meta = "not pinned"
 	}
 
-	s.logf("registration pins %q set: vrf %s metadata %s relays %s pledge %d-%d cost <=%d margin <=%d/%d",
-		p.Name, hex.EncodeToString(pins.VRFKeyHash[:]), meta, relays,
-		pins.PledgeMin, pins.PledgeMax, pins.CostMax, pins.MarginMaxNum, pins.MarginMaxDen)
+	s.logf(
+		"registration pins %q set: vrf %s metadata %s relays %s pledge %d-%d cost <=%d margin <=%d/%d",
+		p.Name,
+		hex.EncodeToString(pins.VRFKeyHash[:]),
+		meta,
+		relays,
+		pins.PledgeMin,
+		pins.PledgeMax,
+		pins.CostMax,
+		pins.MarginMaxNum,
+		pins.MarginMaxDen,
+	)
 
 	req.Profile = p.Name
 

@@ -79,9 +79,14 @@ func (s *signer) provision(w http.ResponseWriter, r *http.Request) {
 
 	key, err := readHexBody(r, len(cborBytes32)+32)
 
-	if err != nil || len(key) != len(cborBytes32)+32 || !bytes.Equal(key[:2], cborBytes32) {
+	if err != nil || len(key) != len(cborBytes32)+32 ||
+		!bytes.Equal(key[:2], cborBytes32) {
 		clear(key)
-		http.Error(w, "expected cborHex of a 32-byte Ed25519 signing key", http.StatusBadRequest)
+		http.Error(
+			w,
+			"expected cborHex of a 32-byte Ed25519 signing key",
+			http.StatusBadRequest,
+		)
 		return
 	}
 
@@ -106,7 +111,11 @@ func (s *signer) provision(w http.ResponseWriter, r *http.Request) {
 	exists, err := s.se.Exists(coldKeyID)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("exist check: %v", err), http.StatusInternalServerError)
+		http.Error(
+			w,
+			fmt.Sprintf("exist check: %v", err),
+			http.StatusInternalServerError,
+		)
 		return
 	}
 
@@ -127,7 +136,11 @@ func (s *signer) writePublicKey(w http.ResponseWriter) {
 	pub, err := s.se.PublicKeyEd25519(coldKeyID)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("read public key: %v", err), http.StatusInternalServerError)
+		http.Error(
+			w,
+			fmt.Sprintf("read public key: %v", err),
+			http.StatusInternalServerError,
+		)
 		return
 	}
 

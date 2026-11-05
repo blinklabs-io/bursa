@@ -54,12 +54,42 @@ type options struct {
 func main() {
 	var o options
 
-	flag.StringVar(&o.listen, "listen", "127.0.0.1:18080", "loopback address to serve on")
-	flag.StringVar(&o.state, "state", "", "directory holding chip.json and card.img (required)")
-	flag.StringVar(&o.image, "image", "sign", "image to run: sign, provision or wipe")
-	flag.StringVar(&o.network, "network", "testnet", "network the image serves: testnet or mainnet")
-	flag.StringVar(&o.chain, "chain", "", "chain of a mainnet image: cardano or prime")
-	flag.Uint64Var(&o.cardBlocks, "card-blocks", 1<<17, "size of a new log card image in 512-byte blocks")
+	flag.StringVar(
+		&o.listen,
+		"listen",
+		"127.0.0.1:18080",
+		"loopback address to serve on",
+	)
+	flag.StringVar(
+		&o.state,
+		"state",
+		"",
+		"directory holding chip.json and card.img (required)",
+	)
+	flag.StringVar(
+		&o.image,
+		"image",
+		"sign",
+		"image to run: sign, provision or wipe",
+	)
+	flag.StringVar(
+		&o.network,
+		"network",
+		"testnet",
+		"network the image serves: testnet or mainnet",
+	)
+	flag.StringVar(
+		&o.chain,
+		"chain",
+		"",
+		"chain of a mainnet image: cardano or prime",
+	)
+	flag.Uint64Var(
+		&o.cardBlocks,
+		"card-blocks",
+		1<<17,
+		"size of a new log card image in 512-byte blocks",
+	)
 	flag.Parse()
 
 	h, err := build(o, log.Printf)
@@ -77,7 +107,13 @@ func main() {
 		IdleTimeout:       30 * time.Second,
 	}
 
-	log.Printf("armory-sim: %s image, %s, serving %s; keys in %s are PLAINTEXT test keys", o.image, o.network, o.listen, o.state)
+	log.Printf(
+		"armory-sim: %s image, %s, serving %s; keys in %s are PLAINTEXT test keys",
+		o.image,
+		o.network,
+		o.listen,
+		o.state,
+	)
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -138,7 +174,10 @@ func build(o options, logf func(string, ...any)) (http.Handler, error) {
 		mux.Handle("/wipe/", svc.WipeHandler())
 		mux.Handle("/v1/challenge", svc.WipeHandler())
 	default:
-		return nil, fmt.Errorf("-image must be sign, provision or wipe, got %q", o.image)
+		return nil, fmt.Errorf(
+			"-image must be sign, provision or wipe, got %q",
+			o.image,
+		)
 	}
 
 	guarded := device.Guard(device.Address, mux)
@@ -200,18 +239,29 @@ func scope(network, chain string) (uint8, string, error) {
 		return 0, "", nil
 	case "mainnet":
 		if chain != "cardano" && chain != "prime" {
-			return 0, "", errors.New("-network mainnet needs -chain cardano or prime")
+			return 0, "", errors.New(
+				"-network mainnet needs -chain cardano or prime",
+			)
 		}
 
 		return 1, chain + "-mainnet", nil
 	default:
-		return 0, "", fmt.Errorf("-network must be testnet or mainnet, got %q", network)
+		return 0, "", fmt.Errorf(
+			"-network must be testnet or mainnet, got %q",
+			network,
+		)
 	}
 }
 
 // openSigningLog opens the log on the card image against the head in the
 // chip, as the signing firmware does with the microSD card.
-func openSigningLog(lock sync.Locker, svc *device.Service, chip *fileChip, path string, blocks uint64) error {
+func openSigningLog(
+	lock sync.Locker,
+	svc *device.Service,
+	chip *fileChip,
+	path string,
+	blocks uint64,
+) error {
 	card, err := openCard(path, blocks)
 	if err != nil {
 		return err
@@ -234,7 +284,11 @@ func openSigningLog(lock sync.Locker, svc *device.Service, chip *fileChip, path 
 }
 
 // openLog opens the log under the chip lock the service shares.
-func openLog(lock sync.Locker, chip *fileChip, m signlog.Medium) (*signlog.Writer, error) {
+func openLog(
+	lock sync.Locker,
+	chip *fileChip,
+	m signlog.Medium,
+) (*signlog.Writer, error) {
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -243,5 +297,9 @@ func openLog(lock sync.Locker, chip *fileChip, m signlog.Medium) (*signlog.Write
 		return nil, err
 	}
 
-	return signlog.Open(m, chipstore.NewHeadStore(chip, profile.SignLogHeadID), id)
+	return signlog.Open(
+		m,
+		chipstore.NewHeadStore(chip, profile.SignLogHeadID),
+		id,
+	)
 }

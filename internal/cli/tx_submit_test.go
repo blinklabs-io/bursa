@@ -67,7 +67,9 @@ func TestSubmitTxPrintsID(t *testing.T) {
 
 func TestSubmitTxReportsRejection(t *testing.T) {
 	reason := errors.New("ValueNotConservedUTxO")
-	chain := &submitChain{err: localtxsubmission.TransactionRejectedError{Reason: reason}}
+	chain := &submitChain{
+		err: localtxsubmission.TransactionRejectedError{Reason: reason},
+	}
 	var out bytes.Buffer
 	err := submitTx(context.Background(), chain, submitFixture, &out)
 	if !errors.Is(err, reason) {
@@ -96,7 +98,10 @@ func TestSubmitTxReportsUnresolvedFailure(t *testing.T) {
 		t.Fatalf("error %q claims a rejection", err)
 	}
 	if !strings.Contains(err.Error(), "may have reached the node") {
-		t.Fatalf("error %q does not warn the transaction may have been accepted", err)
+		t.Fatalf(
+			"error %q does not warn the transaction may have been accepted",
+			err,
+		)
 	}
 	raw, rerr := bursa.ReadCborInputFile(submitFixture)
 	if rerr != nil {

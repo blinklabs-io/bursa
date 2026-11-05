@@ -210,19 +210,30 @@ type TxSummary struct {
 func (s TxSummary) ValidateForSigning() error {
 	for _, input := range s.Inputs {
 		if !input.Resolved {
-			return fmt.Errorf("input %s#%d could not be resolved", input.TxHash, input.Index)
+			return fmt.Errorf(
+				"input %s#%d could not be resolved",
+				input.TxHash,
+				input.Index,
+			)
 		}
 	}
 	for _, input := range s.CollateralInputs {
 		if !input.Resolved {
-			return fmt.Errorf("collateral input %s#%d could not be resolved", input.TxHash, input.Index)
+			return fmt.Errorf(
+				"collateral input %s#%d could not be resolved",
+				input.TxHash,
+				input.Index,
+			)
 		}
 	}
 	if len(s.CollateralInputs) != 0 && s.TotalCollateral == nil {
 		return errors.New("collateral inputs have no total collateral bound")
 	}
 	if len(s.UnsupportedEffects) != 0 {
-		return fmt.Errorf("unsupported transaction effects: %s", strings.Join(s.UnsupportedEffects, ", "))
+		return fmt.Errorf(
+			"unsupported transaction effects: %s",
+			strings.Join(s.UnsupportedEffects, ", "),
+		)
 	}
 	return nil
 }
@@ -230,7 +241,10 @@ func (s TxSummary) ValidateForSigning() error {
 // InspectTx decodes a transaction for an interactive signing approval. It
 // applies the live ledger transaction-size limit before any per-input chain
 // lookups, then requires a complete effect summary.
-func (s *Service) InspectTx(ctx context.Context, txCbor string) (TxSummary, error) {
+func (s *Service) InspectTx(
+	ctx context.Context,
+	txCbor string,
+) (TxSummary, error) {
 	txBytes, err := hex.DecodeString(txCbor)
 	if err != nil {
 		return TxSummary{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
@@ -240,17 +254,26 @@ func (s *Service) InspectTx(ctx context.Context, txCbor string) (TxSummary, erro
 		return TxSummary{}, fmt.Errorf("protocol params: %w", err)
 	}
 	if pp.MaxTxSize <= 0 {
-		return TxSummary{}, errors.New("protocol params: invalid max transaction size")
+		return TxSummary{}, errors.New(
+			"protocol params: invalid max transaction size",
+		)
 	}
 	if len(txBytes) > pp.MaxTxSize {
-		return TxSummary{}, fmt.Errorf("transaction size %d exceeds ledger maximum %d", len(txBytes), pp.MaxTxSize)
+		return TxSummary{}, fmt.Errorf(
+			"transaction size %d exceeds ledger maximum %d",
+			len(txBytes),
+			pp.MaxTxSize,
+		)
 	}
 	summary, err := s.DecodeTx(ctx, txCbor)
 	if err != nil {
 		return TxSummary{}, err
 	}
 	if err := summary.ValidateForSigning(); err != nil {
-		return TxSummary{}, fmt.Errorf("transaction effects are incomplete: %w", err)
+		return TxSummary{}, fmt.Errorf(
+			"transaction effects are incomplete: %w",
+			err,
+		)
 	}
 	return summary, nil
 }
@@ -356,7 +379,11 @@ type Service struct {
 }
 
 // NewService constructs a Service. ks may be nil if only Build (not Confirm) is needed.
-func NewService(cc backend.ChainContext, ks Keystore, acct *wallet.Account) *Service {
+func NewService(
+	cc backend.ChainContext,
+	ks Keystore,
+	acct *wallet.Account,
+) *Service {
 	return &Service{
 		chain:   cc,
 		keys:    ks,
@@ -373,7 +400,9 @@ func NewService(cc backend.ChainContext, ks Keystore, acct *wallet.Account) *Ser
 // (e.g. after a restart) it is not overwritten - the password must unlock it
 // and the supplied mnemonic must match before re-attaching to the existing wallet.
 // The derived account is returned for display.
-func (s *Service) SetWallet(mnemonic, network, password string) (*wallet.Account, error) {
+func (s *Service) SetWallet(
+	mnemonic, network, password string,
+) (*wallet.Account, error) {
 	if s.keys == nil {
 		return nil, errors.New("no keystore configured")
 	}
@@ -514,7 +543,12 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	// Add the recipient payment.
 	recvAddr, err := lcommon.NewAddress(req.To)
 	if err != nil {
-		return Preview{}, fmt.Errorf("%w: recipient %q: %w", ErrInvalidRequest, req.To, err)
+		return Preview{}, fmt.Errorf(
+			"%w: recipient %q: %w",
+			ErrInvalidRequest,
+			req.To,
+			err,
+		)
 	}
 	units, err := assetsToUnits(req.Assets)
 	if err != nil {
@@ -539,12 +573,31 @@ func (s *Service) Build(ctx context.Context, req SendRequest) (Preview, error) {
 	// legacy builder's "silently pull in another input" behaviour — rather than
 	// forcing the whole wallet, which would blow past MaxTxSize on large wallets.
 	addrCount := len(acct.ReceiveAddresses)
-	a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount, false)
+	a, err := s.completeSend(
+		ctx,
+		changeAddr,
+		recvAddr,
+		lovelace,
+		units,
+		loaded,
+		utxoAddr,
+		addrCount,
+		false,
+	)
 	if err != nil {
 		if !isNonConvergenceError(err) {
 			return Preview{}, mapCompleteErr(err)
 		}
-		a, err = s.completeForcingPrefix(ctx, changeAddr, recvAddr, lovelace, units, loaded, utxoAddr, addrCount)
+		a, err = s.completeForcingPrefix(
+			ctx,
+			changeAddr,
+			recvAddr,
+			lovelace,
+			units,
+			loaded,
+			utxoAddr,
+			addrCount,
+		)
 		if err != nil {
 			return Preview{}, err
 		}
@@ -645,7 +698,11 @@ func (s *Service) completeSend(
 		for _, kh := range required {
 			next = next.AddRequiredSigner(kh)
 		}
-		next = next.PayToAddress(recvAddr, int64(lovelace), units...) //nolint:gosec // validated by parseAmount
+		amount := int64(lovelace) //nolint:gosec // validated by parseAmount
+		next = next.PayToAddress(
+			recvAddr,
+			amount,
+			units...)
 
 		next, err := next.WithContext(ctx).Complete()
 		if err != nil {
@@ -655,7 +712,10 @@ func (s *Service) completeSend(
 		if tx == nil {
 			return nil, errors.New("completed tx is nil")
 		}
-		actual, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), utxoAddr)
+		actual, err := requiredPaymentKeyHashesForInputs(
+			tx.Body.Inputs(),
+			utxoAddr,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -709,11 +769,24 @@ func (s *Service) completeForcingPrefix(
 	// asset-underflow arm of isInsufficientFundsError and by guardTxSize, not a
 	// correctness issue, just larger prefixes for token sends than ADA sends.
 	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].Output.Amount().Uint64() > sorted[j].Output.Amount().Uint64()
+		return sorted[i].Output.Amount().
+			Uint64() >
+			sorted[j].Output.Amount().
+				Uint64()
 	})
 
 	for k := 1; k <= len(sorted); k++ {
-		a, err := s.completeSend(ctx, changeAddr, recvAddr, lovelace, units, sorted[:k], utxoAddr, addrCount, true)
+		a, err := s.completeSend(
+			ctx,
+			changeAddr,
+			recvAddr,
+			lovelace,
+			units,
+			sorted[:k],
+			utxoAddr,
+			addrCount,
+			true,
+		)
 		if err != nil {
 			// Insufficient funds: the forced prefix does not yet cover payment+fee.
 			// Non-convergence: still inside the dust-change dead-zone. Either way,
@@ -750,7 +823,11 @@ func (s *Service) completeForcingPrefix(
 // in Confirm), not once per input, so the projection counts distinct signing
 // addresses via utxoAddr — inputs sharing an address share one witness. An input
 // whose address is unknown is conservatively assumed to need its own witness.
-func (s *Service) guardTxSize(ctx context.Context, a *apollo.Apollo, utxoAddr map[string]string) error {
+func (s *Service) guardTxSize(
+	ctx context.Context,
+	a *apollo.Apollo,
+	utxoAddr map[string]string,
+) error {
 	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
 	if err != nil {
 		return fmt.Errorf("protocol params: %w", err)
@@ -796,7 +873,9 @@ func (s *Service) guardTxSize(ctx context.Context, a *apollo.Apollo, utxoAddr ma
 	if signedSize > pp.MaxTxSize {
 		return fmt.Errorf(
 			"%w: transaction would exceed the maximum size (%d/%d bytes); reduce the amount or consolidate UTxOs",
-			ErrInsufficientFunds, signedSize, pp.MaxTxSize,
+			ErrInsufficientFunds,
+			signedSize,
+			pp.MaxTxSize,
 		)
 	}
 	return nil
@@ -836,14 +915,20 @@ func isNonConvergenceError(err error) bool {
 // that shape instead of returning its historical non-convergence error, but a
 // wallet with additional UTxOs should still retry so the remainder is not
 // silently charged as a fee.
-func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, error) {
+func (s *Service) isDustChange(
+	ctx context.Context,
+	a *apollo.Apollo,
+) (bool, error) {
 	tx := a.GetTx()
 	if tx == nil || len(tx.Body.Outputs()) != 1 {
 		return false, nil
 	}
 	pp, err := backend.ProtocolParamsContext(ctx, s.chain)
 	if err != nil {
-		return false, fmt.Errorf("protocol params for dust-change check: %w", err)
+		return false, fmt.Errorf(
+			"protocol params for dust-change check: %w",
+			err,
+		)
 	}
 	if pp.MinFeeCoefficient <= 0 || pp.MinFeeConstant <= 0 {
 		return false, nil
@@ -877,7 +962,13 @@ func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, err
 	if pp.MinFeeCoefficient < 0 || pp.MinFeeConstant < 0 {
 		return false, nil
 	}
-	expectedFee := uint64(len(encoded))*uint64(pp.MinFeeCoefficient) + uint64(pp.MinFeeConstant) + feePaddingLovelace
+	expectedFee := uint64(
+		len(encoded),
+	)*uint64(
+		pp.MinFeeCoefficient,
+	) + uint64(
+		pp.MinFeeConstant,
+	) + feePaddingLovelace
 	return tx.Body.TxFee > expectedFee, nil
 }
 
@@ -888,7 +979,11 @@ func (s *Service) isDustChange(ctx context.Context, a *apollo.Apollo) (bool, err
 // fully offline. The address must be within the wallet's derived address window
 // so the matching signing key can be derived; the COSE wrapping itself lives in
 // the bursa keys layer (bursa.SignData).
-func (s *Service) SignData(addrStr string, message []byte, password string) (signatureHex, keyHex string, err error) {
+func (s *Service) SignData(
+	addrStr string,
+	message []byte,
+	password string,
+) (signatureHex, keyHex string, err error) {
 	if s.keys == nil {
 		return "", "", errors.New("no keystore configured")
 	}
@@ -920,7 +1015,11 @@ func (s *Service) SignData(addrStr string, message []byte, password string) (sig
 	}
 	addrBytes, err := addr.Bytes()
 	if err != nil {
-		return "", "", fmt.Errorf("%w: address bytes: %w", ErrInvalidRequest, err)
+		return "", "", fmt.Errorf(
+			"%w: address bytes: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 
 	mnemonicBytes, err := s.unlockSeed(walletID, password)
@@ -1010,7 +1109,9 @@ func networkParams(name string) (int, uint32, error) {
 // addresses. It returns ErrInvalidRequest if addrStr is not a derived receive
 // address of the active wallet, and ErrNoWallet if no wallet is bound. No seed or
 // password is required — only public path metadata is derived from the account.
-func (s *Service) SignDataHardwareRequest(addrStr string) (HardwareSignDataRequest, error) {
+func (s *Service) SignDataHardwareRequest(
+	addrStr string,
+) (HardwareSignDataRequest, error) {
 	_, acct, _ := s.currentBinding()
 	if acct == nil {
 		return HardwareSignDataRequest{}, ErrNoWallet
@@ -1030,11 +1131,19 @@ func (s *Service) SignDataHardwareRequest(addrStr string) (HardwareSignDataReque
 	}
 	addr, err := lcommon.NewAddress(addrStr)
 	if err != nil {
-		return HardwareSignDataRequest{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return HardwareSignDataRequest{}, fmt.Errorf(
+			"%w: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	addrBytes, err := addr.Bytes()
 	if err != nil {
-		return HardwareSignDataRequest{}, fmt.Errorf("%w: address bytes: %w", ErrInvalidRequest, err)
+		return HardwareSignDataRequest{}, fmt.Errorf(
+			"%w: address bytes: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	networkID, protocolMagic, err := networkParams(acct.Network)
 	if err != nil {
@@ -1181,11 +1290,19 @@ func (s *Service) sweepExpiredLocked() {
 // makeUtxoRef returns the canonical "txhash#index" reference for a UTxO.
 // This mirrors apollo's private utxoRef function.
 func makeUtxoRef(u lcommon.Utxo) string {
-	return hex.EncodeToString(u.Id.Id().Bytes()) + "#" + strconv.Itoa(int(u.Id.Index()))
+	return hex.EncodeToString(
+		u.Id.Id().Bytes(),
+	) + "#" + strconv.Itoa(
+		int(u.Id.Index()),
+	)
 }
 
 func inputRef(inp lcommon.TransactionInput) string {
-	return hex.EncodeToString(inp.Id().Bytes()) + "#" + strconv.Itoa(int(inp.Index()))
+	return hex.EncodeToString(
+		inp.Id().Bytes(),
+	) + "#" + strconv.Itoa(
+		int(inp.Index()),
+	)
 }
 
 func requiredPaymentKeyHashesForInputs(
@@ -1213,7 +1330,9 @@ func requiredPaymentKeyHashesForInputs(
 	return signers, nil
 }
 
-func parseRequiredSignerHashes(requiredSigners []string) ([]lcommon.Blake2b224, error) {
+func parseRequiredSignerHashes(
+	requiredSigners []string,
+) ([]lcommon.Blake2b224, error) {
 	seen := make(map[lcommon.Blake2b224]bool, len(requiredSigners))
 	signers := make([]lcommon.Blake2b224, 0, len(requiredSigners))
 	for _, signer := range requiredSigners {
@@ -1286,21 +1405,36 @@ func assetsToUnits(assets []Asset) ([]apollo.Unit, error) {
 	units := make([]apollo.Unit, 0, len(assets))
 	for _, a := range assets {
 		if len(a.Unit) < 56 {
-			return nil, fmt.Errorf("asset unit %q is too short (expected ≥56 hex chars)", a.Unit)
+			return nil, fmt.Errorf(
+				"asset unit %q is too short (expected ≥56 hex chars)",
+				a.Unit,
+			)
 		}
 		policyHex := a.Unit[:56]
 		nameHex := a.Unit[56:]
 		if _, err := hex.DecodeString(policyHex); err != nil {
-			return nil, fmt.Errorf("asset policy id %q is not valid hex: %w", policyHex, err)
+			return nil, fmt.Errorf(
+				"asset policy id %q is not valid hex: %w",
+				policyHex,
+				err,
+			)
 		}
 		if _, err := hex.DecodeString(nameHex); err != nil {
-			return nil, fmt.Errorf("asset name %q is not valid hex: %w", nameHex, err)
+			return nil, fmt.Errorf(
+				"asset name %q is not valid hex: %w",
+				nameHex,
+				err,
+			)
 		}
 		qty, err := parseAmount(a.Quantity)
 		if err != nil {
 			return nil, fmt.Errorf("asset quantity: %w", err)
 		}
-		units = append(units, apollo.NewUnit(policyHex, nameHex, int64(qty))) //nolint:gosec // validated by parseAmount
+		quantity := int64(qty) //nolint:gosec // validated by parseAmount
+		units = append(
+			units,
+			apollo.NewUnit(policyHex, nameHex, quantity),
+		)
 	}
 	return units, nil
 }
@@ -1351,7 +1485,11 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 	// Enumerate selected inputs from the built tx body.
 	var inputs []string
 	for _, inp := range tx.Body.TxInputs.Items() {
-		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.Itoa(int(inp.OutputIndex))
+		ref := hex.EncodeToString(
+			inp.TxId.Bytes(),
+		) + "#" + strconv.Itoa(
+			int(inp.OutputIndex),
+		)
 		inputs = append(inputs, ref)
 	}
 
@@ -1369,7 +1507,11 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 					qty := out.OutputAmount.Assets.Asset(pol, name)
 					if qty != nil && qty.Sign() > 0 {
 						assets = append(assets, Asset{
-							Unit: hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
+							Unit: hex.EncodeToString(
+								pol.Bytes(),
+							) + hex.EncodeToString(
+								name,
+							),
 							// big.Int.String() preserves the full uint64 range.
 							Quantity: qty.String(),
 						})
@@ -1386,7 +1528,8 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 	// Apollo puts change last; only label it as change when it differs from the
 	// first payment output address. This is a display-only heuristic.
 	var changeLov uint64
-	if len(outputs) > 1 && outputs[len(outputs)-1].Address != outputs[0].Address {
+	if len(outputs) > 1 &&
+		outputs[len(outputs)-1].Address != outputs[0].Address {
 		changeLov = lastLov
 	}
 
@@ -1413,7 +1556,10 @@ func toPreview(id string, a *apollo.Apollo) Preview {
 //     Sign() APPENDs a VkeyWitness to the existing set (apollo.go:1432-1436) so iterative
 //     calls accumulate witnesses — one per distinct signing key.
 //  7. Submit the signed tx.
-func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxResult, error) {
+func (s *Service) Confirm(
+	ctx context.Context,
+	pendingID, password string,
+) (TxResult, error) {
 	// --- step 1: look up and consume the pending entry (reject unknown / TTL-expired) ---
 	s.mu.Lock()
 	p, ok := s.pending[pendingID]
@@ -1485,7 +1631,11 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	seen := make(map[string]bool)
 	var distinctAddrs []string
 	for _, inp := range tx.Body.TxInputs.Items() {
-		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.Itoa(int(inp.OutputIndex))
+		ref := hex.EncodeToString(
+			inp.TxId.Bytes(),
+		) + "#" + strconv.Itoa(
+			int(inp.OutputIndex),
+		)
 		addrStr, found := p.utxoAddr[ref]
 		if !found {
 			return TxResult{}, fmt.Errorf("input %s not in utxoAddr map", ref)
@@ -1509,7 +1659,10 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	for _, addrStr := range distinctAddrs {
 		idx, inWindow := idxOf[addrStr]
 		if !inWindow {
-			return TxResult{}, fmt.Errorf("input address %s is outside the derived address window", addrStr)
+			return TxResult{}, fmt.Errorf(
+				"input address %s is outside the derived address window",
+				addrStr,
+			)
 		}
 		payKey, err := bursa.GetPaymentKey(acctKey, idx)
 		if err != nil {
@@ -1546,7 +1699,9 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	// the stake credential (stake registration, stake delegation, vote delegation,
 	// and reward withdrawal). It also requires a witness from the DRep key for a
 	// DRep registration. These are in addition to the payment-key witnesses above.
-	needsStakeWitness, needsDRepWitness := certKindsRequireWitnesses(p.certKinds)
+	needsStakeWitness, needsDRepWitness := certKindsRequireWitnesses(
+		p.certKinds,
+	)
 	needsStakeWitness = needsStakeWitness || p.signer == SignerStake
 	needsDRepWitness = needsDRepWitness || p.signer == SignerDRep
 	if needsStakeWitness {
@@ -1587,7 +1742,11 @@ func (s *Service) Confirm(ctx context.Context, pendingID, password string) (TxRe
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return TxResult{}, submissionerror.Wrap(
+			err,
+			ErrSubmitUnknown,
+			ErrSubmitRejected,
+		)
 	}
 
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
@@ -1599,7 +1758,10 @@ func (s *Service) unlockSeed(walletID, password string) ([]byte, error) {
 	}
 	ks, ok := s.keys.(walletSeedStore)
 	if !ok {
-		return nil, fmt.Errorf("wallet-bound seed unlock requires UnlockFor support for wallet %q", walletID)
+		return nil, fmt.Errorf(
+			"wallet-bound seed unlock requires UnlockFor support for wallet %q",
+			walletID,
+		)
 	}
 	return ks.UnlockFor(walletID, password)
 }
@@ -1633,7 +1795,11 @@ func (s *Service) VerifyData(
 	// bursa.VerifyDataWithAddress treats the COSE "hashed" header as the source
 	// of truth when rebuilding the Sig_structure. The UI flag is validated above
 	// so request shape mistakes do not silently verify.
-	valid, address, err = bursa.VerifyDataWithAddress(signatureHex, keyHex, message)
+	valid, address, err = bursa.VerifyDataWithAddress(
+		signatureHex,
+		keyHex,
+		message,
+	)
 	if err != nil {
 		return false, "", fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
@@ -1671,7 +1837,10 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 	// Delegation transactions may also bind stake/DRep certificate signers in the
 	// body; export the full body-bound signer set after confirming the selected
 	// payment keys are represented.
-	paymentSignerHashes, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), p.utxoAddr)
+	paymentSignerHashes, err := requiredPaymentKeyHashesForInputs(
+		tx.Body.Inputs(),
+		p.utxoAddr,
+	)
 	if err != nil {
 		return UnsignedTx{}, err
 	}
@@ -1705,7 +1874,10 @@ func (s *Service) ExportUnsigned(pendingID string) (UnsignedTx, error) {
 // the required signer set embedded in the transaction body before any key is
 // unlocked. SignTx then derives the wallet's address window but emits only
 // witnesses whose vkey hash is in the body-bound signer set.
-func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []string) (Witness, error) {
+func (s *Service) SignTx(
+	unsignedTxCBOR, password string,
+	requiredSigners []string,
+) (Witness, error) {
 	if s.keys == nil {
 		return Witness{}, errors.New("no keystore configured")
 	}
@@ -1742,14 +1914,20 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 
 	bodyRequired := tx.Body.RequiredSigners()
 	if len(bodyRequired) == 0 {
-		return Witness{}, fmt.Errorf("%w: unsigned tx does not declare required signers", ErrInvalidTx)
+		return Witness{}, fmt.Errorf(
+			"%w: unsigned tx does not declare required signers",
+			ErrInvalidTx,
+		)
 	}
 	requested, err := parseRequiredSignerHashes(requiredSigners)
 	if err != nil {
 		return Witness{}, err
 	}
 	if len(requested) == 0 {
-		return Witness{}, fmt.Errorf("%w: required_signers is required", ErrInvalidRequest)
+		return Witness{}, fmt.Errorf(
+			"%w: required_signers is required",
+			ErrInvalidRequest,
+		)
 	}
 	if !sameKeyHashSet(requested, bodyRequired) {
 		return Witness{}, fmt.Errorf(
@@ -1812,7 +1990,9 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 				signKey[i] = 0
 			}
 		}()
-		kh := hex.EncodeToString(lcommon.Blake2b224Hash(signKey.PublicKey()).Bytes())
+		kh := hex.EncodeToString(
+			lcommon.Blake2b224Hash(signKey.PublicKey()).Bytes(),
+		)
 		if !needed[kh] || seenKeyHash[kh] {
 			return nil
 		}
@@ -1825,7 +2005,10 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 		return nil
 	}
 	for i := range acct.ReceiveAddresses {
-		payKey, err := bursa.GetPaymentKey(acctKey, uint32(i)) //nolint:gosec // bounded by window size
+		payKey, err := bursa.GetPaymentKey(
+			acctKey,
+			uint32(i),
+		) //nolint:gosec // bounded by window size
 		if err != nil {
 			return Witness{}, fmt.Errorf("payment key idx %d: %w", i, err)
 		}
@@ -1852,7 +2035,9 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 	if len(witnesses) < len(needed) {
 		return Witness{}, fmt.Errorf(
 			"%w: transaction needs %d distinct signers but this wallet produced %d",
-			ErrInvalidWitness, len(needed), len(witnesses),
+			ErrInvalidWitness,
+			len(needed),
+			len(witnesses),
 		)
 	}
 
@@ -1868,7 +2053,10 @@ func (s *Service) SignTx(unsignedTxCBOR, password string, requiredSigners []stri
 // only the witnesses the transaction's inputs actually require (resolved against
 // the chain), and submits. The tx body is never mutated, so the body hash the
 // witnesses signed still matches the submitted transaction.
-func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (TxResult, error) {
+func (s *Service) SubmitSigned(
+	ctx context.Context,
+	unsignedTxCBOR, witnessCBOR string,
+) (TxResult, error) {
 	a, err := apollo.New(s.chain).LoadTxCbor(unsignedTxCBOR)
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
@@ -1880,14 +2068,21 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 
 	witBytes, err := hex.DecodeString(witnessCBOR)
 	if err != nil {
-		return TxResult{}, fmt.Errorf("%w: witness hex: %w", ErrInvalidWitness, err)
+		return TxResult{}, fmt.Errorf(
+			"%w: witness hex: %w",
+			ErrInvalidWitness,
+			err,
+		)
 	}
 	var witnesses []lcommon.VkeyWitness
 	if _, err := cbor.Decode(witBytes, &witnesses); err != nil {
 		return TxResult{}, fmt.Errorf("%w: %w", ErrInvalidWitness, err)
 	}
 	if len(witnesses) == 0 {
-		return TxResult{}, fmt.Errorf("%w: no witnesses supplied", ErrInvalidWitness)
+		return TxResult{}, fmt.Errorf(
+			"%w: no witnesses supplied",
+			ErrInvalidWitness,
+		)
 	}
 
 	// Determine which key-hashes the transaction requires: input payment hashes
@@ -1903,8 +2098,12 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 				hex.EncodeToString(inp.Id().Bytes()), inp.Index(), err)
 		}
 		if u == nil || u.Output == nil {
-			return TxResult{}, fmt.Errorf("%w: input %s#%d not found on chain (already spent?)",
-				ErrInvalidTx, hex.EncodeToString(inp.Id().Bytes()), inp.Index())
+			return TxResult{}, fmt.Errorf(
+				"%w: input %s#%d not found on chain (already spent?)",
+				ErrInvalidTx,
+				hex.EncodeToString(inp.Id().Bytes()),
+				inp.Index(),
+			)
 		}
 		inAddr := u.Output.Address() // addressable copy: PaymentKeyHash has a pointer receiver
 		needed[hex.EncodeToString(inAddr.PaymentKeyHash().Bytes())] = true
@@ -1933,7 +2132,9 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 	if count < len(needed) {
 		return TxResult{}, fmt.Errorf(
 			"%w: transaction needs %d distinct signers but only %d were supplied",
-			ErrInvalidWitness, len(needed), count,
+			ErrInvalidWitness,
+			len(needed),
+			count,
 		)
 	}
 
@@ -1952,7 +2153,11 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return TxResult{}, submissionerror.Wrap(
+			err,
+			ErrSubmitUnknown,
+			ErrSubmitRejected,
+		)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1964,7 +2169,10 @@ func (s *Service) SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR 
 func certKindsRequireWitnesses(kinds []CertKind) (needsStake, needsDRep bool) {
 	for _, k := range kinds {
 		switch k {
-		case CertStakeRegistration, CertStakeDelegation, CertVoteDelegation, CertWithdrawal:
+		case CertStakeRegistration,
+			CertStakeDelegation,
+			CertVoteDelegation,
+			CertWithdrawal:
 			needsStake = true
 		case CertDRepRegistration:
 			needsDRep = true
@@ -1984,19 +2192,29 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	defer cancel()
 	txHash, err := backend.SubmitTxContext(submissionContext, s.chain, txBytes)
 	if err != nil {
-		return "", submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return "", submissionerror.Wrap(
+			err,
+			ErrSubmitUnknown,
+			ErrSubmitRejected,
+		)
 	}
 	return hex.EncodeToString(txHash.Bytes()), nil
 }
 
 // SubmitTxCbor hex-decodes a full (already-signed) tx CBOR and broadcasts it
 // via Submit. It does not sign or hold key material.
-func (s *Service) SubmitTxCbor(ctx context.Context, txCbor string) (TxResult, error) {
+func (s *Service) SubmitTxCbor(
+	ctx context.Context,
+	txCbor string,
+) (TxResult, error) {
 	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
 	}
-	hashHex, err := s.Submit(ctx, txBytes) // existing method; wraps ErrSubmitRejected
+	hashHex, err := s.Submit(
+		ctx,
+		txBytes,
+	) // existing method; wraps ErrSubmitRejected
 	if err != nil {
 		return TxResult{}, err
 	}
@@ -2007,7 +2225,10 @@ func (s *Service) SubmitTxCbor(ctx context.Context, txCbor string) (TxResult, er
 // an ordinary vkey tx. (The api layer upgrades kind to "native_multisig" when the
 // tx carries a native script.) wallet_can_add is derived from the active account's
 // public key hashes — no seed required, and nothing here signs or mutates the tx.
-func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error) {
+func (s *Service) DecodeTx(
+	ctx context.Context,
+	txCbor string,
+) (TxSummary, error) {
 	txBytes, err := hex.DecodeString(strings.TrimSpace(txCbor))
 	if err != nil {
 		return TxSummary{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
@@ -2023,7 +2244,11 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	bodyHash := lcommon.Blake2b256Hash(bodyCbor)
 	var bodyFields map[uint64]cbor.RawMessage
 	if _, err := cbor.Decode(bodyCbor, &bodyFields); err != nil {
-		return TxSummary{}, fmt.Errorf("%w: decode transaction body fields: %w", ErrInvalidTx, err)
+		return TxSummary{}, fmt.Errorf(
+			"%w: decode transaction body fields: %w",
+			ErrInvalidTx,
+			err,
+		)
 	}
 	var tx conway.ConwayTransaction
 	if _, err := cbor.Decode(txBytes, &tx); err != nil {
@@ -2038,7 +2263,10 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		WalletCanAdd:       []TxSummarySigner{},
 	}
 	if !tx.TxIsValid {
-		out.UnsupportedEffects = append(out.UnsupportedEffects, "transaction marked invalid (collateral path)")
+		out.UnsupportedEffects = append(
+			out.UnsupportedEffects,
+			"transaction marked invalid (collateral path)",
+		)
 	}
 	knownBodyFields := map[uint64]bool{
 		0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 7: true,
@@ -2047,7 +2275,10 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	}
 	for field := range bodyFields {
 		if field == 6 {
-			out.UnsupportedEffects = append(out.UnsupportedEffects, "protocol parameter update")
+			out.UnsupportedEffects = append(
+				out.UnsupportedEffects,
+				"protocol parameter update",
+			)
 		} else if !knownBodyFields[field] {
 			out.UnsupportedEffects = append(out.UnsupportedEffects, fmt.Sprintf("transaction body field %d", field))
 		}
@@ -2061,7 +2292,10 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		out.NetworkID = &v
 	}
 	for _, signer := range tx.Body.RequiredSigners() {
-		out.RequiredSigners = append(out.RequiredSigners, hex.EncodeToString(signer.Bytes()))
+		out.RequiredSigners = append(
+			out.RequiredSigners,
+			hex.EncodeToString(signer.Bytes()),
+		)
 	}
 	sort.Strings(out.RequiredSigners)
 	for i, o := range tx.Body.Outputs() {
@@ -2077,10 +2311,14 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		)
 	}
 	if tx.Body.TxAuxDataHash != nil {
-		out.AuxiliaryDataHash = hex.EncodeToString(tx.Body.TxAuxDataHash.Bytes())
+		out.AuxiliaryDataHash = hex.EncodeToString(
+			tx.Body.TxAuxDataHash.Bytes(),
+		)
 	}
 	if tx.Body.TxScriptDataHash != nil {
-		out.ScriptDataHash = hex.EncodeToString(tx.Body.TxScriptDataHash.Bytes())
+		out.ScriptDataHash = hex.EncodeToString(
+			tx.Body.TxScriptDataHash.Bytes(),
+		)
 	}
 	out.Mint = assetsFromMint(tx.Body.TxMint)
 	for _, procedures := range tx.Body.TxVotingProcedures {
@@ -2098,10 +2336,16 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		out.Certificates = append(out.Certificates, certificateSummary(c))
 	}
 	if out.VotingCount != 0 {
-		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance vote details")
+		out.UnsupportedEffects = append(
+			out.UnsupportedEffects,
+			"governance vote details",
+		)
 	}
 	if out.ProposalCount != 0 {
-		out.UnsupportedEffects = append(out.UnsupportedEffects, "governance proposal details")
+		out.UnsupportedEffects = append(
+			out.UnsupportedEffects,
+			"governance proposal details",
+		)
 	}
 	// TxWithdrawals is a Go map (randomized iteration); collect then sort by
 	// reward address so out.Withdrawals is deterministic.
@@ -2127,7 +2371,10 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	present := map[string]bool{}
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
 		kh := hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes())
-		out.ExistingSignatures = append(out.ExistingSignatures, TxSummarySigner{KeyHash: kh})
+		out.ExistingSignatures = append(
+			out.ExistingSignatures,
+			TxSummarySigner{KeyHash: kh},
+		)
 		if txwitness.Valid(w, bodyHash.Bytes()) {
 			present[kh] = true
 		}
@@ -2142,9 +2389,21 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 	_, acct, _ := s.currentBinding()
 	needed := neededKeyHashes(&tx)
 	var resolvedAllInputs bool
-	out.Inputs, resolvedAllInputs = s.resolveSummaryInputs(ctx, tx.Body.Inputs(), needed)
-	out.CollateralInputs, _ = s.resolveSummaryInputs(ctx, tx.Body.Collateral(), nil)
-	out.ReferenceInputs, _ = s.resolveSummaryInputs(ctx, tx.Body.ReferenceInputs(), nil)
+	out.Inputs, resolvedAllInputs = s.resolveSummaryInputs(
+		ctx,
+		tx.Body.Inputs(),
+		needed,
+	)
+	out.CollateralInputs, _ = s.resolveSummaryInputs(
+		ctx,
+		tx.Body.Collateral(),
+		nil,
+	)
+	out.ReferenceInputs, _ = s.resolveSummaryInputs(
+		ctx,
+		tx.Body.ReferenceInputs(),
+		nil,
+	)
 	if collateralReturn := tx.Body.CollateralReturn(); collateralReturn != nil {
 		out.CollateralReturn = &TxSummaryOutput{
 			Address:  collateralReturn.Address().String(),
@@ -2168,7 +2427,10 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 			khHex = strings.ToLower(khHex)
 			if needed[khHex] && !present[khHex] && !seen[khHex] {
 				seen[khHex] = true
-				out.WalletCanAdd = append(out.WalletCanAdd, TxSummarySigner{KeyHash: khHex, Role: role})
+				out.WalletCanAdd = append(
+					out.WalletCanAdd,
+					TxSummarySigner{KeyHash: khHex, Role: role},
+				)
 			}
 		}
 		for _, kh := range walletPaymentKeyHashes(acct) {
@@ -2179,7 +2441,10 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 		// import would show no addable wallet signer at all.
 		if acct.StakeAddress != "" {
 			if sa, err := lcommon.NewAddress(acct.StakeAddress); err == nil {
-				addCanAdd(hex.EncodeToString(sa.StakeKeyHash().Bytes()), "stake")
+				addCanAdd(
+					hex.EncodeToString(sa.StakeKeyHash().Bytes()),
+					"stake",
+				)
 			}
 		}
 		if acct.DRepKeyHash != "" {
@@ -2204,7 +2469,11 @@ func (s *Service) DecodeTx(ctx context.Context, txCbor string) (TxSummary, error
 // no vkey witness and still counts as resolved, but an input the chain cannot
 // return leaves the tx's witness requirements only partially known. Without a
 // chain, inputs are unresolvable and completeness must stay unknown.
-func (s *Service) resolveSummaryInputs(ctx context.Context, inputs []lcommon.TransactionInput, needed map[string]bool) ([]TxSummaryInput, bool) {
+func (s *Service) resolveSummaryInputs(
+	ctx context.Context,
+	inputs []lcommon.TransactionInput,
+	needed map[string]bool,
+) ([]TxSummaryInput, bool) {
 	if len(inputs) == 0 {
 		return nil, true
 	}
@@ -2257,7 +2526,9 @@ func ExtractTxBodyCbor(txBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decode tx as CBOR array: %w", err)
 	}
 	if len(outer) < 1 {
-		return nil, errors.New("transaction CBOR array is empty (no body element)")
+		return nil, errors.New(
+			"transaction CBOR array is empty (no body element)",
+		)
 	}
 	body := []byte(outer[0])
 	if len(body) == 0 {
@@ -2334,7 +2605,11 @@ func (s *Service) CosignTx(
 		return CosignResult{}, err
 	}
 	if err := summary.ValidateForSigning(); err != nil {
-		return CosignResult{}, fmt.Errorf("%w: transaction effects are incomplete: %w", ErrInvalidTx, err)
+		return CosignResult{}, fmt.Errorf(
+			"%w: transaction effects are incomplete: %w",
+			ErrInvalidTx,
+			err,
+		)
 	}
 
 	var inputAddrs []string
@@ -2392,7 +2667,10 @@ func (s *Service) CosignTx(
 	}
 	lt := a.GetTx()
 	if lt == nil {
-		return CosignResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+		return CosignResult{}, fmt.Errorf(
+			"%w: no transaction body",
+			ErrInvalidTx,
+		)
 	}
 	// Rebuild the witness set from only the existing witnesses whose signature
 	// verifies over the preserved body bytes, deduped by key-hash. A pasted tx
@@ -2402,7 +2680,11 @@ func (s *Service) CosignTx(
 	// rejected at the node. Dropping non-verifying witnesses lets the valid one
 	// (ours below, or a later co-signer's) take its place.
 	present := map[string]bool{}
-	kept := make([]lcommon.VkeyWitness, 0, len(lt.WitnessSet.VkeyWitnesses.Items()))
+	kept := make(
+		[]lcommon.VkeyWitness,
+		0,
+		len(lt.WitnessSet.VkeyWitnesses.Items()),
+	)
 	for _, w := range lt.WitnessSet.VkeyWitnesses.Items() {
 		if !txwitness.Valid(w, bodyHash.Bytes()) {
 			continue
@@ -2470,17 +2752,26 @@ func assetsFromOutput(o lcommon.TransactionOutput) []Asset {
 			qty := ma.Asset(pol, name)
 			if qty != nil && qty.Sign() > 0 {
 				assets = append(assets, Asset{
-					Unit:     hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
+					Unit: hex.EncodeToString(
+						pol.Bytes(),
+					) + hex.EncodeToString(
+						name,
+					),
 					Quantity: qty.String(),
 				})
 			}
 		}
 	}
-	sort.Slice(assets, func(i, j int) bool { return assets[i].Unit < assets[j].Unit })
+	sort.Slice(
+		assets,
+		func(i, j int) bool { return assets[i].Unit < assets[j].Unit },
+	)
 	return assets
 }
 
-func assetsFromMint(ma *lcommon.MultiAsset[lcommon.MultiAssetTypeMint]) []Asset {
+func assetsFromMint(
+	ma *lcommon.MultiAsset[lcommon.MultiAssetTypeMint],
+) []Asset {
 	if ma == nil {
 		return nil
 	}
@@ -2490,13 +2781,20 @@ func assetsFromMint(ma *lcommon.MultiAsset[lcommon.MultiAssetTypeMint]) []Asset 
 			qty := ma.Asset(pol, name)
 			if qty != nil && qty.Sign() != 0 {
 				assets = append(assets, Asset{
-					Unit:     hex.EncodeToString(pol.Bytes()) + hex.EncodeToString(name),
+					Unit: hex.EncodeToString(
+						pol.Bytes(),
+					) + hex.EncodeToString(
+						name,
+					),
 					Quantity: qty.String(),
 				})
 			}
 		}
 	}
-	sort.Slice(assets, func(i, j int) bool { return assets[i].Unit < assets[j].Unit })
+	sort.Slice(
+		assets,
+		func(i, j int) bool { return assets[i].Unit < assets[j].Unit },
+	)
 	return assets
 }
 
@@ -2572,7 +2870,8 @@ func drepSummary(drep lcommon.Drep) *TxSummaryDRep {
 	default:
 		ret.Type = "unknown"
 	}
-	if drep.Type == lcommon.DrepTypeAddrKeyHash || drep.Type == lcommon.DrepTypeScriptHash {
+	if drep.Type == lcommon.DrepTypeAddrKeyHash ||
+		drep.Type == lcommon.DrepTypeScriptHash {
 		ret.Hash = hex.EncodeToString(drep.Credential)
 	}
 	return ret
@@ -2724,7 +3023,11 @@ func neededKeyHashes(tx *conway.ConwayTransaction) map[string]bool {
 // walletPaymentKeyHashes returns the payment key hashes for every address
 // (receive and change) the active account has derived.
 func walletPaymentKeyHashes(acct *wallet.Account) []lcommon.Blake2b224 {
-	hashes := make([]lcommon.Blake2b224, 0, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	hashes := make(
+		[]lcommon.Blake2b224,
+		0,
+		len(acct.ReceiveAddresses)+len(acct.ChangeAddresses),
+	)
 	for _, addrStr := range acct.ReceiveAddresses {
 		addr, err := lcommon.NewAddress(addrStr)
 		if err != nil {
@@ -2796,7 +3099,11 @@ func (s *Service) WitnessTx(
 
 	var txBody conway.ConwayTransactionBody
 	if _, err := cbor.Decode(txBodyCbor, &txBody); err != nil {
-		return nil, fmt.Errorf("%w: decode transaction body: %w", ErrInvalidTx, err)
+		return nil, fmt.Errorf(
+			"%w: decode transaction body: %w",
+			ErrInvalidTx,
+			err,
+		)
 	}
 	// Unlock the active wallet's seed (walletID-bound), not merely the active
 	// vault default, so the witnesses are produced from the same account whose
@@ -2886,7 +3193,10 @@ func (s *Service) deriveWitnesses(
 		role  uint32
 		index uint32
 	}
-	pathOf := make(map[string]paymentKeyPath, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	pathOf := make(
+		map[string]paymentKeyPath,
+		len(acct.ReceiveAddresses)+len(acct.ChangeAddresses),
+	)
 	for i, addrStr := range acct.ReceiveAddresses {
 		pathOf[addrStr] = paymentKeyPath{
 			role:  0,
@@ -2984,7 +3294,10 @@ func (s *Service) deriveWitnesses(
 			return bursa.GetPaymentKey(acctKey, path.index)
 		case 1:
 			if path.index >= 0x80000000 {
-				return nil, fmt.Errorf("invalid change key index %d", path.index)
+				return nil, fmt.Errorf(
+					"invalid change key index %d",
+					path.index,
+				)
 			}
 			roleKey := acctKey.Derive(1)
 			defer func() {
@@ -3007,7 +3320,9 @@ func (s *Service) deriveWitnesses(
 			if err != nil {
 				continue
 			}
-			vkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(payKey).Public().PublicKey())
+			vkeyHash := lcommon.Blake2b224Hash(
+				bip32.XPrv(payKey).Public().PublicKey(),
+			)
 			if reqSet[vkeyHash] {
 				signPaths[path] = true
 				delete(reqSet, vkeyHash)
@@ -3020,7 +3335,9 @@ func (s *Service) deriveWitnesses(
 		if err != nil {
 			return nil, fmt.Errorf("stake key: %w", err)
 		}
-		stakeVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(stakeKey).Public().PublicKey())
+		stakeVkeyHash := lcommon.Blake2b224Hash(
+			bip32.XPrv(stakeKey).Public().PublicKey(),
+		)
 		if reqSet[stakeVkeyHash] {
 			signStake = true
 			delete(reqSet, stakeVkeyHash)
@@ -3033,7 +3350,9 @@ func (s *Service) deriveWitnesses(
 		if err != nil {
 			return nil, fmt.Errorf("drep key: %w", err)
 		}
-		drepVkeyHash := lcommon.Blake2b224Hash(bip32.XPrv(drepKey).Public().PublicKey())
+		drepVkeyHash := lcommon.Blake2b224Hash(
+			bip32.XPrv(drepKey).Public().PublicKey(),
+		)
 		if reqSet[drepVkeyHash] {
 			signDRep = true
 			delete(reqSet, drepVkeyHash)
@@ -3069,7 +3388,12 @@ func (s *Service) deriveWitnesses(
 	for path := range signPaths {
 		payKey, err := derivePaymentKey(path)
 		if err != nil {
-			return nil, fmt.Errorf("payment key role %d idx %d: %w", path.role, path.index, err)
+			return nil, fmt.Errorf(
+				"payment key role %d idx %d: %w",
+				path.role,
+				path.index,
+				err,
+			)
 		}
 		func() {
 			defer func() {
@@ -3298,7 +3622,9 @@ type HWExtraSigner struct {
 // same TTL. When an unsupported feature is detected the struct is still returned
 // with Unsupported set (and UnsignedTxCBOR populated) so the SPA can show the
 // user what was attempted.
-func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, error) {
+func (s *Service) HardwareSignRequest(
+	pendingID string,
+) (HardwareSignRequest, error) {
 	// Held for the whole function (like ExportUnsigned) so every structured
 	// field and UnsignedTxCBOR are read from the same consistent snapshot of
 	// the pending entry - not released partway through and re-read after a
@@ -3307,10 +3633,18 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	defer s.mu.Unlock()
 	p, ok := s.pending[pendingID]
 	if !ok {
-		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrUnknownPending, pendingID)
+		return HardwareSignRequest{}, fmt.Errorf(
+			"%w: %q",
+			ErrUnknownPending,
+			pendingID,
+		)
 	}
 	if expired := s.now().Sub(p.created) > pendingTTL; expired {
-		return HardwareSignRequest{}, fmt.Errorf("%w: %q", ErrExpiredPending, pendingID)
+		return HardwareSignRequest{}, fmt.Errorf(
+			"%w: %q",
+			ErrExpiredPending,
+			pendingID,
+		)
 	}
 
 	tx := p.tx.GetTx()
@@ -3409,7 +3743,10 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	// represented to the device.
 	accountNum := acct.AccountIndex
 	idxOf := make(map[string]int, len(acct.ReceiveAddresses))
-	pathOf := make(map[string]string, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	pathOf := make(
+		map[string]string,
+		len(acct.ReceiveAddresses)+len(acct.ChangeAddresses),
+	)
 	for i, addr := range acct.ReceiveAddresses {
 		idxOf[addr] = i
 		pathOf[addr] = fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, i)
@@ -3424,7 +3761,11 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 	// repeated paths. Dedup of witnessPathsNumeric happens on the SPA side.
 	inputs := make([]HWInput, 0, len(tx.Body.TxInputs.Items()))
 	for _, inp := range tx.Body.TxInputs.Items() {
-		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.Itoa(int(inp.OutputIndex))
+		ref := hex.EncodeToString(
+			inp.TxId.Bytes(),
+		) + "#" + strconv.Itoa(
+			int(inp.OutputIndex),
+		)
 		hwInp := HWInput{
 			TxHashHex:   hex.EncodeToString(inp.TxId.Bytes()),
 			OutputIndex: inp.OutputIndex,
@@ -3433,7 +3774,12 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		if found {
 			hwInp.AddressBech32 = addrStr
 			if idx, owned := idxOf[addrStr]; owned {
-				hwInp.Path = fmt.Sprintf("1852'/%d'/%d'/0/%d", 1815, accountNum, idx)
+				hwInp.Path = fmt.Sprintf(
+					"1852'/%d'/%d'/0/%d",
+					1815,
+					accountNum,
+					idx,
+				)
 			}
 		}
 		// Per-input amount + assets, resolved from coin-selection at build time.
@@ -3454,7 +3800,10 @@ func (s *Service) HardwareSignRequest(pendingID string) (HardwareSignRequest, er
 		addr := out.OutputAddress
 		addrBytes, bytesErr := addr.Bytes()
 		if bytesErr != nil {
-			return HardwareSignRequest{}, fmt.Errorf("output address bytes: %w", bytesErr)
+			return HardwareSignRequest{}, fmt.Errorf(
+				"output address bytes: %w",
+				bytesErr,
+			)
 		}
 		hwOut := HWOutput{
 			AddressHex:    hex.EncodeToString(addrBytes),
@@ -3584,12 +3933,15 @@ func resolveSignerData(
 				result.Unsupported = unsupportedCertReason
 				return
 			}
-			result.CertificateSigners = append(result.CertificateSigners, HWCertSigner{
-				CertKind:   kind,
-				Role:       rk.role,
-				Path:       rk.path,
-				KeyHashHex: khHex,
-			})
+			result.CertificateSigners = append(
+				result.CertificateSigners,
+				HWCertSigner{
+					CertKind:   kind,
+					Role:       rk.role,
+					Path:       rk.path,
+					KeyHashHex: khHex,
+				},
+			)
 			continue
 		}
 		// Non-key-credential certificate (e.g. pool registration): surface each
@@ -3601,12 +3953,15 @@ func resolveSignerData(
 			if !ok || rk.role == "payment" {
 				continue
 			}
-			result.CertificateSigners = append(result.CertificateSigners, HWCertSigner{
-				CertKind:   kind,
-				Role:       rk.role,
-				Path:       rk.path,
-				KeyHashHex: khHex,
-			})
+			result.CertificateSigners = append(
+				result.CertificateSigners,
+				HWCertSigner{
+					CertKind:   kind,
+					Role:       rk.role,
+					Path:       rk.path,
+					KeyHashHex: khHex,
+				},
+			)
 		}
 	}
 
@@ -3714,7 +4069,9 @@ func resolveSignerData(
 // cold key + owner key hashes), committee auth/resign, genesis-key delegation,
 // and MIR — which resolveSignerData resolves through their owned addr-key-hash
 // credentials (e.g. a self-owned pool owner) instead.
-func certSigningCredential(cert lcommon.Certificate) (lcommon.Credential, bool) {
+func certSigningCredential(
+	cert lcommon.Certificate,
+) (lcommon.Credential, bool) {
 	switch c := cert.(type) {
 	case *lcommon.StakeRegistrationCertificate:
 		return c.StakeCredential, true

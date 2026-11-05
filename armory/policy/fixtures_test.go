@@ -104,10 +104,19 @@ func baseBody() body {
 func keyCred(h [28]byte) []any { return []any{uint64(0), h[:]} }
 
 func poolReg(operator [28]byte, owners ...[28]byte) []any {
-	return poolRegFields(operator, nil, rewardAddr(rewardHash, false), owners...)
+	return poolRegFields(
+		operator,
+		nil,
+		rewardAddr(rewardHash, false),
+		owners...)
 }
 
-func poolRegFields(operator [28]byte, leios []any, reward []byte, owners ...[28]byte) []any {
+func poolRegFields(
+	operator [28]byte,
+	leios []any,
+	reward []byte,
+	owners ...[28]byte,
+) []any {
 	ownerList := []any{}
 
 	for _, o := range owners {
@@ -129,7 +138,11 @@ func poolRegFields(operator [28]byte, leios []any, reward []byte, owners ...[28]
 	)
 }
 
-func retire(pool [28]byte) []any { return []any{uint64(4), pool[:], uint64(900)} }
+func retire(
+	pool [28]byte,
+) []any {
+	return []any{uint64(4), pool[:], uint64(900)}
+}
 
 func stakeReg(h [28]byte) []any { return []any{uint64(0), keyCred(h)} }
 

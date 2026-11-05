@@ -67,7 +67,9 @@ func newTestController(t *testing.T) (*Controller, *fakeWindow, *int) {
 func TestNewControllerInstallsCloseHook(t *testing.T) {
 	_, win, _ := newTestController(t)
 	if !win.closeHook {
-		t.Fatal("NewController did not install the native close-interception hook")
+		t.Fatal(
+			"NewController did not install the native close-interception hook",
+		)
 	}
 	if win.onClose == nil {
 		t.Fatal("close hook registered a nil handler")

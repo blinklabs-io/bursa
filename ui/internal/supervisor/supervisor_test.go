@@ -65,7 +65,8 @@ func TestNodeConfigOptionsHistoryExpiryOptIn(t *testing.T) {
 	mustApply(on)
 
 	configured := dingo.NewConfig(off...)
-	if configured.BlobPlugin() != "badger" || configured.MetadataPlugin() != "sqlite" {
+	if configured.BlobPlugin() != "badger" ||
+		configured.MetadataPlugin() != "sqlite" {
 		t.Fatalf(
 			"storage plugins = (%q, %q), want (badger, sqlite)",
 			configured.BlobPlugin(),
@@ -111,7 +112,10 @@ type blockingBootstrapper struct {
 	release chan struct{}
 }
 
-func (b *blockingBootstrapper) Bootstrap(ctx context.Context, p BootstrapParams) error {
+func (b *blockingBootstrapper) Bootstrap(
+	ctx context.Context,
+	p BootstrapParams,
+) error {
 	if err := os.MkdirAll(p.DataDir, 0o700); err != nil {
 		return err
 	}
@@ -130,7 +134,11 @@ func (f nodeRunnerFunc) Run(ctx context.Context) error { return f(ctx) }
 
 type nodeFactoryFunc func(dingo.Config) (NodeRunner, error)
 
-func (f nodeFactoryFunc) New(cfg dingo.Config) (NodeRunner, error) { return f(cfg) }
+func (f nodeFactoryFunc) New(
+	cfg dingo.Config,
+) (NodeRunner, error) {
+	return f(cfg)
+}
 
 func TestStartReadsHistoryExpiryAtDeferredBootstrapLaunch(t *testing.T) {
 	enabled := false
@@ -179,6 +187,10 @@ func TestStartReadsHistoryExpiryAtDeferredBootstrapLaunch(t *testing.T) {
 	}
 	applied, ran := s.AppliedHistoryExpiry()
 	if !ran || !applied {
-		t.Fatalf("AppliedHistoryExpiry = (%v, %v), want (true, true)", applied, ran)
+		t.Fatalf(
+			"AppliedHistoryExpiry = (%v, %v), want (true, true)",
+			applied,
+			ran,
+		)
 	}
 }

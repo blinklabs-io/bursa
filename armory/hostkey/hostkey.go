@@ -44,7 +44,10 @@ func Read(file string) (ed25519.PrivateKey, error) {
 	}
 
 	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("host key file %s is readable by others; chmod 600 it", file)
+		return nil, fmt.Errorf(
+			"host key file %s is readable by others; chmod 600 it",
+			file,
+		)
 	}
 
 	data, err := os.ReadFile(file)
@@ -79,7 +82,11 @@ func Read(file string) (ed25519.PrivateKey, error) {
 
 // Authenticate returns req carrying the challenge, the host public key and
 // the host signature over the request binding.
-func Authenticate(req device.SignRequest, key ed25519.PrivateKey, challenge []byte) device.SignRequest {
+func Authenticate(
+	req device.SignRequest,
+	key ed25519.PrivateKey,
+	challenge []byte,
+) device.SignRequest {
 	req.Challenge = challenge
 	req.HostKey = key.Public().(ed25519.PublicKey)
 	req.HostSignature = ed25519.Sign(key, device.RequestBinding(req))

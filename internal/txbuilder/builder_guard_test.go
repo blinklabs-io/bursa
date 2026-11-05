@@ -31,14 +31,29 @@ const guardAddr = "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflw
 func guardChain() *FakeChain {
 	chain := NewFakeChain()
 	chain.UtxosMap[guardAddr] = []UTxO{
-		MakeUTxO(guardAddr, "7777777777777777777777777777777777777777777777777777777777777777", 0, 1_000_000_000),
+		MakeUTxO(
+			guardAddr,
+			"7777777777777777777777777777777777777777777777777777777777777777",
+			0,
+			1_000_000_000,
+		),
 	}
 	return chain
 }
 
-func guardCertFile(t *testing.T, cert lcommon.Certificate, typ lcommon.CertificateType) string {
+func guardCertFile(
+	t *testing.T,
+	cert lcommon.Certificate,
+	typ lcommon.CertificateType,
+) string {
 	t.Helper()
-	return writeEnvelopeCert(t, t.TempDir(), "cert", "CertificateConway", encodeWrapper(t, cert, typ))
+	return writeEnvelopeCert(
+		t,
+		t.TempDir(),
+		"cert",
+		"CertificateConway",
+		encodeWrapper(t, cert, typ),
+	)
 }
 
 // Byron inputs need bootstrap witnesses, which the fee estimate does not
@@ -47,9 +62,18 @@ func TestBuildRejectsByronChangeAddress(t *testing.T) {
 	byron := "Ae2tdPwUPEYwFx4dmJheyNPPYXtvHbJLeCaA96o6Y2iiUL18cAt7AizN2zG"
 	chain := NewFakeChain()
 	chain.UtxosMap[byron] = []UTxO{
-		MakeUTxO(byron, "7878787878787878787878787878787878787878787878787878787878787878", 0, 1_000_000_000),
+		MakeUTxO(
+			byron,
+			"7878787878787878787878787878787878787878787878787878787878787878",
+			0,
+			1_000_000_000,
+		),
 	}
-	_, err := Build(context.Background(), chain, BuildOptions{ChangeAddress: byron})
+	_, err := Build(
+		context.Background(),
+		chain,
+		BuildOptions{ChangeAddress: byron},
+	)
 	require.ErrorContains(t, err, "Byron")
 }
 
@@ -64,9 +88,18 @@ func TestBuildRejectsScriptChangeAddress(t *testing.T) {
 	script := addr.String()
 	chain := NewFakeChain()
 	chain.UtxosMap[script] = []UTxO{
-		MakeUTxO(script, "7979797979797979797979797979797979797979797979797979797979797979", 0, 1_000_000_000),
+		MakeUTxO(
+			script,
+			"7979797979797979797979797979797979797979797979797979797979797979",
+			0,
+			1_000_000_000,
+		),
 	}
-	_, err = Build(context.Background(), chain, BuildOptions{ChangeAddress: script})
+	_, err = Build(
+		context.Background(),
+		chain,
+		BuildOptions{ChangeAddress: script},
+	)
 	require.ErrorContains(t, err, "script")
 }
 
@@ -149,12 +182,24 @@ func TestBuildChargesPoolDepositOncePerPool(t *testing.T) {
 	built, err := Build(context.Background(), chain, BuildOptions{
 		ChangeAddress: guardAddr,
 		CertificateFiles: []string{
-			guardCertFile(t, newCert(340_000_000), lcommon.CertificateTypePoolRegistration),
-			guardCertFile(t, newCert(350_000_000), lcommon.CertificateTypePoolRegistration),
+			guardCertFile(
+				t,
+				newCert(340_000_000),
+				lcommon.CertificateTypePoolRegistration,
+			),
+			guardCertFile(
+				t,
+				newCert(350_000_000),
+				lcommon.CertificateTypePoolRegistration,
+			),
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, chain.PpExtra.PoolDeposit, chargedDeposit(t, built, 1_000_000_000))
+	require.Equal(
+		t,
+		chain.PpExtra.PoolDeposit,
+		chargedDeposit(t, built, 1_000_000_000),
+	)
 }
 
 // A legacy deregistration of a credential registered earlier in the same
@@ -193,8 +238,10 @@ func TestBuildRejectsDeregistrationOfUnregisteredCredential(t *testing.T) {
 		StakeCredential: cred,
 	}
 	_, err := Build(context.Background(), guardChain(), BuildOptions{
-		ChangeAddress:    guardAddr,
-		CertificateFiles: []string{guardCertFile(t, dereg, lcommon.CertificateTypeStakeDeregistration)},
+		ChangeAddress: guardAddr,
+		CertificateFiles: []string{
+			guardCertFile(t, dereg, lcommon.CertificateTypeStakeDeregistration),
+		},
 	})
 	require.ErrorContains(t, err, "not registered")
 }

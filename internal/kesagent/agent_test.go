@@ -29,7 +29,13 @@ import (
 func TestCurrentKESPeriodMath(t *testing.T) {
 	cold := newColdKey(t)
 	// now = period 5 start + 5s (still in period 5), 10s per period.
-	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(5).Add(5*time.Second))
+	a := testAgent(
+		t,
+		ModeSign,
+		cold,
+		kes.CardanoKesDepth,
+		atPeriod(5).Add(5*time.Second),
+	)
 	if got := a.currentKESPeriod(); got != 5 {
 		t.Fatalf("currentKESPeriod = %d, want 5", got)
 	}
@@ -79,7 +85,10 @@ func TestInstallAndSign(t *testing.T) {
 		t.Fatalf("ActiveStart = %d, want 3", info.ActiveStart)
 	}
 	if info.ActivePeriod != 5 {
-		t.Fatalf("ActivePeriod = %d, want 5 (evolved to current)", info.ActivePeriod)
+		t.Fatalf(
+			"ActivePeriod = %d, want 5 (evolved to current)",
+			info.ActivePeriod,
+		)
 	}
 
 	// Sign at the current period; verify with the internal evolution period.
@@ -164,11 +173,21 @@ func TestAgentGuardFloorSurvivesRestart(t *testing.T) {
 	t.Cleanup(restarted.Close)
 	info := restarted.Info()
 	if !info.FloorInitialized || info.MonotonicFloor != 5 {
-		t.Fatalf("restarted guard floor = (%d, %v), want (5, true)", info.MonotonicFloor, info.FloorInitialized)
+		t.Fatalf(
+			"restarted guard floor = (%d, %v), want (5, true)",
+			info.MonotonicFloor,
+			info.FloorInitialized,
+		)
 	}
 	restartedVKey, _ := restarted.GenStagedKey()
-	if _, err := restarted.InstallKey(makeOpCert(t, restartedVKey, 2, 4, cold)); !errors.Is(err, ErrPeriodRollback) {
-		t.Fatalf("InstallKey below restarted floor: want ErrPeriodRollback, got %v", err)
+	if _, err := restarted.InstallKey(makeOpCert(t, restartedVKey, 2, 4, cold)); !errors.Is(
+		err,
+		ErrPeriodRollback,
+	) {
+		t.Fatalf(
+			"InstallKey below restarted floor: want ErrPeriodRollback, got %v",
+			err,
+		)
 	}
 }
 
@@ -184,10 +203,16 @@ func TestSignFuturePeriodRejectedWithoutStateChange(t *testing.T) {
 	}
 	info := a.Info()
 	if info.ActivePeriod != 3 {
-		t.Fatalf("active period = %d after rejected request, want 3", info.ActivePeriod)
+		t.Fatalf(
+			"active period = %d after rejected request, want 3",
+			info.ActivePeriod,
+		)
 	}
 	if info.MonotonicFloor != 3 {
-		t.Fatalf("guard floor = %d after rejected request, want 3", info.MonotonicFloor)
+		t.Fatalf(
+			"guard floor = %d after rejected request, want 3",
+			info.MonotonicFloor,
+		)
 	}
 	if info.Exhausted {
 		t.Fatal("rejected future request marked the active key exhausted")
@@ -246,7 +271,10 @@ func TestInstallOpCertMismatches(t *testing.T) {
 	vkey, _ := a.GenStagedKey()
 
 	// Opcert signed and stamped by a DIFFERENT cold key.
-	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 2, other)); !errors.Is(err, ErrOpCertColdVK) {
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 2, other)); !errors.Is(
+		err,
+		ErrOpCertColdVK,
+	) {
 		t.Fatalf("wrong cold vkey: want ErrOpCertColdVK, got %v", err)
 	}
 
@@ -266,7 +294,10 @@ func TestInstallOpCertMismatches(t *testing.T) {
 	wrongKey := make([]byte, len(vkey))
 	copy(wrongKey, vkey)
 	wrongKey[1] ^= 0xff
-	if _, err := a.InstallKey(makeOpCert(t, wrongKey, 1, 2, cold)); !errors.Is(err, ErrOpCertKESVK) {
+	if _, err := a.InstallKey(makeOpCert(t, wrongKey, 1, 2, cold)); !errors.Is(
+		err,
+		ErrOpCertKESVK,
+	) {
 		t.Fatalf("wrong kes vkey: want ErrOpCertKESVK, got %v", err)
 	}
 }
@@ -274,7 +305,10 @@ func TestInstallOpCertMismatches(t *testing.T) {
 func TestInstallNoStagedKey(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(2))
-	if _, err := a.InstallKey(makeOpCert(t, make([]byte, 32), 1, 2, cold)); !errors.Is(err, ErrNoStagedKey) {
+	if _, err := a.InstallKey(makeOpCert(t, make([]byte, 32), 1, 2, cold)); !errors.Is(
+		err,
+		ErrNoStagedKey,
+	) {
 		t.Fatalf("install without staged: want ErrNoStagedKey, got %v", err)
 	}
 }
@@ -324,7 +358,10 @@ func TestEvolveExhaustion(t *testing.T) {
 	}
 	// It reached its last servable period (start 0 + MaxPeriod-1 = 3).
 	if info.ActivePeriod != 3 {
-		t.Fatalf("ActivePeriod = %d, want 3 (last evolution)", info.ActivePeriod)
+		t.Fatalf(
+			"ActivePeriod = %d, want 3 (last evolution)",
+			info.ActivePeriod,
+		)
 	}
 }
 
@@ -360,10 +397,15 @@ func TestEvolveToLockedDiscardsKeyWhenStoreFails(t *testing.T) {
 	a.mu.Unlock()
 
 	if active != nil {
-		t.Fatal("active key retained after a failed store; it holds a zeroized buffer")
+		t.Fatal(
+			"active key retained after a failed store; it holds a zeroized buffer",
+		)
 	}
 	if got := testutil.ToFloat64(metrics.exhausted); got != 0 {
-		t.Fatalf("exhausted gauge = %v, want 0 (no active key, not an exhausted one)", got)
+		t.Fatalf(
+			"exhausted gauge = %v, want 0 (no active key, not an exhausted one)",
+			got,
+		)
 	}
 	if _, err := a.Sign(2, []byte("msg")); !errors.Is(err, ErrNoActiveKey) {
 		t.Fatalf("Sign after key discard: want ErrNoActiveKey, got %v", err)
@@ -401,7 +443,10 @@ func TestInstallRefusedByGuardFloor(t *testing.T) {
 
 	vkey, _ := a.GenStagedKey()
 	// Install at period 5, but the floor is 100 -> rollback refused.
-	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 5, cold)); !errors.Is(err, ErrPeriodRollback) {
+	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 5, cold)); !errors.Is(
+		err,
+		ErrPeriodRollback,
+	) {
 		t.Fatalf("install below floor: want ErrPeriodRollback, got %v", err)
 	}
 	if a.Info().HasActiveKey {
@@ -424,14 +469,23 @@ func TestInfoReportsActiveIssueNumberAndOpCert(t *testing.T) {
 		t.Fatalf("InstallKey: %v", err)
 	}
 	if info.ActiveIssueNumber != issueNumber {
-		t.Fatalf("ActiveIssueNumber = %d, want %d", info.ActiveIssueNumber, issueNumber)
+		t.Fatalf(
+			"ActiveIssueNumber = %d, want %d",
+			info.ActiveIssueNumber,
+			issueNumber,
+		)
 	}
 	if !bytes.Equal(info.ActiveOpCert, opcert) {
-		t.Fatalf("ActiveOpCert = %x, want the installed opcert %x", info.ActiveOpCert, opcert)
+		t.Fatalf(
+			"ActiveOpCert = %x, want the installed opcert %x",
+			info.ActiveOpCert,
+			opcert,
+		)
 	}
 	// Info() must report the same thing as the InstallKey response.
 	later := a.Info()
-	if later.ActiveIssueNumber != issueNumber || !bytes.Equal(later.ActiveOpCert, opcert) {
+	if later.ActiveIssueNumber != issueNumber ||
+		!bytes.Equal(later.ActiveOpCert, opcert) {
 		t.Fatalf("Info() = (issue %d, opcert %x), want (%d, %x)",
 			later.ActiveIssueNumber, later.ActiveOpCert, issueNumber, opcert)
 	}
@@ -500,14 +554,20 @@ func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
 	a.Tick()
 
 	if info := a.Info(); info.ActivePeriod != 2 || info.MonotonicFloor != 1 {
-		t.Fatalf("after failed authorization: active period = %d, floor = %d; want 2 and 1",
-			info.ActivePeriod, info.MonotonicFloor)
+		t.Fatalf(
+			"after failed authorization: active period = %d, floor = %d; want 2 and 1",
+			info.ActivePeriod,
+			info.MonotonicFloor,
+		)
 	}
 	id, _, current := a.subscribe()
 	if current != nil {
 		securemem.Wipe(current.KESSignKey)
 		a.unsubscribe(id)
-		t.Fatalf("subscribe released period %d after its guard persistence failed", current.Period)
+		t.Fatalf(
+			"subscribe released period %d after its guard persistence failed",
+			current.Period,
+		)
 	}
 	a.unsubscribe(id)
 
@@ -518,11 +578,16 @@ func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
 	id, _, current = a.subscribe()
 	defer a.unsubscribe(id)
 	if current == nil {
-		t.Fatal("subscribe returned no key after guard authorization retry succeeded")
+		t.Fatal(
+			"subscribe returned no key after guard authorization retry succeeded",
+		)
 	}
 	defer securemem.Wipe(current.KESSignKey)
 	if current.Period != 2 {
-		t.Fatalf("subscribe returned period %d after retry, want 2", current.Period)
+		t.Fatalf(
+			"subscribe returned period %d after retry, want 2",
+			current.Period,
+		)
 	}
 }
 
@@ -551,7 +616,10 @@ func TestQueuedPushBelowFloorIsDroppedOnRollback(t *testing.T) {
 	active := a.active.absPeriod()
 	a.mu.Unlock()
 	if len(ch) != 1 {
-		t.Fatalf("queued pushes = %d, want 1 before the floor advances", len(ch))
+		t.Fatalf(
+			"queued pushes = %d, want 1 before the floor advances",
+			len(ch),
+		)
 	}
 
 	// Advance the floor past the queued push, as a committed-but-failed

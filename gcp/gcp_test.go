@@ -64,7 +64,11 @@ func TestDeleteRejectsEmptyWalletNamespace(t *testing.T) {
 
 func TestWalletSecretResourceUsesNamespace(t *testing.T) {
 	t.Parallel()
-	resourceName, err := walletSecretResource("project", "bursa-wallet-", "wallet_1")
+	resourceName, err := walletSecretResource(
+		"project",
+		"bursa-wallet-",
+		"wallet_1",
+	)
 	require.NoError(t, err)
 	require.Equal(
 		t,

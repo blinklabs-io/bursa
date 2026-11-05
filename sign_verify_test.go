@@ -28,7 +28,10 @@ func TestVerifyingSigner_PassesHonestSignature(t *testing.T) {
 	}
 	msg := []byte("the 32-byte transaction id-ish")
 
-	sign := verifyingSigner(pub, func(m []byte) []byte { return ed25519.Sign(priv, m) })
+	sign := verifyingSigner(
+		pub,
+		func(m []byte) []byte { return ed25519.Sign(priv, m) },
+	)
 	sig, err := sign(msg)
 	if err != nil {
 		t.Fatalf("honest signer rejected: %v", err)
@@ -74,7 +77,10 @@ func TestVerifyingSigner_DetectsWrongKey(t *testing.T) {
 	}
 	msg := []byte("message")
 
-	sign := verifyingSigner(pub, func(m []byte) []byte { return ed25519.Sign(otherPriv, m) })
+	sign := verifyingSigner(
+		pub,
+		func(m []byte) []byte { return ed25519.Sign(otherPriv, m) },
+	)
 	if _, err := sign(msg); !errors.Is(err, ErrSignatureVerification) {
 		t.Fatalf("want ErrSignatureVerification, got %v", err)
 	}
@@ -86,8 +92,14 @@ func TestVerifyingSigner_RejectsMalformedPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	sign := verifyingSigner([]byte{0x01, 0x02}, func(m []byte) []byte { return ed25519.Sign(priv, m) })
-	if _, err := sign([]byte("message")); !errors.Is(err, ErrSignatureVerification) {
+	sign := verifyingSigner(
+		[]byte{0x01, 0x02},
+		func(m []byte) []byte { return ed25519.Sign(priv, m) },
+	)
+	if _, err := sign([]byte("message")); !errors.Is(
+		err,
+		ErrSignatureVerification,
+	) {
 		t.Fatalf("want ErrSignatureVerification for short pubkey, got %v", err)
 	}
 }

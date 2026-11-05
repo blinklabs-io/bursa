@@ -132,7 +132,8 @@ func validateWIFCredentials(path string) error {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("decode WIF credential file: %w", err)
 	}
-	if cfg.Type != "external_account" || cfg.SubjectTokenType != jwtSubjectType ||
+	if cfg.Type != "external_account" ||
+		cfg.SubjectTokenType != jwtSubjectType ||
 		cfg.TokenURL != googleSTSURL {
 		return errors.New(
 			"credential file is not a Google STS external-account configuration",
@@ -188,7 +189,11 @@ func (k *CloudKMS) Wrap(
 		return nil, errors.New("cloud KMS did not verify request integrity")
 	}
 	if resp.GetCiphertextCrc32C() == nil ||
-		resp.GetCiphertextCrc32C().GetValue() != checksumValue(resp.GetCiphertext()) {
+		resp.GetCiphertextCrc32C().
+			GetValue() !=
+			checksumValue(
+				resp.GetCiphertext(),
+			) {
 		return nil, errors.New(
 			"cloud KMS encrypt response failed integrity check",
 		)
@@ -215,7 +220,11 @@ func (k *CloudKMS) Unwrap(
 		return nil, err
 	}
 	if resp.GetPlaintextCrc32C() == nil ||
-		resp.GetPlaintextCrc32C().GetValue() != checksumValue(resp.GetPlaintext()) {
+		resp.GetPlaintextCrc32C().
+			GetValue() !=
+			checksumValue(
+				resp.GetPlaintext(),
+			) {
 		wipe(resp.GetPlaintext())
 		return nil, errors.New(
 			"cloud KMS decrypt response failed integrity check",

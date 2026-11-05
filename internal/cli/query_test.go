@@ -154,7 +154,11 @@ func TestRunQueryUtxoAcceptsAddressBeforeDialing(t *testing.T) {
 func TestRunQueryRejectsNonpositiveTimeout(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), testQueryMissingSocket)
 	for _, timeout := range []int64{0, -5} {
-		require.ErrorContains(t, RunQueryTip(socket, "preprod", "", timeout), "--timeout")
+		require.ErrorContains(
+			t,
+			RunQueryTip(socket, "preprod", "", timeout),
+			"--timeout",
+		)
 		require.ErrorContains(
 			t,
 			RunQueryPool(socket, "preprod", testQueryPoolHex, "", timeout),
@@ -162,7 +166,13 @@ func TestRunQueryRejectsNonpositiveTimeout(t *testing.T) {
 		)
 		require.ErrorContains(
 			t,
-			RunQueryStakeAddress(socket, "preprod", testQueryStakeTestnet, "", timeout),
+			RunQueryStakeAddress(
+				socket,
+				"preprod",
+				testQueryStakeTestnet,
+				"",
+				timeout,
+			),
 			"--timeout",
 		)
 		require.ErrorContains(
@@ -214,7 +224,17 @@ func TestRunQueryPoolPassesParsedPoolID(t *testing.T) {
 		return &txbuilder.PoolQueryResult{}, nil
 	}
 	out := filepath.Join(t.TempDir(), "pool.json")
-	require.NoError(t, runQueryPool("node.socket", "preview", testQueryPoolBech32, out, 5, runner))
+	require.NoError(
+		t,
+		runQueryPool(
+			"node.socket",
+			"preview",
+			testQueryPoolBech32,
+			out,
+			5,
+			runner,
+		),
+	)
 	require.Equal(t, testQueryPoolHex, hex.EncodeToString(got[:]))
 }
 

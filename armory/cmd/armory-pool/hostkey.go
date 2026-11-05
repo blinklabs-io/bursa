@@ -70,7 +70,9 @@ func newHostKey(file, scope string, out io.Writer) error {
 		return err
 	}
 
-	req, err := json.Marshal(device.HostKeyRequest{PublicKey: pub, Scope: scope})
+	req, err := json.Marshal(
+		device.HostKeyRequest{PublicKey: pub, Scope: scope},
+	)
 	if err != nil {
 		return err
 	}
@@ -81,11 +83,18 @@ func newHostKey(file, scope string, out io.Writer) error {
 }
 
 // readHostKey reads a host signing key file, refusing one others can read.
-func readHostKey(file string) (ed25519.PrivateKey, error) { return hostkey.Read(file) }
+func readHostKey(
+	file string,
+) (ed25519.PrivateKey, error) {
+	return hostkey.Read(file)
+}
 
 // sign posts a signing request, first authenticating it with the host key
 // when the session has one.
-func (s *session) sign(req device.SignRequest, resp *device.SignResponse) error {
+func (s *session) sign(
+	req device.SignRequest,
+	resp *device.SignResponse,
+) error {
 	if s.hostKey != nil {
 		var ch device.ChallengeResponse
 
@@ -126,7 +135,12 @@ func readAdminRequest(in io.Reader) ([]byte, error) {
 // signs the request, as a device holding a host key requires; without one the
 // request goes unsigned, which a device accepts only while it holds no host
 // key, and always for /wipe/device and /wipe/objects.
-func adminRequest(c *client, route, hostKeyFile string, in io.Reader, out io.Writer) error {
+func adminRequest(
+	c *client,
+	route, hostKeyFile string,
+	in io.Reader,
+	out io.Writer,
+) error {
 	signed := device.AdminRoutes()[route]
 
 	if !signed && route != "/wipe/device" && route != "/wipe/objects" {
@@ -171,7 +185,10 @@ func adminRequest(c *client, route, hostKeyFile string, in io.Reader, out io.Wri
 // route, and the request itself, read so its scope can be named: file when
 // given, else the key of the request's scope in dir. Requests the device does
 // not authenticate take no key.
-func adminKeyFile(route, file, dir, scope string, in io.Reader) (string, io.Reader, error) {
+func adminKeyFile(
+	route, file, dir, scope string,
+	in io.Reader,
+) (string, io.Reader, error) {
 	switch {
 	case dir == "":
 		return file, in, nil
@@ -235,13 +252,19 @@ func checkScopeName(scope string) error {
 		names = append(names, sc.Name())
 	}
 
-	return fmt.Errorf("scope %q is not one of %s", scope, strings.Join(names, ", "))
+	return fmt.Errorf(
+		"scope %q is not one of %s",
+		scope,
+		strings.Join(names, ", "),
+	)
 }
 
 // scopedHostKeyFile is the host key file of scope in dir.
 func scopedHostKeyFile(dir, scope string) (string, error) {
 	if scope == "" {
-		return "", errors.New("-host-key-dir needs the scope: a profile name or -scope")
+		return "", errors.New(
+			"-host-key-dir needs the scope: a profile name or -scope",
+		)
 	}
 
 	if err := checkScopeName(scope); err != nil {

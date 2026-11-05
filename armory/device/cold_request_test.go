@@ -61,7 +61,10 @@ func TestKeyRequestsMarshalAsHex(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if want := `"` + tc.field + `":"` + coldKeyHex(coldSeed) + `"`; !strings.Contains(string(b), want) {
+			if want := `"` + tc.field + `":"` + coldKeyHex(coldSeed) + `"`; !strings.Contains(
+				string(b),
+				want,
+			) {
 				t.Fatalf("marshalled %s, want %s", b, want)
 			}
 
@@ -77,8 +80,14 @@ func TestKeyRequestsMarshalAsHex(t *testing.T) {
 
 		s, _ := newTestService(t)
 
-		code, res, body := postCold(t, s, "/provision/cold", ColdRequest{ColdKeyID: freeColdID, SigningKey: key})
-		if want := ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey); code != http.StatusOK || res.PublicKey != hex.EncodeToString(want) {
+		code, res, body := postCold(
+			t,
+			s,
+			"/provision/cold",
+			ColdRequest{ColdKeyID: freeColdID, SigningKey: key},
+		)
+		if want := ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey); code != http.StatusOK ||
+			res.PublicKey != hex.EncodeToString(want) {
 			t.Fatalf("got %d %s, want the key imported", code, body)
 		}
 
@@ -141,14 +150,21 @@ func TestRequestEmbeddedFields(t *testing.T) {
 			var got embeddingRequest
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("POST /e", handle(s, func(req embeddingRequest) (struct{}, error) {
-				got = req
-				got.Key = nil
+			mux.HandleFunc(
+				"POST /e",
+				handle(s, func(req embeddingRequest) (struct{}, error) {
+					got = req
+					got.Key = nil
 
-				return struct{}{}, nil
-			}))
+					return struct{}{}, nil
+				}),
+			)
 
-			req := httptest.NewRequest(http.MethodPost, "/e", strings.NewReader(tc.body))
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/e",
+				strings.NewReader(tc.body),
+			)
 			setDeviceHeaders(req)
 
 			w := httptest.NewRecorder()
@@ -158,7 +174,9 @@ func TestRequestEmbeddedFields(t *testing.T) {
 				t.Fatalf("got %d %s, want accepted %v", w.Code, w.Body, tc.ok)
 			}
 
-			if tc.ok && got.Token == "" && got.Untagged == "" && got.Named.Token == "" && (got.PointerFields == nil || got.Nonce == "") {
+			if tc.ok && got.Token == "" && got.Untagged == "" &&
+				got.Named.Token == "" &&
+				(got.PointerFields == nil || got.Nonce == "") {
 				t.Fatalf("decoded %+v, want the field set", got)
 			}
 		})

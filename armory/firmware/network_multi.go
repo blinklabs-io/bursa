@@ -28,5 +28,7 @@ func configureScope(svc *device.Service, report *Report) {
 		report.Logf("scope: %s (network id %d)", sc.Name(), sc.Network)
 	}
 
-	report.Logf("multi image: other profiles are refused; every request needs a host key of the profile's scope")
+	report.Logf(
+		"multi image: other profiles are refused; every request needs a host key of the profile's scope",
+	)
 }

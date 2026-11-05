@@ -50,7 +50,8 @@ func walletCreateCommand() *cobra.Command {
 				os.Exit(1)
 			}
 			if err := cli.RunCreate(cfg, output); err != nil {
-				logging.GetLogger().Error("failed to create wallet", "error", err)
+				logging.GetLogger().
+					Error("failed to create wallet", "error", err)
 				os.Exit(1)
 			}
 		},
@@ -92,7 +93,8 @@ Examples:
 				os.Exit(1)
 			}
 			if err := cli.RunRestore(cfg, "", mnemonicFile, password, restoreOutput); err != nil {
-				logging.GetLogger().Error("failed to restore wallet", "error", err)
+				logging.GetLogger().
+					Error("failed to restore wallet", "error", err)
 				os.Exit(1)
 			}
 		},

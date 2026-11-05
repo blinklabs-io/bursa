@@ -88,7 +88,10 @@ func TestSealUnsealWithARealQuicknetBeacon(t *testing.T) {
 	noErr(t, err)
 
 	isTrue(t, len(sealed) >= 512)
-	isFalse(t, strings.HasPrefix(string(sealed), "-----BEGIN")) // raw age, never the armored text
+	isFalse(
+		t,
+		strings.HasPrefix(string(sealed), "-----BEGIN"),
+	) // raw age, never the armored text
 	isTrue(t, strings.HasPrefix(string(sealed), "age-encryption.org/"))
 
 	got, err := UnsealAnswers(sealed, mode, sigBytes(t, quicknetRound100Sig))
@@ -101,7 +104,17 @@ func TestSealHidesAnswerLengthWithinPadding(t *testing.T) {
 	mode := sealedMode(100, 512)
 	short, err := SealAnswers(zeroAnswers(), mode)
 	noErr(t, err)
-	long, err := SealAnswers(append(zeroAnswers(), Answer{Kind: KindMultiSelect, Question: 2, Indices: []uint64{0, 1, 2, 3, 4, 5}}), mode)
+	long, err := SealAnswers(
+		append(
+			zeroAnswers(),
+			Answer{
+				Kind:     KindMultiSelect,
+				Question: 2,
+				Indices:  []uint64{0, 1, 2, 3, 4, 5},
+			},
+		),
+		mode,
+	)
 	noErr(t, err)
 	equal(t, len(short), len(long))
 

@@ -76,7 +76,10 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	if fileBacked {
 		if err := secureSQLiteSidecars(dbPath); err != nil {
 			db.Close()
-			return nil, fmt.Errorf("failed to secure sqlite journal files: %w", err)
+			return nil, fmt.Errorf(
+				"failed to secure sqlite journal files: %w",
+				err,
+			)
 		}
 	}
 
@@ -105,7 +108,10 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	if fileBacked {
 		if err := secureSQLiteSidecars(dbPath); err != nil {
 			db.Close()
-			return nil, fmt.Errorf("failed to secure sqlite journal files: %w", err)
+			return nil, fmt.Errorf(
+				"failed to secure sqlite journal files: %w",
+				err,
+			)
 		}
 	}
 

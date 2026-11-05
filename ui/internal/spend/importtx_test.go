@@ -26,7 +26,10 @@ import (
 // wallet). Because CosignTx verifies and dedupes witnesses by signature, a
 // retained witness must be genuinely valid — a zero/garbage witness would be
 // (correctly) dropped, so it could not prove retention.
-func foreignWitness(t *testing.T, unsignedCbor string) (lcommon.VkeyWitness, string) {
+func foreignWitness(
+	t *testing.T,
+	unsignedCbor string,
+) (lcommon.VkeyWitness, string) {
 	t.Helper()
 	txBytes, err := hex.DecodeString(unsignedCbor)
 	if err != nil {
@@ -41,7 +44,10 @@ func foreignWitness(t *testing.T, unsignedCbor string) (lcommon.VkeyWitness, str
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	w := lcommon.VkeyWitness{Vkey: pub, Signature: ed25519.Sign(priv, bodyHash.Bytes())}
+	w := lcommon.VkeyWitness{
+		Vkey:      pub,
+		Signature: ed25519.Sign(priv, bodyHash.Bytes()),
+	}
 	kh := hex.EncodeToString(lcommon.Blake2b224Hash(pub).Bytes())
 	return w, kh
 }
@@ -49,7 +55,12 @@ func foreignWitness(t *testing.T, unsignedCbor string) (lcommon.VkeyWitness, str
 // attachWitness re-serializes unsignedCbor with w merged into its witness set,
 // preserving the original body bytes (the SubmitSigned/CosignTx pattern), and
 // returns the new tx CBOR hex.
-func attachWitness(t *testing.T, s *Service, unsignedCbor string, w lcommon.VkeyWitness) string {
+func attachWitness(
+	t *testing.T,
+	s *Service,
+	unsignedCbor string,
+	w lcommon.VkeyWitness,
+) string {
 	t.Helper()
 	a, err := apollo.New(s.chain).LoadTxCbor(unsignedCbor)
 	if err != nil {
@@ -79,7 +90,9 @@ const testPassword = "cosign-test-password"
 // same Build -> ExportUnsigned path exercised in spend_test.go's air-gap
 // tests) and returns the Service it was built against, the active account,
 // and the resulting unsigned tx CBOR (hex).
-func buildUnsignedSendFixture(t *testing.T) (*Service, *wallet.Account, string) {
+func buildUnsignedSendFixture(
+	t *testing.T,
+) (*Service, *wallet.Account, string) {
 	t.Helper()
 	acct := mustDeriveConfirmAccount(t)
 	addr0 := acct.ReceiveAddresses[0]
@@ -88,7 +101,10 @@ func buildUnsignedSendFixture(t *testing.T) (*Service, *wallet.Account, string) 
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -107,7 +123,11 @@ func newBuildOnlyService(t *testing.T) *Service {
 	return NewService(nil, nil, nil)
 }
 
-func mutateConwayBody(t *testing.T, txHex string, mutate func(*conway.ConwayTransactionBody)) string {
+func mutateConwayBody(
+	t *testing.T,
+	txHex string,
+	mutate func(*conway.ConwayTransactionBody),
+) string {
 	t.Helper()
 	txBytes, err := hex.DecodeString(txHex)
 	if err != nil {
@@ -163,11 +183,15 @@ func setTxValidity(t *testing.T, txHex string, valid bool) string {
 	return hex.EncodeToString(newTxBytes)
 }
 
-func testDatumOption(t *testing.T) *babbage.BabbageTransactionOutputDatumOption {
+func testDatumOption(
+	t *testing.T,
+) *babbage.BabbageTransactionOutputDatumOption {
 	t.Helper()
 	var hash lcommon.Blake2b256
 	hash[0] = 1
-	datumOptionCBOR, err := cbor.Encode([]any{babbage.DatumOptionTypeHash, hash})
+	datumOptionCBOR, err := cbor.Encode(
+		[]any{babbage.DatumOptionTypeHash, hash},
+	)
 	if err != nil {
 		t.Fatalf("encode datum option: %v", err)
 	}
@@ -180,23 +204,33 @@ func testDatumOption(t *testing.T) *babbage.BabbageTransactionOutputDatumOption 
 
 func TestDecodeTx_CollateralEffectsResolvedAndOfflineExplicit(t *testing.T) {
 	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
-	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
-		body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
-		body.TxCollateralReturn = &body.TxOutputs[0]
-		body.TxTotalCollateral = 1_000_000
-	})
+	txHex := mutateConwayBody(
+		t,
+		unsignedCbor,
+		func(body *conway.ConwayTransactionBody) {
+			body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
+			body.TxCollateralReturn = &body.TxOutputs[0]
+			body.TxTotalCollateral = 1_000_000
+		},
+	)
 
 	got, err := svc.DecodeTx(context.Background(), txHex)
 	if err != nil {
 		t.Fatalf("DecodeTx: %v", err)
 	}
 	if len(got.CollateralInputs) != 1 || !got.CollateralInputs[0].Resolved {
-		t.Fatalf("collateral inputs = %+v, want one resolved input", got.CollateralInputs)
+		t.Fatalf(
+			"collateral inputs = %+v, want one resolved input",
+			got.CollateralInputs,
+		)
 	}
-	if got.CollateralInputs[0].TxHash == "" || got.CollateralInputs[0].Address == "" || got.CollateralInputs[0].Lovelace != "5000000" {
+	if got.CollateralInputs[0].TxHash == "" ||
+		got.CollateralInputs[0].Address == "" ||
+		got.CollateralInputs[0].Lovelace != "5000000" {
 		t.Fatalf("resolved collateral = %+v", got.CollateralInputs[0])
 	}
-	if got.CollateralReturn == nil || got.CollateralReturn.Address == "" || got.CollateralReturn.Lovelace == "" {
+	if got.CollateralReturn == nil || got.CollateralReturn.Address == "" ||
+		got.CollateralReturn.Lovelace == "" {
 		t.Fatalf("collateral return = %+v", got.CollateralReturn)
 	}
 	if got.TotalCollateral == nil || *got.TotalCollateral != "1000000" {
@@ -207,8 +241,13 @@ func TestDecodeTx_CollateralEffectsResolvedAndOfflineExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("offline DecodeTx: %v", err)
 	}
-	if len(offline.CollateralInputs) != 1 || offline.CollateralInputs[0].Resolved || offline.CollateralInputs[0].TxHash == "" {
-		t.Fatalf("offline collateral = %+v, want explicit unresolved ref", offline.CollateralInputs)
+	if len(offline.CollateralInputs) != 1 ||
+		offline.CollateralInputs[0].Resolved ||
+		offline.CollateralInputs[0].TxHash == "" {
+		t.Fatalf(
+			"offline collateral = %+v, want explicit unresolved ref",
+			offline.CollateralInputs,
+		)
 	}
 	if err := offline.ValidateForSigning(); err == nil {
 		t.Fatal("ValidateForSigning accepted unresolved consumed inputs")
@@ -217,18 +256,30 @@ func TestDecodeTx_CollateralEffectsResolvedAndOfflineExplicit(t *testing.T) {
 
 func TestDecodeTx_ReferenceInputsResolvedAndOfflineExplicit(t *testing.T) {
 	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
-	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
-		body.TxReferenceInputs = cbor.NewSetType(body.TxInputs.Items(), true)
-	})
+	txHex := mutateConwayBody(
+		t,
+		unsignedCbor,
+		func(body *conway.ConwayTransactionBody) {
+			body.TxReferenceInputs = cbor.NewSetType(
+				body.TxInputs.Items(),
+				true,
+			)
+		},
+	)
 
 	got, err := svc.DecodeTx(context.Background(), txHex)
 	if err != nil {
 		t.Fatalf("DecodeTx: %v", err)
 	}
 	if len(got.ReferenceInputs) != 1 || !got.ReferenceInputs[0].Resolved {
-		t.Fatalf("reference inputs = %+v, want one resolved input", got.ReferenceInputs)
+		t.Fatalf(
+			"reference inputs = %+v, want one resolved input",
+			got.ReferenceInputs,
+		)
 	}
-	if got.ReferenceInputs[0].TxHash == "" || got.ReferenceInputs[0].Address == "" || got.ReferenceInputs[0].Lovelace != "5000000" {
+	if got.ReferenceInputs[0].TxHash == "" ||
+		got.ReferenceInputs[0].Address == "" ||
+		got.ReferenceInputs[0].Lovelace != "5000000" {
 		t.Fatalf("resolved reference input = %+v", got.ReferenceInputs[0])
 	}
 
@@ -236,8 +287,13 @@ func TestDecodeTx_ReferenceInputsResolvedAndOfflineExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("offline DecodeTx: %v", err)
 	}
-	if len(offline.ReferenceInputs) != 1 || offline.ReferenceInputs[0].Resolved || offline.ReferenceInputs[0].TxHash == "" {
-		t.Fatalf("offline reference inputs = %+v, want explicit unresolved ref", offline.ReferenceInputs)
+	if len(offline.ReferenceInputs) != 1 ||
+		offline.ReferenceInputs[0].Resolved ||
+		offline.ReferenceInputs[0].TxHash == "" {
+		t.Fatalf(
+			"offline reference inputs = %+v, want explicit unresolved ref",
+			offline.ReferenceInputs,
+		)
 	}
 }
 
@@ -247,7 +303,9 @@ func TestTxSummaryValidateForSigningRequiresCollateralTotal(t *testing.T) {
 		Resolved: true,
 	}}}
 	if err := summary.ValidateForSigning(); err == nil {
-		t.Fatal("ValidateForSigning accepted collateral without total collateral")
+		t.Fatal(
+			"ValidateForSigning accepted collateral without total collateral",
+		)
 	}
 }
 
@@ -267,37 +325,52 @@ func TestDecodeTxMarksUnshownExecutionEffectsUnsupported(t *testing.T) {
 		{
 			name: "output datum",
 			tx: func() string {
-				return mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
-					body.TxOutputs[0].DatumOption = datumOption
-					body.TxOutputs[0].SetCbor(nil)
-				})
+				return mutateConwayBody(
+					t,
+					unsignedCbor,
+					func(body *conway.ConwayTransactionBody) {
+						body.TxOutputs[0].DatumOption = datumOption
+						body.TxOutputs[0].SetCbor(nil)
+					},
+				)
 			},
 			want: "output 0 datum",
 		},
 		{
 			name: "output reference script",
 			tx: func() string {
-				return mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
-					body.TxOutputs[0].TxOutScriptRef = &lcommon.ScriptRef{
-						Type:   lcommon.ScriptRefTypePlutusV1,
-						Script: lcommon.PlutusV1Script{0x01},
-					}
-					body.TxOutputs[0].SetCbor(nil)
-				})
+				return mutateConwayBody(
+					t,
+					unsignedCbor,
+					func(body *conway.ConwayTransactionBody) {
+						body.TxOutputs[0].TxOutScriptRef = &lcommon.ScriptRef{
+							Type:   lcommon.ScriptRefTypePlutusV1,
+							Script: lcommon.PlutusV1Script{0x01},
+						}
+						body.TxOutputs[0].SetCbor(nil)
+					},
+				)
 			},
 			want: "output 0 reference script",
 		},
 		{
 			name: "collateral return datum",
 			tx: func() string {
-				return mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
-					collateralReturn := body.TxOutputs[0]
-					collateralReturn.DatumOption = datumOption
-					collateralReturn.SetCbor(nil)
-					body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
-					body.TxCollateralReturn = &collateralReturn
-					body.TxTotalCollateral = 1_000_000
-				})
+				return mutateConwayBody(
+					t,
+					unsignedCbor,
+					func(body *conway.ConwayTransactionBody) {
+						collateralReturn := body.TxOutputs[0]
+						collateralReturn.DatumOption = datumOption
+						collateralReturn.SetCbor(nil)
+						body.TxCollateral = cbor.NewSetType(
+							body.TxInputs.Items(),
+							true,
+						)
+						body.TxCollateralReturn = &collateralReturn
+						body.TxTotalCollateral = 1_000_000
+					},
+				)
 			},
 			want: "collateral return datum",
 		},
@@ -309,10 +382,16 @@ func TestDecodeTxMarksUnshownExecutionEffectsUnsupported(t *testing.T) {
 				t.Fatalf("DecodeTx: %v", err)
 			}
 			if !containsString(summary.UnsupportedEffects, tt.want) {
-				t.Fatalf("unsupported effects = %v, want %q", summary.UnsupportedEffects, tt.want)
+				t.Fatalf(
+					"unsupported effects = %v, want %q",
+					summary.UnsupportedEffects,
+					tt.want,
+				)
 			}
 			if err := summary.ValidateForSigning(); err == nil {
-				t.Fatal("ValidateForSigning accepted an unshown execution effect")
+				t.Fatal(
+					"ValidateForSigning accepted an unshown execution effect",
+				)
 			}
 		})
 	}
@@ -332,9 +411,16 @@ func TestCosignTxValidatesEffectsBeforeUnlock(t *testing.T) {
 		{
 			name: "collateral without total",
 			mutate: func(t *testing.T, tx string) string {
-				return mutateConwayBody(t, tx, func(body *conway.ConwayTransactionBody) {
-					body.TxCollateral = cbor.NewSetType(body.TxInputs.Items(), true)
-				})
+				return mutateConwayBody(
+					t,
+					tx,
+					func(body *conway.ConwayTransactionBody) {
+						body.TxCollateral = cbor.NewSetType(
+							body.TxInputs.Items(),
+							true,
+						)
+					},
+				)
 			},
 		},
 		{
@@ -346,10 +432,14 @@ func TestCosignTxValidatesEffectsBeforeUnlock(t *testing.T) {
 		{
 			name: "output datum",
 			mutate: func(t *testing.T, tx string) string {
-				return mutateConwayBody(t, tx, func(body *conway.ConwayTransactionBody) {
-					body.TxOutputs[0].DatumOption = testDatumOption(t)
-					body.TxOutputs[0].SetCbor(nil)
-				})
+				return mutateConwayBody(
+					t,
+					tx,
+					func(body *conway.ConwayTransactionBody) {
+						body.TxOutputs[0].DatumOption = testDatumOption(t)
+						body.TxOutputs[0].SetCbor(nil)
+					},
+				)
 			},
 		},
 	}
@@ -362,7 +452,12 @@ func TestCosignTxValidatesEffectsBeforeUnlock(t *testing.T) {
 				chain = nil
 			}
 			cosigner := NewService(chain, keys, acct)
-			_, err := cosigner.CosignTx(context.Background(), tt.mutate(t, unsignedCbor), testPassword, true)
+			_, err := cosigner.CosignTx(
+				context.Background(),
+				tt.mutate(t, unsignedCbor),
+				testPassword,
+				true,
+			)
 			if !errors.Is(err, ErrInvalidTx) {
 				t.Fatalf("CosignTx error = %v, want ErrInvalidTx", err)
 			}
@@ -401,7 +496,10 @@ func TestDecodeTx_VkeySummary(t *testing.T) {
 		t.Error("unsigned tx must not be complete")
 	}
 	if len(got.ExistingSignatures) != 0 {
-		t.Errorf("unsigned tx has %d existing sigs, want 0", len(got.ExistingSignatures))
+		t.Errorf(
+			"unsigned tx has %d existing sigs, want 0",
+			len(got.ExistingSignatures),
+		)
 	}
 
 	// WalletCanAdd must name the actual payment key hash this wallet owns for
@@ -410,7 +508,9 @@ func TestDecodeTx_VkeySummary(t *testing.T) {
 	// does -- not hardcoded -- so a subtly-wrong key hash in DecodeTx would
 	// fail this test.
 	if len(got.WalletCanAdd) == 0 {
-		t.Fatal("expected at least one wallet_can_add entry for the unsigned send tx's input signer")
+		t.Fatal(
+			"expected at least one wallet_can_add entry for the unsigned send tx's input signer",
+		)
 	}
 	fundingAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
 	if err != nil {
@@ -423,12 +523,20 @@ func TestDecodeTx_VkeySummary(t *testing.T) {
 		if signer.KeyHash == wantKeyHash {
 			found = true
 			if signer.Role != "payment" {
-				t.Errorf("wallet_can_add entry for %s: role = %q, want payment", wantKeyHash, signer.Role)
+				t.Errorf(
+					"wallet_can_add entry for %s: role = %q, want payment",
+					wantKeyHash,
+					signer.Role,
+				)
 			}
 		}
 	}
 	if !found {
-		t.Errorf("wallet_can_add %+v does not contain expected payment key hash %s", got.WalletCanAdd, wantKeyHash)
+		t.Errorf(
+			"wallet_can_add %+v does not contain expected payment key hash %s",
+			got.WalletCanAdd,
+			wantKeyHash,
+		)
 	}
 }
 
@@ -458,11 +566,21 @@ func TestDecodeTx_WithdrawalsSortedByAddress(t *testing.T) {
 		t.Fatalf("decode tx body: %v", err)
 	}
 
-	addrHi, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, bytesRepeat(0xff, 28))
+	addrHi, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		lcommon.AddressNetworkTestnet,
+		nil,
+		bytesRepeat(0xff, 28),
+	)
 	if err != nil {
 		t.Fatalf("NewAddressFromParts(hi): %v", err)
 	}
-	addrLo, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, bytesRepeat(0x00, 28))
+	addrLo, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		lcommon.AddressNetworkTestnet,
+		nil,
+		bytesRepeat(0x00, 28),
+	)
 	if err != nil {
 		t.Fatalf("NewAddressFromParts(lo): %v", err)
 	}
@@ -501,11 +619,24 @@ func TestDecodeTx_WithdrawalsSortedByAddress(t *testing.T) {
 			t.Fatalf("DecodeTx (attempt %d): %v", attempt, err)
 		}
 		if len(got.Withdrawals) != 2 {
-			t.Fatalf("attempt %d: got %d withdrawals, want 2: %+v", attempt, len(got.Withdrawals), got.Withdrawals)
+			t.Fatalf(
+				"attempt %d: got %d withdrawals, want 2: %+v",
+				attempt,
+				len(got.Withdrawals),
+				got.Withdrawals,
+			)
 		}
-		gotAddrs := []string{got.Withdrawals[0].Address, got.Withdrawals[1].Address}
+		gotAddrs := []string{
+			got.Withdrawals[0].Address,
+			got.Withdrawals[1].Address,
+		}
 		if gotAddrs[0] != want[0] || gotAddrs[1] != want[1] {
-			t.Fatalf("attempt %d: withdrawals order = %v, want sorted %v", attempt, gotAddrs, want)
+			t.Fatalf(
+				"attempt %d: withdrawals order = %v, want sorted %v",
+				attempt,
+				gotAddrs,
+				want,
+			)
 		}
 	}
 }
@@ -540,7 +671,12 @@ func TestCosignTx_MergesPreservingExisting(t *testing.T) {
 	}
 
 	// First co-sign: wallet adds its own witness on top of the foreign one.
-	res, err := svc.CosignTx(context.Background(), preSigned, testPassword, true)
+	res, err := svc.CosignTx(
+		context.Background(),
+		preSigned,
+		testPassword,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("CosignTx: %v", err)
 	}
@@ -549,7 +685,10 @@ func TestCosignTx_MergesPreservingExisting(t *testing.T) {
 	}
 	for _, a := range res.Added {
 		if a.KeyHash == foreignKH {
-			t.Fatalf("cosign re-added the foreign witness %s instead of preserving it", foreignKH)
+			t.Fatalf(
+				"cosign re-added the foreign witness %s instead of preserving it",
+				foreignKH,
+			)
 		}
 	}
 
@@ -559,7 +698,10 @@ func TestCosignTx_MergesPreservingExisting(t *testing.T) {
 		t.Fatalf("DecodeTx(updated): %v", err)
 	}
 	if !hasSigner(summary.ExistingSignatures, foreignKH) {
-		t.Errorf("cosign dropped the pre-existing foreign witness %s", foreignKH)
+		t.Errorf(
+			"cosign dropped the pre-existing foreign witness %s",
+			foreignKH,
+		)
 	}
 	if len(summary.ExistingSignatures) < len(res.Added)+1 {
 		t.Errorf("updated tx has %d sigs, want >= %d (foreign + added)",
@@ -567,12 +709,20 @@ func TestCosignTx_MergesPreservingExisting(t *testing.T) {
 	}
 
 	// Body-hash stability: re-cosigning must be idempotent (no duplicate witnesses).
-	res2, err := svc.CosignTx(context.Background(), res.TxCBOR, testPassword, true)
+	res2, err := svc.CosignTx(
+		context.Background(),
+		res.TxCBOR,
+		testPassword,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("CosignTx (2nd): %v", err)
 	}
 	if len(res2.Added) != 0 {
-		t.Errorf("second cosign added %d witnesses, want 0 (already present)", len(res2.Added))
+		t.Errorf(
+			"second cosign added %d witnesses, want 0 (already present)",
+			len(res2.Added),
+		)
 	}
 }
 
@@ -592,7 +742,10 @@ func TestCosignTx_WrongPassword(t *testing.T) {
 	fc := newFakeChain(5_000_000, addr0)
 	good := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
-	pv, err := good.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := good.Build(
+		context.Background(),
+		SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -603,20 +756,32 @@ func TestCosignTx_WrongPassword(t *testing.T) {
 
 	// A service bound to the same account whose keystore rejects the password.
 	bad := NewService(fc, fakeKeystore{err: keystore.ErrDecryptFailed}, acct)
-	_, err = bad.CosignTx(context.Background(), unsigned.UnsignedTxCBOR, "wrong", true)
+	_, err = bad.CosignTx(
+		context.Background(),
+		unsigned.UnsignedTxCBOR,
+		"wrong",
+		true,
+	)
 	if !errors.Is(err, ErrWrongPassword) {
 		t.Fatalf("err = %v, want ErrWrongPassword", err)
 	}
 }
 
 func TestSubmitTxCbor_Broadcasts(t *testing.T) {
-	svc, _, unsignedCbor := buildUnsignedSendFixture(t) // fake chain records SubmitTx
+	svc, _, unsignedCbor := buildUnsignedSendFixture(
+		t,
+	) // fake chain records SubmitTx
 
 	// The import flow submits a fully assembled tx, not raw unsigned CBOR: cosign
 	// first, then broadcast the CosignResult's CBOR. Asserting the witness was
 	// added keeps this test honest — it would otherwise pass even if submission
 	// wrongly accepted an unsigned transaction.
-	cos, err := svc.CosignTx(context.Background(), unsignedCbor, testPassword, true)
+	cos, err := svc.CosignTx(
+		context.Background(),
+		unsignedCbor,
+		testPassword,
+		true,
+	)
 	if err != nil {
 		t.Fatalf("CosignTx: %v", err)
 	}
@@ -628,7 +793,11 @@ func TestSubmitTxCbor_Broadcasts(t *testing.T) {
 		t.Fatalf("DecodeTx(cosigned): %v", err)
 	}
 	if len(summary.ExistingSignatures) < len(cos.Added) {
-		t.Fatalf("cosigned tx has %d sigs, want >= %d", len(summary.ExistingSignatures), len(cos.Added))
+		t.Fatalf(
+			"cosigned tx has %d sigs, want >= %d",
+			len(summary.ExistingSignatures),
+			len(cos.Added),
+		)
 	}
 
 	res, err := svc.SubmitTxCbor(context.Background(), cos.TxCBOR)
@@ -642,7 +811,10 @@ func TestSubmitTxCbor_Broadcasts(t *testing.T) {
 
 func TestSubmitTxCbor_BadHex(t *testing.T) {
 	svc := newBuildOnlyService(t)
-	if _, err := svc.SubmitTxCbor(context.Background(), "nothex"); !errors.Is(err, ErrInvalidTx) {
+	if _, err := svc.SubmitTxCbor(context.Background(), "nothex"); !errors.Is(
+		err,
+		ErrInvalidTx,
+	) {
 		t.Fatalf("err = %v, want ErrInvalidTx", err)
 	}
 }
@@ -671,9 +843,13 @@ func TestDecodeTx_Malformed(t *testing.T) {
 
 func TestDecodeTx_NoOutputsSerializesEmptyList(t *testing.T) {
 	svc, _, unsignedCbor := buildUnsignedSendFixture(t)
-	txHex := mutateConwayBody(t, unsignedCbor, func(body *conway.ConwayTransactionBody) {
-		body.TxOutputs = nil
-	})
+	txHex := mutateConwayBody(
+		t,
+		unsignedCbor,
+		func(body *conway.ConwayTransactionBody) {
+			body.TxOutputs = nil
+		},
+	)
 
 	got, err := svc.DecodeTx(context.Background(), txHex)
 	if err != nil {

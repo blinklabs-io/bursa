@@ -53,17 +53,26 @@ func (c *chip) Exists(id uint32) (bool, error) {
 }
 
 func (c *chip) GenerateEd25519(id uint32, transient bool) error {
-	_, err := retry(c, func() (struct{}, error) { return struct{}{}, c.se.GenerateEd25519(id, transient) })
+	_, err := retry(
+		c,
+		func() (struct{}, error) { return struct{}{}, c.se.GenerateEd25519(id, transient) },
+	)
 	return err
 }
 
 func (c *chip) ImportEd25519(id uint32, seed []byte, transient bool) error {
-	_, err := retry(c, func() (struct{}, error) { return struct{}{}, c.se.ImportEd25519(id, seed, transient) })
+	_, err := retry(
+		c,
+		func() (struct{}, error) { return struct{}{}, c.se.ImportEd25519(id, seed, transient) },
+	)
 	return err
 }
 
 func (c *chip) PublicKeyEd25519(id uint32) (ed25519.PublicKey, error) {
-	return retry(c, func() (ed25519.PublicKey, error) { return c.se.PublicKeyEd25519(id) })
+	return retry(
+		c,
+		func() (ed25519.PublicKey, error) { return c.se.PublicKeyEd25519(id) },
+	)
 }
 
 func (c *chip) SignEd25519(id uint32, msg []byte) ([]byte, error) {
@@ -71,7 +80,10 @@ func (c *chip) SignEd25519(id uint32, msg []byte) ([]byte, error) {
 }
 
 func (c *chip) WriteBinary(id uint32, data []byte) error {
-	_, err := retry(c, func() (struct{}, error) { return struct{}{}, c.se.WriteBinary(id, data) })
+	_, err := retry(
+		c,
+		func() (struct{}, error) { return struct{}{}, c.se.WriteBinary(id, data) },
+	)
 	return err
 }
 

@@ -139,7 +139,11 @@ type KMS interface {
 	GenerateDataKey(ctx context.Context, keyID string, recipient []byte) (
 		kmsCiphertext, ciphertextForRecipient []byte, err error,
 	)
-	Decrypt(ctx context.Context, keyID string, kmsCiphertext, recipient []byte) (
+	Decrypt(
+		ctx context.Context,
+		keyID string,
+		kmsCiphertext, recipient []byte,
+	) (
 		ciphertextForRecipient []byte, err error,
 	)
 }

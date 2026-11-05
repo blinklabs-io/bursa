@@ -35,7 +35,12 @@ import (
 	utxorpc "github.com/utxorpc/go-codegen/utxorpc/v1alpha/cardano"
 )
 
-func writeEnvelopeCert(t *testing.T, dir, name string, envType string, certBytes []byte) string {
+func writeEnvelopeCert(
+	t *testing.T,
+	dir, name string,
+	envType string,
+	certBytes []byte,
+) string {
 	t.Helper()
 	env := struct {
 		Type        string `json:"type"`
@@ -65,7 +70,11 @@ func makeStakeCredential(t *testing.T, fill byte) lcommon.Credential {
 	}
 }
 
-func encodeWrapper(t *testing.T, cert lcommon.Certificate, typ lcommon.CertificateType) []byte {
+func encodeWrapper(
+	t *testing.T,
+	cert lcommon.Certificate,
+	typ lcommon.CertificateType,
+) []byte {
 	t.Helper()
 	wrapper := lcommon.CertificateWrapper{Type: uint(typ), Certificate: cert}
 	b, err := cbor.Encode(wrapper)
@@ -77,7 +86,12 @@ func TestBuildCoinSelectionAndFeeAndBalance(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000001", 0, 10_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000001",
+			0,
+			10_000_000,
+		),
 	}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
@@ -107,7 +121,12 @@ func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000002", 0, 10_000_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000002",
+			0,
+			10_000_000_000,
+		),
 	}
 	poolKey := make([]byte, 28)
 	for i := range poolKey {
@@ -130,10 +149,20 @@ func TestBuildPoolDepositChargedOnlyIfNotRegistered(t *testing.T) {
 		CredType:   lcommon.CredentialTypeAddrKeyHash,
 		Credential: lcommon.CredentialHash(rewardAcct),
 	}, 0)
-	wrapBytes := encodeWrapper(t, &poolCert, lcommon.CertificateTypePoolRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		&poolCert,
+		lcommon.CertificateTypePoolRegistration,
+	)
 
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.cert",
+		"CertificateConway",
+		wrapBytes,
+	)
 
 	ctx := context.Background()
 	// Not registered -> should charge pool deposit
@@ -171,16 +200,31 @@ func TestBuildKeyDepositForLegacyStakeRegistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "1111111111111111111111111111111111111111111111111111111111111111", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"1111111111111111111111111111111111111111111111111111111111111111",
+			0,
+			20_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x11)
 	cert := &lcommon.StakeRegistrationCertificate{
 		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
 		StakeCredential: cred,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeStakeRegistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.reg",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -200,7 +244,12 @@ func TestBuildConwayRegistrationDeposit(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "2222222222222222222222222222222222222222222222222222222222222222", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"2222222222222222222222222222222222222222222222222222222222222222",
+			0,
+			20_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x22)
 	deposit := uint64(3_000_000)
@@ -211,7 +260,13 @@ func TestBuildConwayRegistrationDeposit(t *testing.T) {
 	}
 	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeRegistration)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.reg.conway", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.reg.conway",
+		"CertificateConway",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -230,7 +285,12 @@ func TestBuildPoolRetirementNoDeposit(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "3333333333333333333333333333333333333333333333333333333333333333", 0, 10_000_000),
+		MakeUTxO(
+			addr,
+			"3333333333333333333333333333333333333333333333333333333333333333",
+			0,
+			10_000_000,
+		),
 	}
 	poolKey := make([]byte, 28)
 	for i := range poolKey {
@@ -243,7 +303,13 @@ func TestBuildPoolRetirementNoDeposit(t *testing.T) {
 	}
 	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypePoolRetirement)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "pool.retire", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.retire",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -262,7 +328,12 @@ func TestBuildCertificatesInBodyEqualFiles(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "4444444444444444444444444444444444444444444444444444444444444444", 0, 50_000_000),
+		MakeUTxO(
+			addr,
+			"4444444444444444444444444444444444444444444444444444444444444444",
+			0,
+			50_000_000,
+		),
 	}
 	cred1 := makeStakeCredential(t, 0x01)
 	cred2 := makeStakeCredential(t, 0x02)
@@ -307,16 +378,31 @@ func TestBuildRoundTripsThroughSign(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555555", 0, 30_000_000),
+		MakeUTxO(
+			addr,
+			"5555555555555555555555555555555555555555555555555555555555555555",
+			0,
+			30_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x33)
 	cert := &lcommon.StakeRegistrationCertificate{
 		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
 		StakeCredential: cred,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeStakeRegistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.reg",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -326,7 +412,12 @@ func TestBuildRoundTripsThroughSign(t *testing.T) {
 	require.NoError(t, err)
 	// Write envelope to temp file and sign
 	txFile := filepath.Join(dir, "tx.conway")
-	envStr, err := bursa.WriteCborEnvelope(built.TxEnvelopeType, "Unwitnessed Tx", built.TxCBOR, txFile)
+	envStr, err := bursa.WriteCborEnvelope(
+		built.TxEnvelopeType,
+		"Unwitnessed Tx",
+		built.TxCBOR,
+		txFile,
+	)
 	require.NoError(t, err)
 	require.NotEmpty(t, envStr)
 	// Read back and ensure signable
@@ -362,7 +453,10 @@ func TestBuildRoundTripsThroughSign(t *testing.T) {
 	bodyHash := signedTx.Hash().Bytes()
 	require.NotEmpty(t, signedTx.WitnessSet.VkeyWitnesses.Items())
 	for _, w := range signedTx.WitnessSet.VkeyWitnesses.Items() {
-		require.True(t, ed25519.Verify(ed25519.PublicKey(w.Vkey), bodyHash, w.Signature))
+		require.True(
+			t,
+			ed25519.Verify(ed25519.PublicKey(w.Vkey), bodyHash, w.Signature),
+		)
 	}
 	_ = lk
 }
@@ -388,7 +482,12 @@ func TestBuildTTLFromSlot(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "6666666666666666666666666666666666666666666666666666666666666666", 0, 10_000_000),
+		MakeUTxO(
+			addr,
+			"6666666666666666666666666666666666666666666666666666666666666666",
+			0,
+			10_000_000,
+		),
 	}
 	chain.SlotVal = 123456
 	ctx := context.Background()
@@ -416,7 +515,12 @@ func TestBuildFeeMeetsMinFeeForWitnessedSize(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "7777777777777777777777777777777777777777777777777777777777777777", 0, 100_000_000),
+		MakeUTxO(
+			addr,
+			"7777777777777777777777777777777777777777777777777777777777777777",
+			0,
+			100_000_000,
+		),
 	}
 	ctx := context.Background()
 	for _, wc := range []uint{1, 2, 5} {
@@ -439,7 +543,12 @@ func TestBuildInsufficientFunds(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "8888888888888888888888888888888888888888888888888888888888888888", 0, 1_000_000),
+		MakeUTxO(
+			addr,
+			"8888888888888888888888888888888888888888888888888888888888888888",
+			0,
+			1_000_000,
+		),
 	}
 	// Legacy registration needs 2M deposit + fee > 1M => insufficient
 	cred := makeStakeCredential(t, 0x44)
@@ -447,9 +556,19 @@ func TestBuildInsufficientFunds(t *testing.T) {
 		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
 		StakeCredential: cred,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeStakeRegistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.reg",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	_, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -463,8 +582,18 @@ func TestBuildInsufficientFunds(t *testing.T) {
 func TestBuildSkipsAssetsUTxOs(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
-	adaUTxO := MakeUTxO(addr, "9999999999999999999999999999999999999999999999999999999999999999", 0, 10_000_000)
-	assetUTxO := makeAssetUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1, 20_000_000)
+	adaUTxO := MakeUTxO(
+		addr,
+		"9999999999999999999999999999999999999999999999999999999999999999",
+		0,
+		10_000_000,
+	)
+	assetUTxO := makeAssetUTxO(
+		addr,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		1,
+		20_000_000,
+	)
 	chain.UtxosMap[addr] = []UTxO{assetUTxO, adaUTxO}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
@@ -485,18 +614,32 @@ type assetFakeOutput struct {
 	assets   *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput]
 }
 
-func (o *assetFakeOutput) Address() lcommon.Address                                  { return o.address }
-func (o *assetFakeOutput) Amount() *big.Int                                          { return new(big.Int).SetUint64(o.lovelace) }
-func (o *assetFakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] { return o.assets }
-func (o *assetFakeOutput) Datum() *lcommon.Datum                                     { return nil }
-func (o *assetFakeOutput) DatumHash() *lcommon.Blake2b256                            { return nil }
-func (o *assetFakeOutput) Cbor() []byte                                              { return nil }
-func (o *assetFakeOutput) Utxorpc() (*utxorpc.TxOutput, error)                       { return nil, nil }
-func (o *assetFakeOutput) ScriptRef() lcommon.Script                                 { return nil }
-func (o *assetFakeOutput) ToPlutusData() data.PlutusData                             { return nil }
-func (o *assetFakeOutput) String() string                                            { return o.address.String() }
+func (o *assetFakeOutput) Address() lcommon.Address { return o.address }
 
-func makeAssetUTxO(addr string, txHashHex string, idx uint32, lovelace uint64) UTxO {
+func (o *assetFakeOutput) Amount() *big.Int { return new(big.Int).SetUint64(o.lovelace) }
+
+func (o *assetFakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] { return o.assets }
+
+func (o *assetFakeOutput) Datum() *lcommon.Datum { return nil }
+
+func (o *assetFakeOutput) DatumHash() *lcommon.Blake2b256 { return nil }
+
+func (o *assetFakeOutput) Cbor() []byte { return nil }
+
+func (o *assetFakeOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
+
+func (o *assetFakeOutput) ScriptRef() lcommon.Script { return nil }
+
+func (o *assetFakeOutput) ToPlutusData() data.PlutusData { return nil }
+
+func (o *assetFakeOutput) String() string { return o.address.String() }
+
+func makeAssetUTxO(
+	addr string,
+	txHashHex string,
+	idx uint32,
+	lovelace uint64,
+) UTxO {
 	var txID lcommon.Blake2b256
 	b, _ := hex.DecodeString(txHashHex)
 	copy(txID[:], b)
@@ -504,9 +647,11 @@ func makeAssetUTxO(addr string, txHashHex string, idx uint32, lovelace uint64) U
 	a, _ := lcommon.NewAddress(addr)
 	policy := lcommon.Blake2b224{1, 2, 3}
 	assetName := cbor.NewByteString([]byte("TOKEN"))
-	ma := lcommon.NewMultiAsset[lcommon.MultiAssetTypeOutput](map[lcommon.Blake2b224]map[cbor.ByteString]*big.Int{
-		policy: {assetName: big.NewInt(100)},
-	})
+	ma := lcommon.NewMultiAsset[lcommon.MultiAssetTypeOutput](
+		map[lcommon.Blake2b224]map[cbor.ByteString]*big.Int{
+			policy: {assetName: big.NewInt(100)},
+		},
+	)
 	_ = ma
 	return UTxO{
 		Input:  input,
@@ -518,7 +663,12 @@ func TestRefundLegacyStakeDeregistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			0,
+			20_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x55)
 	chain.StakeDelegDeposits[StakeCredentialKeyFrom(cred)] = chain.PpExtra.KeyDeposit
@@ -526,9 +676,19 @@ func TestRefundLegacyStakeDeregistration(t *testing.T) {
 		CertType:        uint(lcommon.CertificateTypeStakeDeregistration),
 		StakeCredential: cred,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeDeregistration)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeStakeDeregistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.dereg", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.dereg",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -552,7 +712,12 @@ func TestRefundLegacyStakeDeregistrationUsesRecordedDeposit(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			0,
+			20_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x5a)
 	recorded := uint64(7_000_000)
@@ -562,9 +727,19 @@ func TestRefundLegacyStakeDeregistrationUsesRecordedDeposit(t *testing.T) {
 		CertType:        uint(lcommon.CertificateTypeStakeDeregistration),
 		StakeCredential: cred,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeDeregistration)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeStakeDeregistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.dereg", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.dereg",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	built, err := Build(context.Background(), chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
@@ -584,7 +759,12 @@ func TestRefundConwayDeregistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			0,
+			20_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x56)
 	deregAmt := uint64(5_000_000)
@@ -595,7 +775,13 @@ func TestRefundConwayDeregistration(t *testing.T) {
 	}
 	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeDeregistration)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.dereg.conway", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.dereg.conway",
+		"CertificateConway",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -617,7 +803,12 @@ func TestRefundDrepDeregistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddd0001", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"dddddddddddddddddddddddddddddddddddddddddddddddddddddddd0001",
+			0,
+			20_000_000,
+		),
 	}
 	cred := makeStakeCredential(t, 0x60)
 	refundAmt := uint64(5_000_000)
@@ -626,9 +817,19 @@ func TestRefundDrepDeregistration(t *testing.T) {
 		DrepCredential: cred,
 		Amount:         refundAmt,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeDeregistrationDrep)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeDeregistrationDrep,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "drep.dereg", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"drep.dereg",
+		"CertificateConway",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -652,7 +853,12 @@ func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", 0, 50_000_000),
+		MakeUTxO(
+			addr,
+			"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			0,
+			50_000_000,
+		),
 	}
 	credReg := makeStakeCredential(t, 0x57)
 	credDereg := makeStakeCredential(t, 0x58)
@@ -665,8 +871,16 @@ func TestRefundMixedRegistrationAndDeregistration(t *testing.T) {
 		CertType:        uint(lcommon.CertificateTypeStakeDeregistration),
 		StakeCredential: credDereg,
 	}
-	wrapReg := encodeWrapper(t, regCert, lcommon.CertificateTypeStakeRegistration)
-	wrapDereg := encodeWrapper(t, deregCert, lcommon.CertificateTypeStakeDeregistration)
+	wrapReg := encodeWrapper(
+		t,
+		regCert,
+		lcommon.CertificateTypeStakeRegistration,
+	)
+	wrapDereg := encodeWrapper(
+		t,
+		deregCert,
+		lcommon.CertificateTypeStakeDeregistration,
+	)
 	dir := t.TempDir()
 	f1 := writeEnvelopeCert(t, dir, "reg", "CertificateShelley", wrapReg)
 	f2 := writeEnvelopeCert(t, dir, "dereg", "CertificateShelley", wrapDereg)
@@ -693,7 +907,12 @@ func TestPoolLookupError(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", 0, 10_000_000_000),
+		MakeUTxO(
+			addr,
+			"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			0,
+			10_000_000_000,
+		),
 	}
 	poolKey := make([]byte, 28)
 	for i := range poolKey {
@@ -714,9 +933,19 @@ func TestPoolLookupError(t *testing.T) {
 		CredType:   lcommon.CredentialTypeAddrKeyHash,
 		Credential: lcommon.CredentialHash(make([]byte, 28)),
 	}, 0)
-	wrapBytes := encodeWrapper(t, &poolCert, lcommon.CertificateTypePoolRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		&poolCert,
+		lcommon.CertificateTypePoolRegistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.cert",
+		"CertificateConway",
+		wrapBytes,
+	)
 	chain.PoolRegistration = func(poolKeyHash []byte) (bool, error) {
 		return false, errors.New("pool lookup failed")
 	}
@@ -739,7 +968,10 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 		for j := range txh {
 			txh[j] = byte(i + 1)
 		}
-		utxos = append(utxos, MakeUTxO(addr, hex.EncodeToString(txh), 0, 5_000_000))
+		utxos = append(
+			utxos,
+			MakeUTxO(addr, hex.EncodeToString(txh), 0, 5_000_000),
+		)
 	}
 	chain.UtxosMap[addr] = utxos
 	// Make each UTxO small so need multiple
@@ -750,7 +982,10 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 		for j := range txh {
 			txh[j] = byte(i + 1)
 		}
-		utxos = append(utxos, MakeUTxO(addr, hex.EncodeToString(txh), 0, 1_500_000))
+		utxos = append(
+			utxos,
+			MakeUTxO(addr, hex.EncodeToString(txh), 0, 1_500_000),
+		)
 	}
 	chain.UtxosMap[addr] = utxos
 	// Add registration to need deposits
@@ -759,9 +994,19 @@ func TestCoinSelectionDeterministicAndMinInputs(t *testing.T) {
 		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
 		StakeCredential: cred,
 	}
-	wrapBytes := encodeWrapper(t, cert, lcommon.CertificateTypeStakeRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		cert,
+		lcommon.CertificateTypeStakeRegistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "stake.reg", "CertificateShelley", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.reg",
+		"CertificateShelley",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	// Need ~6 ADA - should take smallest prefix covering needs (deterministic order largest first)
 	built, err := Build(ctx, chain, BuildOptions{
@@ -803,7 +1048,10 @@ func TestCoinSelectionExceedsMaxTxSize(t *testing.T) {
 		for j := range txh {
 			txh[j] = byte(i%251 + 1)
 		}
-		utxos = append(utxos, MakeUTxO(addr, hex.EncodeToString(txh), uint32(i%10), 10_000_000))
+		utxos = append(
+			utxos,
+			MakeUTxO(addr, hex.EncodeToString(txh), uint32(i%10), 10_000_000),
+		)
 	}
 	chain.UtxosMap[addr] = utxos
 	if chain.PpExtra != nil {
@@ -821,7 +1069,12 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "1111111111111111111111111111111111111111111111111111111111111112", 0, 100_000_000),
+		MakeUTxO(
+			addr,
+			"1111111111111111111111111111111111111111111111111111111111111112",
+			0,
+			100_000_000,
+		),
 	}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
@@ -841,7 +1094,12 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	// case where the change crosses 65536 lovelace
 	chain2 := NewFakeChain()
 	chain2.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "2222222222222222222222222222222222222222222222222222222222222223", 0, 200_000),
+		MakeUTxO(
+			addr,
+			"2222222222222222222222222222222222222222222222222222222222222223",
+			0,
+			200_000,
+		),
 	}
 	built2, err := Build(ctx, chain2, BuildOptions{
 		ChangeAddress: addr,
@@ -860,7 +1118,12 @@ func TestFeeIndependentCalculationAndBoundaries(t *testing.T) {
 	// case crossing 2^32 lovelace
 	chain3 := NewFakeChain()
 	chain3.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "3333333333333333333333333333333333333333333333333333333333333334", 0, 5_000_000_000),
+		MakeUTxO(
+			addr,
+			"3333333333333333333333333333333333333333333333333333333333333334",
+			0,
+			5_000_000_000,
+		),
 	}
 	built3, err := Build(ctx, chain3, BuildOptions{
 		ChangeAddress: addr,
@@ -879,7 +1142,12 @@ func TestChangeBelowMinUTxO(t *testing.T) {
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	// Small UTxO that would leave change below min UTxO
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "4444444444444444444444444444444444444444444444444444444444444445", 0, 1_000_000),
+		MakeUTxO(
+			addr,
+			"4444444444444444444444444444444444444444444444444444444444444445",
+			0,
+			1_000_000,
+		),
 	}
 	if chain.PpExtra != nil {
 		chain.PpExtra.CoinsPerUTxOByte = 4310
@@ -897,7 +1165,12 @@ func TestBodyWithoutWithdrawalsHasNoWithdrawalsKey(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555556", 0, 10_000_000),
+		MakeUTxO(
+			addr,
+			"5555555555555555555555555555555555555555555555555555555555555556",
+			0,
+			10_000_000,
+		),
 	}
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
@@ -930,8 +1203,18 @@ func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
 	// The 1 ADA input alone covers the fee but leaves change below the
 	// minimum UTxO; adding the 0.3 ADA input fixes that.
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "5555555555555555555555555555555555555555555555555555555555555555", 0, 1_000_000),
-		MakeUTxO(addr, "6666666666666666666666666666666666666666666666666666666666666666", 0, 300_000),
+		MakeUTxO(
+			addr,
+			"5555555555555555555555555555555555555555555555555555555555555555",
+			0,
+			1_000_000,
+		),
+		MakeUTxO(
+			addr,
+			"6666666666666666666666666666666666666666666666666666666666666666",
+			0,
+			300_000,
+		),
 	}
 	built, err := Build(context.Background(), chain, BuildOptions{
 		ChangeAddress: addr,
@@ -942,14 +1225,23 @@ func TestSelectionAddsInputWhenChangeBelowMinUTxO(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tx.Inputs(), 2)
 	require.Len(t, tx.Outputs(), 1)
-	require.Equal(t, uint64(1_300_000), tx.Outputs()[0].Amount().Uint64()+tx.Fee().Uint64())
+	require.Equal(
+		t,
+		uint64(1_300_000),
+		tx.Outputs()[0].Amount().Uint64()+tx.Fee().Uint64(),
+	)
 }
 
 func TestBuildWithPoolVote(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000001", 0, 10_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000001",
+			0,
+			10_000_000,
+		),
 	}
 	poolKey := make([]byte, 28)
 	for i := range poolKey {
@@ -975,7 +1267,10 @@ func TestBuildWithPoolVote(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var anchor *lcommon.GovAnchor
 			if tt.withAnchor {
-				a, err := lcommon.NewGovAnchor("https://example.com/vote.json", make([]byte, 32))
+				a, err := lcommon.NewGovAnchor(
+					"https://example.com/vote.json",
+					make([]byte, 32),
+				)
 				for i := range a.DataHash {
 					a.DataHash[i] = byte(i)
 				}
@@ -1003,7 +1298,11 @@ func TestBuildWithPoolVote(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, tx.Body.TxVotingProcedures, 1)
 			for voter, actions := range tx.Body.TxVotingProcedures {
-				require.Equal(t, lcommon.VoterTypeStakingPoolKeyHash, voter.Type)
+				require.Equal(
+					t,
+					lcommon.VoterTypeStakingPoolKeyHash,
+					voter.Type,
+				)
 				require.Equal(t, poolKeyArr, [28]byte(voter.Hash))
 				require.Len(t, actions, 1)
 				for aid, proc := range actions {
@@ -1023,7 +1322,11 @@ func TestBuildWithPoolVote(t *testing.T) {
 	}
 }
 
-func poolRegWrapWithOwners(t *testing.T, operatorFill byte, ownerFills ...byte) []byte {
+func poolRegWrapWithOwners(
+	t *testing.T,
+	operatorFill byte,
+	ownerFills ...byte,
+) []byte {
 	t.Helper()
 	poolKey := make([]byte, 28)
 	for i := range poolKey {
@@ -1068,11 +1371,22 @@ func TestRequiredWitnessesPoolRegistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000010", 0, 10_000_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000010",
+			0,
+			10_000_000_000,
+		),
 	}
 	wrapBytes := poolRegWrapWithOwners(t, 0x10, 0xa0, 0xb0)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.cert",
+		"CertificateConway",
+		wrapBytes,
+	)
 	ctx := context.Background()
 	built, err := Build(ctx, chain, BuildOptions{
 		ChangeAddress:    addr,
@@ -1092,7 +1406,11 @@ func TestRequiredWitnessesPoolRegistration(t *testing.T) {
 	for i := range cold {
 		cold[i] = 0x10 + byte(i)
 	}
-	require.Equal(t, [28]byte(lcommon.PoolKeyHash(cold)), byRole["pool cold"][0])
+	require.Equal(
+		t,
+		[28]byte(lcommon.PoolKeyHash(cold)),
+		byRole["pool cold"][0],
+	)
 	// The fee must be sized for the computed count
 	estSize, err := bursa.EstimateWitnessedTxSize(built.TxCBOR, 4, 0)
 	require.NoError(t, err)
@@ -1112,7 +1430,12 @@ func TestRequiredWitnessesStakeRegistration(t *testing.T) {
 	// Legacy type 0 adds no witness: only the payment key remains
 	chain := NewFakeChain()
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000011", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000011",
+			0,
+			20_000_000,
+		),
 	}
 	cert0 := &lcommon.StakeRegistrationCertificate{
 		CertType:        uint(lcommon.CertificateTypeStakeRegistration),
@@ -1132,7 +1455,12 @@ func TestRequiredWitnessesStakeRegistration(t *testing.T) {
 	// Conway type 7 adds the stake credential
 	chain2 := NewFakeChain()
 	chain2.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000012", 0, 20_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000012",
+			0,
+			20_000_000,
+		),
 	}
 	cert7 := &lcommon.RegistrationCertificate{
 		CertType:        uint(lcommon.CertificateTypeRegistration),
@@ -1156,7 +1484,12 @@ func TestRequiredWitnessesVote(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000013", 0, 10_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000013",
+			0,
+			10_000_000,
+		),
 	}
 	var poolKeyArr [28]byte
 	for i := range poolKeyArr {
@@ -1183,7 +1516,12 @@ func TestRequiredWitnessesOverlapCountedOnce(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000014", 0, 10_000_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000014",
+			0,
+			10_000_000_000,
+		),
 	}
 	// The pool owner and the stake credential of the type-7 cert are the
 	// same key: it must be counted once.
@@ -1203,8 +1541,20 @@ func TestRequiredWitnessesOverlapCountedOnce(t *testing.T) {
 	}
 	stakeWrap := encodeWrapper(t, cert7, lcommon.CertificateTypeRegistration)
 	dir := t.TempDir()
-	fPool := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", poolWrap)
-	fStake := writeEnvelopeCert(t, dir, "stake.reg", "CertificateConway", stakeWrap)
+	fPool := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.cert",
+		"CertificateConway",
+		poolWrap,
+	)
+	fStake := writeEnvelopeCert(
+		t,
+		dir,
+		"stake.reg",
+		"CertificateConway",
+		stakeWrap,
+	)
 	built, err := Build(context.Background(), chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{fPool, fStake},
@@ -1227,11 +1577,22 @@ func TestWitnessCountBelowRequiredErrors(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000015", 0, 10_000_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000015",
+			0,
+			10_000_000_000,
+		),
 	}
 	wrapBytes := poolRegWrapWithOwners(t, 0x30, 0xa0, 0xb0)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.cert",
+		"CertificateConway",
+		wrapBytes,
+	)
 	_, err := Build(context.Background(), chain, BuildOptions{
 		ChangeAddress:    addr,
 		CertificateFiles: []string{certFile},
@@ -1246,7 +1607,12 @@ func TestBuildWithVoteAndPoolRegistration(t *testing.T) {
 	chain := NewFakeChain()
 	addr := "addr_test1vzt7vzv8fwn43jw04aas85pzxspdfkg5qh5m0ljs82vh07shflwre"
 	chain.UtxosMap[addr] = []UTxO{
-		MakeUTxO(addr, "0000000000000000000000000000000000000000000000000000000000000003", 0, 10_000_000_000),
+		MakeUTxO(
+			addr,
+			"0000000000000000000000000000000000000000000000000000000000000003",
+			0,
+			10_000_000_000,
+		),
 	}
 	poolKey := make([]byte, 28)
 	for i := range poolKey {
@@ -1269,9 +1635,19 @@ func TestBuildWithVoteAndPoolRegistration(t *testing.T) {
 		CredType:   lcommon.CredentialTypeAddrKeyHash,
 		Credential: lcommon.CredentialHash(rewardAcct),
 	}, 0)
-	wrapBytes := encodeWrapper(t, &poolCert, lcommon.CertificateTypePoolRegistration)
+	wrapBytes := encodeWrapper(
+		t,
+		&poolCert,
+		lcommon.CertificateTypePoolRegistration,
+	)
 	dir := t.TempDir()
-	certFile := writeEnvelopeCert(t, dir, "pool.cert", "CertificateConway", wrapBytes)
+	certFile := writeEnvelopeCert(
+		t,
+		dir,
+		"pool.cert",
+		"CertificateConway",
+		wrapBytes,
+	)
 
 	var poolKeyArr [28]byte
 	copy(poolKeyArr[:], poolKey)

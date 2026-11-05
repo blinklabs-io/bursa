@@ -127,7 +127,13 @@ func (c *client) do(method, path, body string) (string, error) {
 	}
 
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s %s: %s: %s", method, path, res.Status, bytes.TrimSpace(b))
+		return "", fmt.Errorf(
+			"%s %s: %s: %s",
+			method,
+			path,
+			res.Status,
+			bytes.TrimSpace(b),
+		)
 	}
 
 	return strings.TrimSpace(string(b)), nil
@@ -136,7 +142,11 @@ func (c *client) do(method, path, body string) (string, error) {
 // sign posts sr to /v1/sign and decodes the response. With a host key it
 // first fetches a challenge and authenticates the request sent; the response
 // binding is still over sr, since it does not cover the host fields.
-func (c *client) sign(sr device.SignRequest, hostKey ed25519.PrivateKey, resp *device.SignResponse) error {
+func (c *client) sign(
+	sr device.SignRequest,
+	hostKey ed25519.PrivateKey,
+	resp *device.SignResponse,
+) error {
 	if hostKey != nil {
 		out, err := c.do(http.MethodPost, "/v1/challenge", "{}")
 		if err != nil {
@@ -177,13 +187,33 @@ func main() {
 // error for the first failed check.
 func run(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("opcert-check", flag.ContinueOnError)
-	vkeyHex := fs.String("vkey", "", "cold verification key cborHex (node.vkey)")
-	certHex := fs.String("cert", "", "operational certificate cborHex (node.cert)")
+	vkeyHex := fs.String(
+		"vkey",
+		"",
+		"cold verification key cborHex (node.vkey)",
+	)
+	certHex := fs.String(
+		"cert",
+		"",
+		"operational certificate cborHex (node.cert)",
+	)
 	poolID := fs.String("pool", "", "expected pool id (hex)")
-	profileName := fs.String("profile", "", "device profile holding the cold key")
+	profileName := fs.String(
+		"profile",
+		"",
+		"device profile holding the cold key",
+	)
 	base := fs.String("signer", "http://10.0.0.1", "armory-signer URL")
-	source := fs.String("source", "10.0.0.2", "local source address on the USB network")
-	hostKeyFile := fs.String("host-key", "", "host signing key file authenticating the signing request")
+	source := fs.String(
+		"source",
+		"10.0.0.2",
+		"local source address on the USB network",
+	)
+	hostKeyFile := fs.String(
+		"host-key",
+		"",
+		"host signing key file authenticating the signing request",
+	)
 
 	if err := fs.Parse(args); err != nil {
 		// a help request printed the usage and succeeds, as flag.Parse exits 0
@@ -201,7 +231,11 @@ func run(args []string, out io.Writer) error {
 	}
 
 	if len(vkey) != ed25519.PublicKeySize {
-		return fmt.Errorf("invalid -vkey: %d bytes, want %d", len(vkey), ed25519.PublicKeySize)
+		return fmt.Errorf(
+			"invalid -vkey: %d bytes, want %d",
+			len(vkey),
+			ed25519.PublicKeySize,
+		)
 	}
 
 	var cert opCert
@@ -239,15 +273,23 @@ func run(args []string, out io.Writer) error {
 	h, _ := blake2b.New(28, nil)
 	h.Write(vkey)
 
-	if !check("blake2b-224(node.vkey) equals pool id", hex.EncodeToString(h.Sum(nil)) == strings.ToLower(*poolID)) ||
-		!check("node.cert cold key equals node.vkey", bytes.Equal(cert.ColdKey, vkey)) ||
+	if !check(
+		"blake2b-224(node.vkey) equals pool id",
+		hex.EncodeToString(h.Sum(nil)) == strings.ToLower(*poolID),
+	) ||
+		!check(
+			"node.cert cold key equals node.vkey",
+			bytes.Equal(cert.ColdKey, vkey),
+		) ||
 		!check("node.cert signature verifies under node.vkey",
 			ed25519.Verify(vkey, cert.Body.signable(), cert.Body.ColdSig)) {
 		return failed
 	}
 
 	if cert.Body.IssueNumber == 0 {
-		return errors.New("node.cert issue number 0 has no chain counter below it")
+		return errors.New(
+			"node.cert issue number 0 has no chain counter below it",
+		)
 	}
 
 	nonce := make([]byte, 32)
@@ -283,12 +325,27 @@ func run(args []string, out io.Writer) error {
 	}
 
 	if !check("response echoes nonce", bytes.Equal(resp.Nonce, nonce)) ||
-		!check(fmt.Sprintf("device chose issue counter %d", cert.Body.IssueNumber),
-			resp.IssueCounter != nil && *resp.IssueCounter == cert.Body.IssueNumber) ||
-		!check(fmt.Sprintf("device reproduces node.cert signature (issue %d, KES period %d)",
-			cert.Body.IssueNumber, cert.Body.KESPeriod), bytes.Equal(resp.Signature, cert.Body.ColdSig)) ||
-		!check("binding signature covers the request under node.vkey",
-			ed25519.Verify(vkey, device.ResponseBinding(sr, resp.Signature, resp.Summary), resp.BindingSignature)) {
+		!check(
+			fmt.Sprintf("device chose issue counter %d", cert.Body.IssueNumber),
+			resp.IssueCounter != nil &&
+				*resp.IssueCounter == cert.Body.IssueNumber,
+		) ||
+		!check(
+			fmt.Sprintf(
+				"device reproduces node.cert signature (issue %d, KES period %d)",
+				cert.Body.IssueNumber,
+				cert.Body.KESPeriod,
+			),
+			bytes.Equal(resp.Signature, cert.Body.ColdSig),
+		) ||
+		!check(
+			"binding signature covers the request under node.vkey",
+			ed25519.Verify(
+				vkey,
+				device.ResponseBinding(sr, resp.Signature, resp.Summary),
+				resp.BindingSignature,
+			),
+		) {
 		return failed
 	}
 

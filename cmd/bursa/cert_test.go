@@ -77,7 +77,11 @@ func TestCertStakeRegistrationDepositFlag(t *testing.T) {
 	}{
 		{"absent", nil, "8200" + certTestStakeCred},
 		{"zero", []string{"--deposit", "0"}, "8307" + certTestStakeCred + "00"},
-		{"set", []string{"--deposit", "2000000"}, "8307" + certTestStakeCred + "1a001e8480"},
+		{
+			"set",
+			[]string{"--deposit", "2000000"},
+			"8307" + certTestStakeCred + "1a001e8480",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,8 +102,16 @@ func TestCertStakeDeregistrationDepositRefundFlag(t *testing.T) {
 		want  string
 	}{
 		{"absent", nil, "8201" + certTestStakeCred},
-		{"zero", []string{"--deposit-refund", "0"}, "8308" + certTestStakeCred + "00"},
-		{"set", []string{"--deposit-refund", "2000000"}, "8308" + certTestStakeCred + "1a001e8480"},
+		{
+			"zero",
+			[]string{"--deposit-refund", "0"},
+			"8308" + certTestStakeCred + "00",
+		},
+		{
+			"set",
+			[]string{"--deposit-refund", "2000000"},
+			"8308" + certTestStakeCred + "1a001e8480",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

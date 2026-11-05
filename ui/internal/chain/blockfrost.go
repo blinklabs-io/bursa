@@ -302,7 +302,12 @@ type accountAddress struct {
 }
 
 func (c *Client) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		c.BaseURL+path,
+		nil,
+	)
 	if err != nil {
 		return err
 	}
@@ -319,7 +324,12 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("GET %s: status %d: %s", path, resp.StatusCode, string(body))
+		return fmt.Errorf(
+			"GET %s: status %d: %s",
+			path,
+			resp.StatusCode,
+			string(body),
+		)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
@@ -336,13 +346,26 @@ const poolCacheTTL = time.Minute
 
 // getAllPages fetches every page of a list endpoint. The node caps pages at
 // pageSize rows; a page with fewer rows is the last one.
-func getAllPages[T any](ctx context.Context, c *Client, path string) ([]T, error) {
+func getAllPages[T any](
+	ctx context.Context,
+	c *Client,
+	path string,
+) ([]T, error) {
 	return getAllPagesLimit[T](ctx, c, path, maxPages)
 }
 
-func getAllPagesLimit[T any](ctx context.Context, c *Client, path string, maxPages int) ([]T, error) {
+func getAllPagesLimit[T any](
+	ctx context.Context,
+	c *Client,
+	path string,
+	maxPages int,
+) ([]T, error) {
 	if maxPages < 1 {
-		return nil, fmt.Errorf("%w: invalid max page count %d", errPageLimitExceeded, maxPages)
+		return nil, fmt.Errorf(
+			"%w: invalid max page count %d",
+			errPageLimitExceeded,
+			maxPages,
+		)
 	}
 	var all []T
 	for page := 1; page <= maxPages; page++ {
@@ -356,10 +379,18 @@ func getAllPagesLimit[T any](ctx context.Context, c *Client, path string, maxPag
 			return all, nil
 		}
 	}
-	return nil, fmt.Errorf("%w: %s exceeded %d pages", errPageLimitExceeded, path, maxPages)
+	return nil, fmt.Errorf(
+		"%w: %s exceeded %d pages",
+		errPageLimitExceeded,
+		path,
+		maxPages,
+	)
 }
 
-func (c *Client) Account(ctx context.Context, stakeAddr string) (AccountInfo, error) {
+func (c *Client) Account(
+	ctx context.Context,
+	stakeAddr string,
+) (AccountInfo, error) {
 	var out AccountInfo
 	err := c.get(ctx, "/api/v0/accounts/"+stakeAddr, &out)
 	return out, err
@@ -377,7 +408,10 @@ const (
 // AccountDRepID reads the account's current vote delegation from Dingo's local
 // metadata DB. Dingo v0.58 does not include drep_id in its Blockfrost-compatible
 // account response, but it persists the value in account.drep/account.drep_type.
-func (c *Client) AccountDRepID(ctx context.Context, stakeAddr string) (*string, error) {
+func (c *Client) AccountDRepID(
+	ctx context.Context,
+	stakeAddr string,
+) (*string, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
 	}
@@ -417,7 +451,10 @@ func (c *Client) AccountDRepID(ctx context.Context, stakeAddr string) (*string, 
 		return nil, nil
 	}
 	if drepType.Int64 < 0 {
-		return nil, fmt.Errorf("account drep metadata: unknown drep_type %d", drepType.Int64)
+		return nil, fmt.Errorf(
+			"account drep metadata: unknown drep_type %d",
+			drepType.Int64,
+		)
 	}
 	id, ok, err := dingoDRepID(drep.Bytes, uint64(drepType.Int64))
 	if err != nil || !ok {
@@ -483,7 +520,10 @@ func dingoDRepID(drep []byte, drepType uint64) (string, bool, error) {
 			return "", false, nil
 		}
 		if len(drep) != lcommon.AddressHashSize {
-			return "", false, fmt.Errorf("account drep metadata: key hash has %d bytes", len(drep))
+			return "", false, fmt.Errorf(
+				"account drep metadata: key hash has %d bytes",
+				len(drep),
+			)
 		}
 		return "drep-keyHash-" + hex.EncodeToString(drep), true, nil
 	case dingoDRepTypeScriptHash:
@@ -491,7 +531,10 @@ func dingoDRepID(drep []byte, drepType uint64) (string, bool, error) {
 			return "", false, nil
 		}
 		if len(drep) != lcommon.AddressHashSize {
-			return "", false, fmt.Errorf("account drep metadata: script hash has %d bytes", len(drep))
+			return "", false, fmt.Errorf(
+				"account drep metadata: script hash has %d bytes",
+				len(drep),
+			)
 		}
 		return "drep-scriptHash-" + hex.EncodeToString(drep), true, nil
 	case dingoDRepTypeAlwaysAbstain:
@@ -499,7 +542,10 @@ func dingoDRepID(drep []byte, drepType uint64) (string, bool, error) {
 	case dingoDRepTypeNoConfidence:
 		return "drep_no_confidence", true, nil
 	default:
-		return "", false, fmt.Errorf("account drep metadata: unknown drep_type %d", drepType)
+		return "", false, fmt.Errorf(
+			"account drep metadata: unknown drep_type %d",
+			drepType,
+		)
 	}
 }
 
@@ -524,8 +570,15 @@ func (n *nullableBytes) Scan(value any) error {
 	}
 }
 
-func (c *Client) AccountAddresses(ctx context.Context, stakeAddr string) ([]string, error) {
-	rows, err := getAllPages[accountAddress](ctx, c, "/api/v0/accounts/"+stakeAddr+"/addresses")
+func (c *Client) AccountAddresses(
+	ctx context.Context,
+	stakeAddr string,
+) ([]string, error) {
+	rows, err := getAllPages[accountAddress](
+		ctx,
+		c,
+		"/api/v0/accounts/"+stakeAddr+"/addresses",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -536,12 +589,22 @@ func (c *Client) AccountAddresses(ctx context.Context, stakeAddr string) ([]stri
 	return out, nil
 }
 
-func (c *Client) AddressUTxOs(ctx context.Context, addr string) ([]UTxO, error) {
+func (c *Client) AddressUTxOs(
+	ctx context.Context,
+	addr string,
+) ([]UTxO, error) {
 	return getAllPages[UTxO](ctx, c, "/api/v0/addresses/"+addr+"/utxos")
 }
 
-func (c *Client) AddressTransactions(ctx context.Context, addr string) ([]AddressTx, error) {
-	return getAllPages[AddressTx](ctx, c, "/api/v0/addresses/"+addr+"/transactions")
+func (c *Client) AddressTransactions(
+	ctx context.Context,
+	addr string,
+) ([]AddressTx, error) {
+	return getAllPages[AddressTx](
+		ctx,
+		c,
+		"/api/v0/addresses/"+addr+"/transactions",
+	)
 }
 
 // TxInfo mirrors the subset of GET /api/v0/txs/{hash} the wallet's transaction
@@ -583,11 +646,24 @@ const LabelPageSize = pageSize
 // MetadataByLabelPage reads one page (1-based) of the transactions carrying
 // metadata under label, oldest first, from
 // GET /api/v0/metadata/txs/labels/{label}/cbor.
-func (c *Client) MetadataByLabelPage(ctx context.Context, label uint64, page int) ([]LabelMetadata, error) {
+func (c *Client) MetadataByLabelPage(
+	ctx context.Context,
+	label uint64,
+	page int,
+) ([]LabelMetadata, error) {
 	if page < 1 {
-		return nil, fmt.Errorf("metadata label %d: invalid page %d", label, page)
+		return nil, fmt.Errorf(
+			"metadata label %d: invalid page %d",
+			label,
+			page,
+		)
 	}
-	path := fmt.Sprintf("/api/v0/metadata/txs/labels/%d/cbor?count=%d&page=%d", label, pageSize, page)
+	path := fmt.Sprintf(
+		"/api/v0/metadata/txs/labels/%d/cbor?count=%d&page=%d",
+		label,
+		pageSize,
+		page,
+	)
 	var rows []labelMetadataRow
 	if err := c.get(ctx, path, &rows); err != nil {
 		return nil, err
@@ -595,12 +671,21 @@ func (c *Client) MetadataByLabelPage(ctx context.Context, label uint64, page int
 	out := make([]LabelMetadata, len(rows))
 	for i, r := range rows {
 		if r.CBORMetadata == nil {
-			return nil, fmt.Errorf("metadata label %d tx %s: no cbor", label, r.TxHash)
+			return nil, fmt.Errorf(
+				"metadata label %d tx %s: no cbor",
+				label,
+				r.TxHash,
+			)
 		}
 		// Blockfrost prefixes its hex with \x; dingo does not.
 		raw, err := hex.DecodeString(strings.TrimPrefix(*r.CBORMetadata, `\x`))
 		if err != nil {
-			return nil, fmt.Errorf("metadata label %d tx %s: %w", label, r.TxHash, err)
+			return nil, fmt.Errorf(
+				"metadata label %d tx %s: %w",
+				label,
+				r.TxHash,
+				err,
+			)
 		}
 		out[i] = LabelMetadata{TxHash: r.TxHash, CBOR: raw}
 	}
@@ -609,7 +694,10 @@ func (c *Client) MetadataByLabelPage(ctx context.Context, label uint64, page int
 
 // RequiredSigners returns the key hashes (hex) in a transaction's
 // required_signers field, from GET /api/v0/txs/{hash}/required_signers.
-func (c *Client) RequiredSigners(ctx context.Context, hash string) ([]string, error) {
+func (c *Client) RequiredSigners(
+	ctx context.Context,
+	hash string,
+) ([]string, error) {
 	var rows []struct {
 		WitnessHash string `json:"witness_hash"`
 	}
@@ -644,7 +732,10 @@ type TxUTxOs struct {
 
 // TransactionUTxOs fetches a transaction's inputs and outputs from
 // GET /api/v0/txs/{hash}/utxos.
-func (c *Client) TransactionUTxOs(ctx context.Context, hash string) (TxUTxOs, error) {
+func (c *Client) TransactionUTxOs(
+	ctx context.Context,
+	hash string,
+) (TxUTxOs, error) {
 	var out TxUTxOs
 	err := c.get(ctx, "/api/v0/txs/"+url.PathEscape(hash)+"/utxos", &out)
 	return out, err
@@ -667,7 +758,10 @@ func (c *Client) LatestBlock(ctx context.Context) (BlockTip, error) {
 // TxOutputs returns the outputs of a transaction, including each output's
 // inline datum (hex CBOR) when present. Used to recover a script UTxO's inline
 // datum, which the address-utxos endpoint does not expose.
-func (c *Client) TxOutputs(ctx context.Context, txHash string) ([]TxOutput, error) {
+func (c *Client) TxOutputs(
+	ctx context.Context,
+	txHash string,
+) ([]TxOutput, error) {
 	var out txUTxOsResponse
 	if err := c.get(ctx, "/api/v0/txs/"+txHash+"/utxos", &out); err != nil {
 		return nil, err
@@ -675,11 +769,21 @@ func (c *Client) TxOutputs(ctx context.Context, txHash string) ([]TxOutput, erro
 	return out.Outputs, nil
 }
 
-func (c *Client) AccountDelegations(ctx context.Context, stakeAddr string) ([]Delegation, error) {
-	return getAllPages[Delegation](ctx, c, "/api/v0/accounts/"+stakeAddr+"/delegations")
+func (c *Client) AccountDelegations(
+	ctx context.Context,
+	stakeAddr string,
+) ([]Delegation, error) {
+	return getAllPages[Delegation](
+		ctx,
+		c,
+		"/api/v0/accounts/"+stakeAddr+"/delegations",
+	)
 }
 
-func (c *Client) AccountRewards(ctx context.Context, stakeAddr string) ([]Reward, error) {
+func (c *Client) AccountRewards(
+	ctx context.Context,
+	stakeAddr string,
+) ([]Reward, error) {
 	return getAllPages[Reward](ctx, c, "/api/v0/accounts/"+stakeAddr+"/rewards")
 }
 
@@ -712,14 +816,24 @@ func (c *Client) Pool(ctx context.Context, poolID string) (PoolInfo, error) {
 // consulting the short-lived index Pool answers from, so a pool registered
 // since that index was filled is found. It refreshes the index with the pages
 // it reads. Use it where a stale answer would change what a transaction pays.
-func (c *Client) PoolUncached(ctx context.Context, poolID string) (PoolInfo, error) {
+func (c *Client) PoolUncached(
+	ctx context.Context,
+	poolID string,
+) (PoolInfo, error) {
 	return c.scanPools(ctx, poolID)
 }
 
-func (c *Client) scanPools(ctx context.Context, poolID string) (PoolInfo, error) {
+func (c *Client) scanPools(
+	ctx context.Context,
+	poolID string,
+) (PoolInfo, error) {
 	for page := 1; page <= maxPages; page++ {
 		var rows []PoolInfo
-		paged := fmt.Sprintf("/api/v0/pools/extended?count=%d&page=%d", pageSize, page)
+		paged := fmt.Sprintf(
+			"/api/v0/pools/extended?count=%d&page=%d",
+			pageSize,
+			page,
+		)
 		if err := c.get(ctx, paged, &rows); err != nil {
 			return PoolInfo{}, err
 		}
@@ -734,7 +848,11 @@ func (c *Client) scanPools(ctx context.Context, poolID string) (PoolInfo, error)
 			return PoolInfo{}, ErrNotFound
 		}
 	}
-	return PoolInfo{}, fmt.Errorf("%w: /api/v0/pools/extended exceeded %d pages", errPageLimitExceeded, maxPages)
+	return PoolInfo{}, fmt.Errorf(
+		"%w: /api/v0/pools/extended exceeded %d pages",
+		errPageLimitExceeded,
+		maxPages,
+	)
 }
 
 // Pools returns the full stake-pool directory the node has indexed, drawn from
@@ -839,7 +957,9 @@ const (
 // asks for the whole list, and each uncached read scans every proposal and
 // aggregates every vote while the node may be writing the same database.
 // Concurrent misses share one read. Failed and canceled reads are not cached.
-func (c *Client) GovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
+func (c *Client) GovernanceActions(
+	ctx context.Context,
+) ([]GovernanceAction, error) {
 	if cached, ok := c.cachedGovernanceActions(); ok {
 		return cached, nil
 	}
@@ -878,7 +998,9 @@ func (c *Client) cachedGovernanceActions() ([]GovernanceAction, bool) {
 	return slices.Clone(c.govCache), true
 }
 
-func (c *Client) readGovernanceActions(ctx context.Context) ([]GovernanceAction, error) {
+func (c *Client) readGovernanceActions(
+	ctx context.Context,
+) ([]GovernanceAction, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
 	}
@@ -946,10 +1068,14 @@ func (c *Client) readGovernanceActions(ctx context.Context) ([]GovernanceAction,
 			ActionIndex:   actionIndex,
 			Type:          govActionTypeName(actionType),
 			ProposedEpoch: proposedEpoch,
-			Status:        govActionStatus(enactedEpoch, ratifiedEpoch, expiredEpoch),
-			YesVotes:      tally.yes,
-			NoVotes:       tally.no,
-			AbstainVotes:  tally.abstain,
+			Status: govActionStatus(
+				enactedEpoch,
+				ratifiedEpoch,
+				expiredEpoch,
+			),
+			YesVotes:     tally.yes,
+			NoVotes:      tally.no,
+			AbstainVotes: tally.abstain,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -974,7 +1100,9 @@ type AnchorDocument struct {
 // Dingo keys a fetched document by (source, URL, hash), and two proposals can
 // share an anchor URL with different hashes, so the join matches the hash too:
 // a document is only attributed to the proposal whose anchor it verified.
-func (c *Client) GovernanceAnchorDocuments(ctx context.Context) ([]AnchorDocument, error) {
+func (c *Client) GovernanceAnchorDocuments(
+	ctx context.Context,
+) ([]AnchorDocument, error) {
 	if c.dingoDataDir == "" {
 		return nil, nil
 	}
@@ -1043,7 +1171,10 @@ type govVoteTally struct{ yes, no, abstain int }
 // into Yes/No/Abstain counts, keyed by governance_proposal.id. A metadata DB
 // without the vote table (partially backfilled) yields empty tallies, not an
 // error.
-func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteTally, error) {
+func governanceVoteTallies(
+	ctx context.Context,
+	db *sql.DB,
+) (map[uint64]govVoteTally, error) {
 	tallies := map[uint64]govVoteTally{}
 	hasTable, err := sqliteHasTable(ctx, db, "governance_vote")
 	if err != nil {
@@ -1108,7 +1239,11 @@ func governanceVoteTallies(ctx context.Context, db *sql.DB) (map[uint64]govVoteT
 }
 
 // sqliteHasTable reports whether a table exists in Dingo's metadata database.
-func sqliteHasTable(ctx context.Context, db *sql.DB, name string) (bool, error) {
+func sqliteHasTable(
+	ctx context.Context,
+	db *sql.DB,
+	name string,
+) (bool, error) {
 	var exists int
 	if err := db.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -1183,8 +1318,15 @@ func (c *Client) LatestEpoch(ctx context.Context) (EpochInfo, error) {
 // AssetAddresses returns every address currently holding some quantity of
 // asset — a Blockfrost-style unit (policy ID concatenated with the hex asset
 // name). An asset the node has not seen yields ErrNotFound.
-func (c *Client) AssetAddresses(ctx context.Context, asset string) ([]AssetAddress, error) {
-	return getAllPages[AssetAddress](ctx, c, "/api/v0/assets/"+asset+"/addresses")
+func (c *Client) AssetAddresses(
+	ctx context.Context,
+	asset string,
+) ([]AssetAddress, error) {
+	return getAllPages[AssetAddress](
+		ctx,
+		c,
+		"/api/v0/assets/"+asset+"/addresses",
+	)
 }
 
 // Asset fetches on-chain identity/metadata for a native asset — unit is the
@@ -1202,7 +1344,8 @@ func (c *Client) Asset(ctx context.Context, unit string) (AssetInfo, error) {
 	}
 	metadata, err := c.assetCIP25Metadata(ctx, out.PolicyID, out.AssetName)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
 			return AssetInfo{}, err
 		}
 		// Metadata enrichment is optional. A core/partially-backfilled Dingo
@@ -1251,7 +1394,10 @@ func (c *Client) assetCIP25Metadata(
 	} {
 		exists, err := sqliteHasTable(ctx, db, table)
 		if err != nil {
-			return nil, fmt.Errorf("inspect asset CIP-25 metadata index: %w", err)
+			return nil, fmt.Errorf(
+				"inspect asset CIP-25 metadata index: %w",
+				err,
+			)
 		}
 		if !exists {
 			return nil, nil
@@ -1260,11 +1406,19 @@ func (c *Client) assetCIP25Metadata(
 
 	policyIDBytes, err := hex.DecodeString(policyID)
 	if err != nil {
-		return nil, fmt.Errorf("decode asset metadata policy ID %q: %w", policyID, err)
+		return nil, fmt.Errorf(
+			"decode asset metadata policy ID %q: %w",
+			policyID,
+			err,
+		)
 	}
 	assetName, err := hex.DecodeString(assetNameHex)
 	if err != nil {
-		return nil, fmt.Errorf("decode asset metadata name %q: %w", assetNameHex, err)
+		return nil, fmt.Errorf(
+			"decode asset metadata name %q: %w",
+			assetNameHex,
+			err,
+		)
 	}
 
 	// CIP-25 metadata belongs to the initial mint transaction. A transaction

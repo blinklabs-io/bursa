@@ -24,29 +24,37 @@ func TestStopWaitsForStalledSubmission(t *testing.T) {
 
 	accepted := make(chan struct{}, 1)
 	release := make(chan struct{})
-	node := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accepted <- struct{}{}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
+	node := httptest.NewUnstartedServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			accepted <- struct{}{}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}),
+	)
 	node.Config.Protocols = new(http.Protocols)
 	node.Config.Protocols.SetUnencryptedHTTP2(true)
 	node.Start()
 	defer node.Close()
 	defer close(release)
 
-	spendSvc := spend.NewService(utxorpc.NewUtxoRpcChainContext(node.URL, 0, nil), nil, nil)
+	spendSvc := spend.NewService(
+		utxorpc.NewUtxoRpcChainContext(node.URL, 0, nil),
+		nil,
+		nil,
+	)
 	handlerDone := make(chan error, 1)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, err := spendSvc.Submit(r.Context(), []byte("signed-tx"))
-		handlerDone <- err
-	})}
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, err := spendSvc.Submit(r.Context(), []byte("signed-tx"))
+			handlerDone <- err
+		}),
+	}
 	go func() { _ = srv.Serve(listener) }()
 
 	app := &App{

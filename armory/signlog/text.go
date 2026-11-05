@@ -26,9 +26,26 @@ func FormatEntry(e Entry) string {
 	}
 
 	if e.Purpose == PurposeOpCertNext {
-		return fmt.Sprintf("%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x %s",
-			e.Seq, e.Purpose, e.Profile, e.Role, e.IssueCounter, e.KESPeriod, e.KESKeyHash, summary)
+		return fmt.Sprintf(
+			"%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x %s",
+			e.Seq,
+			e.Purpose,
+			e.Profile,
+			e.Role,
+			e.IssueCounter,
+			e.KESPeriod,
+			e.KESKeyHash,
+			summary,
+		)
 	}
 
-	return fmt.Sprintf("%d %s %s %s body=%x %s", e.Seq, e.Purpose, e.Profile, e.Role, e.BodyHash, summary)
+	return fmt.Sprintf(
+		"%d %s %s %s body=%x %s",
+		e.Seq,
+		e.Purpose,
+		e.Profile,
+		e.Role,
+		e.BodyHash,
+		summary,
+	)
 }

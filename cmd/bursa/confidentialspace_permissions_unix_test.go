@@ -33,7 +33,10 @@ func TestConfidentialSpaceTLSConfigRejectsPermissiveKey(t *testing.T) {
 			}
 			_, err := confidentialSpaceTLSConfig(certFile, keyFile, certFile)
 			if !errors.Is(err, bursa.ErrInsecureFileMode) {
-				t.Fatalf("confidentialSpaceTLSConfig error = %v, want ErrInsecureFileMode", err)
+				t.Fatalf(
+					"confidentialSpaceTLSConfig error = %v, want ErrInsecureFileMode",
+					err,
+				)
 			}
 		})
 	}

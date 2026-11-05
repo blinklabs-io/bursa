@@ -67,7 +67,9 @@ func (s *Service) SetScopes(scopes []Scope) {
 
 	s.scopes = append([]Scope(nil), scopes...)
 	s.networkFixed, s.requireHostAuth = true, true
-	s.logf("multi image: signing and every request require a host key of the scope acted on")
+	s.logf(
+		"multi image: signing and every request require a host key of the scope acted on",
+	)
 }
 
 // AllowFirstHostKey lets the provisioning image of a multi service take the
@@ -89,7 +91,11 @@ func (s *Service) scopeOf(network uint8, name string) (Scope, error) {
 			return ScopeTestnet, nil
 		}
 
-		return Scope{}, fmt.Errorf("profile %q is for network 0; this build serves %s", name, s.scopeNames())
+		return Scope{}, fmt.Errorf(
+			"profile %q is for network 0; this build serves %s",
+			name,
+			s.scopeNames(),
+		)
 	}
 
 	if i := strings.LastIndexByte(name, '@'); i >= 0 {
@@ -98,7 +104,11 @@ func (s *Service) scopeOf(network uint8, name string) (Scope, error) {
 		}
 	}
 
-	return Scope{}, fmt.Errorf("profile %q is not for a scope this build serves (%s)", name, s.scopeNames())
+	return Scope{}, fmt.Errorf(
+		"profile %q is not for a scope this build serves (%s)",
+		name,
+		s.scopeNames(),
+	)
 }
 
 func (s *Service) inScope(sc Scope) bool {
@@ -121,22 +131,42 @@ func (s *Service) scopeNames() string {
 }
 
 var (
-	errScopeMismatch = errors.New("host key is not of the scope of this profile")
-	errDeviceWide    = errors.New("this request is device-wide: it needs a host key of a mainnet scope")
-	errCrossScope    = errors.New("key already belongs to a profile of another scope")
-	errFirstKey      = errors.New("an unsigned host key is accepted only by the provisioning image, for a scope of the image")
-	errFirstKeyHeld  = errors.New("an unsigned host key is accepted only while the device holds no host key; a key of a mainnet scope adds the first key of another scope")
-	errKeyOtherScope = errors.New("host key is already registered for another scope")
-	errScopeNeeded   = errors.New("a host key request names the scope it is for")
+	errScopeMismatch = errors.New(
+		"host key is not of the scope of this profile",
+	)
+	errDeviceWide = errors.New(
+		"this request is device-wide: it needs a host key of a mainnet scope",
+	)
+	errCrossScope = errors.New(
+		"key already belongs to a profile of another scope",
+	)
+	errFirstKey = errors.New(
+		"an unsigned host key is accepted only by the provisioning image, for a scope of the image",
+	)
+	errFirstKeyHeld = errors.New(
+		"an unsigned host key is accepted only while the device holds no host key; a key of a mainnet scope adds the first key of another scope",
+	)
+	errKeyOtherScope = errors.New(
+		"host key is already registered for another scope",
+	)
+	errScopeNeeded = errors.New(
+		"a host key request names the scope it is for",
+	)
 	// errAddScopeMismatch refuses a host key add signed by a key of another
 	// scope than the one the request names, unless a mainnet key adds the
 	// first key of a scope
-	errAddScopeMismatch = errors.New("host key is not of the scope it adds a key for")
+	errAddScopeMismatch = errors.New(
+		"host key is not of the scope it adds a key for",
+	)
 	// errMainnetName refuses a testnet profile named as a mainnet scope's
-	errMainnetName = errors.New("a testnet profile may not end with the label of a mainnet scope")
+	errMainnetName = errors.New(
+		"a testnet profile may not end with the label of a mainnet scope",
+	)
 	// errLastKeyOtherScope refuses revoking the last host key of another
 	// scope, which would lock that scope out
-	errLastKeyOtherScope = errors.New("a key of another scope may not revoke the last host key of a scope")
+	errLastKeyOtherScope = errors.New(
+		"a key of another scope may not revoke the last host key of a scope",
+	)
 )
 
 // caller is who an admin request has been authenticated as, for the handler
@@ -214,7 +244,12 @@ func (s *Service) parseScope(name string) (Scope, error) {
 		}
 	}
 
-	return Scope{}, fmt.Errorf("%w (scope %q is not one of %s)", errFirstKey, name, s.scopeNames())
+	return Scope{}, fmt.Errorf(
+		"%w (scope %q is not one of %s)",
+		errFirstKey,
+		name,
+		s.scopeNames(),
+	)
 }
 
 // listedKeys returns the host keys a response lists. A single-scope image
@@ -247,7 +282,8 @@ func (s *Service) callerSees(e hostEntry) bool {
 		return false
 	}
 
-	return s.caller.scope == sc || (!s.caller.unsigned && s.caller.scope.Network == 1)
+	return s.caller.scope == sc ||
+		(!s.caller.unsigned && s.caller.scope.Network == 1)
 }
 
 // authorizeMulti authenticates an admin request of a multi image.
@@ -256,7 +292,9 @@ func (s *Service) authorizeMulti(route string, req hostAuthed) error {
 
 	// the device's first host key is the only unsigned request
 	if route == RouteProvisionHostKey && s.firstHostKeyOpen &&
-		len(a.HostKey) == 0 && len(a.HostSignature) == 0 && len(a.Challenge) == 0 {
+		len(
+			a.HostKey,
+		) == 0 && len(a.HostSignature) == 0 && len(a.Challenge) == 0 {
 		hk, _ := req.(*HostKeyRequest)
 
 		sc, err := s.parseScope(hk.Scope)
@@ -281,32 +319,38 @@ func (s *Service) authorizeMulti(route string, req hostAuthed) error {
 		return errDevice
 	}
 
-	sc, err := s.authenticateHostScope(a.HostKey, a.HostSignature, a.Challenge, AdminBinding(route, canonical, a.Challenge), func(sc Scope) error {
-		if err := s.authorizeScope(req, sc); err != nil {
-			return err
-		}
-
-		// host key changes check their scope rules here too, so a key
-		// registered for several scopes acts under one they allow
-		hk, ok := req.(*HostKeyRequest)
-		if !ok {
-			return nil
-		}
-
-		switch route {
-		case RouteProvisionHostKey:
-			target, err := s.parseScope(hk.Scope)
-			if err != nil {
+	sc, err := s.authenticateHostScope(
+		a.HostKey,
+		a.HostSignature,
+		a.Challenge,
+		AdminBinding(route, canonical, a.Challenge),
+		func(sc Scope) error {
+			if err := s.authorizeScope(req, sc); err != nil {
 				return err
 			}
 
-			return s.mayAddHostKey(caller{known: true, scope: sc}, target)
-		case RouteProvisionHostRevoke:
-			return s.mayRevokeHostKey(sc, hk.PublicKey)
-		}
+			// host key changes check their scope rules here too, so a key
+			// registered for several scopes acts under one they allow
+			hk, ok := req.(*HostKeyRequest)
+			if !ok {
+				return nil
+			}
 
-		return nil
-	})
+			switch route {
+			case RouteProvisionHostKey:
+				target, err := s.parseScope(hk.Scope)
+				if err != nil {
+					return err
+				}
+
+				return s.mayAddHostKey(caller{known: true, scope: sc}, target)
+			case RouteProvisionHostRevoke:
+				return s.mayRevokeHostKey(sc, hk.PublicKey)
+			}
+
+			return nil
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -416,11 +460,20 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 	}
 
 	if len(s.hostEntries) >= maxHostKeys {
-		return HostKeyResponse{}, errors.New("host key list is full; revoke a key first")
+		return HostKeyResponse{}, errors.New(
+			"host key list is full; revoke a key first",
+		)
 	}
 
-	return s.writeHostKeys(append(append([]hostEntry(nil), s.hostEntries...),
-		hostEntry{key: bytes.Clone(req.PublicKey), kind: scopeImage, network: sc.Network, chain: chainTag(sc.Chain)}))
+	return s.writeHostKeys(append(
+		append([]hostEntry(nil), s.hostEntries...),
+		hostEntry{
+			key:     bytes.Clone(req.PublicKey),
+			kind:    scopeImage,
+			network: sc.Network,
+			chain:   chainTag(sc.Chain),
+		},
+	))
 }
 
 // revokeHostKeyMulti removes a host key. A key revokes keys of its own
@@ -430,7 +483,8 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 // mayAddHostKey checks that c may add a key for scope sc: a key of sc, or a
 // signed key of a mainnet scope adding the first key of another scope.
 func (s *Service) mayAddHostKey(c caller, sc Scope) error {
-	if c.scope != sc && (c.unsigned || s.needDeviceWide(c.scope) != nil || s.scopeHasKey(sc)) {
+	if c.scope != sc &&
+		(c.unsigned || s.needDeviceWide(c.scope) != nil || s.scopeHasKey(sc)) {
 		return errAddScopeMismatch
 	}
 
@@ -468,7 +522,8 @@ func (s *Service) mayRevokeHostKey(by Scope, pub []byte) error {
 		kept := false
 
 		for _, e := range s.hostEntries {
-			if got, ok := s.entryScope(e); ok && got == sc && !bytes.Equal(e.key, pub) {
+			if got, ok := s.entryScope(e); ok && got == sc &&
+				!bytes.Equal(e.key, pub) {
 				kept = true
 				break
 			}
@@ -482,7 +537,9 @@ func (s *Service) mayRevokeHostKey(by Scope, pub []byte) error {
 	return nil
 }
 
-func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
+func (s *Service) revokeHostKeyMulti(
+	req HostKeyRequest,
+) (HostKeyResponse, error) {
 	if !s.caller.known {
 		return HostKeyResponse{}, errHostAuthMissing
 	}
@@ -507,9 +564,14 @@ func (s *Service) revokeHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error
 // keyScopeConflict refuses pub, or a cold key slot, that belongs to a profile
 // of a scope other than sc. Which scope owns a cold key object is recorded
 // separately (ownership.go).
-func (s *Service) keyScopeConflict(sc Scope, slot uint32, pub ed25519.PublicKey) error {
+func (s *Service) keyScopeConflict(
+	sc Scope,
+	slot uint32,
+	pub ed25519.PublicKey,
+) error {
 	for _, other := range s.profiles {
-		if got, err := s.scopeOf(other.NetworkID, other.Name); err == nil && got == sc {
+		if got, err := s.scopeOf(other.NetworkID, other.Name); err == nil &&
+			got == sc {
 			continue
 		}
 
@@ -585,13 +647,20 @@ func seedPublic(seed []byte) ed25519.PublicKey {
 // with a host key of the scope of the profile asked for. An unknown profile
 // is refused by the caller once the key is known to be authentic.
 func (s *Service) authenticateInventory(req InventoryRequest) error {
-	_, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, InventoryRequestBinding(req), func(sc Scope) error {
-		if target, err := s.profileScope(req.Profile); err == nil && target != sc {
-			return errScopeMismatch
-		}
+	_, err := s.authenticateHostScope(
+		req.HostKey,
+		req.HostSignature,
+		req.Challenge,
+		InventoryRequestBinding(req),
+		func(sc Scope) error {
+			if target, err := s.profileScope(req.Profile); err == nil &&
+				target != sc {
+				return errScopeMismatch
+			}
 
-		return nil
-	})
+			return nil
+		},
+	)
 
 	return err
 }

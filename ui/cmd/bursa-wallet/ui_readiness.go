@@ -30,7 +30,12 @@ func controlSurfaceError(err error) error {
 
 // waitReachable polls url until it answers, startup fails, ctx is canceled, or
 // timeout elapses.
-func waitReachable(ctx context.Context, url string, timeout time.Duration, srvErr <-chan error) error {
+func waitReachable(
+	ctx context.Context,
+	url string,
+	timeout time.Duration,
+	srvErr <-chan error,
+) error {
 	if timeout <= 0 {
 		return nil
 	}

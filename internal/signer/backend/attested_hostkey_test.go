@@ -33,7 +33,10 @@ func TestAttestedRequestBindingVector(t *testing.T) {
 	era := uint(6)
 	req := AttestedRequest{
 		Version: AttestedProtocol, Purpose: "opcert-next", KeyHash: strings.Repeat("ab", 28), Role: KeyTypePool,
-		Nonce: bytes.Repeat([]byte{1}, 32), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview",
+		Nonce: bytes.Repeat(
+			[]byte{1},
+			32,
+		), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview",
 		Era: &era, Challenge: bytes.Repeat([]byte{3}, 32),
 	}
 	const want = "a398cde575f763d683168b38b24f539dc61fe9235f2140f36321c92ee0d944d0"
@@ -70,7 +73,8 @@ func (d *hostAuthDevice) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(resp)
 	case "/v1/inventory":
 		d.inventory++
-		_ = json.NewEncoder(w).Encode(AttestedInventory{Version: AttestedProtocol})
+		_ = json.NewEncoder(w).
+			Encode(AttestedInventory{Version: AttestedProtocol})
 	case "/v1/sign":
 		d.signs++
 		var req AttestedRequest
@@ -78,7 +82,11 @@ func (d *hostAuthDevice) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		resp := AttestedResponse{Version: AttestedProtocol, Nonce: req.Nonce, Signature: []byte{1}}
+		resp := AttestedResponse{
+			Version:   AttestedProtocol,
+			Nonce:     req.Nonce,
+			Signature: []byte{1},
+		}
 		switch {
 		case !bytes.Equal(req.HostKey, d.key):
 			resp.Error = "host key not registered"
@@ -117,7 +125,10 @@ func newHostKeyEnclave(t *testing.T, d *hostAuthDevice) *HTTPEnclave {
 func hostKeyRequest() AttestedRequest {
 	return AttestedRequest{
 		Version: AttestedProtocol, Purpose: PurposeTxBody, KeyHash: strings.Repeat("ab", 28), Role: KeyTypePool,
-		Nonce: bytes.Repeat([]byte{1}, 32), Payload: []byte{0xa0}, Profile: "otg@preview",
+		Nonce: bytes.Repeat(
+			[]byte{1},
+			32,
+		), Payload: []byte{0xa0}, Profile: "otg@preview",
 	}
 }
 
@@ -133,7 +144,11 @@ func TestHostKeyEnclaveAuthenticatesEverySign(t *testing.T) {
 		}
 	}
 	if d.challenges != 2 || d.signs != 2 {
-		t.Fatalf("challenges=%d signs=%d, want one challenge per signature", d.challenges, d.signs)
+		t.Fatalf(
+			"challenges=%d signs=%d, want one challenge per signature",
+			d.challenges,
+			d.signs,
+		)
 	}
 
 	if _, err := e.Inventory(t.Context(), bytes.Repeat([]byte{2}, 32)); err != nil {
@@ -185,6 +200,10 @@ func TestPlainEnclaveSendsNoHostFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if d.challenges != 0 || d.refused != "host key not registered" {
-		t.Fatalf("challenges=%d refused=%q, want no challenge and no host key", d.challenges, d.refused)
+		t.Fatalf(
+			"challenges=%d refused=%q, want no challenge and no host key",
+			d.challenges,
+			d.refused,
+		)
 	}
 }

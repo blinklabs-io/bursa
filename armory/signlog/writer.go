@@ -100,12 +100,21 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 	switch {
 	case head == (Head{}):
 		if last.Seq != 0 {
-			return nil, fmt.Errorf("%w: head store is uninitialised but the medium holds %d entries", ErrAhead, last.Seq)
+			return nil, fmt.Errorf(
+				"%w: head store is uninitialised but the medium holds %d entries",
+				ErrAhead,
+				last.Seq,
+			)
 		}
 
 		return w, w.repair(last)
 	case last.Seq < head.Seq:
-		return nil, fmt.Errorf("%w: medium at entry %d, head at %d", ErrRollback, last.Seq, head.Seq)
+		return nil, fmt.Errorf(
+			"%w: medium at entry %d, head at %d",
+			ErrRollback,
+			last.Seq,
+			head.Seq,
+		)
 	case last.Seq == head.Seq:
 		if last.Hash != head.Hash {
 			return nil, ErrHashMismatch
@@ -118,7 +127,12 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 		return w, w.repair(last)
 	}
 
-	return nil, fmt.Errorf("%w: medium at entry %d, head at %d", ErrAhead, last.Seq, head.Seq)
+	return nil, fmt.Errorf(
+		"%w: medium at entry %d, head at %d",
+		ErrAhead,
+		last.Seq,
+		head.Seq,
+	)
 }
 
 // isBlankHeader reports whether block 0 is all zero.
@@ -147,7 +161,11 @@ func (w *Writer) format(head Head) (*Writer, error) {
 
 	slots := min((w.medium.NumBlocks()-1)/RecordBlocks, DefaultMaxEntries)
 	if w.medium.NumBlocks() < 1 || slots == 0 {
-		return nil, fmt.Errorf("%w: %d blocks hold no entry", ErrMedium, w.medium.NumBlocks())
+		return nil, fmt.Errorf(
+			"%w: %d blocks hold no entry",
+			ErrMedium,
+			w.medium.NumBlocks(),
+		)
 	}
 
 	if err := checkBlank(w.medium, 0, 1+slots*RecordBlocks, ErrNotBlank); err != nil {
@@ -190,7 +208,12 @@ func checkBlank(m Medium, from, end uint64, notBlank error) error {
 		}
 
 		if !isZero(p) {
-			return fmt.Errorf("%w: data in blocks %d+%d", notBlank, lba, len(p)/BlockSize)
+			return fmt.Errorf(
+				"%w: data in blocks %d+%d",
+				notBlank,
+				lba,
+				len(p)/BlockSize,
+			)
 		}
 	}
 
@@ -273,7 +296,10 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 		return Entry{}, err
 	}
 
-	raw, err := frameEntry(Entry{Record: rec, Seq: w.head.Seq + 1, Prev: w.head.Hash}, w.id)
+	raw, err := frameEntry(
+		Entry{Record: rec, Seq: w.head.Seq + 1, Prev: w.head.Hash},
+		w.id,
+	)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -341,7 +367,12 @@ func (w *Writer) recheck() error {
 
 	e, err := decodeRecord(buf)
 	if err != nil {
-		return fmt.Errorf("%w: entry %d unreadable: %w", ErrRollback, w.head.Seq, err)
+		return fmt.Errorf(
+			"%w: entry %d unreadable: %w",
+			ErrRollback,
+			w.head.Seq,
+			err,
+		)
 	}
 
 	if e.Seq != w.head.Seq || e.Hash != w.head.Hash {

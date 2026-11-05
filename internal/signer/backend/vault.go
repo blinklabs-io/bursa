@@ -70,7 +70,11 @@ func parseTransitSignature(s string) ([]byte, error) {
 		return nil, fmt.Errorf("decode transit signature: %w", err)
 	}
 	if len(raw) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("transit signature: expected %d bytes, got %d", ed25519.SignatureSize, len(raw))
+		return nil, fmt.Errorf(
+			"transit signature: expected %d bytes, got %d",
+			ed25519.SignatureSize,
+			len(raw),
+		)
 	}
 	return raw, nil
 }
@@ -89,12 +93,19 @@ func NewVaultBackend(name string, sign TransitSignFunc) *VaultBackend {
 }
 
 // AddKey registers a Transit key by name with its known 32-byte public key.
-func (b *VaultBackend) AddKey(keyName string, pub []byte, typ KeyType) (KeyHash, error) {
+func (b *VaultBackend) AddKey(
+	keyName string,
+	pub []byte,
+	typ KeyType,
+) (KeyHash, error) {
 	if !typ.Valid() {
 		return KeyHash{}, fmt.Errorf("invalid key type %q", typ)
 	}
 	if len(pub) != 32 {
-		return KeyHash{}, fmt.Errorf("vault backend requires a 32-byte Ed25519 public key, got %d", len(pub))
+		return KeyHash{}, fmt.Errorf(
+			"vault backend requires a 32-byte Ed25519 public key, got %d",
+			len(pub),
+		)
 	}
 	hash := HashPublicKey(pub)
 	b.mu.Lock()

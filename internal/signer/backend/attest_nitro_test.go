@@ -48,11 +48,19 @@ func newNitroFixture(t *testing.T) *nitroFixture {
 		t.Fatal(err)
 	}
 	rootTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-nitro-root"},
+		SerialNumber: big.NewInt(
+			1,
+		), Subject: pkix.Name{CommonName: "test-nitro-root"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
 	}
-	rootDER, err := x509.CreateCertificate(rand.Reader, rootTmpl, rootTmpl, &rootKey.PublicKey, rootKey)
+	rootDER, err := x509.CreateCertificate(
+		rand.Reader,
+		rootTmpl,
+		rootTmpl,
+		&rootKey.PublicKey,
+		rootKey,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,25 +70,39 @@ func newNitroFixture(t *testing.T) *nitroFixture {
 		t.Fatal(err)
 	}
 	leafTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "test-enclave"},
+		SerialNumber: big.NewInt(
+			2,
+		), Subject: pkix.Name{CommonName: "test-enclave"},
 		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature,
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, root, &leafKey.PublicKey, rootKey)
+	leafDER, err := x509.CreateCertificate(
+		rand.Reader,
+		leafTmpl,
+		root,
+		&leafKey.PublicKey,
+		rootKey,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pcr0 := make([]byte, nitroPCRSize)
 	pcr0[0] = 0xaa
 	return &nitroFixture{
-		rootPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER}),
+		rootPEM: pem.EncodeToMemory(
+			&pem.Block{Type: "CERTIFICATE", Bytes: rootDER},
+		),
 		rootDER: rootDER, leafDER: leafDER, leafKey: leafKey, pcr0: pcr0, now: now,
 	}
 }
 
 // document builds a COSE_Sign1 attestation document. mutate may alter the
 // payload fields before signing.
-func (f *nitroFixture) document(t *testing.T, userData []byte, mutate func(d map[string]any)) []byte {
+func (f *nitroFixture) document(
+	t *testing.T,
+	userData []byte,
+	mutate func(d map[string]any),
+) []byte {
 	t.Helper()
 	d := map[string]any{
 		"module_id": "i-test", "digest": "SHA384", "timestamp": uint64(f.now.UnixMilli()),
@@ -139,54 +161,126 @@ func TestNitroVerifier(t *testing.T) {
 		verify  func(v *NitroVerifier, f *nitroFixture)
 		wantErr bool
 	}{
-		{"valid", func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) }, nil, false},
+		{
+			"valid",
+			func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
+			nil,
+			false,
+		},
 		{"tagged COSE_Sign1", func(f *nitroFixture, t *testing.T) []byte {
 			return append([]byte{coseTagSign1}, f.document(t, binding, nil)...)
 		}, nil, false},
-		{"debug enclave reports zero PCR0", func(f *nitroFixture, t *testing.T) []byte {
-			return f.document(t, binding, func(d map[string]any) { d["pcrs"] = map[uint][]byte{0: make([]byte, nitroPCRSize)} })
-		}, nil, true},
-		{"different image measurement", func(f *nitroFixture, t *testing.T) []byte {
-			pcr := append([]byte(nil), f.pcr0...)
-			pcr[1] = 0xbb
-			return f.document(t, binding, func(d map[string]any) { d["pcrs"] = map[uint][]byte{0: pcr} })
-		}, nil, true},
+		{
+			"debug enclave reports zero PCR0",
+			func(f *nitroFixture, t *testing.T) []byte {
+				return f.document(
+					t,
+					binding,
+					func(d map[string]any) { d["pcrs"] = map[uint][]byte{0: make([]byte, nitroPCRSize)} },
+				)
+			},
+			nil,
+			true,
+		},
+		{
+			"different image measurement",
+			func(f *nitroFixture, t *testing.T) []byte {
+				pcr := append([]byte(nil), f.pcr0...)
+				pcr[1] = 0xbb
+				return f.document(
+					t,
+					binding,
+					func(d map[string]any) { d["pcrs"] = map[uint][]byte{0: pcr} },
+				)
+			},
+			nil,
+			true,
+		},
 		{"missing PCR0", func(f *nitroFixture, t *testing.T) []byte {
-			return f.document(t, binding, func(d map[string]any) { d["pcrs"] = map[uint][]byte{} })
+			return f.document(
+				t,
+				binding,
+				func(d map[string]any) { d["pcrs"] = map[uint][]byte{} },
+			)
 		}, nil, true},
-		{"binding mismatch", func(f *nitroFixture, t *testing.T) []byte { return f.document(t, []byte("another-binding"), nil) }, nil, true},
-		{"missing user_data", func(f *nitroFixture, t *testing.T) []byte { return f.document(t, nil, nil) }, nil, true},
-		{"expired certificate", func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
-			func(v *NitroVerifier, f *nitroFixture) { v.now = func() time.Time { return f.now.Add(2 * time.Hour) } }, true},
-		{"untrusted root", func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
+		{
+			"binding mismatch",
+			func(f *nitroFixture, t *testing.T) []byte { return f.document(t, []byte("another-binding"), nil) },
+			nil,
+			true,
+		},
+		{
+			"missing user_data",
+			func(f *nitroFixture, t *testing.T) []byte { return f.document(t, nil, nil) },
+			nil,
+			true,
+		},
+		{
+			"expired certificate",
+			func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
+			func(v *NitroVerifier, f *nitroFixture) { v.now = func() time.Time { return f.now.Add(2 * time.Hour) } },
+			true,
+		},
+		{
+			"untrusted root",
+			func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
 			func(v *NitroVerifier, f *nitroFixture) {
 				v.roots = x509.NewCertPool()
 				c, _ := x509.ParseCertificate(other.rootDER)
 				v.roots.AddCert(c)
-			}, true},
+			},
+			true,
+		},
 		{"unsupported digest", func(f *nitroFixture, t *testing.T) []byte {
-			return f.document(t, binding, func(d map[string]any) { d["digest"] = "SHA256" })
+			return f.document(
+				t,
+				binding,
+				func(d map[string]any) { d["digest"] = "SHA256" },
+			)
 		}, nil, true},
-		{"expected PCR1 not reported", func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
-			func(v *NitroVerifier, f *nitroFixture) { v.pcrs[1] = make([]byte, nitroPCRSize) }, true},
-		{"signature over a different payload", func(f *nitroFixture, t *testing.T) []byte {
-			var msg coseSign1Msg
-			if err := cbor.Unmarshal(f.document(t, binding, nil), &msg); err != nil {
-				t.Fatal(err)
-			}
-			// Same binding, different payload: only the signature check can
-			// tell this document from the genuine one.
-			forged := f.document(t, binding, func(d map[string]any) { d["module_id"] = "i-other" })
-			var fm coseSign1Msg
-			if err := cbor.Unmarshal(forged, &fm); err != nil {
-				t.Fatal(err)
-			}
-			fm.Signature = msg.Signature
-			out, _ := cbor.Marshal(fm)
-			return out
-		}, nil, true},
-		{"not CBOR", func(*nitroFixture, *testing.T) []byte { return []byte("not a document") }, nil, true},
-		{"empty", func(*nitroFixture, *testing.T) []byte { return nil }, nil, true},
+		{
+			"expected PCR1 not reported",
+			func(f *nitroFixture, t *testing.T) []byte { return f.document(t, binding, nil) },
+			func(v *NitroVerifier, f *nitroFixture) { v.pcrs[1] = make([]byte, nitroPCRSize) },
+			true,
+		},
+		{
+			"signature over a different payload",
+			func(f *nitroFixture, t *testing.T) []byte {
+				var msg coseSign1Msg
+				if err := cbor.Unmarshal(f.document(t, binding, nil), &msg); err != nil {
+					t.Fatal(err)
+				}
+				// Same binding, different payload: only the signature check can
+				// tell this document from the genuine one.
+				forged := f.document(
+					t,
+					binding,
+					func(d map[string]any) { d["module_id"] = "i-other" },
+				)
+				var fm coseSign1Msg
+				if err := cbor.Unmarshal(forged, &fm); err != nil {
+					t.Fatal(err)
+				}
+				fm.Signature = msg.Signature
+				out, _ := cbor.Marshal(fm)
+				return out
+			},
+			nil,
+			true,
+		},
+		{
+			"not CBOR",
+			func(*nitroFixture, *testing.T) []byte { return []byte("not a document") },
+			nil,
+			true,
+		},
+		{
+			"empty",
+			func(*nitroFixture, *testing.T) []byte { return nil },
+			nil,
+			true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

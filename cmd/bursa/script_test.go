@@ -35,7 +35,11 @@ func TestScriptCreateHelpExamplesUseValidKeyHashes(t *testing.T) {
 		for _, hash := range strings.Split(matches[1], ",") {
 			decoded, err := hex.DecodeString(hash)
 			if err != nil {
-				t.Errorf("example contains invalid hex key hash %q: %v", hash, err)
+				t.Errorf(
+					"example contains invalid hex key hash %q: %v",
+					hash,
+					err,
+				)
 				continue
 			}
 			if len(decoded) != 28 {
@@ -56,7 +60,10 @@ func TestScriptCreateHelpExamplesUseValidKeyHashes(t *testing.T) {
 		"bursa address info",
 	} {
 		if !strings.Contains(longHelp, command) {
-			t.Errorf("help text does not explain how to get a key hash with %q", command)
+			t.Errorf(
+				"help text does not explain how to get a key hash with %q",
+				command,
+			)
 		}
 	}
 }

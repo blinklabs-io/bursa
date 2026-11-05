@@ -80,7 +80,12 @@ func TestPolicyForNetworkUsesSamePolicyOnSupportedNetworks(t *testing.T) {
 			t.Fatalf("PolicyForNetwork(%q) ok = false, want true", network)
 		}
 		if policy != PolicyID {
-			t.Fatalf("PolicyForNetwork(%q) = %q, want %q", network, policy, PolicyID)
+			t.Fatalf(
+				"PolicyForNetwork(%q) = %q, want %q",
+				network,
+				policy,
+				PolicyID,
+			)
 		}
 	}
 	for _, net := range []string{"testnet", "", "MAINNET", "mainnte"} {
@@ -130,7 +135,10 @@ type lookupResult struct {
 	err   error
 }
 
-func (f *fakeAssetLookup) AssetAddresses(_ context.Context, asset string) ([]chain.AssetAddress, error) {
+func (f *fakeAssetLookup) AssetAddresses(
+	_ context.Context,
+	asset string,
+) ([]chain.AssetAddress, error) {
 	f.called = true
 	f.gotAssets = append(f.gotAssets, asset)
 	if result, ok := f.results[asset]; ok {
@@ -143,8 +151,10 @@ func TestResolveFound(t *testing.T) {
 	classic, _ := AssetUnit("mainnet", "chris")
 	cip68, _ := cip68AssetUnit("mainnet", "chris")
 	lk := &fakeAssetLookup{results: map[string]lookupResult{
-		classic: {addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}},
-		cip68:   {err: chain.ErrNotFound},
+		classic: {
+			addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}},
+		},
+		cip68: {err: chain.ErrNotFound},
 	}}
 	name, addr, err := Resolve(context.Background(), lk, "mainnet", "$chris")
 	if err != nil {
@@ -168,8 +178,15 @@ func TestResolveRejectsAmbiguousHolder(t *testing.T) {
 		{{Address: "addr1a", Quantity: "2"}},
 	} {
 		lk := &fakeAssetLookup{addrs: addrs}
-		if _, _, err := Resolve(context.Background(), lk, "mainnet", "$chris"); !errors.Is(err, ErrAmbiguousHolder) {
-			t.Fatalf("Resolve(%+v) error = %v, want ErrAmbiguousHolder", addrs, err)
+		if _, _, err := Resolve(context.Background(), lk, "mainnet", "$chris"); !errors.Is(
+			err,
+			ErrAmbiguousHolder,
+		) {
+			t.Fatalf(
+				"Resolve(%+v) error = %v, want ErrAmbiguousHolder",
+				addrs,
+				err,
+			)
 		}
 	}
 }
@@ -179,7 +196,9 @@ func TestResolveOnTestnetUsesSharedPolicy(t *testing.T) {
 	cip68, _ := cip68AssetUnit("preview", "chris")
 	lk := &fakeAssetLookup{results: map[string]lookupResult{
 		classic: {err: chain.ErrNotFound},
-		cip68:   {addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}},
+		cip68: {
+			addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}},
+		},
 	}}
 	name, addr, err := Resolve(context.Background(), lk, "preview", "$chris")
 	if err != nil {
@@ -191,14 +210,19 @@ func TestResolveOnTestnetUsesSharedPolicy(t *testing.T) {
 	if addr != "addr1abc" {
 		t.Fatalf("Resolve address = %q, want addr1abc", addr)
 	}
-	wantUnits := []string{PolicyID + "6368726973", PolicyID + "000de1406368726973"}
+	wantUnits := []string{
+		PolicyID + "6368726973",
+		PolicyID + "000de1406368726973",
+	}
 	if !slices.Equal(lk.gotAssets, wantUnits) {
 		t.Fatalf("Resolve queried assets %q, want %q", lk.gotAssets, wantUnits)
 	}
 }
 
 func TestResolveNotFoundOnInvalidNetworkSkipsNodeQuery(t *testing.T) {
-	lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
+	lk := &fakeAssetLookup{
+		addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}},
+	}
 	_, _, err := Resolve(context.Background(), lk, "mainnte", "$chris")
 	if !errors.Is(err, chain.ErrNotFound) {
 		t.Fatalf("Resolve err = %v, want chain.ErrNotFound", err)
@@ -281,7 +305,13 @@ func TestAssetUnitCaseInsensitive(t *testing.T) {
 		}
 		got, ok := AssetUnit("mainnet", norm)
 		if !ok || got != want {
-			t.Errorf("AssetUnit(mainnet, Normalize(%q)) = (%q, %v), want (%q, true)", in, got, ok, want)
+			t.Errorf(
+				"AssetUnit(mainnet, Normalize(%q)) = (%q, %v), want (%q, true)",
+				in,
+				got,
+				ok,
+				want,
+			)
 		}
 	}
 }
@@ -295,7 +325,9 @@ func TestResolveCaseInsensitive(t *testing.T) {
 		t.Fatal("AssetUnit(mainnet, chris) ok = false, want true")
 	}
 	for _, in := range []string{"chris", "Chris", "CHRIS", "$Chris", "$CHRIS"} {
-		lk := &fakeAssetLookup{addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}}}
+		lk := &fakeAssetLookup{
+			addrs: []chain.AssetAddress{{Address: "addr1abc", Quantity: "1"}},
+		}
 		name, addr, err := Resolve(context.Background(), lk, "mainnet", in)
 		if err != nil {
 			t.Fatalf("Resolve(%q): %v", in, err)
@@ -308,7 +340,12 @@ func TestResolveCaseInsensitive(t *testing.T) {
 		}
 		wantUnits := []string{wantUnit, PolicyID + "000de1406368726973"}
 		if !slices.Equal(lk.gotAssets, wantUnits) {
-			t.Errorf("Resolve(%q) queried assets %q, want %q", in, lk.gotAssets, wantUnits)
+			t.Errorf(
+				"Resolve(%q) queried assets %q, want %q",
+				in,
+				lk.gotAssets,
+				wantUnits,
+			)
 		}
 	}
 }
@@ -328,7 +365,12 @@ func TestCIP68AssetUnitUsesLabel222Encoding(t *testing.T) {
 		}
 		want := PolicyID + "000de140" + tc.hex
 		if unit != want {
-			t.Errorf("cip68AssetUnit(mainnet, %q) = %q, want %q", tc.name, unit, want)
+			t.Errorf(
+				"cip68AssetUnit(mainnet, %q) = %q, want %q",
+				tc.name,
+				unit,
+				want,
+			)
 		}
 	}
 }
@@ -338,7 +380,9 @@ func TestResolveCIP68Handle(t *testing.T) {
 	cip68, _ := cip68AssetUnit("mainnet", "chris")
 	lk := &fakeAssetLookup{results: map[string]lookupResult{
 		classic: {err: chain.ErrNotFound},
-		cip68:   {addrs: []chain.AssetAddress{{Address: "addr1cip68", Quantity: "1"}}},
+		cip68: {
+			addrs: []chain.AssetAddress{{Address: "addr1cip68", Quantity: "1"}},
+		},
 	}}
 
 	_, addr, err := Resolve(context.Background(), lk, "mainnet", "$chris")
@@ -354,8 +398,14 @@ func TestResolveRejectsConflictingHandleHolders(t *testing.T) {
 	classic, _ := AssetUnit("mainnet", "chris")
 	cip68, _ := cip68AssetUnit("mainnet", "chris")
 	lk := &fakeAssetLookup{results: map[string]lookupResult{
-		classic: {addrs: []chain.AssetAddress{{Address: "addr1classic", Quantity: "1"}}},
-		cip68:   {addrs: []chain.AssetAddress{{Address: "addr1cip68", Quantity: "1"}}},
+		classic: {
+			addrs: []chain.AssetAddress{
+				{Address: "addr1classic", Quantity: "1"},
+			},
+		},
+		cip68: {
+			addrs: []chain.AssetAddress{{Address: "addr1cip68", Quantity: "1"}},
+		},
 	}}
 
 	_, _, err := Resolve(context.Background(), lk, "mainnet", "$chris")
@@ -379,7 +429,11 @@ func TestResolveRejectsMultipleOrInvalidHolders(t *testing.T) {
 		}}
 		_, _, err := Resolve(context.Background(), lk, "mainnet", "$chris")
 		if !errors.Is(err, ErrAmbiguousHolder) {
-			t.Fatalf("Resolve(%+v) err = %v, want ErrAmbiguousHolder", addrs, err)
+			t.Fatalf(
+				"Resolve(%+v) err = %v, want ErrAmbiguousHolder",
+				addrs,
+				err,
+			)
 		}
 	}
 }
@@ -389,8 +443,12 @@ func TestResolveDoesNotMaskSecondQueryFailure(t *testing.T) {
 	cip68, _ := cip68AssetUnit("mainnet", "chris")
 	wantErr := errors.New("node unavailable")
 	lk := &fakeAssetLookup{results: map[string]lookupResult{
-		classic: {addrs: []chain.AssetAddress{{Address: "addr1classic", Quantity: "1"}}},
-		cip68:   {err: wantErr},
+		classic: {
+			addrs: []chain.AssetAddress{
+				{Address: "addr1classic", Quantity: "1"},
+			},
+		},
+		cip68: {err: wantErr},
 	}}
 
 	_, _, err := Resolve(context.Background(), lk, "mainnet", "$chris")

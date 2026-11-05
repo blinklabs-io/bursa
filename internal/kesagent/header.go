@@ -25,7 +25,9 @@ import (
 
 // ErrInvalidHeader is returned when a sign request is not a block header body
 // matching the agent's installed key and operational certificate.
-var ErrInvalidHeader = errors.New("kesagent: sign request is not a matching Praos header body")
+var ErrInvalidHeader = errors.New(
+	"kesagent: sign request is not a matching Praos header body",
+)
 
 // checkHeaderLocked verifies that msg is a Babbage/Conway header body (the
 // Praos eras) for the requested KES period whose operational certificate
@@ -40,20 +42,39 @@ func (a *Agent) checkHeaderLocked(period uint64, msg []byte) error {
 		return fmt.Errorf("%w: %d trailing bytes", ErrInvalidHeader, len(msg)-n)
 	}
 	if got := hb.Slot / a.cfg.SlotsPerKESPeriod; got != period {
-		return fmt.Errorf("%w: slot %d is in KES period %d, requested %d", ErrInvalidHeader, hb.Slot, got, period)
+		return fmt.Errorf(
+			"%w: slot %d is in KES period %d, requested %d",
+			ErrInvalidHeader,
+			hb.Slot,
+			got,
+			period,
+		)
 	}
 	if !bytes.Equal(hb.IssuerVkey[:], a.cfg.ColdVKey) {
-		return fmt.Errorf("%w: issuer key is not this pool's cold key", ErrInvalidHeader)
+		return fmt.Errorf(
+			"%w: issuer key is not this pool's cold key",
+			ErrInvalidHeader,
+		)
 	}
 	oc := hb.OpCert
 	if !bytes.Equal(oc.HotVkey, a.active.vkey) {
-		return fmt.Errorf("%w: operational certificate names a different KES key", ErrInvalidHeader)
+		return fmt.Errorf(
+			"%w: operational certificate names a different KES key",
+			ErrInvalidHeader,
+		)
 	}
-	if oc.SequenceNumber != a.active.issueNumber || oc.KesPeriod != a.active.startPeriod {
-		return fmt.Errorf("%w: operational certificate counter/period do not match the installed one", ErrInvalidHeader)
+	if oc.SequenceNumber != a.active.issueNumber ||
+		oc.KesPeriod != a.active.startPeriod {
+		return fmt.Errorf(
+			"%w: operational certificate counter/period do not match the installed one",
+			ErrInvalidHeader,
+		)
 	}
 	if !bytes.Equal(oc.Signature, a.active.coldSig) {
-		return fmt.Errorf("%w: operational certificate cold signature is not the installed one", ErrInvalidHeader)
+		return fmt.Errorf(
+			"%w: operational certificate cold signature is not the installed one",
+			ErrInvalidHeader,
+		)
 	}
 	return nil
 }

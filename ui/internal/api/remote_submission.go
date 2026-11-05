@@ -8,10 +8,13 @@ import (
 )
 
 func registerRemoteSubmission(mux *http.ServeMux, svc *remotesubmit.Service) {
-	mux.HandleFunc("GET /remote-submission", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, svc.Status())
-	})
+	mux.HandleFunc(
+		"GET /remote-submission",
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, svc.Status())
+		},
+	)
 	mutate := func(action func() (remotesubmit.Status, error)) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			status, err := action()

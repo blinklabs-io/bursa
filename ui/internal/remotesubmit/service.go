@@ -33,10 +33,12 @@ const (
 )
 
 var (
-	ErrDisabled      = errors.New("remote submission is disabled")
-	ErrUnauthorized  = errors.New("remote submission capability is invalid")
-	ErrRateLimited   = errors.New("remote submission rate limit exceeded")
-	ErrDuplicate     = errors.New("transaction was already submitted for approval")
+	ErrDisabled     = errors.New("remote submission is disabled")
+	ErrUnauthorized = errors.New("remote submission capability is invalid")
+	ErrRateLimited  = errors.New("remote submission rate limit exceeded")
+	ErrDuplicate    = errors.New(
+		"transaction was already submitted for approval",
+	)
 	ErrIncomplete    = errors.New("transaction is not fully signed")
 	ErrStaleApproval = errors.New("remote submission access was revoked")
 )
@@ -47,7 +49,12 @@ type Submitter interface {
 }
 
 type Approver interface {
-	ApproveSubmission(context.Context, string, json.RawMessage, func(context.Context) (string, error)) (string, error)
+	ApproveSubmission(
+		context.Context,
+		string,
+		json.RawMessage,
+		func(context.Context) (string, error),
+	) (string, error)
 }
 
 type state struct {
@@ -80,16 +87,28 @@ type Service struct {
 	nextActive uint64
 }
 
-func New(path, publicURL string, submitter Submitter, approver Approver) (*Service, error) {
+func New(
+	path, publicURL string,
+	submitter Submitter,
+	approver Approver,
+) (*Service, error) {
 	u, err := url.Parse(publicURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("remote submission public URL must be an HTTPS origin")
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		u.RawQuery != "" ||
+		u.Fragment != "" {
+		return nil, errors.New(
+			"remote submission public URL must be an HTTPS origin",
+		)
 	}
 	if strings.TrimRight(u.Path, "/") != "" {
-		return nil, errors.New("remote submission public URL must not contain a path")
+		return nil, errors.New(
+			"remote submission public URL must not contain a path",
+		)
 	}
 	if submitter == nil || approver == nil {
-		return nil, errors.New("remote submission requires a submitter and approval service")
+		return nil, errors.New(
+			"remote submission requires a submitter and approval service",
+		)
 	}
 	s := &Service{
 		path: path, publicURL: strings.TrimRight(publicURL, "/"), submitter: submitter,
@@ -102,7 +121,9 @@ func New(path, publicURL string, submitter Submitter, approver Approver) (*Servi
 			return nil, fmt.Errorf("parse remote submission state: %w", err)
 		}
 		if loaded.Enabled && !validToken(loaded.Token) {
-			return nil, errors.New("remote submission state has an invalid capability")
+			return nil, errors.New(
+				"remote submission state has an invalid capability",
+			)
 		}
 		s.state = loaded
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -172,7 +193,8 @@ func (s *Service) Disable() (Status, error) {
 	if err != nil {
 		// Removing the prior enabled snapshot preserves revocation across a
 		// restart when the atomic replacement itself could not be completed.
-		if removeErr := os.Remove(s.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		if removeErr := os.Remove(s.path); removeErr != nil &&
+			!errors.Is(removeErr, os.ErrNotExist) {
 			err = errors.Join(err, removeErr)
 		}
 	}
@@ -251,11 +273,19 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mediaType := strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]); mediaType != "application/cbor" {
-		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/cbor")
+		writeError(
+			w,
+			http.StatusUnsupportedMediaType,
+			"Content-Type must be application/cbor",
+		)
 		return
 	}
 	if r.ContentLength > MaxTransactionBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "transaction exceeds size limit")
+		writeError(
+			w,
+			http.StatusRequestEntityTooLarge,
+			"transaction exceeds size limit",
+		)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, MaxTransactionBytes+1))
@@ -268,7 +298,11 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > MaxTransactionBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "transaction exceeds size limit")
+		writeError(
+			w,
+			http.StatusRequestEntityTooLarge,
+			"transaction exceeds size limit",
+		)
 		return
 	}
 
@@ -300,31 +334,46 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"summary":        summary,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not prepare approval")
+		writeError(
+			w,
+			http.StatusInternalServerError,
+			"could not prepare approval",
+		)
 		return
 	}
 	origin := "Remote transaction submission"
-	hash, err := s.approver.ApproveSubmission(r.Context(), origin, params, func(ctx context.Context) (string, error) {
-		submitCtx, activeID, ok := s.beginSubmission(ctx, generation, token)
-		if !ok {
-			return "", ErrStaleApproval
-		}
-		result, err := s.submitter.SubmitTxCbor(submitCtx, txHex)
-		if !s.finishSubmission(activeID, generation, token) {
-			return "", ErrStaleApproval
-		}
-		return result.TxHash, err
-	})
+	hash, err := s.approver.ApproveSubmission(
+		r.Context(),
+		origin,
+		params,
+		func(ctx context.Context) (string, error) {
+			submitCtx, activeID, ok := s.beginSubmission(ctx, generation, token)
+			if !ok {
+				return "", ErrStaleApproval
+			}
+			result, err := s.submitter.SubmitTxCbor(submitCtx, txHex)
+			if !s.finishSubmission(activeID, generation, token) {
+				return "", ErrStaleApproval
+			}
+			return result.TxHash, err
+		},
+	)
 	if err != nil {
 		switch {
-		case errors.Is(err, connector.ErrUserDeclined), errors.Is(err, ErrStaleApproval):
+		case errors.Is(err, connector.ErrUserDeclined),
+			errors.Is(err, ErrStaleApproval):
 			writeError(w, http.StatusForbidden, err.Error())
 		case errors.Is(err, connector.ErrTimeout):
 			writeError(w, http.StatusRequestTimeout, "approval timed out")
-		case errors.Is(err, connector.ErrQueueFull), errors.Is(err, ErrRateLimited):
+		case errors.Is(err, connector.ErrQueueFull),
+			errors.Is(err, ErrRateLimited):
 			writeError(w, http.StatusTooManyRequests, err.Error())
 		default:
-			writeError(w, http.StatusBadGateway, "transaction submission failed")
+			writeError(
+				w,
+				http.StatusBadGateway,
+				"transaction submission failed",
+			)
 		}
 		return
 	}
@@ -333,7 +382,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func tokenFromPath(path string) (string, bool) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) != 4 || parts[1] != "api" || parts[2] != "submit" || parts[3] != "tx" || !validToken(parts[0]) {
+	if len(parts) != 4 || parts[1] != "api" || parts[2] != "submit" ||
+		parts[3] != "tx" ||
+		!validToken(parts[0]) {
 		return "", false
 	}
 	return parts[0], true
@@ -345,13 +396,18 @@ func (s *Service) authorize(token string) (uint64, error) {
 	if !s.state.Enabled {
 		return 0, ErrDisabled
 	}
-	if len(token) != len(s.state.Token) || subtle.ConstantTimeCompare([]byte(token), []byte(s.state.Token)) != 1 {
+	if len(token) != len(s.state.Token) ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(s.state.Token)) != 1 {
 		return 0, ErrUnauthorized
 	}
 	return s.generation, nil
 }
 
-func (s *Service) beginSubmission(parent context.Context, generation uint64, token string) (context.Context, uint64, bool) {
+func (s *Service) beginSubmission(
+	parent context.Context,
+	generation uint64,
+	token string,
+) (context.Context, uint64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.generationActiveLocked(generation, token) {
@@ -374,7 +430,8 @@ func (s *Service) finishSubmission(id, generation uint64, token string) bool {
 }
 
 func (s *Service) generationActiveLocked(generation uint64, token string) bool {
-	return s.state.Enabled && s.generation == generation && len(token) == len(s.state.Token) &&
+	return s.state.Enabled && s.generation == generation &&
+		len(token) == len(s.state.Token) &&
 		subtle.ConstantTimeCompare([]byte(token), []byte(s.state.Token)) == 1
 }
 
@@ -427,7 +484,11 @@ func writeError(w http.ResponseWriter, status int, message string) {
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		http.Error(w, "response encoding failed", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"response encoding failed",
+			http.StatusInternalServerError,
+		)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

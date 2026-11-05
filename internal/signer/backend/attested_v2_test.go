@@ -36,7 +36,10 @@ func TestAttestedSummaryBindingVector(t *testing.T) {
 	era := uint(6)
 	req := AttestedRequest{
 		Version: AttestedProtocolSummary, Purpose: PurposeTxBody, KeyHash: strings.Repeat("ab", 28), Role: KeyTypePool,
-		Nonce: bytes.Repeat([]byte{1}, 32), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview", Era: &era,
+		Nonce: bytes.Repeat(
+			[]byte{1},
+			32,
+		), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview", Era: &era,
 	}
 	sig := bytes.Repeat([]byte{4}, 64)
 	const want = "b60325204c042b454e43758b76753047c7a7cc94329a4dfe6c0bc671b34d4c45"
@@ -99,15 +102,24 @@ func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Nonce []byte `json:"nonce"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		keys := []AttestedKeyInfo{{Role: KeyTypePool, PublicKey: d.pool.Public().(ed25519.PublicKey)}}
+		keys := []AttestedKeyInfo{
+			{Role: KeyTypePool, PublicKey: d.pool.Public().(ed25519.PublicKey)},
+		}
 		_ = json.NewEncoder(w).Encode(AttestedInventory{
 			Version: AttestedProtocol, Keys: keys,
-			Attestation: ed25519.Sign(d.identity, InventoryBinding(in.Nonce, keys)),
+			Attestation: ed25519.Sign(
+				d.identity,
+				InventoryBinding(in.Nonce, keys),
+			),
 		})
 	case "/v1/challenge":
-		c := bytes.Repeat([]byte{byte(len(d.issued) + 1)}, attestedChallengeSize)
+		c := bytes.Repeat(
+			[]byte{byte(len(d.issued) + 1)},
+			attestedChallengeSize,
+		)
 		d.issued = append(d.issued, c)
-		_ = json.NewEncoder(w).Encode(map[string]any{"version": AttestedProtocol, "challenge": c})
+		_ = json.NewEncoder(w).
+			Encode(map[string]any{"version": AttestedProtocol, "challenge": c})
 	case "/v1/sign":
 		if d.failSign {
 			http.Error(w, "unavailable", http.StatusInternalServerError)
@@ -124,9 +136,14 @@ func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (d *v2Device) answer(req AttestedRequest) AttestedResponse {
 	resp := AttestedResponse{Version: AttestedProtocol, Nonce: req.Nonce}
 	// the host must hold the latest challenge, which a request consumes
-	fresh := len(d.issued) > 0 && bytes.Equal(req.Challenge, d.issued[len(d.issued)-1])
+	fresh := len(d.issued) > 0 &&
+		bytes.Equal(req.Challenge, d.issued[len(d.issued)-1])
 	if !bytes.Equal(req.HostKey, d.host) || !fresh ||
-		!ed25519.Verify(d.host, AttestedRequestBinding(req), req.HostSignature) {
+		!ed25519.Verify(
+			d.host,
+			AttestedRequestBinding(req),
+			req.HostSignature,
+		) {
 		resp.Error = "host authentication failed"
 		return resp
 	}
@@ -139,14 +156,20 @@ func (d *v2Device) answer(req AttestedRequest) AttestedResponse {
 			summary = testDeviceSummary
 		}
 		resp.Summary = summary
-		resp.BindingSignature = ed25519.Sign(d.pool, AttestedResponseBinding(req, resp.Signature, summary))
+		resp.BindingSignature = ed25519.Sign(
+			d.pool,
+			AttestedResponseBinding(req, resp.Signature, summary),
+		)
 	}
 	switch {
 	case d.behavior == "v1Summary":
 		hash := blake2b.Sum256(req.Payload)
 		resp.Signature = ed25519.Sign(d.pool, hash[:])
 		resp.Summary = testDeviceSummary
-		resp.BindingSignature = ed25519.Sign(d.pool, AttestedResponseBinding(req, resp.Signature, resp.Summary))
+		resp.BindingSignature = ed25519.Sign(
+			d.pool,
+			AttestedResponseBinding(req, resp.Signature, resp.Summary),
+		)
 	case d.behavior == "echoV2":
 		sign(AttestedProtocolSummary)
 	case d.behavior == "echoV1" && req.Version == AttestedProtocolSummary:
@@ -171,12 +194,21 @@ func (d *v2Device) answer(req AttestedRequest) AttestedResponse {
 
 // newV2Backend loads an attested backend over a host-key HTTP enclave served
 // by a v2Device with the given behavior.
-func newV2Backend(t *testing.T, behavior string, mode AttestedProtocolMode) (*v2Device, *AttestedBackend, TxBodySigner) {
+func newV2Backend(
+	t *testing.T,
+	behavior string,
+	mode AttestedProtocolMode,
+) (*v2Device, *AttestedBackend, TxBodySigner) {
 	t.Helper()
 	_, identity, _ := ed25519.GenerateKey(nil)
 	_, pool, _ := ed25519.GenerateKey(nil)
 	host, hostPriv, _ := ed25519.GenerateKey(nil)
-	dev := &v2Device{behavior: behavior, identity: identity, pool: pool, host: host}
+	dev := &v2Device{
+		behavior: behavior,
+		identity: identity,
+		pool:     pool,
+		host:     host,
+	}
 	srv := httptest.NewServer(dev)
 	t.Cleanup(srv.Close)
 	enclave, err := NewHostKeyHTTPEnclave(srv.URL, "otg@preview", hostPriv)
@@ -187,11 +219,19 @@ func newV2Backend(t *testing.T, behavior string, mode AttestedProtocolMode) (*v2
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := NewProfiledAttestedBackend("armory", "otg@preview", enclave, verifier).WithProtocolMode(mode)
+	b := NewProfiledAttestedBackend(
+		"armory",
+		"otg@preview",
+		enclave,
+		verifier,
+	).WithProtocolMode(mode)
 	if err := b.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	ref, err := b.GetKey(t.Context(), HashPublicKey(pool.Public().(ed25519.PublicKey)))
+	ref, err := b.GetKey(
+		t.Context(),
+		HashPublicKey(pool.Public().(ed25519.PublicKey)),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +245,13 @@ func newV2Backend(t *testing.T, behavior string, mode AttestedProtocolMode) (*v2
 func (d *v2Device) seen() (versions []string, nonces [][]byte, challenges int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return append([]string(nil), d.versions...), append([][]byte(nil), d.nonces...), len(d.issued)
+	return append(
+			[]string(nil),
+			d.versions...), append(
+			[][]byte(nil),
+			d.nonces...), len(
+			d.issued,
+		)
 }
 
 func sameStrings(a, b []string) bool {
@@ -229,8 +275,13 @@ func TestAttestedV2ReturnsBoundSummary(t *testing.T) {
 				t.Fatalf("summary = %q, want %q", summary, testDeviceSummary)
 			}
 			versions, _, challenges := dev.seen()
-			if !sameStrings(versions, []string{AttestedProtocolSummary}) || challenges != 1 {
-				t.Fatalf("sign requests at %v with %d challenges, want one at version 2", versions, challenges)
+			if !sameStrings(versions, []string{AttestedProtocolSummary}) ||
+				challenges != 1 {
+				t.Fatalf(
+					"sign requests at %v with %d challenges, want one at version 2",
+					versions,
+					challenges,
+				)
 			}
 		})
 	}
@@ -246,7 +297,10 @@ func TestAttestedVersion1ModeSendsVersion1(t *testing.T) {
 	if summary != "" {
 		t.Fatalf("version 1 reply summary = %q", summary)
 	}
-	if versions, _, _ := dev.seen(); !sameStrings(versions, []string{AttestedProtocol}) {
+	if versions, _, _ := dev.seen(); !sameStrings(
+		versions,
+		[]string{AttestedProtocol},
+	) {
 		t.Fatalf("sign requests at %v, want version 1 only", versions)
 	}
 }
@@ -262,7 +316,10 @@ func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 		t.Fatalf("signature %d bytes, summary %q", len(sig), summary)
 	}
 	versions, nonces, challenges := dev.seen()
-	if !sameStrings(versions, []string{AttestedProtocolSummary, AttestedProtocol}) {
+	if !sameStrings(
+		versions,
+		[]string{AttestedProtocolSummary, AttestedProtocol},
+	) {
 		t.Fatalf("sign requests at %v, want version 2 then version 1", versions)
 	}
 	if challenges != 2 {
@@ -276,15 +333,24 @@ func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err != nil {
 		t.Fatalf("second sign: %v", err)
 	}
-	if versions, _, _ := dev.seen(); !sameStrings(versions, []string{AttestedProtocolSummary, AttestedProtocol, AttestedProtocol}) {
-		t.Fatalf("sign requests at %v, want the second at version 1 only", versions)
+	if versions, _, _ := dev.seen(); !sameStrings(
+		versions,
+		[]string{AttestedProtocolSummary, AttestedProtocol, AttestedProtocol},
+	) {
+		t.Fatalf(
+			"sign requests at %v, want the second at version 1 only",
+			versions,
+		)
 	}
 
 	// a reload re-probes
 	if err := b.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	ref, err := b.GetKey(t.Context(), HashPublicKey(dev.pool.Public().(ed25519.PublicKey)))
+	ref, err := b.GetKey(
+		t.Context(),
+		HashPublicKey(dev.pool.Public().(ed25519.PublicKey)),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,8 +358,12 @@ func TestAttestedNegotiateFallsBackToVersion1(t *testing.T) {
 		t.Fatalf("sign after reload: %v", err)
 	}
 	versions, _, _ = dev.seen()
-	if len(versions) != 5 || versions[3] != AttestedProtocolSummary || versions[4] != AttestedProtocol {
-		t.Fatalf("sign requests at %v, want a version 2 probe after reload", versions)
+	if len(versions) != 5 || versions[3] != AttestedProtocolSummary ||
+		versions[4] != AttestedProtocol {
+		t.Fatalf(
+			"sign requests at %v, want a version 2 probe after reload",
+			versions,
+		)
 	}
 }
 
@@ -307,7 +377,10 @@ func TestAttestedRequireVersion2RefusesFallback(t *testing.T) {
 	if !errors.Is(err, ErrAttestedProtocol) {
 		t.Fatalf("error = %v, want ErrAttestedProtocol", err)
 	}
-	if versions, _, _ := dev.seen(); !sameStrings(versions, []string{AttestedProtocolSummary}) {
+	if versions, _, _ := dev.seen(); !sameStrings(
+		versions,
+		[]string{AttestedProtocolSummary},
+	) {
 		t.Fatalf("sign requests at %v, want exactly one at version 2", versions)
 	}
 }
@@ -398,7 +471,12 @@ func TestAttestedNegotiateReprobesAfterFailedRoundTrip(t *testing.T) {
 	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); err != nil {
 		t.Fatalf("sign after recovery: %v", err)
 	}
-	want := []string{AttestedProtocolSummary, AttestedProtocol, AttestedProtocolSummary, AttestedProtocol}
+	want := []string{
+		AttestedProtocolSummary,
+		AttestedProtocol,
+		AttestedProtocolSummary,
+		AttestedProtocol,
+	}
 	if versions, _, _ := dev.seen(); !sameStrings(versions, want) {
 		t.Fatalf("sign requests at %v, want %v", versions, want)
 	}
@@ -445,7 +523,12 @@ func TestClipSummary(t *testing.T) {
 	long := strings.Repeat("a", attestedMaxSummary-1) + "\u00e9" + "tail"
 	want := strings.Repeat("a", attestedMaxSummary-1) + "..."
 	if got := clipSummary(long); got != want {
-		t.Fatalf("clipped to %d bytes ending %q, want %d bytes", len(got), got[len(got)-8:], len(want))
+		t.Fatalf(
+			"clipped to %d bytes ending %q, want %d bytes",
+			len(got),
+			got[len(got)-8:],
+			len(want),
+		)
 	}
 }
 
@@ -460,10 +543,17 @@ func TestAttestedNegotiateLateReplyAfterLoadDoesNotPin(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); !errors.Is(err, ErrKeyNotFound) {
+	if _, _, err := signer.SignTxBody(t.Context(), []byte{0xa0}, 6); !errors.Is(
+		err,
+		ErrKeyNotFound,
+	) {
 		t.Fatalf("error = %v, want ErrKeyNotFound", err)
 	}
 	if v := b.requestVersion(); v != AttestedProtocolSummary {
-		t.Fatalf("after reload the backend starts at %q, want %q", v, AttestedProtocolSummary)
+		t.Fatalf(
+			"after reload the backend starts at %q, want %q",
+			v,
+			AttestedProtocolSummary,
+		)
 	}
 }

@@ -45,10 +45,32 @@ type fakeCardano struct {
 	assembled []byte
 }
 
-func (f fakeCardano) Inspect([]byte, uint) (*bursa.TxInspection, error) { return f.insp, nil }
-func (f fakeCardano) Operations([]byte, uint) (policy.TxOps, error)     { return f.ops, f.opsErr }
-func (f fakeCardano) TxID([]byte, uint) ([]byte, error)                 { return f.txid, nil }
-func (f fakeCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
+func (f fakeCardano) Inspect(
+	[]byte,
+	uint,
+) (*bursa.TxInspection, error) {
+	return f.insp, nil
+}
+
+func (f fakeCardano) Operations(
+	[]byte,
+	uint,
+) (policy.TxOps, error) {
+	return f.ops, f.opsErr
+}
+
+func (f fakeCardano) TxID(
+	[]byte,
+	uint,
+) ([]byte, error) {
+	return f.txid, nil
+}
+
+func (f fakeCardano) Assemble(
+	[]byte,
+	uint,
+	[]lcommon.VkeyWitness,
+) ([]byte, error) {
 	return f.assembled, nil
 }
 
@@ -69,7 +91,11 @@ func (panicCardano) TxID([]byte, uint) ([]byte, error) {
 	panic("TxID called for rejected signer list")
 }
 
-func (panicCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
+func (panicCardano) Assemble(
+	[]byte,
+	uint,
+	[]lcommon.VkeyWitness,
+) ([]byte, error) {
 	panic("Assemble called for rejected signer list")
 }
 
@@ -104,7 +130,11 @@ func (b fakeBackend) Name() string { return "fake" }
 func (b fakeBackend) ListKeys(context.Context) ([]backend.KeyRef, error) {
 	return []backend.KeyRef{b.key}, nil
 }
-func (b fakeBackend) GetKey(_ context.Context, h backend.KeyHash) (backend.KeyRef, error) {
+
+func (b fakeBackend) GetKey(
+	_ context.Context,
+	h backend.KeyHash,
+) (backend.KeyRef, error) {
 	if h == b.key.hash {
 		return b.key, nil
 	}
@@ -120,7 +150,13 @@ func newFakeKey(t *testing.T) *fakeKey {
 	return &fakeKey{pub: pub, priv: priv, hash: backend.HashPublicKey(pub)}
 }
 
-func newCoordinator(t *testing.T, k *fakeKey, pol policy.KeyPolicy, wm watermark.Watermark, card operation.Cardano) (*Coordinator, *Metrics) {
+func newCoordinator(
+	t *testing.T,
+	k *fakeKey,
+	pol policy.KeyPolicy,
+	wm watermark.Watermark,
+	card operation.Cardano,
+) (*Coordinator, *Metrics) {
 	t.Helper()
 	pol.Hash = k.hash.String()
 	eng, err := policy.NewEngine([]policy.KeyPolicy{pol})
@@ -141,15 +177,33 @@ func newCoordinator(t *testing.T, k *fakeKey, pol policy.KeyPolicy, wm watermark
 func TestSignTx_HappyPath(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{
-		insp:      &bursa.TxInspection{TxId: "abc", TTL: 10, Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1000000"}}},
+		insp: &bursa.TxInspection{
+			TxId: "abc",
+			TTL:  10,
+			Outputs: []bursa.TxOutput{
+				{Address: "addr1ok", Lovelace: "1000000"},
+			},
+		},
 		txid:      make([]byte, 32),
 		assembled: []byte{0x01, 0x02},
 	}
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
-		watermark.NewMemWatermark(), card)
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
+		watermark.NewMemWatermark(),
+		card,
+	)
 
-	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	res, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
@@ -163,12 +217,27 @@ func TestSignTx_HappyPath(t *testing.T) {
 
 func TestSignTx_PolicyDeny(t *testing.T) {
 	k := newFakeKey(t)
-	card := fakeCardano{insp: &bursa.TxInspection{CertificateCount: 1}, txid: make([]byte, 32)}
-	c, m := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}, // certs not allowed
-		watermark.NewMemWatermark(), card)
+	card := fakeCardano{
+		insp: &bursa.TxInspection{CertificateCount: 1},
+		txid: make([]byte, 32),
+	}
+	c, m := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		}, // certs not allowed
+		watermark.NewMemWatermark(),
+		card,
+	)
 
-	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	res, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if err != nil {
 		t.Fatalf("SignTx returned hard error: %v", err)
 	}
@@ -183,12 +252,24 @@ func TestSignTx_PolicyDeny(t *testing.T) {
 func TestSignTx_UnknownKey(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
-		watermark.NewMemWatermark(), card)
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
+		watermark.NewMemWatermark(),
+		card,
+	)
 
 	other := newFakeKey(t)
-	_, perr, _ := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{other.hash.String()})
+	_, perr, _ := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{other.hash.String()},
+	)
 	if len(perr) != 1 || perr[0].Code != CodeNotFound {
 		t.Fatalf("expected not-found, got %+v", perr)
 	}
@@ -198,10 +279,22 @@ func TestSignTx_ExtendedOnUnsupportedBackend(t *testing.T) {
 	k := newFakeKey(t)
 	k.signErr = backend.ErrUnsupportedExtended
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
-		watermark.NewMemWatermark(), card)
-	_, perr, _ := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
+		watermark.NewMemWatermark(),
+		card,
+	)
+	_, perr, _ := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if len(perr) != 1 || perr[0].Code != CodeUnsupported {
 		t.Fatalf("expected unsupported, got %+v", perr)
 	}
@@ -209,21 +302,52 @@ func TestSignTx_ExtendedOnUnsupportedBackend(t *testing.T) {
 
 type conflictWatermark struct{}
 
-func (conflictWatermark) Check(context.Context, backend.KeyHash, string, []byte) error {
+func (conflictWatermark) Check(
+	context.Context,
+	backend.KeyHash,
+	string,
+	[]byte,
+) error {
 	return watermark.ErrConflict
 }
-func (conflictWatermark) CheckAndCommit(context.Context, backend.KeyHash, string, []byte) error {
+
+func (conflictWatermark) CheckAndCommit(
+	context.Context,
+	backend.KeyHash,
+	string,
+	[]byte,
+) error {
 	return watermark.ErrConflict
 }
-func (conflictWatermark) Commit(context.Context, backend.KeyHash, string, []byte) error { return nil }
+
+func (conflictWatermark) Commit(
+	context.Context,
+	backend.KeyHash,
+	string,
+	[]byte,
+) error {
+	return nil
+}
 
 func TestSignTx_WatermarkConflict(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c, m := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
-		conflictWatermark{}, card)
-	_, perr, _ := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	c, m := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
+		conflictWatermark{},
+		card,
+	)
+	_, perr, _ := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if len(perr) != 1 || perr[0].Code != CodeConflict {
 		t.Fatalf("expected conflict, got %+v", perr)
 	}
@@ -318,7 +442,11 @@ func TestValidateSignerListAcceptsCardanoEnvelopeLimit(t *testing.T) {
 		t.Fatalf("ValidateSignerList: %v", err)
 	}
 	if len(resolved) != MaxTxSigners {
-		t.Fatalf("resolved signer count = %d, want %d", len(resolved), MaxTxSigners)
+		t.Fatalf(
+			"resolved signer count = %d, want %d",
+			len(resolved),
+			MaxTxSigners,
+		)
 	}
 }
 
@@ -327,7 +455,10 @@ func TestSignTxRejectsInvalidSignerListsBeforeCardanoWork(t *testing.T) {
 	coord, _ := newCoordinator(
 		t,
 		key,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
 		watermark.NewMemWatermark(),
 		panicCardano{},
 	)
@@ -341,19 +472,40 @@ func TestSignTxRejectsInvalidSignerListsBeforeCardanoWork(t *testing.T) {
 		signers     []string
 		wantErrPart string
 	}{
-		{name: "too many", signers: oversized, wantErrPart: fmt.Sprintf("at most %d signers", MaxTxSigners)},
-		{name: "duplicate", signers: []string{key.hash.String(), key.hash.String()}, wantErrPart: "duplicate signer"},
-		{name: "invalid", signers: []string{"not-a-signer"}, wantErrPart: "invalid signer"},
+		{
+			name:        "too many",
+			signers:     oversized,
+			wantErrPart: fmt.Sprintf("at most %d signers", MaxTxSigners),
+		},
+		{
+			name:        "duplicate",
+			signers:     []string{key.hash.String(), key.hash.String()},
+			wantErrPart: "duplicate signer",
+		},
+		{
+			name:        "invalid",
+			signers:     []string{"not-a-signer"},
+			wantErrPart: "invalid signer",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := coord.SignTx(t.Context(), []byte("not-cbor"), testTxEra, tt.signers)
+			_, _, err := coord.SignTx(
+				t.Context(),
+				[]byte("not-cbor"),
+				testTxEra,
+				tt.signers,
+			)
 			if err == nil || !IsBadRequest(err) {
 				t.Fatalf("SignTx error = %v, want bad request", err)
 			}
 			if !strings.Contains(err.Error(), tt.wantErrPart) {
-				t.Fatalf("SignTx error = %q, want substring %q", err, tt.wantErrPart)
+				t.Fatalf(
+					"SignTx error = %q, want substring %q",
+					err,
+					tt.wantErrPart,
+				)
 			}
 		})
 	}
@@ -370,7 +522,10 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 
 	t.Run("ModeOff", func(t *testing.T) {
 		k := newFakeKey(t)
-		pol := policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+		pol := policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		}
 		pol.Hash = k.hash.String()
 		eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 		c := New(Deps{
@@ -380,7 +535,12 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 			WMMode:    watermark.ModeOff,
 			Cardano:   baseCard,
 		})
-		res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+		res, perr, err := c.SignTx(
+			context.Background(),
+			[]byte(testTxCbor),
+			testTxEra,
+			[]string{k.hash.String()},
+		)
 		if err != nil {
 			t.Fatalf("SignTx (ModeOff): %v", err)
 		}
@@ -394,7 +554,10 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 
 	t.Run("ModeWarn", func(t *testing.T) {
 		k := newFakeKey(t)
-		pol := policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+		pol := policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		}
 		pol.Hash = k.hash.String()
 		eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 		c := New(Deps{
@@ -404,7 +567,12 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 			WMMode:    watermark.ModeWarn,
 			Cardano:   baseCard,
 		})
-		res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+		res, perr, err := c.SignTx(
+			context.Background(),
+			[]byte(testTxCbor),
+			testTxEra,
+			[]string{k.hash.String()},
+		)
 		if err != nil {
 			t.Fatalf("SignTx (ModeWarn): %v", err)
 		}
@@ -412,7 +580,10 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 			t.Fatalf("ModeWarn: unexpected per-signer errors: %+v", perr)
 		}
 		if len(res.Witnesses) != 1 {
-			t.Fatalf("ModeWarn: expected 1 witness (conflict warned, not blocked), got %d", len(res.Witnesses))
+			t.Fatalf(
+				"ModeWarn: expected 1 witness (conflict warned, not blocked), got %d",
+				len(res.Witnesses),
+			)
 		}
 	})
 }
@@ -421,7 +592,10 @@ func TestSignTx_WatermarkModes(t *testing.T) {
 type badSigKey struct{ *fakeKey }
 
 func (b *badSigKey) Sign(_ context.Context, _ []byte) ([]byte, error) {
-	return make([]byte, 64), nil // correct length, wrong bytes → Verify must fail
+	return make(
+		[]byte,
+		64,
+	), nil // correct length, wrong bytes → Verify must fail
 }
 
 // TestSignTx_VerifyFailure ensures a backend that returns a wrong (but
@@ -429,7 +603,10 @@ func (b *badSigKey) Sign(_ context.Context, _ []byte) ([]byte, error) {
 func TestSignTx_VerifyFailure(t *testing.T) {
 	base := newFakeKey(t)
 	k := &badSigKey{fakeKey: base}
-	pol := policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	pol := policy.KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx:              &policy.TxPolicy{},
+	}
 	pol.Hash = k.hash.String()
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
@@ -441,7 +618,12 @@ func TestSignTx_VerifyFailure(t *testing.T) {
 		WMMode:    watermark.ModeEnforce,
 		Cardano:   card,
 	})
-	_, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	_, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if err != nil {
 		t.Fatalf("SignTx: unexpected hard error: %v", err)
 	}
@@ -457,7 +639,11 @@ func (b badKeyBackend) Name() string { return "bad-sig" }
 func (b badKeyBackend) ListKeys(_ context.Context) ([]backend.KeyRef, error) {
 	return []backend.KeyRef{b.k}, nil
 }
-func (b badKeyBackend) GetKey(_ context.Context, h backend.KeyHash) (backend.KeyRef, error) {
+
+func (b badKeyBackend) GetKey(
+	_ context.Context,
+	h backend.KeyHash,
+) (backend.KeyRef, error) {
 	if h == b.k.hash {
 		return b.k, nil
 	}
@@ -473,12 +659,23 @@ func TestSignTx_PartialSuccess(t *testing.T) {
 		txid:      make([]byte, 32),
 		assembled: []byte{0xAB},
 	}
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
-		watermark.NewMemWatermark(), card)
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
+		watermark.NewMemWatermark(),
+		card,
+	)
 
-	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra,
-		[]string{k.hash.String(), other.hash.String()})
+	res, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String(), other.hash.String()},
+	)
 	if err != nil {
 		t.Fatalf("SignTx: unexpected hard error: %v", err)
 	}
@@ -494,11 +691,23 @@ func TestSignTx_PartialSuccess(t *testing.T) {
 func TestSignTx_NoSigners(t *testing.T) {
 	k := newFakeKey(t)
 	card := fakeCardano{insp: &bursa.TxInspection{}, txid: make([]byte, 32)}
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
-		watermark.NewMemWatermark(), card)
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
+		watermark.NewMemWatermark(),
+		card,
+	)
 
-	_, _, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{})
+	_, _, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{},
+	)
 	if err == nil {
 		t.Fatal("expected hard error for empty signers, got nil")
 	}
@@ -516,7 +725,13 @@ func TestSignOpCert_PoolKeySucceeds(t *testing.T) {
 		policy.KeyPolicy{AllowedRequests: []string{"opcert"}},
 		watermark.NewMemWatermark(), fakeCardano{})
 
-	res, code, err := c.SignOpCert(context.Background(), make([]byte, kesVkeySize), 1, 2, k.hash.String())
+	res, code, err := c.SignOpCert(
+		context.Background(),
+		make([]byte, kesVkeySize),
+		1,
+		2,
+		k.hash.String(),
+	)
 	if err != nil {
 		t.Fatalf("SignOpCert: unexpected error: %v (code=%s)", err, code)
 	}
@@ -534,7 +749,13 @@ func TestSignOpCert_NonPoolKeyRejected(t *testing.T) {
 		policy.KeyPolicy{AllowedRequests: []string{"opcert"}},
 		watermark.NewMemWatermark(), fakeCardano{})
 
-	res, code, err := c.SignOpCert(context.Background(), make([]byte, kesVkeySize), 1, 2, k.hash.String())
+	res, code, err := c.SignOpCert(
+		context.Background(),
+		make([]byte, kesVkeySize),
+		1,
+		2,
+		k.hash.String(),
+	)
 	if err == nil {
 		t.Fatal("expected error for non-pool key, got nil")
 	}

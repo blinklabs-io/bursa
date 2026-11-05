@@ -62,7 +62,11 @@ func openForOwnershipAdoption(file *os.File) (windows.Handle, error) {
 		if errors.As(err, &status) {
 			err = status.Errno()
 		}
-		return 0, fmt.Errorf("failed to open %q for ownership adoption: %w", file.Name(), err)
+		return 0, fmt.Errorf(
+			"failed to open %q for ownership adoption: %w",
+			file.Name(),
+			err,
+		)
 	}
 	return handle, nil
 }
@@ -116,7 +120,10 @@ func ownerOnlySecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, string, error)
 		fmt.Sprintf("O:%[1]sD:P(A;;GA;;;%[1]s)", userSID),
 	)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create owner-only security descriptor: %w", err)
+		return nil, "", fmt.Errorf(
+			"failed to create owner-only security descriptor: %w",
+			err,
+		)
 	}
 	return descriptor, userSID, nil
 }
@@ -170,7 +177,10 @@ func restrictSecretKeyFilePermissions(file *os.File) error {
 		securityInformation,
 		newOwner, nil, dacl, nil,
 	); err != nil {
-		return fmt.Errorf("failed to set current-user ownership and DACL: %w", err)
+		return fmt.Errorf(
+			"failed to set current-user ownership and DACL: %w",
+			err,
+		)
 	}
 	return nil
 }
@@ -182,12 +192,19 @@ func checkOpenFilePermissions(file *os.File) error {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to get security info for %q: %w", file.Name(), err)
+		return fmt.Errorf(
+			"failed to get security info for %q: %w",
+			file.Name(),
+			err,
+		)
 	}
 	return checkOpenSecurityDescriptor(file.Name(), descriptor)
 }
 
-func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCRIPTOR) error {
+func checkOpenSecurityDescriptor(
+	path string,
+	descriptor *windows.SECURITY_DESCRIPTOR,
+) error {
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
 		return fmt.Errorf(
@@ -207,7 +224,11 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
-		return fmt.Errorf("failed to read security descriptor control for %q: %w", path, err)
+		return fmt.Errorf(
+			"failed to read security descriptor control for %q: %w",
+			path,
+			err,
+		)
 	}
 	if control&windows.SE_DACL_PROTECTED == 0 {
 		return fmt.Errorf(

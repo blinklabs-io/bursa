@@ -28,7 +28,9 @@ import (
 
 // ErrConsentRequired is returned when revealing a sealed survey would fetch a
 // drand beacon from a relay and the caller has not consented to that request.
-var ErrConsentRequired = errors.New("survey: fetching the drand beacon needs consent")
+var ErrConsentRequired = errors.New(
+	"survey: fetching the drand beacon needs consent",
+)
 
 // drandRelay is the public relay a consented reveal asks for the beacon. It is
 // the wallet's only drand contact: sealing is offline and nothing is fetched
@@ -40,7 +42,10 @@ const maxBeaconResponse = 8 << 10
 
 // newRelayFetcher returns a function that GETs one quicknet beacon signature
 // from the relay.
-func newRelayFetcher(client *http.Client, relay string) func(context.Context, uint64) ([]byte, error) {
+func newRelayFetcher(
+	client *http.Client,
+	relay string,
+) func(context.Context, uint64) ([]byte, error) {
 	return func(ctx context.Context, round uint64) ([]byte, error) {
 		url := fmt.Sprintf("%s/%s/public/%d", relay, QuicknetChainHash, round)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -53,7 +58,11 @@ func newRelayFetcher(client *http.Client, relay string) func(context.Context, ui
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("drand relay: status %d for round %d", resp.StatusCode, round)
+			return nil, fmt.Errorf(
+				"drand relay: status %d for round %d",
+				resp.StatusCode,
+				round,
+			)
 		}
 		var beacon struct {
 			Round     uint64 `json:"round"`
@@ -64,7 +73,10 @@ func newRelayFetcher(client *http.Client, relay string) func(context.Context, ui
 		}
 		sig, err := hex.DecodeString(beacon.Signature)
 		if err != nil || len(sig) == 0 || beacon.Round != round {
-			return nil, fmt.Errorf("drand relay: malformed beacon for round %d", round)
+			return nil, fmt.Errorf(
+				"drand relay: malformed beacon for round %d",
+				round,
+			)
 		}
 		return sig, nil
 	}
@@ -98,7 +110,10 @@ func (s *Service) cacheBeacon(round uint64, sig []byte) error {
 // rememberBeaconLocked refreshes a verified beacon and evicts the least
 // recently used round when the cache reaches its bound. The caller holds s.mu.
 func (s *Service) rememberBeaconLocked(round uint64, sig []byte) {
-	s.beaconOrder = slices.DeleteFunc(s.beaconOrder, func(existing uint64) bool { return existing == round })
+	s.beaconOrder = slices.DeleteFunc(
+		s.beaconOrder,
+		func(existing uint64) bool { return existing == round },
+	)
 	s.beacons[round] = slices.Clone(sig)
 	s.beaconOrder = append(s.beaconOrder, round)
 	if len(s.beaconOrder) > maxCachedBeacons {
@@ -120,7 +135,10 @@ type RevealRequest struct {
 // Reveal obtains and verifies the beacon for a sealed survey's reveal round,
 // remembers it so later reads unseal automatically, and returns the survey with
 // its revealed answers tallied.
-func (s *Service) Reveal(ctx context.Context, req RevealRequest) (Detail, error) {
+func (s *Service) Reveal(
+	ctx context.Context,
+	req RevealRequest,
+) (Detail, error) {
 	sn, err := s.snapshot(ctx)
 	if err != nil {
 		return Detail{}, err
@@ -146,7 +164,11 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (Detail, error)
 	return s.detail(ctx, sn, k)
 }
 
-func (s *Service) obtainBeacon(ctx context.Context, req RevealRequest, round uint64) error {
+func (s *Service) obtainBeacon(
+	ctx context.Context,
+	req RevealRequest,
+	round uint64,
+) error {
 	if req.Beacon != "" {
 		sig, err := hex.DecodeString(req.Beacon)
 		if err != nil {
@@ -155,7 +177,11 @@ func (s *Service) obtainBeacon(ctx context.Context, req RevealRequest, round uin
 		return s.cacheBeacon(round, sig)
 	}
 	if current := CurrentRound(time.Now()); current < round {
-		return invalidf("reveal round %d is not yet published (current round %d)", round, current)
+		return invalidf(
+			"reveal round %d is not yet published (current round %d)",
+			round,
+			current,
+		)
 	}
 	if !req.Consent {
 		return ErrConsentRequired

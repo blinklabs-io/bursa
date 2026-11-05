@@ -35,14 +35,22 @@ var (
 // the process. The lock file stays open and referenced, so the lock is
 // released only when the process exits.
 func lockState(dir string) error {
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(
+		filepath.Join(dir, "lock"),
+		os.O_RDWR|os.O_CREATE,
+		0o600,
+	)
 	if err != nil {
 		return err
 	}
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil { //nolint:gosec // a file descriptor fits an int
 		f.Close() //nolint:errcheck,gosec // the lock error is returned
-		return fmt.Errorf("state directory %s is in use by another armory-sim: %w", dir, err)
+		return fmt.Errorf(
+			"state directory %s is in use by another armory-sim: %w",
+			dir,
+			err,
+		)
 	}
 
 	heldLocksMu.Lock()
