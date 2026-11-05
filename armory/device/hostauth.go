@@ -210,8 +210,8 @@ func (s *Service) loadHostKeys(chip Chip) error {
 		s.logf("host key %x", keyHash(k))
 	}
 
-	// revoking the last key deletes the object, so a present list with no
-	// key is not a valid empty list
+	// the last key is never revoked and a wipe deletes the object, so a
+	// present list with no key is not a valid empty list
 	if len(entries) == 0 {
 		s.logf("host key list: present but empty")
 		s.hostKeysBad = true
