@@ -125,7 +125,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: Watermark conflict (would sign at or below a recorded period).
+          description: Watermark or counter conflict (would sign at or below a recorded period or opcert counter), or custody refused the opcert chain counter.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
