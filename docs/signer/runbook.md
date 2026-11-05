@@ -274,11 +274,18 @@ either request form, and refuses a chain counter above it with HTTP 409: the
 ledger only holds counters that were issued, so a higher value cannot be real
 and would raise the floor past every counter the ledger accepts. In `warn`
 mode the request is logged and signed, and neither the floor nor the record
-changes. A key with no record (first use, or signed before this record
-existed) is not bounded until its next opcert.
+changes.
+
+The same record bounds both forms from below, so switching forms cannot go
+back to an earlier counter. An `issue_counter` must be greater than it. A
+`chain_counter` request's issue number, `chain_counter + 1`, may equal it (a
+reissue) but not be lower. Either is otherwise refused with HTTP 409; in `warn`
+mode it is logged and signed, and the record does not change. A key with no
+record (first use, or signed before this record existed) is not bounded until
+its next opcert.
 
 If opcerts for the same cold key are also issued by another signer, this
-record falls behind. To clear it, stop `chain_counter` requests for the key on
+record falls behind. To clear it, stop opcert requests for the key on
 every signer instance and let in-flight requests finish, then delete the row
 whose `record_key` is `<56-character hex key hash>|opcert-chain-issued` from
 `signer_counter_watermark` (Postgres) or `counter_watermark` (SQLite), and

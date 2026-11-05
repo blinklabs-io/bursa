@@ -325,8 +325,9 @@ components:
           format: int64
           description: |
             opcert - operational certificate issue counter. Must be greater
-            than every counter already signed for the key. Ignored when
-            chain_counter is set.
+            than every counter already signed for the key, by either request
+            form; otherwise refused with 409. Ignored when chain_counter is
+            set.
         chain_counter:
           type: integer
           format: int64
@@ -336,8 +337,9 @@ components:
             certificate at chain_counter + 1 and returns that number in
             issue_counter. The same chain counter may be sent again while the
             pool has not forged with the new certificate. A chain counter
-            lower than already reported, or above the last issue counter
-            signed for the key, is refused with 409.
+            lower than already reported, above the last issue counter signed
+            for the key, or whose chain_counter + 1 is below that issue
+            counter, is refused with 409.
         kes_period:
           type: integer
           format: int64

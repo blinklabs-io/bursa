@@ -91,7 +91,9 @@ type pausingCounterWatermark struct {
 
 func (p *pausingCounterWatermark) CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
 	v, ok, err := p.counter.CounterFor(ctx, key, scope)
-	if p.didPause.CompareAndSwap(false, true) {
+	// the issued record is the last lookup before signing, so the paused
+	// request has passed every pre-sign check when the other one runs
+	if scope == opcertChainIssuedScope && p.didPause.CompareAndSwap(false, true) {
 		close(p.paused)
 		<-p.release
 	}
