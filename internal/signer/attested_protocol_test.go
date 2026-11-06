@@ -37,45 +37,65 @@ type armoryProtocolDevice struct {
 	versions []string
 }
 
-func newArmoryProtocolDevice(t *testing.T, v1Only bool) (config.SignerBackendConfig, ed25519.PublicKey, *armoryProtocolDevice) {
+func newArmoryProtocolDevice(
+	t *testing.T,
+	v1Only bool,
+) (config.SignerBackendConfig, ed25519.PublicKey, *armoryProtocolDevice) {
 	t.Helper()
 	identity, identityPriv, _ := ed25519.GenerateKey(nil)
 	pool, poolPriv, _ := ed25519.GenerateKey(nil)
 	dev := &armoryProtocolDevice{v1Only: v1Only}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		dev.mu.Lock()
-		defer dev.mu.Unlock()
-		switch r.URL.Path {
-		case "/v1/inventory":
-			var in struct {
-				Nonce []byte `json:"nonce"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&in)
-			keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pool}}
-			_ = json.NewEncoder(w).Encode(backend.AttestedInventory{
-				Version: backend.AttestedProtocol, Keys: keys,
-				Attestation: ed25519.Sign(identityPriv, backend.InventoryBinding(in.Nonce, keys)),
-			})
-		case "/v1/sign":
-			var req backend.AttestedRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			dev.versions = append(dev.versions, req.Version)
-			resp := backend.AttestedResponse{Version: backend.AttestedProtocol, Nonce: req.Nonce}
-			switch {
-			case req.Version == backend.AttestedProtocol || (req.Version == backend.AttestedProtocolSummary && !dev.v1Only):
-				resp.Version = req.Version
-				hash := blake2b.Sum256(req.Payload)
-				resp.Signature = ed25519.Sign(poolPriv, hash[:])
-				if req.Version == backend.AttestedProtocolSummary {
-					resp.Summary = "custody summary"
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			dev.mu.Lock()
+			defer dev.mu.Unlock()
+			switch r.URL.Path {
+			case "/v1/inventory":
+				var in struct {
+					Nonce []byte `json:"nonce"`
 				}
-				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature, resp.Summary))
-			default:
-				resp.Error = "unsupported protocol version"
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				keys := []backend.AttestedKeyInfo{
+					{Role: backend.KeyTypePool, PublicKey: pool},
+				}
+				_ = json.NewEncoder(w).Encode(backend.AttestedInventory{
+					Version: backend.AttestedProtocol, Keys: keys,
+					Attestation: ed25519.Sign(
+						identityPriv,
+						backend.InventoryBinding(in.Nonce, keys),
+					),
+				})
+			case "/v1/sign":
+				var req backend.AttestedRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				dev.versions = append(dev.versions, req.Version)
+				resp := backend.AttestedResponse{
+					Version: backend.AttestedProtocol,
+					Nonce:   req.Nonce,
+				}
+				switch {
+				case req.Version == backend.AttestedProtocol || (req.Version == backend.AttestedProtocolSummary && !dev.v1Only):
+					resp.Version = req.Version
+					hash := blake2b.Sum256(req.Payload)
+					resp.Signature = ed25519.Sign(poolPriv, hash[:])
+					if req.Version == backend.AttestedProtocolSummary {
+						resp.Summary = "custody summary"
+					}
+					resp.BindingSignature = ed25519.Sign(
+						poolPriv,
+						backend.AttestedResponseBinding(
+							req,
+							resp.Signature,
+							resp.Summary,
+						),
+					)
+				default:
+					resp.Error = "unsupported protocol version"
+				}
+				_ = json.NewEncoder(w).Encode(resp)
 			}
-			_ = json.NewEncoder(w).Encode(resp)
-		}
-	}))
+		}),
+	)
 	t.Cleanup(srv.Close)
 	return config.SignerBackendConfig{
 		Name: "armory", Type: "armory", Address: srv.URL, Profile: "pool@preview",
@@ -116,7 +136,10 @@ func TestBuildBackendsArmoryProtocol(t *testing.T) {
 			t.Parallel()
 			cfg, pool, dev := newArmoryProtocolDevice(t, tc.v1Only)
 			cfg.Protocol = tc.protocol
-			bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
+			bs, err := BuildBackends(
+				t.Context(),
+				[]config.SignerBackendConfig{cfg},
+			)
 			if err != nil {
 				t.Fatalf("BuildBackends: %v", err)
 			}
@@ -124,7 +147,13 @@ func TestBuildBackendsArmoryProtocol(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, summary, err := backend.SignTxFor(t.Context(), ref, []byte{0xa0}, 6, nil)
+			_, summary, err := backend.SignTxFor(
+				t.Context(),
+				ref,
+				[]byte{0xa0},
+				6,
+				nil,
+			)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("sign error = %v, want error %v", err, tc.wantErr)
 			}
@@ -142,12 +171,19 @@ func TestBuildBackendsProtocolValidation(t *testing.T) {
 	t.Parallel()
 	cfg, _, _ := newArmoryProtocolDevice(t, false)
 	cfg.Protocol = "3"
-	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg}); err == nil || !strings.Contains(err.Error(), "protocol") {
+	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg}); err == nil ||
+		!strings.Contains(err.Error(), "protocol") {
 		t.Fatalf("armory protocol 3: got %v, want a protocol error", err)
 	}
 
-	soft := config.SignerBackendConfig{Name: "soft", Type: "software", Path: t.TempDir(), Protocol: "negotiate"}
-	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{soft}); err == nil || !strings.Contains(err.Error(), "protocol") {
+	soft := config.SignerBackendConfig{
+		Name:     "soft",
+		Type:     "software",
+		Path:     t.TempDir(),
+		Protocol: "negotiate",
+	}
+	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{soft}); err == nil ||
+		!strings.Contains(err.Error(), "protocol") {
 		t.Fatalf("software with protocol: got %v, want a protocol error", err)
 	}
 }

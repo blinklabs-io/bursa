@@ -67,7 +67,9 @@ func TestMetrics_ObserveDenyExported(t *testing.T) {
 func TestMetrics_RegisterAll(t *testing.T) {
 	m := NewMetrics()
 	reg := prometheus.NewRegistry()
-	m.Register(reg) // must not panic (MustRegister) and must register all collectors
+	m.Register(
+		reg,
+	) // must not panic (MustRegister) and must register all collectors
 	m.observe("tx", "signed")
 	m.observeDeny("conflict")
 	m.observeSignDuration("software", 0.02)

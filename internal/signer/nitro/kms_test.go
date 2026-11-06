@@ -24,28 +24,54 @@ type fakeKMSAPI struct {
 	plaintext     []byte
 }
 
-func (f *fakeKMSAPI) GenerateDataKey(_ context.Context, input *kms.GenerateDataKeyInput, _ ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error) {
+func (f *fakeKMSAPI) GenerateDataKey(
+	_ context.Context,
+	input *kms.GenerateDataKeyInput,
+	_ ...func(*kms.Options),
+) (*kms.GenerateDataKeyOutput, error) {
 	f.generateInput = input
 	return &kms.GenerateDataKeyOutput{
-		CiphertextBlob: []byte("wrapped"), CiphertextForRecipient: []byte("recipient"),
+		CiphertextBlob: []byte(
+			"wrapped",
+		), CiphertextForRecipient: []byte("recipient"),
 		Plaintext: f.plaintext,
 	}, nil
 }
 
-func (f *fakeKMSAPI) Decrypt(_ context.Context, input *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
+func (f *fakeKMSAPI) Decrypt(
+	_ context.Context,
+	input *kms.DecryptInput,
+	_ ...func(*kms.Options),
+) (*kms.DecryptOutput, error) {
 	f.decryptInput = input
-	return &kms.DecryptOutput{CiphertextForRecipient: []byte("recipient"), Plaintext: f.plaintext}, nil
+	return &kms.DecryptOutput{
+		CiphertextForRecipient: []byte("recipient"),
+		Plaintext:              f.plaintext,
+	}, nil
 }
 
 func TestAWSKMSAlwaysUsesRecipientAttestation(t *testing.T) {
 	api := &fakeKMSAPI{}
 	provider := &awsKMS{client: api}
 	document := []byte("attestation")
-	_, _, err := provider.GenerateDataKey(context.Background(), testKMSKey, document)
+	_, _, err := provider.GenerateDataKey(
+		context.Background(),
+		testKMSKey,
+		document,
+	)
 	require.NoError(t, err)
 	require.Equal(t, document, api.generateInput.Recipient.AttestationDocument)
-	require.Equal(t, types.KeyEncryptionMechanismRsaesOaepSha256, api.generateInput.Recipient.KeyEncryptionAlgorithm)
-	_, err = provider.Decrypt(context.Background(), testKMSKey, []byte("wrapped"), document)
+	require.Equal(
+		t,
+		types.KeyEncryptionMechanismRsaesOaepSha256,
+		api.generateInput.Recipient.KeyEncryptionAlgorithm,
+	)
+	_, err = provider.Decrypt(
+		context.Background(),
+		testKMSKey,
+		[]byte("wrapped"),
+		document,
+	)
 	require.NoError(t, err)
 	require.Equal(t, document, api.decryptInput.Recipient.AttestationDocument)
 }
@@ -53,7 +79,11 @@ func TestAWSKMSAlwaysUsesRecipientAttestation(t *testing.T) {
 func TestAWSKMSRejectsPlaintextResponses(t *testing.T) {
 	api := &fakeKMSAPI{plaintext: []byte("host-visible")}
 	provider := &awsKMS{client: api}
-	_, _, err := provider.GenerateDataKey(context.Background(), testKMSKey, []byte("attestation"))
+	_, _, err := provider.GenerateDataKey(
+		context.Background(),
+		testKMSKey,
+		[]byte("attestation"),
+	)
 	require.ErrorContains(t, err, "plaintext")
 	require.Equal(t, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, api.plaintext)
 }
@@ -76,7 +106,11 @@ func TestKMSProxyHTTPClientIgnoresEnvironmentProxy(t *testing.T) {
 	if transport.Proxy == nil {
 		return
 	}
-	request, err := http.NewRequest(http.MethodPost, "https://kms.us-east-1.amazonaws.com/", nil)
+	request, err := http.NewRequest(
+		http.MethodPost,
+		"https://kms.us-east-1.amazonaws.com/",
+		nil,
+	)
 	require.NoError(t, err)
 	proxy, err := transport.Proxy(request)
 	require.NoError(t, err)

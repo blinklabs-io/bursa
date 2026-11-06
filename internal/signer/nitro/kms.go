@@ -19,8 +19,16 @@ import (
 )
 
 type kmsAPI interface {
-	GenerateDataKey(context.Context, *kms.GenerateDataKeyInput, ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error)
-	Decrypt(context.Context, *kms.DecryptInput, ...func(*kms.Options)) (*kms.DecryptOutput, error)
+	GenerateDataKey(
+		context.Context,
+		*kms.GenerateDataKeyInput,
+		...func(*kms.Options),
+	) (*kms.GenerateDataKeyOutput, error)
+	Decrypt(
+		context.Context,
+		*kms.DecryptInput,
+		...func(*kms.Options),
+	) (*kms.DecryptOutput, error)
 }
 
 type awsKMS struct {
@@ -39,11 +47,13 @@ func NewAWSKMSFactory(httpClient aws.HTTPClient) KMSFactory {
 		}
 		cfg := aws.Config{
 			Region: region,
-			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(
-				credentialsValue.AccessKeyID,
-				credentialsValue.SecretAccessKey,
-				credentialsValue.SessionToken,
-			)),
+			Credentials: aws.NewCredentialsCache(
+				credentials.NewStaticCredentialsProvider(
+					credentialsValue.AccessKeyID,
+					credentialsValue.SecretAccessKey,
+					credentialsValue.SessionToken,
+				),
+			),
 			HTTPClient: httpClient,
 		}
 		return &awsKMS{client: kms.NewFromConfig(cfg)}, nil
@@ -57,7 +67,11 @@ func recipientInfo(document []byte) *types.RecipientInfo {
 	}
 }
 
-func (k *awsKMS) GenerateDataKey(ctx context.Context, keyID string, recipient []byte) ([]byte, []byte, error) {
+func (k *awsKMS) GenerateDataKey(
+	ctx context.Context,
+	keyID string,
+	recipient []byte,
+) ([]byte, []byte, error) {
 	result, err := k.client.GenerateDataKey(ctx, &kms.GenerateDataKeyInput{
 		KeyId:     aws.String(keyID),
 		KeySpec:   types.DataKeySpecAes256,
@@ -68,15 +82,24 @@ func (k *awsKMS) GenerateDataKey(ctx context.Context, keyID string, recipient []
 	}
 	if len(result.Plaintext) != 0 {
 		clear(result.Plaintext)
-		return nil, nil, errors.New("KMS returned a plaintext data key for an attested request")
+		return nil, nil, errors.New(
+			"KMS returned a plaintext data key for an attested request",
+		)
 	}
-	if len(result.CiphertextBlob) == 0 || len(result.CiphertextForRecipient) == 0 {
-		return nil, nil, errors.New("KMS attested data-key response is incomplete")
+	if len(result.CiphertextBlob) == 0 ||
+		len(result.CiphertextForRecipient) == 0 {
+		return nil, nil, errors.New(
+			"KMS attested data-key response is incomplete",
+		)
 	}
 	return result.CiphertextBlob, result.CiphertextForRecipient, nil
 }
 
-func (k *awsKMS) Decrypt(ctx context.Context, keyID string, ciphertext, recipient []byte) ([]byte, error) {
+func (k *awsKMS) Decrypt(
+	ctx context.Context,
+	keyID string,
+	ciphertext, recipient []byte,
+) ([]byte, error) {
 	if len(ciphertext) == 0 {
 		return nil, ErrEnvelope
 	}

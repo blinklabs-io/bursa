@@ -34,7 +34,11 @@ func TestNewSignerHTTPServerReadTimeout(t *testing.T) {
 		t.Fatal("signer server must bound header reads")
 	}
 	if srv.ReadTimeout != signerReadTimeout {
-		t.Fatalf("ReadTimeout = %s, want %s", srv.ReadTimeout, signerReadTimeout)
+		t.Fatalf(
+			"ReadTimeout = %s, want %s",
+			srv.ReadTimeout,
+			signerReadTimeout,
+		)
 	}
 }
 
@@ -44,7 +48,11 @@ func TestSignerMuxDoesNotExposeMetrics(t *testing.T) {
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
-		t.Fatalf("GET /metrics status = %d, want %d", response.Code, http.StatusNotFound)
+		t.Fatalf(
+			"GET /metrics status = %d, want %d",
+			response.Code,
+			http.StatusNotFound,
+		)
 	}
 }
 
@@ -61,8 +69,16 @@ func TestIsLocalListenAddress(t *testing.T) {
 		{name: "ipv4 loopback", addr: "127.0.0.1", want: true},
 		{name: "ipv6 loopback", addr: "::1", want: true},
 		{name: "bracketed ipv6 loopback", addr: "[::1]", want: true},
-		{name: "bracketed ipv6 loopback with spaces", addr: " [::1] ", want: true},
-		{name: "bracketed ipv6 loopback with port", addr: "[::1]:8080", want: true},
+		{
+			name: "bracketed ipv6 loopback with spaces",
+			addr: " [::1] ",
+			want: true,
+		},
+		{
+			name: "bracketed ipv6 loopback with port",
+			addr: "[::1]:8080",
+			want: true,
+		},
 		{name: "empty wildcard", addr: "", want: false},
 		{name: "ipv4 wildcard", addr: "0.0.0.0", want: false},
 		{name: "ipv6 wildcard", addr: "::", want: false},
@@ -73,7 +89,12 @@ func TestIsLocalListenAddress(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := signer.IsLoopbackListenAddress(tt.addr); got != tt.want {
-				t.Fatalf("IsLoopbackListenAddress(%q) = %v, want %v", tt.addr, got, tt.want)
+				t.Fatalf(
+					"IsLoopbackListenAddress(%q) = %v, want %v",
+					tt.addr,
+					got,
+					tt.want,
+				)
 			}
 		})
 	}
@@ -81,7 +102,9 @@ func TestIsLocalListenAddress(t *testing.T) {
 
 // A metrics scrape that outlives the shutdown deadline must not skip the
 // signer drain or turn into a failed shutdown.
-func TestShutdownSignerServersDrainsSignerWhenMetricsShutdownFails(t *testing.T) {
+func TestShutdownSignerServersDrainsSignerWhenMetricsShutdownFails(
+	t *testing.T,
+) {
 	signerLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

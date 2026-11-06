@@ -110,7 +110,12 @@ func setupSoftHSMToken(t *testing.T) (module, label, pin string) {
 // importEd25519Key writes a known Ed25519 key pair into the token (matching
 // CKA_ID on both objects) so the backend can enumerate it and so the signature
 // can be checked byte-for-byte against the software implementation.
-func importEd25519Key(t *testing.T, module, label, pin string, pub ed25519.PublicKey, priv ed25519.PrivateKey) {
+func importEd25519Key(
+	t *testing.T,
+	module, label, pin string,
+	pub ed25519.PublicKey,
+	priv ed25519.PrivateKey,
+) {
 	t.Helper()
 	p := pkcs11.New(module)
 	if p == nil {
@@ -128,7 +133,10 @@ func importEd25519Key(t *testing.T, module, label, pin string, pub ed25519.Publi
 	if err != nil {
 		t.Fatalf("find slot: %v", err)
 	}
-	session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+	session, err := p.OpenSession(
+		slot,
+		pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION,
+	)
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -140,7 +148,9 @@ func importEd25519Key(t *testing.T, module, label, pin string, pub ed25519.Publi
 
 	oid := ed25519OID(t)
 	id := []byte{0x01}
-	ecPoint, err := asn1.Marshal([]byte(pub)) // DER OCTET STRING wrapping the 32-byte key
+	ecPoint, err := asn1.Marshal(
+		[]byte(pub),
+	) // DER OCTET STRING wrapping the 32-byte key
 	if err != nil {
 		t.Fatalf("marshal EC_POINT: %v", err)
 	}
@@ -166,7 +176,10 @@ func importEd25519Key(t *testing.T, module, label, pin string, pub ed25519.Publi
 		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
 		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
 		pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, oid),
-		pkcs11.NewAttribute(pkcs11.CKA_VALUE, priv.Seed()), // 32-byte Ed25519 seed
+		pkcs11.NewAttribute(
+			pkcs11.CKA_VALUE,
+			priv.Seed(),
+		), // 32-byte Ed25519 seed
 		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, "bursa-key"),
 	}
@@ -242,7 +255,11 @@ func TestPKCS11Backend_SoftHSM(t *testing.T) {
 	// the same message is deterministic and must match ed25519.Sign exactly.
 	soft := ed25519.Sign(priv, digest)
 	if !bytes.Equal(sig, soft) {
-		t.Fatalf("HSM signature != software signature\n hsm:  %x\n soft: %x", sig, soft)
+		t.Fatalf(
+			"HSM signature != software signature\n hsm:  %x\n soft: %x",
+			sig,
+			soft,
+		)
 	}
 }
 
@@ -288,7 +305,10 @@ func TestPKCS11Backend_SoftHSM_AmbiguousPublicKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("find slot: %v", err)
 		}
-		session, err := p.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+		session, err := p.OpenSession(
+			slot,
+			pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION,
+		)
 		if err != nil {
 			t.Fatalf("open session: %v", err)
 		}
@@ -344,7 +364,9 @@ func TestPKCS11Backend_SoftHSM_AmbiguousPublicKey(t *testing.T) {
 		PIN:        pin,
 	})
 	if err == nil {
-		t.Fatal("expected NewPKCS11Backend to fail on ambiguous CKA_ID, got nil error")
+		t.Fatal(
+			"expected NewPKCS11Backend to fail on ambiguous CKA_ID, got nil error",
+		)
 	}
 	if !errors.Is(err, errAmbiguousPublicKey) {
 		t.Fatalf("expected errAmbiguousPublicKey, got: %v", err)

@@ -77,9 +77,15 @@ type SignLogResponse struct {
 
 var (
 	errLogUnavailable = errors.New("signing log unavailable")
-	errLogFull        = errors.New("signing log is full; the device refuses to sign")
-	errLogWrite       = errors.New("signing log write failed; the device refuses to sign")
-	errLogCheck       = errors.New("signing log check failed; the device refuses to sign")
+	errLogFull        = errors.New(
+		"signing log is full; the device refuses to sign",
+	)
+	errLogWrite = errors.New(
+		"signing log write failed; the device refuses to sign",
+	)
+	errLogCheck = errors.New(
+		"signing log check failed; the device refuses to sign",
+	)
 )
 
 // RequireSigningLog makes the service refuse every signing request until
@@ -180,8 +186,10 @@ func (s *Service) lastOpCertRepeat(rec signlog.Record) bool {
 
 	e, ok := s.log.Last()
 
-	return ok && e.Profile == rec.Profile && e.Role == rec.Role && e.Purpose == rec.Purpose &&
-		e.IssueCounter == rec.IssueCounter && e.KESPeriod == rec.KESPeriod &&
+	return ok && e.Profile == rec.Profile && e.Role == rec.Role &&
+		e.Purpose == rec.Purpose &&
+		e.IssueCounter == rec.IssueCounter &&
+		e.KESPeriod == rec.KESPeriod &&
 		bytes.Equal(e.KESKeyHash, rec.KESKeyHash) &&
 		// an entry of a version 1 medium records no cold key
 		(len(e.ColdKeyHash) == 0 || bytes.Equal(e.ColdKeyHash, rec.ColdKeyHash))
@@ -210,13 +218,19 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 			return SignLogResponse{}, err
 		}
 
-		return SignLogResponse{}, fmt.Errorf("%w: none installed", errLogUnavailable)
+		return SignLogResponse{}, fmt.Errorf(
+			"%w: none installed",
+			errLogUnavailable,
+		)
 	}
 
 	n := s.logMedium.NumBlocks()
 
 	if req.Count > MaxLogBlocks {
-		return SignLogResponse{}, fmt.Errorf("at most %d blocks per read", MaxLogBlocks)
+		return SignLogResponse{}, fmt.Errorf(
+			"at most %d blocks per read",
+			MaxLogBlocks,
+		)
 	}
 
 	// only the header, the entries and the slot after the head are served:
@@ -225,7 +239,12 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 	limit := min(n, 1+(head.Seq+1)*signlog.RecordBlocks)
 
 	if req.From > limit || uint64(req.Count) > limit-req.From {
-		return SignLogResponse{}, fmt.Errorf("blocks %d+%d are outside the %d blocks the log uses", req.From, req.Count, limit)
+		return SignLogResponse{}, fmt.Errorf(
+			"blocks %d+%d are outside the %d blocks the log uses",
+			req.From,
+			req.Count,
+			limit,
+		)
 	}
 
 	resp := SignLogResponse{Version: Protocol, NumBlocks: n, From: req.From}
@@ -234,7 +253,12 @@ func (s *Service) signLogRead(req SignLogRequest) (SignLogResponse, error) {
 
 	if req.Count > 0 {
 		if err := s.logMedium.ReadBlocks(req.From, resp.Blocks); err != nil {
-			s.logf("signing log: read blocks %d+%d: %v", req.From, req.Count, err)
+			s.logf(
+				"signing log: read blocks %d+%d: %v",
+				req.From,
+				req.Count,
+				err,
+			)
 			return SignLogResponse{}, errDevice
 		}
 	}

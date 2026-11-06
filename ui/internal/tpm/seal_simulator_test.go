@@ -103,7 +103,10 @@ func TestUnsealWrongPasswordSimulator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
-	if _, err := Unseal(tp, sealed, "wrong-password"); !errors.Is(err, ErrWrongPassword) {
+	if _, err := Unseal(tp, sealed, "wrong-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("Unseal wrong password = %v, want ErrWrongPassword", err)
 	}
 }
@@ -118,7 +121,10 @@ func TestPCRBoundSealUnsealSimulator(t *testing.T) {
 		t.Fatalf("Seal pcrBound: %v", err)
 	}
 	if !sealed.PCRBound || len(sealed.PCRs) == 0 {
-		t.Fatalf("Seal pcrBound metadata = %+v, want PCRBound + PCRs set", sealed)
+		t.Fatalf(
+			"Seal pcrBound metadata = %+v, want PCRBound + PCRs set",
+			sealed,
+		)
 	}
 	// PCRs are unchanged since seal, so unseal succeeds.
 	got, err := Unseal(tp, sealed, pw)
@@ -148,8 +154,14 @@ func TestPCRBoundWrongPasswordFailsSimulator(t *testing.T) {
 	// PCRs are unchanged (they match), but the password is wrong: unseal MUST
 	// still fail. If this passes, PCR state alone is authorizing the unseal —
 	// exactly the threat-model violation this test guards against.
-	if _, err := Unseal(tp, sealed, "wrong-password"); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("PCR-bound unseal with wrong password = %v, want ErrWrongPassword", err)
+	if _, err := Unseal(tp, sealed, "wrong-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
+		t.Fatalf(
+			"PCR-bound unseal with wrong password = %v, want ErrWrongPassword",
+			err,
+		)
 	}
 }
 

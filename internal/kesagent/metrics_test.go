@@ -65,7 +65,12 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 		}
 	}
 	if len(got) != len(want) {
-		t.Errorf("registered metric family count = %d, want %d (got %v)", len(got), len(want), got)
+		t.Errorf(
+			"registered metric family count = %d, want %d (got %v)",
+			len(got),
+			len(want),
+			got,
+		)
 	}
 }
 

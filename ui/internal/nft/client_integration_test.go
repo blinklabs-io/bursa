@@ -67,5 +67,9 @@ func TestRealIPFSFetch(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatalf("fetched 0 bytes for %s", cid)
 	}
-	t.Logf("fetched %d bytes for %s via direct p2p (no gateway)", len(data), cid)
+	t.Logf(
+		"fetched %d bytes for %s via direct p2p (no gateway)",
+		len(data),
+		cid,
+	)
 }

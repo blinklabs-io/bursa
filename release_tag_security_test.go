@@ -26,7 +26,9 @@ import (
 )
 
 func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
-	workflowPaths, err := filepath.Glob(filepath.Join(".github", "workflows", "*.yml"))
+	workflowPaths, err := filepath.Glob(
+		filepath.Join(".github", "workflows", "*.yml"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +70,14 @@ func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
 			}
 
 			signingJobs++
-			if got, ok := job["environment"].(string); !ok || got != environment {
-				t.Errorf("%s job %s uses signing material without environment %q", workflowPath, jobName, environment)
+			if got, ok := job["environment"].(string); !ok ||
+				got != environment {
+				t.Errorf(
+					"%s job %s uses signing material without environment %q",
+					workflowPath,
+					jobName,
+					environment,
+				)
 			}
 		}
 	}
@@ -103,10 +111,16 @@ func TestReleaseSigningEnvironmentPolicy(t *testing.T) {
 	}
 
 	var environment environmentPolicy
-	readJSON(filepath.Join(".github", "environments", "release-signing.json"), &environment)
+	readJSON(
+		filepath.Join(".github", "environments", "release-signing.json"),
+		&environment,
+	)
 	if environment.DeploymentBranchPolicy.ProtectedBranches ||
 		!environment.DeploymentBranchPolicy.CustomBranchPolicies {
-		t.Fatalf("release-signing must use custom deployment branch policies: %+v", environment.DeploymentBranchPolicy)
+		t.Fatalf(
+			"release-signing must use custom deployment branch policies: %+v",
+			environment.DeploymentBranchPolicy,
+		)
 	}
 
 	wantPolicies := []refPolicy{
@@ -131,7 +145,9 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 		t.Skip("bash is required for release workflow checks")
 	}
 
-	data, err := os.ReadFile(filepath.Join(".github", "workflows", "publish.yml"))
+	data, err := os.ReadFile(
+		filepath.Join(".github", "workflows", "publish.yml"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,18 +186,33 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 					foundRelease = true
 					break
 				}
-				if step.Run == "" || strings.Contains(step.If, "workflow_dispatch") {
+				if step.Run == "" ||
+					strings.Contains(step.If, "workflow_dispatch") {
 					continue
 				}
-				cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
+				cmd := exec.Command(
+					"bash",
+					"-e",
+					"-o",
+					"pipefail",
+					"-c",
+					step.Run,
+				)
 				cmd.Env = append(os.Environ(),
 					"GITHUB_REF=refs/tags/"+tc.tag,
 					"GITHUB_ENV="+filepath.Join(t.TempDir(), "github-env"),
 				)
 				output, err := cmd.CombinedOutput()
 				if err != nil {
-					if !strings.Contains(string(output), "Invalid release tag") {
-						t.Fatalf("release setup failed for another reason: %v\n%s", err, output)
+					if !strings.Contains(
+						string(output),
+						"Invalid release tag",
+					) {
+						t.Fatalf(
+							"release setup failed for another reason: %v\n%s",
+							err,
+							output,
+						)
 					}
 					rejected = true
 					break
@@ -191,7 +222,11 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 				t.Fatal("release creation step is missing")
 			}
 			if rejected == tc.allowed {
-				t.Fatalf("release setup accepted=%t for tag %q", !rejected, tc.tag)
+				t.Fatalf(
+					"release setup accepted=%t for tag %q",
+					!rejected,
+					tc.tag,
+				)
 			}
 		})
 	}
@@ -261,7 +296,11 @@ func TestMakeVersionStaysData(t *testing.T) {
 					t.Fatal(err)
 				}
 				if !strings.Contains(string(args), "Version="+tc.tag) {
-					t.Fatalf("tag was reinterpreted in %s linker arguments: %q", target, args)
+					t.Fatalf(
+						"tag was reinterpreted in %s linker arguments: %q",
+						target,
+						args,
+					)
 				}
 			})
 		}

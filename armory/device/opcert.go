@@ -19,15 +19,21 @@ import (
 	"math"
 )
 
-var errBelowFloor = errors.New("chain counter below the recorded on-chain counter")
+var errBelowFloor = errors.New(
+	"chain counter below the recorded on-chain counter",
+)
 
-var errAboveIssued = errors.New("chain counter above the last counter the device issued")
+var errAboveIssued = errors.New(
+	"chain counter above the last counter the device issued",
+)
 
 // errKESBackdated refuses a reissue of the last issued counter at a KES period
 // below the one the signing log holds for it. Both opcerts stay valid until
 // one forges, so a backdated reissue would only extend an older KES key's
 // window.
-var errKESBackdated = errors.New("KES period below the logged opcert at this counter")
+var errKESBackdated = errors.New(
+	"KES period below the logged opcert at this counter",
+)
 
 // nextOpCert picks the opcert issue number from the on-chain counter chain:
 // the last counter seen in a block the pool forged, 0 if none. A header's
@@ -39,7 +45,11 @@ var errKESBackdated = errors.New("KES period below the logged opcert at this cou
 // counter above it is refused: it would yield an opcert the ledger rejects and
 // push the floor above every counter it accepts. Unset, as on a record from
 // before the field, there is no bound until the first opcert-next sets it.
-func nextOpCert(floor uint64, floorSet bool, lastIssued, chain uint64) (issue uint64, newFloor uint64, err error) {
+func nextOpCert(
+	floor uint64,
+	floorSet bool,
+	lastIssued, chain uint64,
+) (issue uint64, newFloor uint64, err error) {
 	if floorSet && chain < floor {
 		return 0, 0, errBelowFloor
 	}

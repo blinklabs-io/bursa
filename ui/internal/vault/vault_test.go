@@ -105,7 +105,10 @@ func TestVerifyPasswordDoesNotUnlockVault(t *testing.T) {
 	}
 	v.Lock()
 
-	if err := v.VerifyPassword("wrong-password"); !errors.Is(err, ErrWrongPassword) {
+	if err := v.VerifyPassword("wrong-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("VerifyPassword wrong = %v, want ErrWrongPassword", err)
 	}
 	if !v.Locked() {
@@ -162,7 +165,9 @@ func TestCreatePublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
 		t.Fatal("Create should report the durability error")
 	}
 	if v.Locked() {
-		t.Fatal("Create must publish the in-memory vault after the file is renamed")
+		t.Fatal(
+			"Create must publish the in-memory vault after the file is renamed",
+		)
 	}
 	if !v.Exists() {
 		t.Fatal("Create must leave the renamed vault available")
@@ -172,12 +177,21 @@ func TestCreatePublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
 	}
 }
 
-func TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
+func TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename(
+	t *testing.T,
+) {
 	v := newTestVault(t)
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("selected", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"selected",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
@@ -194,7 +208,10 @@ func TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename(t *testing
 		t.Fatal("SelectAccount should report the durability error")
 	}
 	if selected.ActiveAccountIndex != 1 {
-		t.Fatalf("returned ActiveAccountIndex = %d, want 1", selected.ActiveAccountIndex)
+		t.Fatalf(
+			"returned ActiveAccountIndex = %d, want 1",
+			selected.ActiveAccountIndex,
+		)
 	}
 	if got := v.ActiveAccountIndexFor(meta.ID); got != 1 {
 		t.Fatalf("in-memory active account index = %d, want 1", got)
@@ -208,7 +225,10 @@ func TestSelectAccountPublishesStateWhenDirectorySyncFailsAfterRename(t *testing
 		t.Fatalf("reopen Unlock: %v", err)
 	}
 	if len(wallets) != 1 || wallets[0].ActiveAccountIndex != 1 {
-		t.Fatalf("reopened wallets = %#v, want one wallet with active account 1", wallets)
+		t.Fatalf(
+			"reopened wallets = %#v, want one wallet with active account 1",
+			wallets,
+		)
 	}
 }
 
@@ -225,7 +245,9 @@ func TestCreateRefusesOverwrite(t *testing.T) {
 func TestWriteFileAtomicRejectsOversizedVaultBeforePublish(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vault.json")
 	if err := writeFileAtomic(path, make([]byte, maxVaultLen+1), 0o600); err == nil {
-		t.Fatal("writeFileAtomic should reject data larger than the vault read limit")
+		t.Fatal(
+			"writeFileAtomic should reject data larger than the vault read limit",
+		)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("oversized write published destination: stat error = %v", err)
@@ -253,14 +275,22 @@ func TestReadEnvelopeRejectsFileOneByteOverLimit(t *testing.T) {
 	if err := os.WriteFile(v.path, paddedEnvelope(maxVaultLen+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := v.readEnvelope(); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := v.readEnvelope(); err == nil ||
+		!strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("readEnvelope error = %v, want size-limit error", err)
 	}
 }
 
 func TestImportWalletCreatesSingleWalletVault(t *testing.T) {
 	v := newTestVault(t)
-	meta, err := v.ImportWallet("legacy", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.ImportWallet(
+		"legacy",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("ImportWallet: %v", err)
 	}
@@ -280,7 +310,10 @@ func TestImportWalletCreatesSingleWalletVault(t *testing.T) {
 	if string(seed) != mnemonicA {
 		t.Fatal("imported seed mismatch")
 	}
-	if _, err := v.ImportWallet("again", mnemonicB, "preview", vaultPw, spendPwB, window); !errors.Is(err, ErrVaultExists) {
+	if _, err := v.ImportWallet("again", mnemonicB, "preview", vaultPw, spendPwB, window); !errors.Is(
+		err,
+		ErrVaultExists,
+	) {
 		t.Fatalf("second ImportWallet = %v, want ErrVaultExists", err)
 	}
 }
@@ -288,7 +321,14 @@ func TestImportWalletCreatesSingleWalletVault(t *testing.T) {
 func TestImportWalletMnemonicBytesCreatesSingleWalletVault(t *testing.T) {
 	v := newTestVault(t)
 	mnemonic := []byte(mnemonicA)
-	meta, err := v.ImportWalletMnemonicBytes("legacy", mnemonic, "preview", vaultPw, spendPwA, window)
+	meta, err := v.ImportWalletMnemonicBytes(
+		"legacy",
+		mnemonic,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	keystore.Zero(mnemonic)
 	if err != nil {
 		t.Fatalf("ImportWalletMnemonicBytes: %v", err)
@@ -331,7 +371,10 @@ func TestUnlockWrongVaultPassword(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	v.Lock()
-	if _, err := v.Unlock("wrong-vault-password"); !errors.Is(err, ErrWrongPassword) {
+	if _, err := v.Unlock("wrong-vault-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("Unlock wrong password = %v, want ErrWrongPassword", err)
 	}
 }
@@ -341,7 +384,14 @@ func TestAddWalletReadOnlyAndSpendLayers(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
@@ -355,7 +405,11 @@ func TestAddWalletReadOnlyAndSpendLayers(t *testing.T) {
 		t.Fatal("meta.AccountXpub should be populated")
 	}
 	if v.ActiveID() != meta.ID {
-		t.Fatalf("added wallet should be active: active=%q id=%q", v.ActiveID(), meta.ID)
+		t.Fatalf(
+			"added wallet should be active: active=%q id=%q",
+			v.ActiveID(),
+			meta.ID,
+		)
 	}
 
 	// Layered read-only: relaunch with vault password only reveals the wallet
@@ -369,7 +423,9 @@ func TestAddWalletReadOnlyAndSpendLayers(t *testing.T) {
 		t.Fatalf("wallets after unlock = %d, want 1", len(wallets))
 	}
 	if wallets[0].Account == nil || wallets[0].Account.StakeAddress == "" {
-		t.Fatal("read-only account must be available without the spend password")
+		t.Fatal(
+			"read-only account must be available without the spend password",
+		)
 	}
 	// Sole wallet auto-activates.
 	if v.ActiveID() != meta.ID {
@@ -384,12 +440,18 @@ func TestAddWalletReadOnlyAndSpendLayers(t *testing.T) {
 	if string(seed) != mnemonicA {
 		t.Fatalf("decrypted seed mismatch")
 	}
-	if _, err := v.UnlockSeed("wrong-spend-password"); !errors.Is(err, ErrWrongPassword) {
+	if _, err := v.UnlockSeed("wrong-spend-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("UnlockSeed wrong password = %v, want ErrWrongPassword", err)
 	}
 	// The VAULT password must NOT decrypt the seed (different layer).
 	if _, err := v.UnlockSeed(vaultPw); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("UnlockSeed with vault password = %v, want ErrWrongPassword (layers are separate)", err)
+		t.Fatalf(
+			"UnlockSeed with vault password = %v, want ErrWrongPassword (layers are separate)",
+			err,
+		)
 	}
 }
 
@@ -411,24 +473,42 @@ func TestAddWalletRequiresCorrectVaultPassword(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := v.AddWallet("main", mnemonicA, "preview", "wrong-vault-password", spendPwA, window); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("AddWallet wrong vault password = %v, want ErrWrongPassword", err)
+	if _, err := v.AddWallet("main", mnemonicA, "preview", "wrong-vault-password", spendPwA, window); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
+		t.Fatalf(
+			"AddWallet wrong vault password = %v, want ErrWrongPassword",
+			err,
+		)
 	}
 	if v.WalletCount() != 0 {
-		t.Fatalf("WalletCount after failed AddWallet = %d, want 0", v.WalletCount())
+		t.Fatalf(
+			"WalletCount after failed AddWallet = %d, want 0",
+			v.WalletCount(),
+		)
 	}
 
 	v.Lock()
 	wallets, err := v.Unlock(vaultPw)
 	if err != nil {
-		t.Fatalf("Unlock with original password after failed AddWallet: %v", err)
+		t.Fatalf(
+			"Unlock with original password after failed AddWallet: %v",
+			err,
+		)
 	}
 	if len(wallets) != 0 {
 		t.Fatalf("wallets after failed AddWallet = %d, want 0", len(wallets))
 	}
 	v.Lock()
-	if _, err := v.Unlock("wrong-vault-password"); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("Unlock with rejected password = %v, want ErrWrongPassword", err)
+	if _, err := v.Unlock("wrong-vault-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
+		t.Fatalf(
+			"Unlock with rejected password = %v, want ErrWrongPassword",
+			err,
+		)
 	}
 }
 
@@ -437,11 +517,25 @@ func TestMultipleWalletsActiveSwitch(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	a, err := v.AddWallet("alpha", mnemonicA, "preview", vaultPw, spendPwA, window)
+	a, err := v.AddWallet(
+		"alpha",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet alpha: %v", err)
 	}
-	b, err := v.AddWallet("beta", mnemonicB, "preview", vaultPw, spendPwB, window)
+	b, err := v.AddWallet(
+		"beta",
+		mnemonicB,
+		"preview",
+		vaultPw,
+		spendPwB,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet beta: %v", err)
 	}
@@ -459,11 +553,18 @@ func TestMultipleWalletsActiveSwitch(t *testing.T) {
 	}
 	seed, err := v.UnlockSeed(spendPwA)
 	if err != nil || string(seed) != mnemonicA {
-		t.Fatalf("alpha seed unlock: err=%v match=%v", err, string(seed) == mnemonicA)
+		t.Fatalf(
+			"alpha seed unlock: err=%v match=%v",
+			err,
+			string(seed) == mnemonicA,
+		)
 	}
 	// beta's password must not unlock alpha's seed.
 	if _, err := v.UnlockSeed(spendPwB); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("alpha seed with beta password = %v, want ErrWrongPassword", err)
+		t.Fatalf(
+			"alpha seed with beta password = %v, want ErrWrongPassword",
+			err,
+		)
 	}
 
 	// Multiple wallets → unlock does NOT auto-activate.
@@ -472,7 +573,10 @@ func TestMultipleWalletsActiveSwitch(t *testing.T) {
 		t.Fatalf("Unlock: %v", err)
 	}
 	if v.ActiveID() != "" {
-		t.Fatalf("multi-wallet unlock should not auto-activate, got %q", v.ActiveID())
+		t.Fatalf(
+			"multi-wallet unlock should not auto-activate, got %q",
+			v.ActiveID(),
+		)
 	}
 	if _, err := v.Active(); !errors.Is(err, ErrNoActiveWallet) {
 		t.Fatalf("Active with none selected = %v, want ErrNoActiveWallet", err)
@@ -488,7 +592,10 @@ func TestAddDuplicateWalletRejected(t *testing.T) {
 		t.Fatalf("AddWallet one: %v", err)
 	}
 	// Same seed (even under a different name/spend password) → same stake address.
-	if _, err := v.AddWallet("dup", mnemonicA, "preview", vaultPw, spendPwB, window); !errors.Is(err, ErrDuplicateWallet) {
+	if _, err := v.AddWallet("dup", mnemonicA, "preview", vaultPw, spendPwB, window); !errors.Is(
+		err,
+		ErrDuplicateWallet,
+	) {
 		t.Fatalf("duplicate add = %v, want ErrDuplicateWallet", err)
 	}
 }
@@ -498,7 +605,14 @@ func TestRemoveWallet(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	a, _ := v.AddWallet("alpha", mnemonicA, "preview", vaultPw, spendPwA, window)
+	a, _ := v.AddWallet(
+		"alpha",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	b, _ := v.AddWallet("beta", mnemonicB, "preview", vaultPw, spendPwB, window)
 
 	if err := v.RemoveWallet(a.ID, vaultPw); err != nil {
@@ -515,11 +629,15 @@ func TestRemoveWallet(t *testing.T) {
 	if _, err := v.SetActive(b.ID); err != nil {
 		t.Fatalf("SetActive beta: %v", err)
 	}
-	if seed, err := v.UnlockSeed(spendPwB); err != nil || string(seed) != mnemonicB {
+	if seed, err := v.UnlockSeed(spendPwB); err != nil ||
+		string(seed) != mnemonicB {
 		t.Fatalf("beta seed unlock after remove: err=%v", err)
 	}
 
-	if err := v.RemoveWallet("nonexistent", vaultPw); !errors.Is(err, ErrUnknownWallet) {
+	if err := v.RemoveWallet("nonexistent", vaultPw); !errors.Is(
+		err,
+		ErrUnknownWallet,
+	) {
 		t.Fatalf("RemoveWallet unknown = %v, want ErrUnknownWallet", err)
 	}
 }
@@ -529,26 +647,51 @@ func TestRemoveWalletRequiresCorrectVaultPassword(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	a, _ := v.AddWallet("alpha", mnemonicA, "preview", vaultPw, spendPwA, window)
+	a, _ := v.AddWallet(
+		"alpha",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	b, _ := v.AddWallet("beta", mnemonicB, "preview", vaultPw, spendPwB, window)
 
-	if err := v.RemoveWallet(a.ID, "wrong-vault-password"); !errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("RemoveWallet wrong vault password = %v, want ErrWrongPassword", err)
+	if err := v.RemoveWallet(a.ID, "wrong-vault-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
+		t.Fatalf(
+			"RemoveWallet wrong vault password = %v, want ErrWrongPassword",
+			err,
+		)
 	}
 	if v.WalletCount() != 2 {
-		t.Fatalf("WalletCount after failed RemoveWallet = %d, want 2", v.WalletCount())
+		t.Fatalf(
+			"WalletCount after failed RemoveWallet = %d, want 2",
+			v.WalletCount(),
+		)
 	}
 	if _, err := v.SetActive(a.ID); err != nil {
-		t.Fatalf("removed wallet should still be selectable after failed RemoveWallet: %v", err)
+		t.Fatalf(
+			"removed wallet should still be selectable after failed RemoveWallet: %v",
+			err,
+		)
 	}
 	if _, err := v.SetActive(b.ID); err != nil {
-		t.Fatalf("other wallet should remain selectable after failed RemoveWallet: %v", err)
+		t.Fatalf(
+			"other wallet should remain selectable after failed RemoveWallet: %v",
+			err,
+		)
 	}
 
 	v.Lock()
 	wallets, err := v.Unlock(vaultPw)
 	if err != nil {
-		t.Fatalf("Unlock with original password after failed RemoveWallet: %v", err)
+		t.Fatalf(
+			"Unlock with original password after failed RemoveWallet: %v",
+			err,
+		)
 	}
 	if len(wallets) != 2 {
 		t.Fatalf("wallets after failed RemoveWallet = %d, want 2", len(wallets))
@@ -564,7 +707,10 @@ func TestOperationsRequireUnlock(t *testing.T) {
 	if _, err := v.Wallets(); !errors.Is(err, ErrLocked) {
 		t.Fatalf("Wallets while locked = %v, want ErrLocked", err)
 	}
-	if _, err := v.AddWallet("x", mnemonicA, "preview", vaultPw, spendPwA, window); !errors.Is(err, ErrLocked) {
+	if _, err := v.AddWallet("x", mnemonicA, "preview", vaultPw, spendPwA, window); !errors.Is(
+		err,
+		ErrLocked,
+	) {
 		t.Fatalf("AddWallet while locked = %v, want ErrLocked", err)
 	}
 	if _, err := v.UnlockSeed(spendPwA); !errors.Is(err, ErrLocked) {
@@ -651,7 +797,9 @@ func TestFormat2CreateLockUnlockRoundTrip(t *testing.T) {
 	}
 	_, open := keystore.CheapTestSealer()
 	if _, err := open(idxBlob, []byte(vaultPw)); err == nil {
-		t.Fatal("index should not decrypt directly under the vault password (VEK indirection)")
+		t.Fatal(
+			"index should not decrypt directly under the vault password (VEK indirection)",
+		)
 	}
 
 	// Lock + fresh handle unlock round-trips.
@@ -675,7 +823,14 @@ func TestPersistenceAcrossHandles(t *testing.T) {
 	if err := v1.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v1.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v1.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
@@ -729,7 +884,14 @@ func TestAddHardwareWallet(t *testing.T) {
 	}
 
 	const hwWindowN = 5
-	meta, err := v.AddHardwareWallet("My Ledger", xpub, "preview", vaultPw, 0, hwWindowN)
+	meta, err := v.AddHardwareWallet(
+		"My Ledger",
+		xpub,
+		"preview",
+		vaultPw,
+		0,
+		hwWindowN,
+	)
 	if err != nil {
 		t.Fatalf("AddHardwareWallet: %v", err)
 	}
@@ -743,7 +905,11 @@ func TestAddHardwareWallet(t *testing.T) {
 	}
 	// The correct number of receive addresses must be derived.
 	if len(meta.Account.ReceiveAddresses) != hwWindowN {
-		t.Fatalf("ReceiveAddresses = %d, want %d", len(meta.Account.ReceiveAddresses), hwWindowN)
+		t.Fatalf(
+			"ReceiveAddresses = %d, want %d",
+			len(meta.Account.ReceiveAddresses),
+			hwWindowN,
+		)
 	}
 	// The added wallet becomes active.
 	if v.ActiveID() != meta.ID {
@@ -778,13 +944,25 @@ func TestAddHardwareWallet(t *testing.T) {
 	}
 	reloaded := wallets[0]
 	if reloaded.Type != WalletTypeHardware {
-		t.Fatalf("wallet type after reload = %q, want %q", reloaded.Type, WalletTypeHardware)
+		t.Fatalf(
+			"wallet type after reload = %q, want %q",
+			reloaded.Type,
+			WalletTypeHardware,
+		)
 	}
 	if reloaded.AccountXpub != xpub {
-		t.Fatalf("AccountXpub after reload = %q, want %q", reloaded.AccountXpub, xpub)
+		t.Fatalf(
+			"AccountXpub after reload = %q, want %q",
+			reloaded.AccountXpub,
+			xpub,
+		)
 	}
 	if len(reloaded.Account.ReceiveAddresses) != hwWindowN {
-		t.Fatalf("ReceiveAddresses after reload = %d, want %d", len(reloaded.Account.ReceiveAddresses), hwWindowN)
+		t.Fatalf(
+			"ReceiveAddresses after reload = %d, want %d",
+			len(reloaded.Account.ReceiveAddresses),
+			hwWindowN,
+		)
 	}
 	// Still no seed blob after reload.
 	if hasSeedBlob(t, v2, meta.ID) {
@@ -804,17 +982,30 @@ func TestAddHardwareWalletNonzeroAccountIndexIsActive(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	xpub, err := wallet.AccountXpubForIndexFromMnemonicBytes([]byte(mnemonicA), 1)
+	xpub, err := wallet.AccountXpubForIndexFromMnemonicBytes(
+		[]byte(mnemonicA),
+		1,
+	)
 	if err != nil {
 		t.Fatalf("AccountXpubForIndexFromMnemonicBytes: %v", err)
 	}
 
-	meta, err := v.AddHardwareWallet("My Ledger", xpub, "preview", vaultPw, 1, window)
+	meta, err := v.AddHardwareWallet(
+		"My Ledger",
+		xpub,
+		"preview",
+		vaultPw,
+		1,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddHardwareWallet: %v", err)
 	}
 	if meta.ActiveAccountIndex != 1 {
-		t.Fatalf("returned meta ActiveAccountIndex = %d, want 1", meta.ActiveAccountIndex)
+		t.Fatalf(
+			"returned meta ActiveAccountIndex = %d, want 1",
+			meta.ActiveAccountIndex,
+		)
 	}
 
 	wallets, err := v.Wallets()
@@ -830,7 +1021,10 @@ func TestAddHardwareWalletNonzeroAccountIndexIsActive(t *testing.T) {
 		t.Fatalf("Active: %v", err)
 	}
 	if active.ActiveAccountIndex != 1 {
-		t.Fatalf("Active().ActiveAccountIndex = %d, want 1", active.ActiveAccountIndex)
+		t.Fatalf(
+			"Active().ActiveAccountIndex = %d, want 1",
+			active.ActiveAccountIndex,
+		)
 	}
 
 	// Survives a lock/unlock cycle via a fresh handle (the selection is
@@ -849,7 +1043,9 @@ func TestAddHardwareWalletNonzeroAccountIndexIsActive(t *testing.T) {
 
 func testScript(addr string) ScriptMeta {
 	return ScriptMeta{
-		Policy:        json.RawMessage(`{"threshold":2,"participants":[{"key_hash_hex":"aa"}]}`),
+		Policy: json.RawMessage(
+			`{"threshold":2,"participants":[{"key_hash_hex":"aa"}]}`,
+		),
 		ScriptCBOR:    "8201828200581c",
 		ScriptAddress: addr,
 	}
@@ -861,7 +1057,13 @@ func TestAddScriptWallet(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	meta, err := v.AddScriptWallet("", "Treasury 2-of-3", "preview", testScript("addr_test1wscript"), vaultPw)
+	meta, err := v.AddScriptWallet(
+		"",
+		"Treasury 2-of-3",
+		"preview",
+		testScript("addr_test1wscript"),
+		vaultPw,
+	)
 	if err != nil {
 		t.Fatalf("AddScriptWallet: %v", err)
 	}
@@ -874,7 +1076,8 @@ func TestAddScriptWallet(t *testing.T) {
 	}
 	// The script address must be reachable as an ordinary receive address, so
 	// address and balance reads need no special case.
-	if got := meta.Account.ReceiveAddresses; len(got) != 1 || got[0] != "addr_test1wscript" {
+	if got := meta.Account.ReceiveAddresses; len(got) != 1 ||
+		got[0] != "addr_test1wscript" {
 		t.Fatalf("ReceiveAddresses = %v, want [addr_test1wscript]", got)
 	}
 	// There is genuinely no stake credential; reporting one would be a lie.
@@ -882,7 +1085,10 @@ func TestAddScriptWallet(t *testing.T) {
 		t.Fatalf("StakeAddress = %q, want empty", meta.Account.StakeAddress)
 	}
 	if meta.AccountXpub != "" {
-		t.Fatalf("AccountXpub = %q, want empty — a script wallet has no seed", meta.AccountXpub)
+		t.Fatalf(
+			"AccountXpub = %q, want empty — a script wallet has no seed",
+			meta.AccountXpub,
+		)
 	}
 }
 
@@ -936,7 +1142,13 @@ func TestAddScriptWalletRejectsDuplicateScriptAddress(t *testing.T) {
 
 	// Same policy composed twice is the same account. This is also what makes
 	// re-running the migration safe.
-	_, err := v.AddScriptWallet("", "Treasury copy", "preview", testScript("addr_test1wsame"), vaultPw)
+	_, err := v.AddScriptWallet(
+		"",
+		"Treasury copy",
+		"preview",
+		testScript("addr_test1wsame"),
+		vaultPw,
+	)
 	if !errors.Is(err, ErrDuplicateWallet) {
 		t.Fatalf("err = %v, want ErrDuplicateWallet", err)
 	}
@@ -970,7 +1182,10 @@ func TestAddScriptWalletRequiresUnlock(t *testing.T) {
 	}
 	v.Lock()
 
-	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); !errors.Is(err, ErrLocked) {
+	if _, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw); !errors.Is(
+		err,
+		ErrLocked,
+	) {
 		t.Fatalf("err = %v, want ErrLocked", err)
 	}
 }
@@ -988,7 +1203,13 @@ func TestAddScriptWalletReportsCommittedWriteError(t *testing.T) {
 	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
 	t.Cleanup(func() { syncVaultDir = oldSync })
 
-	meta, err := v.AddScriptWallet("", "Treasury", "preview", testScript("addr_test1wscript"), vaultPw)
+	meta, err := v.AddScriptWallet(
+		"",
+		"Treasury",
+		"preview",
+		testScript("addr_test1wscript"),
+		vaultPw,
+	)
 	if !errors.Is(err, ErrCommittedWrite) {
 		t.Fatalf("AddScriptWallet error = %v, want committed write error", err)
 	}
@@ -1018,7 +1239,14 @@ func TestMutationsPublishStateWhenDirectorySyncFailsAfterRename(t *testing.T) {
 	syncVaultDir = func(string) error { return errors.New("directory sync failed") }
 	t.Cleanup(func() { syncVaultDir = oldSync })
 
-	meta, err := v.AddWallet("added", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"added",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err == nil {
 		t.Fatal("AddWallet should report the durability error")
 	}

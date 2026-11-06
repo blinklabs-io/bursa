@@ -34,7 +34,10 @@ import (
 // &fakeSpender{} keep satisfying the extended Spender interface unchanged;
 // only the methods live here, next to the tests that exercise them.
 
-func (f *fakeSpender) DecodeTx(_ context.Context, txCbor string) (spend.TxSummary, error) {
+func (f *fakeSpender) DecodeTx(
+	_ context.Context,
+	txCbor string,
+) (spend.TxSummary, error) {
 	f.gotDecodeCBOR = txCbor
 	if f.decodeErr != nil {
 		return spend.TxSummary{}, f.decodeErr
@@ -42,7 +45,11 @@ func (f *fakeSpender) DecodeTx(_ context.Context, txCbor string) (spend.TxSummar
 	return f.decodeResult, nil
 }
 
-func (f *fakeSpender) CosignTx(_ context.Context, txCbor, password string, partial bool) (spend.CosignResult, error) {
+func (f *fakeSpender) CosignTx(
+	_ context.Context,
+	txCbor, password string,
+	partial bool,
+) (spend.CosignResult, error) {
 	f.gotCosignCBOR = txCbor
 	f.gotCosignPass = password
 	f.gotCosignPartial = partial
@@ -52,7 +59,10 @@ func (f *fakeSpender) CosignTx(_ context.Context, txCbor, password string, parti
 	return f.cosignResult, nil
 }
 
-func (f *fakeSpender) SubmitTxCbor(_ context.Context, txCbor string) (spend.TxResult, error) {
+func (f *fakeSpender) SubmitTxCbor(
+	_ context.Context,
+	txCbor string,
+) (spend.TxResult, error) {
 	f.gotSubmitTxCBOR = txCbor
 	if f.submitTxErr != nil {
 		return spend.TxResult{}, f.submitTxErr
@@ -76,7 +86,9 @@ func (f *fakeMultiSig) InspectTx(txCbor string) (multisig.TxInfo, error) {
 	return f.inspect, nil
 }
 
-func (f *fakeMultiSig) CosignImported(txCbor, password string) (multisig.CosignResult, error) {
+func (f *fakeMultiSig) CosignImported(
+	txCbor, password string,
+) (multisig.CosignResult, error) {
 	f.gotCosignCBOR = txCbor
 	f.gotCosignPassword = password
 	if f.cosignImportedErr != nil {
@@ -85,7 +97,10 @@ func (f *fakeMultiSig) CosignImported(txCbor, password string) (multisig.CosignR
 	return f.cosign, nil
 }
 
-func (f *fakeMultiSig) SubmitImported(_ context.Context, txCbor string) (multisig.TxResult, error) {
+func (f *fakeMultiSig) SubmitImported(
+	_ context.Context,
+	txCbor string,
+) (multisig.TxResult, error) {
 	f.gotSubmitImportCBOR = txCbor
 	if f.submitImportedErr != nil {
 		return multisig.TxResult{}, f.submitImportedErr
@@ -96,8 +111,24 @@ func (f *fakeMultiSig) SubmitImported(_ context.Context, txCbor string) (multisi
 // --- POST /wallet/decode-tx ---------------------------------------------------
 
 func TestDecodeTxHandler_OK(t *testing.T) {
-	sp := &fakeSpender{decodeResult: spend.TxSummary{Kind: "vkey", Fee: "170000"}}
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	sp := &fakeSpender{
+		decodeResult: spend.TxSummary{Kind: "vkey", Fee: "170000"},
+	}
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/decode-tx", body))
@@ -113,9 +144,31 @@ func TestDecodeTxHandler_OK(t *testing.T) {
 }
 
 func TestDecodeTxHandler_MultiSigKind(t *testing.T) {
-	sp := &fakeSpender{decodeResult: spend.TxSummary{Kind: "vkey", Fee: "2000000"}}
-	ms := &fakeMultiSig{inspect: multisig.TxInfo{IsMultiSig: true, Threshold: 2, SignedCount: 1}}
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	sp := &fakeSpender{
+		decodeResult: spend.TxSummary{Kind: "vkey", Fee: "2000000"},
+	}
+	ms := &fakeMultiSig{
+		inspect: multisig.TxInfo{
+			IsMultiSig:  true,
+			Threshold:   2,
+			SignedCount: 1,
+		},
+	}
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		ms,
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/decode-tx", body))
@@ -126,15 +179,35 @@ func TestDecodeTxHandler_MultiSigKind(t *testing.T) {
 		t.Errorf("want native_multisig kind, got %s", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"threshold":2`) {
-		t.Errorf("want multisig block with threshold, got %s", rec.Body.String())
+		t.Errorf(
+			"want multisig block with threshold, got %s",
+			rec.Body.String(),
+		)
 	}
 	if !strings.Contains(rec.Body.String(), `"fee":"2000000"`) {
-		t.Errorf("want spend-summary fee to survive the multisig merge, got %s", rec.Body.String())
+		t.Errorf(
+			"want spend-summary fee to survive the multisig merge, got %s",
+			rec.Body.String(),
+		)
 	}
 }
 
 func TestDecodeTxHandler_InvalidJSON(t *testing.T) {
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		&fakeSpender{},
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`not json`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/decode-tx", body))
@@ -147,18 +220,50 @@ func TestDecodeTxHandler_InvalidJSON(t *testing.T) {
 
 func TestCosignTxHandler_InvalidTxIs400(t *testing.T) {
 	sp := &fakeSpender{cosignErr: fmt.Errorf("%w: bad", spend.ErrInvalidTx)}
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"zz","password":"p"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("cosign-tx status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf(
+			"cosign-tx status = %d, want 400, body=%s",
+			rec.Code,
+			rec.Body.String(),
+		)
 	}
 }
 
 func TestCosignTxHandler_OK_DefaultsPartialSignTrue(t *testing.T) {
 	sp := &fakeSpender{cosignResult: spend.CosignResult{TxCBOR: "84...merged"}}
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"pw"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
@@ -166,7 +271,11 @@ func TestCosignTxHandler_OK_DefaultsPartialSignTrue(t *testing.T) {
 		t.Fatalf("cosign-tx status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	if sp.gotCosignCBOR != "84a4..." || sp.gotCosignPass != "pw" {
-		t.Errorf("args not passed through: cbor=%q pass=%q", sp.gotCosignCBOR, sp.gotCosignPass)
+		t.Errorf(
+			"args not passed through: cbor=%q pass=%q",
+			sp.gotCosignCBOR,
+			sp.gotCosignPass,
+		)
 	}
 	if !sp.gotCosignPartial {
 		t.Errorf("partial_sign should default to true when omitted")
@@ -178,9 +287,25 @@ func TestCosignTxHandler_OK_DefaultsPartialSignTrue(t *testing.T) {
 
 func TestCosignTxHandler_PartialSignFalseIsHonored(t *testing.T) {
 	sp := &fakeSpender{}
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"pw","partial_sign":false}`)
+	body := bytes.NewBufferString(
+		`{"tx_cbor":"84a4...","password":"pw","partial_sign":false}`,
+	)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cosign-tx status = %d, body=%s", rec.Code, rec.Body.String())
@@ -193,14 +318,38 @@ func TestCosignTxHandler_PartialSignFalseIsHonored(t *testing.T) {
 func TestCosignTxHandler_RoutesMultiSig(t *testing.T) {
 	ms := &fakeMultiSig{
 		inspect: multisig.TxInfo{IsMultiSig: true, Threshold: 1},
-		cosign:  multisig.CosignResult{TxCBOR: "84beef", Added: true, SignedCount: 1, Threshold: 1},
+		cosign: multisig.CosignResult{
+			TxCBOR:      "84beef",
+			Added:       true,
+			SignedCount: 1,
+			Threshold:   1,
+		},
 	}
-	h := NewHandler(testSessionToken, fakeStatuser{}, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, ms, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		fakeStatuser{},
+		&fakeVault{},
+		&fakeWallet{},
+		&fakeSpender{},
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		ms,
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4...","password":"p"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/cosign-tx", body))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "84beef") {
-		t.Fatalf("multisig cosign not routed: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "84beef") {
+		t.Fatalf(
+			"multisig cosign not routed: %d %s",
+			rec.Code,
+			rec.Body.String(),
+		)
 	}
 }
 
@@ -208,19 +357,51 @@ func TestCosignTxHandler_RoutesMultiSig(t *testing.T) {
 
 func TestSubmitTxHandler_RequiresReady(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
-	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		st,
+		&fakeVault{},
+		&fakeWallet{},
+		&fakeSpender{},
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-tx", body))
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("submit-tx while syncing = %d, want 503, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf(
+			"submit-tx while syncing = %d, want 503, body=%s",
+			rec.Code,
+			rec.Body.String(),
+		)
 	}
 }
 
 func TestSubmitTxHandler_ReturnsTxHash(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
 	sp := &fakeSpender{submitTxResult: spend.TxResult{TxHash: "cafebabe"}}
-	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	h := NewHandler(
+		testSessionToken,
+		st,
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"84a4..."}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-tx", body))
@@ -237,12 +418,32 @@ func TestSubmitTxHandler_ReturnsTxHash(t *testing.T) {
 
 func TestSubmitTxHandler_InvalidTxIs400(t *testing.T) {
 	st := fakeStatuser{s: supervisor.Status{State: supervisor.StateReady}}
-	sp := &fakeSpender{submitTxErr: fmt.Errorf("%w: bad hex", spend.ErrInvalidTx)}
-	h := NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, sp, &fakeSettings{}, &fakeContacts{}, nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler())
+	sp := &fakeSpender{
+		submitTxErr: fmt.Errorf("%w: bad hex", spend.ErrInvalidTx),
+	}
+	h := NewHandler(
+		testSessionToken,
+		st,
+		&fakeVault{},
+		&fakeWallet{},
+		sp,
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+	)
 	rec := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"tx_cbor":"zz"}`)
 	h.ServeHTTP(rec, localReq(http.MethodPost, "/wallet/submit-tx", body))
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("submit-tx invalid tx = %d, want 400, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf(
+			"submit-tx invalid tx = %d, want 400, body=%s",
+			rec.Code,
+			rec.Body.String(),
+		)
 	}
 }

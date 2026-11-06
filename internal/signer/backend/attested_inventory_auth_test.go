@@ -48,38 +48,55 @@ func TestHostKeyEnclaveInventoryRetriesSigned(t *testing.T) {
 	challenge := bytes.Repeat([]byte{9}, 32)
 	var calls atomic.Int32
 	var signedOK atomic.Bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/challenge":
-			_ = json.NewEncoder(w).Encode(map[string]any{"version": AttestedProtocol, "challenge": challenge})
-		case "/v1/inventory":
-			calls.Add(1)
-			var req struct {
-				Nonce         []byte `json:"nonce"`
-				Profile       string `json:"profile"`
-				Challenge     []byte `json:"challenge"`
-				HostKey       []byte `json:"host_key"`
-				HostSignature []byte `json:"host_signature"`
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/challenge":
+				_ = json.NewEncoder(w).
+					Encode(map[string]any{"version": AttestedProtocol, "challenge": challenge})
+			case "/v1/inventory":
+				calls.Add(1)
+				var req struct {
+					Nonce         []byte `json:"nonce"`
+					Profile       string `json:"profile"`
+					Challenge     []byte `json:"challenge"`
+					HostKey       []byte `json:"host_key"`
+					HostSignature []byte `json:"host_signature"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if len(req.HostKey) == 0 {
+					http.Error(
+						w,
+						"host key not registered",
+						http.StatusBadRequest,
+					)
+					return
+				}
+				binding := AttestedInventoryRequestBinding(
+					req.Nonce,
+					req.Profile,
+					req.Challenge,
+				)
+				if !bytes.Equal(req.Challenge, challenge) ||
+					!ed25519.Verify(req.HostKey, binding, req.HostSignature) {
+					http.Error(
+						w,
+						"host signature does not verify",
+						http.StatusBadRequest,
+					)
+					return
+				}
+				signedOK.Store(true)
+				_ = json.NewEncoder(w).
+					Encode(AttestedInventory{Version: AttestedProtocol})
+			default:
+				http.NotFound(w, r)
 			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if len(req.HostKey) == 0 {
-				http.Error(w, "host key not registered", http.StatusBadRequest)
-				return
-			}
-			binding := AttestedInventoryRequestBinding(req.Nonce, req.Profile, req.Challenge)
-			if !bytes.Equal(req.Challenge, challenge) || !ed25519.Verify(req.HostKey, binding, req.HostSignature) {
-				http.Error(w, "host signature does not verify", http.StatusBadRequest)
-				return
-			}
-			signedOK.Store(true)
-			_ = json.NewEncoder(w).Encode(AttestedInventory{Version: AttestedProtocol})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	e, err := NewHostKeyHTTPEnclave(srv.URL, "otg@preview", key)
@@ -90,7 +107,11 @@ func TestHostKeyEnclaveInventoryRetriesSigned(t *testing.T) {
 		t.Fatalf("inventory: %v", err)
 	}
 	if calls.Load() != 2 || !signedOK.Load() {
-		t.Fatalf("inventory calls = %d, signed accepted = %v; want an unsigned try then a signed one", calls.Load(), signedOK.Load())
+		t.Fatalf(
+			"inventory calls = %d, signed accepted = %v; want an unsigned try then a signed one",
+			calls.Load(),
+			signedOK.Load(),
+		)
 	}
 }
 
@@ -99,17 +120,24 @@ func TestHostKeyEnclaveInventoryRetriesSigned(t *testing.T) {
 func TestPlainEnclaveInventoryRefusalIsFinal(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, "refused", http.StatusBadRequest)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			http.Error(w, "refused", http.StatusBadRequest)
+		}),
+	)
 	t.Cleanup(srv.Close)
 	e, err := NewProfiledHTTPEnclave(srv.URL, "otg@preview")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.Inventory(t.Context(), bytes.Repeat([]byte{4}, 32)); err == nil || calls.Load() != 1 {
-		t.Fatalf("err = %v, calls = %d, want one refused request", err, calls.Load())
+	if _, err := e.Inventory(t.Context(), bytes.Repeat([]byte{4}, 32)); err == nil ||
+		calls.Load() != 1 {
+		t.Fatalf(
+			"err = %v, calls = %d, want one refused request",
+			err,
+			calls.Load(),
+		)
 	}
 }
 
@@ -119,24 +147,27 @@ func TestHostKeyEnclaveInventoryAnsweredUnsigned(t *testing.T) {
 	t.Parallel()
 	_, key, _ := ed25519.GenerateKey(nil)
 	var calls, signed atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		if r.URL.Path != "/v1/inventory" {
-			http.NotFound(w, r)
-			return
-		}
-		var req map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		for _, f := range []string{"challenge", "host_key", "host_signature"} {
-			if _, ok := req[f]; ok {
-				signed.Add(1)
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			if r.URL.Path != "/v1/inventory" {
+				http.NotFound(w, r)
+				return
 			}
-		}
-		_ = json.NewEncoder(w).Encode(AttestedInventory{Version: AttestedProtocol})
-	}))
+			var req map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			for _, f := range []string{"challenge", "host_key", "host_signature"} {
+				if _, ok := req[f]; ok {
+					signed.Add(1)
+				}
+			}
+			_ = json.NewEncoder(w).
+				Encode(AttestedInventory{Version: AttestedProtocol})
+		}),
+	)
 	t.Cleanup(srv.Close)
 	e, err := NewHostKeyHTTPEnclave(srv.URL, "otg@preview", key)
 	if err != nil {
@@ -146,7 +177,11 @@ func TestHostKeyEnclaveInventoryAnsweredUnsigned(t *testing.T) {
 		t.Fatalf("inventory: %v", err)
 	}
 	if calls.Load() != 1 || signed.Load() != 0 {
-		t.Fatalf("calls = %d, authentication fields sent = %d; want one unsigned request", calls.Load(), signed.Load())
+		t.Fatalf(
+			"calls = %d, authentication fields sent = %d; want one unsigned request",
+			calls.Load(),
+			signed.Load(),
+		)
 	}
 }
 
@@ -155,13 +190,19 @@ func TestHostKeyEnclaveInventoryAnsweredUnsigned(t *testing.T) {
 func TestHostKeyEnclaveInventoryReportsChallengeFailure(t *testing.T) {
 	t.Parallel()
 	_, key, _ := ed25519.GenerateKey(nil)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/challenge" {
-			http.Error(w, "challenge table full", http.StatusServiceUnavailable)
-			return
-		}
-		http.Error(w, "host key not registered", http.StatusBadRequest)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/challenge" {
+				http.Error(
+					w,
+					"challenge table full",
+					http.StatusServiceUnavailable,
+				)
+				return
+			}
+			http.Error(w, "host key not registered", http.StatusBadRequest)
+		}),
+	)
 	t.Cleanup(srv.Close)
 	e, err := NewHostKeyHTTPEnclave(srv.URL, "otg@preview", key)
 	if err != nil {
@@ -169,8 +210,12 @@ func TestHostKeyEnclaveInventoryReportsChallengeFailure(t *testing.T) {
 	}
 	_, err = e.Inventory(t.Context(), bytes.Repeat([]byte{4}, 32))
 	// the enclave client reports the status, not the body
-	if err == nil || !strings.Contains(err.Error(), "HTTP 400") || !strings.Contains(err.Error(), "HTTP 503") {
-		t.Fatalf("err = %v, want both the refusal and the challenge failure", err)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 400") ||
+		!strings.Contains(err.Error(), "HTTP 503") {
+		t.Fatalf(
+			"err = %v, want both the refusal and the challenge failure",
+			err,
+		)
 	}
 }
 
@@ -178,20 +223,24 @@ func TestHostKeyEnclaveInventoryReportsChallengeFailure(t *testing.T) {
 func TestHostKeyEnclaveInventoryMalformedChallenge(t *testing.T) {
 	t.Parallel()
 	_, key, _ := ed25519.GenerateKey(nil)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/challenge" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"version": "other/9", "challenge": []byte{1, 2}})
-			return
-		}
-		http.Error(w, "host key not registered", http.StatusBadRequest)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1/challenge" {
+				_ = json.NewEncoder(w).
+					Encode(map[string]any{"version": "other/9", "challenge": []byte{1, 2}})
+				return
+			}
+			http.Error(w, "host key not registered", http.StatusBadRequest)
+		}),
+	)
 	t.Cleanup(srv.Close)
 	e, err := NewHostKeyHTTPEnclave(srv.URL, "otg@preview", key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = e.Inventory(t.Context(), bytes.Repeat([]byte{4}, 32))
-	if err == nil || !errors.Is(err, ErrAttestedProtocol) || !strings.Contains(err.Error(), "HTTP 400") {
+	if err == nil || !errors.Is(err, ErrAttestedProtocol) ||
+		!strings.Contains(err.Error(), "HTTP 400") {
 		t.Fatalf("err = %v, want the refusal and %v", err, ErrAttestedProtocol)
 	}
 }

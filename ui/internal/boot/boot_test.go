@@ -60,7 +60,11 @@ func TestBootValidatesConfig(t *testing.T) {
 				t.Fatalf("expected error containing %q, got nil", tc.wantSub)
 			}
 			if !strings.Contains(err.Error(), tc.wantSub) {
-				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantSub)
+				t.Fatalf(
+					"error %q does not contain %q",
+					err.Error(),
+					tc.wantSub,
+				)
 			}
 		})
 	}
@@ -91,7 +95,10 @@ func TestBootReturnsContextErrorWhenAlreadyCanceled(t *testing.T) {
 		t.Fatalf("expected nil App when ctx is already canceled, got %v", app)
 	}
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Boot with an already-canceled ctx = %v, want context.Canceled", err)
+		t.Fatalf(
+			"Boot with an already-canceled ctx = %v, want context.Canceled",
+			err,
+		)
 	}
 	// The guard must fire before any node/network work, so this must return
 	// almost instantly — a regression back to "ignore ctx" would still return
@@ -100,7 +107,10 @@ func TestBootReturnsContextErrorWhenAlreadyCanceled(t *testing.T) {
 	// bound here guards against a future step becoming a genuine, unbounded
 	// wait that ignores ctx.
 	if elapsed > 2*time.Second {
-		t.Fatalf("Boot with an already-canceled ctx took %s; want a prompt abort", elapsed)
+		t.Fatalf(
+			"Boot with an already-canceled ctx took %s; want a prompt abort",
+			elapsed,
+		)
 	}
 }
 
@@ -120,23 +130,26 @@ func TestPrepareNodeDataDir(t *testing.T) {
 		}
 	})
 
-	t.Run("separate directory is created outside the wallet tree", func(t *testing.T) {
-		t.Parallel()
-		dataDir, nodeDir := t.TempDir(), filepath.Join(t.TempDir(), "node")
-		got, err := prepareNodeDataDir(dataDir, nodeDir, logger)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != nodeDir {
-			t.Fatalf("node dir = %q, want %q", got, nodeDir)
-		}
-		if fi, err := os.Stat(nodeDir); err != nil || !fi.IsDir() {
-			t.Fatalf("node dir not created: %v", err)
-		}
-		if _, err := os.Stat(filepath.Join(dataDir, "db")); err == nil {
-			t.Fatal("wallet tree must not gain a db directory")
-		}
-	})
+	t.Run(
+		"separate directory is created outside the wallet tree",
+		func(t *testing.T) {
+			t.Parallel()
+			dataDir, nodeDir := t.TempDir(), filepath.Join(t.TempDir(), "node")
+			got, err := prepareNodeDataDir(dataDir, nodeDir, logger)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != nodeDir {
+				t.Fatalf("node dir = %q, want %q", got, nodeDir)
+			}
+			if fi, err := os.Stat(nodeDir); err != nil || !fi.IsDir() {
+				t.Fatalf("node dir not created: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dataDir, "db")); err == nil {
+				t.Fatal("wallet tree must not gain a db directory")
+			}
+		},
+	)
 
 	t.Run("existing database moves once", func(t *testing.T) {
 		t.Parallel()
@@ -171,25 +184,36 @@ func TestPrepareNodeDataDir(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := os.Stat(legacy); err != nil {
-			t.Fatalf("legacy directory removed although node dir existed: %v", err)
+			t.Fatalf(
+				"legacy directory removed although node dir existed: %v",
+				err,
+			)
 		}
 	})
 
 	// Creating the node directory closes the one-time move for good, so a
 	// legacy location that cannot be inspected must stop the boot rather than
 	// strand a database there and resync.
-	t.Run("uninspectable legacy location fails without creating the node directory", func(t *testing.T) {
-		t.Parallel()
-		dataDir := filepath.Join(t.TempDir(), "wallet")
-		if err := os.WriteFile(dataDir, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		nodeDir := filepath.Join(t.TempDir(), "node")
-		if _, err := prepareNodeDataDir(dataDir, nodeDir, logger); err == nil {
-			t.Fatal("want an error when the legacy database location cannot be inspected")
-		}
-		if _, err := os.Stat(nodeDir); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("node dir created although the move could not be decided: %v", err)
-		}
-	})
+	t.Run(
+		"uninspectable legacy location fails without creating the node directory",
+		func(t *testing.T) {
+			t.Parallel()
+			dataDir := filepath.Join(t.TempDir(), "wallet")
+			if err := os.WriteFile(dataDir, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			nodeDir := filepath.Join(t.TempDir(), "node")
+			if _, err := prepareNodeDataDir(dataDir, nodeDir, logger); err == nil {
+				t.Fatal(
+					"want an error when the legacy database location cannot be inspected",
+				)
+			}
+			if _, err := os.Stat(nodeDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf(
+					"node dir created although the move could not be decided: %v",
+					err,
+				)
+			}
+		},
+	)
 }

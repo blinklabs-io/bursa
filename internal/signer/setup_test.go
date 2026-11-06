@@ -38,7 +38,10 @@ func TestKeyTypeFromEnvelope(t *testing.T) {
 	}{
 		// Payment signing keys
 		{"PaymentSigningKeyShelley_ed25519", backend.KeyTypePayment},
-		{"PaymentExtendedSigningKeyShelley_ed25519_bip32", backend.KeyTypePayment},
+		{
+			"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+			backend.KeyTypePayment,
+		},
 		// Stake signing key (must NOT match StakePool prefix)
 		{"StakeSigningKeyShelley_ed25519", backend.KeyTypeStake},
 		// StakePool signing key (was previously shadowed by the Stake case)
@@ -55,7 +58,12 @@ func TestKeyTypeFromEnvelope(t *testing.T) {
 		t.Run(tc.envelopeType, func(t *testing.T) {
 			got := keyTypeFromEnvelope(tc.envelopeType, "")
 			if got != tc.want {
-				t.Errorf("keyTypeFromEnvelope(%q) = %q, want %q", tc.envelopeType, got, tc.want)
+				t.Errorf(
+					"keyTypeFromEnvelope(%q) = %q, want %q",
+					tc.envelopeType,
+					got,
+					tc.want,
+				)
 			}
 		})
 	}
@@ -66,7 +74,10 @@ func TestBuildPolicies(t *testing.T) {
 		Hash:            "00000000000000000000000000000000000000000000000000000001",
 		Backend:         "software",
 		AllowedRequests: []string{"tx"},
-		TxPolicy:        map[string]any{"max_output_ada": 100, "allow_mint": false},
+		TxPolicy: map[string]any{
+			"max_output_ada": 100,
+			"allow_mint":     false,
+		},
 	}}
 	pols, err := BuildPolicies(keys)
 	if err != nil {
@@ -91,7 +102,12 @@ func TestBuildPolicies_UnknownFieldRejected(t *testing.T) {
 	}
 }
 
-func writeTestSkey(t *testing.T, dir, name string, encrypt bool, passphrase string) string {
+func writeTestSkey(
+	t *testing.T,
+	dir, name string,
+	encrypt bool,
+	passphrase string,
+) string {
 	t.Helper()
 	seed := bytes.Repeat([]byte{0x42}, 32)
 	envelope := fmt.Sprintf(
@@ -118,9 +134,17 @@ func TestBuildBackends_SoftwarePassphrase(t *testing.T) {
 	writeTestSkey(t, dir, "payment.skey", true, "test-passphrase")
 
 	t.Setenv("TEST_BURSA_KEY_PASSPHRASE", "test-passphrase")
-	backends, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "sw", Type: "software", Path: dir, PassphraseEnv: "TEST_BURSA_KEY_PASSPHRASE"},
-	})
+	backends, err := BuildBackends(
+		context.Background(),
+		[]config.SignerBackendConfig{
+			{
+				Name:          "sw",
+				Type:          "software",
+				Path:          dir,
+				PassphraseEnv: "TEST_BURSA_KEY_PASSPHRASE",
+			},
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildBackends: %v", err)
 	}
@@ -151,7 +175,12 @@ func TestBuildBackends_SoftwareWrongPassphrase(t *testing.T) {
 
 	t.Setenv("TEST_BURSA_KEY_PASSPHRASE", "wrong-passphrase")
 	_, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "sw", Type: "software", Path: dir, PassphraseEnv: "TEST_BURSA_KEY_PASSPHRASE"},
+		{
+			Name:          "sw",
+			Type:          "software",
+			Path:          dir,
+			PassphraseEnv: "TEST_BURSA_KEY_PASSPHRASE",
+		},
 	})
 	if err == nil {
 		t.Fatal("expected error for wrong passphrase")
@@ -165,9 +194,17 @@ func TestBuildBackends_SoftwarePlaintextStillWorks(t *testing.T) {
 	dir := t.TempDir()
 	writeTestSkey(t, dir, "payment.skey", false, "")
 
-	backends, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "sw", Type: "software", Path: dir, PassphraseEnv: "UNSET_ENV_VAR_FOR_TEST"},
-	})
+	backends, err := BuildBackends(
+		context.Background(),
+		[]config.SignerBackendConfig{
+			{
+				Name:          "sw",
+				Type:          "software",
+				Path:          dir,
+				PassphraseEnv: "UNSET_ENV_VAR_FOR_TEST",
+			},
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildBackends: %v", err)
 	}
@@ -202,9 +239,12 @@ func TestBuildBackends_SoftwarePolicyType(t *testing.T) {
 		t.Fatalf("write policy key: %v", err)
 	}
 
-	backends, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "sw", Type: "software", Path: dir},
-	})
+	backends, err := BuildBackends(
+		context.Background(),
+		[]config.SignerBackendConfig{
+			{Name: "sw", Type: "software", Path: dir},
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildBackends: %v", err)
 	}
@@ -250,15 +290,20 @@ func TestBuildBackends_Sops(t *testing.T) {
 	orig := newSopsSecretSource
 	defer func() { newSopsSecretSource = orig }()
 	newSopsSecretSource = func(_ context.Context, _ config.SignerBackendConfig) (backend.SecretSource, error) {
-		return &fakeSecretSource{secrets: map[string][]byte{"signer-payment-1": []byte(envelope)}}, nil
+		return &fakeSecretSource{
+			secrets: map[string][]byte{"signer-payment-1": []byte(envelope)},
+		}, nil
 	}
 	origDecrypt := sopsDecrypt
 	defer func() { sopsDecrypt = origDecrypt }()
 	sopsDecrypt = func(d []byte) ([]byte, error) { return d, nil } // fake: secrets arrive "decrypted"
 
-	backends, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "gcp", Type: "sops", SecretPrefix: "signer-"},
-	})
+	backends, err := BuildBackends(
+		context.Background(),
+		[]config.SignerBackendConfig{
+			{Name: "gcp", Type: "sops", SecretPrefix: "signer-"},
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildBackends: %v", err)
 	}
@@ -279,7 +324,9 @@ func TestBuildBackends_Sops(t *testing.T) {
 
 func TestBuildCallerACL(t *testing.T) {
 	hash := strings.Repeat("ab", 28)
-	m, err := BuildCallerACL([]config.SignerCallerConfig{{Subject: "alice", Keys: []string{hash}}})
+	m, err := BuildCallerACL(
+		[]config.SignerCallerConfig{{Subject: "alice", Keys: []string{hash}}},
+	)
 	if err != nil {
 		t.Fatalf("BuildCallerACL: %v", err)
 	}
@@ -304,7 +351,11 @@ func TestBuildCallerACL(t *testing.T) {
 
 func TestBuildAuthorizedKeys(t *testing.T) {
 	pubHex := strings.Repeat("cd", 32) // 32 bytes
-	m, err := BuildAuthorizedKeys([]config.SignerAuthorizedKeyConfig{{Caller: "alice", Ed25519PubkeyHex: pubHex}})
+	m, err := BuildAuthorizedKeys(
+		[]config.SignerAuthorizedKeyConfig{
+			{Caller: "alice", Ed25519PubkeyHex: pubHex},
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildAuthorizedKeys: %v", err)
 	}

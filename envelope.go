@@ -70,7 +70,11 @@ func ReadCborInputFile(path string) ([]byte, error) {
 
 // WriteCborEnvelope writes CBOR data as a JSON text envelope to outputFile,
 // or returns the JSON string (and writes nothing) when outputFile is empty.
-func WriteCborEnvelope(envType, description string, cborData []byte, outputFile string) (string, error) {
+func WriteCborEnvelope(
+	envType, description string,
+	cborData []byte,
+	outputFile string,
+) (string, error) {
 	env := CborEnvelope{
 		Type:        envType,
 		Description: description,

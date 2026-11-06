@@ -35,7 +35,11 @@ type fileCard struct {
 // of the given number of blocks if it does not exist.
 func openCard(path string, blocks uint64) (*fileCard, error) {
 	if blocks == 0 || blocks > math.MaxInt64/signlog.BlockSize {
-		return nil, fmt.Errorf("card size must be 1 to %d blocks, got %d", uint64(math.MaxInt64/signlog.BlockSize), blocks)
+		return nil, fmt.Errorf(
+			"card size must be 1 to %d blocks, got %d",
+			uint64(math.MaxInt64/signlog.BlockSize),
+			blocks,
+		)
 	}
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
@@ -65,7 +69,10 @@ func openCard(path string, blocks uint64) (*fileCard, error) {
 	size := info.Size()
 	if size <= 0 || size%signlog.BlockSize != 0 {
 		f.Close() //nolint:errcheck,gosec // the size error is returned
-		return nil, fmt.Errorf("card image %s is not a whole number of blocks", path)
+		return nil, fmt.Errorf(
+			"card image %s is not a whole number of blocks",
+			path,
+		)
 	}
 
 	return &fileCard{f: f, blocks: uint64(size / signlog.BlockSize)}, nil

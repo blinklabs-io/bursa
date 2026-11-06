@@ -29,11 +29,32 @@ func fixtureDef() Definition {
 		Questions: []Question{
 			{Kind: KindCustom, Anchor: &Anchor{URI: "ipfs://x"}},
 			{Kind: KindSingleChoice, Options: []string{"a", "b", "c"}},
-			{Kind: KindMultiSelect, Options: []string{"a", "b", "c"}, Min: 0, Max: 2},
-			{Kind: KindRanking, Options: []string{"a", "b", "c"}, Min: 1, Max: 2},
-			{Kind: KindNumericRange, Range: &Range{Min: 10, Max: 1000, Step: 5}},
-			{Kind: KindPointsAllocation, Options: []string{"a", "b", "c"}, Budget: 100},
-			{Kind: KindRating, Options: []string{"a", "b", "c"}, Scale: &RatingScale{Grid: &Range{Min: 1, Max: 5}}},
+			{
+				Kind:    KindMultiSelect,
+				Options: []string{"a", "b", "c"},
+				Min:     0,
+				Max:     2,
+			},
+			{
+				Kind:    KindRanking,
+				Options: []string{"a", "b", "c"},
+				Min:     1,
+				Max:     2,
+			},
+			{
+				Kind:  KindNumericRange,
+				Range: &Range{Min: 10, Max: 1000, Step: 5},
+			},
+			{
+				Kind:    KindPointsAllocation,
+				Options: []string{"a", "b", "c"},
+				Budget:  100,
+			},
+			{
+				Kind:    KindRating,
+				Options: []string{"a", "b", "c"},
+				Scale:   &RatingScale{Grid: &Range{Min: 1, Max: 5}},
+			},
 		},
 	}
 }
@@ -149,7 +170,11 @@ func TestTallyAnswers(t *testing.T) {
 			{Kind: KindMultiSelect, Question: 2, Indices: []uint64{0, 2}},
 			{Kind: KindRanking, Question: 3, Indices: []uint64{2, 0}},
 			{Kind: KindNumericRange, Question: 4, Number: 100},
-			{Kind: KindPointsAllocation, Question: 5, Pairs: []Pair{{0, 70}, {1, 30}}},
+			{
+				Kind:     KindPointsAllocation,
+				Question: 5,
+				Pairs:    []Pair{{0, 70}, {1, 30}},
+			},
 			{Kind: KindRating, Question: 6, Pairs: []Pair{{0, 5}, {1, 2}}},
 		},
 		{
@@ -157,19 +182,75 @@ func TestTallyAnswers(t *testing.T) {
 			{Kind: KindMultiSelect, Question: 2, Indices: []uint64{}},
 			{Kind: KindRanking, Question: 3, Indices: []uint64{0}},
 			{Kind: KindNumericRange, Question: 4, Number: 40},
-			{Kind: KindPointsAllocation, Question: 5, Pairs: []Pair{{0, 0}, {2, 100}}},
+			{
+				Kind:     KindPointsAllocation,
+				Question: 5,
+				Pairs:    []Pair{{0, 0}, {2, 100}},
+			},
 			{Kind: KindCustom, Question: 0, Custom: mText("x")},
 		},
 	}
 	got := d.tallyAnswers(sets)
 
 	equal(t, QuestionTally{Answered: 1, Abstained: 1}, got[0])
-	equal(t, QuestionTally{Answered: 2, Options: []OptionTally{{Count: 2}, {}, {}}}, got[1])
-	equal(t, QuestionTally{Answered: 2, Options: []OptionTally{{Count: 1}, {}, {Count: 1}}}, got[2])
-	equal(t, QuestionTally{Answered: 2, Options: []OptionTally{{Count: 2, First: 1}, {}, {Count: 1, First: 1}}}, got[3])
-	equal(t, QuestionTally{Answered: 2, Numeric: &NumericTally{Sum: 140, Min: 40, Max: 100}}, got[4])
-	equal(t, QuestionTally{Answered: 2, Options: []OptionTally{{Count: 1, Sum: 70}, {Count: 1, Sum: 30}, {Count: 1, Sum: 100}}}, got[5])
-	equal(t, QuestionTally{Answered: 1, Abstained: 1, Options: []OptionTally{{Count: 1, Sum: 5}, {Count: 1, Sum: 2}, {}}}, got[6])
+	equal(
+		t,
+		QuestionTally{Answered: 2, Options: []OptionTally{{Count: 2}, {}, {}}},
+		got[1],
+	)
+	equal(
+		t,
+		QuestionTally{
+			Answered: 2,
+			Options:  []OptionTally{{Count: 1}, {}, {Count: 1}},
+		},
+		got[2],
+	)
+	equal(
+		t,
+		QuestionTally{
+			Answered: 2,
+			Options: []OptionTally{
+				{Count: 2, First: 1},
+				{},
+				{Count: 1, First: 1},
+			},
+		},
+		got[3],
+	)
+	equal(
+		t,
+		QuestionTally{
+			Answered: 2,
+			Numeric:  &NumericTally{Sum: 140, Min: 40, Max: 100},
+		},
+		got[4],
+	)
+	equal(
+		t,
+		QuestionTally{
+			Answered: 2,
+			Options: []OptionTally{
+				{Count: 1, Sum: 70},
+				{Count: 1, Sum: 30},
+				{Count: 1, Sum: 100},
+			},
+		},
+		got[5],
+	)
+	equal(
+		t,
+		QuestionTally{
+			Answered:  1,
+			Abstained: 1,
+			Options: []OptionTally{
+				{Count: 1, Sum: 5},
+				{Count: 1, Sum: 2},
+				{},
+			},
+		},
+		got[6],
+	)
 }
 
 // Four allocations of 2^62 sum to 2^64, which wraps to 0 in a uint64; adding a
@@ -179,12 +260,20 @@ func TestCheckAnswersPointsCannotWrapToTheBudget(t *testing.T) {
 	t.Parallel()
 	d := Definition{
 		Roles: []Role{RoleDRep}, EndEpoch: 1,
-		Questions: []Question{{Kind: KindPointsAllocation, Options: []string{"a", "b", "c", "d", "e"}, Budget: 100}},
+		Questions: []Question{
+			{
+				Kind:    KindPointsAllocation,
+				Options: []string{"a", "b", "c", "d", "e"},
+				Budget:  100,
+			},
+		},
 	}
 	huge := int64(1) << 62
-	err := d.CheckAnswers([]Answer{{Kind: KindPointsAllocation, Question: 0, Pairs: []Pair{
-		{0, huge}, {1, huge}, {2, huge}, {3, huge}, {4, 100},
-	}}})
+	err := d.CheckAnswers(
+		[]Answer{{Kind: KindPointsAllocation, Question: 0, Pairs: []Pair{
+			{0, huge}, {1, huge}, {2, huge}, {3, huge}, {4, 100},
+		}}},
+	)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}

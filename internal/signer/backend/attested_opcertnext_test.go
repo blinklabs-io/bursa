@@ -30,7 +30,11 @@ func opCertNextSignable(kes []byte, issue, period uint64) []byte {
 
 // opCertNextKey loads the enclave's first key as an OpCertNextSigner. profile
 // selects a profiled backend.
-func opCertNextKey(t *testing.T, e *fakeEnclave, profile string) (KeyRef, OpCertNextSigner) {
+func opCertNextKey(
+	t *testing.T,
+	e *fakeEnclave,
+	profile string,
+) (KeyRef, OpCertNextSigner) {
 	t.Helper()
 	b := NewAttestedBackend("enclave", e, stubVerifier{})
 	if profile != "" {
@@ -74,18 +78,32 @@ func TestAttestedKeySignOpCertNext(t *testing.T) {
 			if issue != tc.wantIssue {
 				t.Fatalf("issue = %d, want %d", issue, tc.wantIssue)
 			}
-			if !ed25519.Verify(ref.PublicKey(), opCertNextSignable(kes, tc.wantIssue, 300), sig) {
-				t.Fatal("signature does not verify over kes_vkey||issue||period")
+			if !ed25519.Verify(
+				ref.PublicKey(),
+				opCertNextSignable(kes, tc.wantIssue, 300),
+				sig,
+			) {
+				t.Fatal(
+					"signature does not verify over kes_vkey||issue||period",
+				)
 			}
 			if len(e.requests) != 1 {
 				t.Fatalf("enclave requests = %d, want 1", len(e.requests))
 			}
 			req := e.requests[0]
-			if req.Purpose != PurposeOpCertNext || req.Role != KeyTypePool || req.Era != nil {
+			if req.Purpose != PurposeOpCertNext || req.Role != KeyTypePool ||
+				req.Era != nil {
 				t.Fatalf("request = %+v", req)
 			}
-			if want := opCertNextSignable(kes, tc.chain, 300); !bytes.Equal(req.Payload, want) {
-				t.Fatalf("payload carries %x, want chain counter payload %x", req.Payload, want)
+			if want := opCertNextSignable(kes, tc.chain, 300); !bytes.Equal(
+				req.Payload,
+				want,
+			) {
+				t.Fatalf(
+					"payload carries %x, want chain counter payload %x",
+					req.Payload,
+					want,
+				)
 			}
 		})
 	}
@@ -154,16 +172,25 @@ func TestAttestedKeySignOpCertNextRefusesBeforeEnclave(t *testing.T) {
 	pool := mustKey(t, b, e.hashOf(0)).(OpCertNextSigner)
 	pay := mustKey(t, b, e.hashOf(1)).(OpCertNextSigner)
 
-	if _, _, err := pay.SignOpCertNext(t.Context(), make([]byte, 32), 1, 1); !errors.Is(err, ErrAttestedProtocol) {
+	if _, _, err := pay.SignOpCertNext(t.Context(), make([]byte, 32), 1, 1); !errors.Is(
+		err,
+		ErrAttestedProtocol,
+	) {
 		t.Fatalf("wrong role: %v", err)
 	}
 	for _, n := range []int{0, 31, 33, 48} {
-		if _, _, err := pool.SignOpCertNext(t.Context(), make([]byte, n), 1, 1); !errors.Is(err, ErrAttestedProtocol) {
+		if _, _, err := pool.SignOpCertNext(t.Context(), make([]byte, n), 1, 1); !errors.Is(
+			err,
+			ErrAttestedProtocol,
+		) {
 			t.Fatalf("kes vkey length %d: %v", n, err)
 		}
 	}
 	// The generic path cannot carry opcert-next: it returns no issue number.
-	if _, err := mustKey(t, b, e.hashOf(0)).(PurposeSigner).SignPurpose(t.Context(), PurposeOpCertNext, make([]byte, 48)); !errors.Is(err, ErrAttestedProtocol) {
+	if _, err := mustKey(t, b, e.hashOf(0)).(PurposeSigner).SignPurpose(t.Context(), PurposeOpCertNext, make([]byte, 48)); !errors.Is(
+		err,
+		ErrAttestedProtocol,
+	) {
 		t.Fatalf("SignPurpose opcert-next: %v", err)
 	}
 	if e.signCalls != 0 {
@@ -185,7 +212,8 @@ func TestPurposeOpCertNextValidate(t *testing.T) {
 		{"payment 48", KeyTypePayment, make([]byte, 48), false},
 	} {
 		err := PurposeOpCertNext.validate(tc.role, tc.payload)
-		if tc.ok != (err == nil) || (err != nil && !errors.Is(err, ErrAttestedProtocol)) {
+		if tc.ok != (err == nil) ||
+			(err != nil && !errors.Is(err, ErrAttestedProtocol)) {
 			t.Fatalf("%s: err = %v", tc.name, err)
 		}
 	}
@@ -220,7 +248,11 @@ func TestAttestedKeySignOpCertNextCounterConflict(t *testing.T) {
 			t.Parallel()
 			e := newFakeEnclave(t, KeyTypePool)
 			e.tamperResp = func(_ AttestedRequest, resp *AttestedResponse) {
-				*resp = AttestedResponse{Version: resp.Version, Nonce: resp.Nonce, Error: tc.refusal}
+				*resp = AttestedResponse{
+					Version: resp.Version,
+					Nonce:   resp.Nonce,
+					Error:   tc.refusal,
+				}
 			}
 			ref, s := opCertNextKey(t, e, "")
 			_, _, err := s.SignOpCertNext(t.Context(), kes, 5, 300)
@@ -228,10 +260,20 @@ func TestAttestedKeySignOpCertNextCounterConflict(t *testing.T) {
 				t.Fatal("refusal signed")
 			}
 			if got := errors.Is(err, ErrCustodyCounterConflict); got != tc.conflict {
-				t.Fatalf("errors.Is(%v, ErrCustodyCounterConflict) = %v, want %v", err, got, tc.conflict)
+				t.Fatalf(
+					"errors.Is(%v, ErrCustodyCounterConflict) = %v, want %v",
+					err,
+					got,
+					tc.conflict,
+				)
 			}
 			// the same text refusing another purpose is not a counter conflict
-			_, err = SignFor(t.Context(), ref, PurposeOpCert, opCertNextSignable(kes, 6, 300))
+			_, err = SignFor(
+				t.Context(),
+				ref,
+				PurposeOpCert,
+				opCertNextSignable(kes, 6, 300),
+			)
 			if err == nil || errors.Is(err, ErrCustodyCounterConflict) {
 				t.Fatalf("opcert refusal: %v", err)
 			}

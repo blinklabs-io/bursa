@@ -46,7 +46,9 @@ func addSecretFlags(
 			return nil
 		}
 		if passwordFile == "-" && *mnemonicFile == "-" {
-			return errors.New(`--mnemonic-file and --password-file cannot both read standard input`)
+			return errors.New(
+				`--mnemonic-file and --password-file cannot both read standard input`,
+			)
 		}
 		value, err := cli.ReadSecretFile(passwordFile, cmd.InOrStdin())
 		if err != nil {

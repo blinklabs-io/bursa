@@ -39,7 +39,10 @@ import (
 // The registered public key is the key's latest version at boot. If the
 // Transit key is rotated, signatures from the new version will fail the
 // coordinator's verify step until the signer is restarted.
-func buildVaultBackend(ctx context.Context, c config.SignerBackendConfig) (*backend.VaultBackend, error) {
+func buildVaultBackend(
+	ctx context.Context,
+	c config.SignerBackendConfig,
+) (*backend.VaultBackend, error) {
 	if c.Address == "" {
 		return nil, errors.New("vault backend requires address")
 	}
@@ -48,15 +51,23 @@ func buildVaultBackend(ctx context.Context, c config.SignerBackendConfig) (*back
 		return nil, fmt.Errorf("invalid vault address: %w", err)
 	}
 	if u.Scheme != "https" && !backend.IsLoopbackHost(u.Hostname()) {
-		return nil, errors.New("vault address must use https; plain http is allowed only for loopback addresses (the token would travel in cleartext)")
+		return nil, errors.New(
+			"vault address must use https; plain http is allowed only for loopback addresses (the token would travel in cleartext)",
+		)
 	}
 	if len(c.Keys) == 0 {
-		return nil, errors.New("vault backend requires an explicit keys list (name + type per transit key)")
+		return nil, errors.New(
+			"vault backend requires an explicit keys list (name + type per transit key)",
+		)
 	}
 	// Validate key types before any network I/O so config errors surface fast.
 	for _, k := range c.Keys {
 		if !backend.KeyType(k.Type).Valid() {
-			return nil, fmt.Errorf("vault key %q: invalid key type %q", k.Name, k.Type)
+			return nil, fmt.Errorf(
+				"vault key %q: invalid key type %q",
+				k.Name,
+				k.Type,
+			)
 		}
 	}
 	mount := c.TransitMount
@@ -81,9 +92,13 @@ func buildVaultBackend(ctx context.Context, c config.SignerBackendConfig) (*back
 	logical := client.Logical()
 
 	sign := func(ctx context.Context, keyName string, digest []byte) (string, error) {
-		resp, err := logical.WriteWithContext(ctx, mount+"/sign/"+keyName, map[string]any{
-			"input": base64.StdEncoding.EncodeToString(digest),
-		})
+		resp, err := logical.WriteWithContext(
+			ctx,
+			mount+"/sign/"+keyName,
+			map[string]any{
+				"input": base64.StdEncoding.EncodeToString(digest),
+			},
+		)
 		if err != nil {
 			return "", err
 		}
@@ -120,7 +135,11 @@ func buildVaultBackend(ctx context.Context, c config.SignerBackendConfig) (*back
 
 // vaultTransitPublicKey reads a Transit key and returns the 32-byte Ed25519
 // public key of its latest version.
-func vaultTransitPublicKey(ctx context.Context, logical *vaultapi.Logical, mount, name string) ([]byte, error) {
+func vaultTransitPublicKey(
+	ctx context.Context,
+	logical *vaultapi.Logical,
+	mount, name string,
+) ([]byte, error) {
 	resp, err := logical.ReadWithContext(ctx, mount+"/keys/"+name)
 	if err != nil {
 		return nil, err
@@ -129,7 +148,10 @@ func vaultTransitPublicKey(ctx context.Context, logical *vaultapi.Logical, mount
 		return nil, errors.New("transit key not found")
 	}
 	if t, _ := resp.Data["type"].(string); t != "ed25519" {
-		return nil, fmt.Errorf("transit key type %q is not ed25519", resp.Data["type"])
+		return nil, fmt.Errorf(
+			"transit key type %q is not ed25519",
+			resp.Data["type"],
+		)
 	}
 	version, err := transitLatestVersion(resp.Data)
 	if err != nil {
@@ -152,7 +174,11 @@ func vaultTransitPublicKey(ctx context.Context, logical *vaultapi.Logical, mount
 		return nil, fmt.Errorf("decode public key: %w", err)
 	}
 	if len(pub) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("expected %d-byte public key, got %d", ed25519.PublicKeySize, len(pub))
+		return nil, fmt.Errorf(
+			"expected %d-byte public key, got %d",
+			ed25519.PublicKeySize,
+			len(pub),
+		)
 	}
 	return pub, nil
 }

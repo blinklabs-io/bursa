@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -80,9 +81,14 @@ type HostKeyResponse struct {
 }
 
 var (
-	errHostKeyUnknown  = errors.New("host key not registered")
-	errHostKeysBad     = errors.New("host key list unreadable; wipe the device to reset it")
+	errHostKeyUnknown = errors.New("host key not registered")
+	errHostKeysBad    = errors.New(
+		"host key list unreadable; wipe the device to reset it",
+	)
 	errHostAuthMissing = errors.New("signing requires host authentication")
+	// errLastHostKey refuses a revoke that would empty the key list: an
+	// empty list is the bootstrap state, which accepts unsigned requests
+	errLastHostKey = errors.New("the last host key may not be revoked; wipe the device to return to the bootstrap state")
 )
 
 // RequireHostAuth refuses every signing request that is not authenticated
@@ -113,7 +119,12 @@ func chainTag(chain string) (tag [chainTagSize]byte) {
 
 // scopeEntry is the entry for key registered by this build.
 func (s *Service) scopeEntry(key []byte) hostEntry {
-	return hostEntry{key: bytes.Clone(key), kind: scopeImage, network: s.network, chain: chainTag(s.chain)}
+	return hostEntry{
+		key:     bytes.Clone(key),
+		kind:    scopeImage,
+		network: s.network,
+		chain:   chainTag(s.chain),
+	}
 }
 
 // trusts reports whether this build trusts, lists and may revoke e. A build
@@ -207,8 +218,8 @@ func (s *Service) loadHostKeys(chip Chip) error {
 		s.logf("host key %x", keyHash(k))
 	}
 
-	// revoking the last key deletes the object, so a present list with no
-	// key is not a valid empty list
+	// the last key is never revoked and a wipe deletes the object, so a
+	// present list with no key is not a valid empty list
 	if len(entries) == 0 {
 		s.logf("host key list: present but empty")
 		s.hostKeysBad = true
@@ -261,7 +272,8 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 	now := s.clock()
 	s.purgeUsed(now)
 
-	binary.BigEndian.PutUint64(c, uint64(now.UnixNano())) //nolint:gosec // post-epoch time
+	stamp := uint64(now.UnixNano()) //nolint:gosec // post-epoch time
+	binary.BigEndian.PutUint64(c, stamp)
 	copy(c[challengeBody:], s.challengeMAC(c[:challengeBody]))
 
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
@@ -280,7 +292,12 @@ func (s *Service) takeChallenge(ch []byte) error {
 	}
 
 	now := s.clock()
-	issued := time.Unix(0, int64(binary.BigEndian.Uint64(ch))) //nolint:gosec // bounded by MAC
+	raw := binary.BigEndian.Uint64(ch)
+	if raw > math.MaxInt64 {
+		return errBad
+	}
+
+	issued := time.Unix(0, int64(raw)) //nolint:gosec // checked above
 
 	if age := now.Sub(issued); age < 0 || age >= challengeTTL {
 		return errBad
@@ -301,7 +318,10 @@ func (s *Service) takeChallenge(ch []byte) error {
 	}
 
 	s.usedChallenges[key] = struct{}{}
-	s.usedOrder = append(s.usedOrder, usedChallenge{expires: now.Add(challengeTTL), key: key})
+	s.usedOrder = append(
+		s.usedOrder,
+		usedChallenge{expires: now.Add(challengeTTL), key: key},
+	)
 
 	return nil
 }
@@ -336,22 +356,29 @@ func (s *Service) purgeUsed(now time.Time) {
 // the challenge is outstanding. The challenge is burned only after the
 // signature verifies, so a forged request cannot use up a real one.
 func (s *Service) authenticate(req SignRequest) error {
-	_, err := s.authenticateHostScope(req.HostKey, req.HostSignature, req.Challenge, RequestBinding(req), func(sc Scope) error {
-		if !s.multi() {
-			return nil
-		}
-
-		// the key is authentic; in a multi image it must also be of the
-		// scope of the profile it signs for. An unknown profile is refused
-		// later as ever.
-		if p, ok := s.profiles[req.Profile]; ok {
-			if target, err := s.scopeOf(p.NetworkID, p.Name); err == nil && target != sc {
-				return errScopeMismatch
+	_, err := s.authenticateHostScope(
+		req.HostKey,
+		req.HostSignature,
+		req.Challenge,
+		RequestBinding(req),
+		func(sc Scope) error {
+			if !s.multi() {
+				return nil
 			}
-		}
 
-		return nil
-	})
+			// the key is authentic; in a multi image it must also be of the
+			// scope of the profile it signs for. An unknown profile is refused
+			// later as ever.
+			if p, ok := s.profiles[req.Profile]; ok {
+				if target, err := s.scopeOf(p.NetworkID, p.Name); err == nil &&
+					target != sc {
+					return errScopeMismatch
+				}
+			}
+
+			return nil
+		},
+	)
 
 	return err
 }
@@ -360,7 +387,9 @@ func (s *Service) authenticate(req SignRequest) error {
 // signature over binding, and that challenge is outstanding, burning it. With
 // no host key registered for any network or chain it refuses when host
 // authentication is required and accepts otherwise.
-func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) error {
+func (s *Service) authenticateHost(
+	hostKey, sig, challenge, binding []byte,
+) error {
 	_, err := s.authenticateHostScope(hostKey, sig, challenge, binding, nil)
 
 	return err
@@ -372,7 +401,10 @@ func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) erro
 // make the request; it runs after the signature verifies and before the
 // challenge is burned, so only an authorized request uses one up. A request
 // accepted because no host key exists returns the image scope and no error.
-func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte, authorize func(Scope) error) (Scope, error) {
+func (s *Service) authenticateHostScope(
+	hostKey, sig, challenge, binding []byte,
+	authorize func(Scope) error,
+) (Scope, error) {
 	if s.hostKeysBad {
 		return Scope{}, errHostKeysBad
 	}
@@ -402,7 +434,8 @@ func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte,
 		return Scope{}, errHostKeyUnknown
 	}
 
-	if len(sig) != ed25519.SignatureSize || !ed25519.Verify(hostKey, binding, sig) {
+	if len(sig) != ed25519.SignatureSize ||
+		!ed25519.Verify(hostKey, binding, sig) {
 		return Scope{}, errors.New("host signature does not verify")
 	}
 
@@ -446,7 +479,8 @@ func (s *Service) authenticateHostScope(hostKey, sig, challenge, binding []byte,
 }
 
 func validHostKey(k []byte) error {
-	if len(k) != ed25519.PublicKeySize || bytes.Equal(k, make([]byte, ed25519.PublicKeySize)) {
+	if len(k) != ed25519.PublicKeySize ||
+		bytes.Equal(k, make([]byte, ed25519.PublicKeySize)) {
 		return errors.New("host key must be a 32-byte Ed25519 public key")
 	}
 
@@ -466,7 +500,11 @@ func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	}
 
 	if req.Scope != "" && req.Scope != s.imageScope().Name() {
-		return HostKeyResponse{}, fmt.Errorf("this image serves the scope %s, not %q", s.imageScope().Name(), req.Scope)
+		return HostKeyResponse{}, fmt.Errorf(
+			"this image serves the scope %s, not %q",
+			s.imageScope().Name(),
+			req.Scope,
+		)
 	}
 
 	for _, k := range s.hostKeys {
@@ -476,14 +514,23 @@ func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	}
 
 	if len(s.hostEntries) >= maxHostKeys {
-		return HostKeyResponse{}, errors.New("host key list is full; revoke a key first")
+		return HostKeyResponse{}, errors.New(
+			"host key list is full; revoke a key first",
+		)
 	}
 
-	return s.writeHostKeys(append(append([]hostEntry(nil), s.hostEntries...), s.scopeEntry(req.PublicKey)))
+	return s.writeHostKeys(
+		append(
+			append([]hostEntry(nil), s.hostEntries...),
+			s.scopeEntry(req.PublicKey),
+		),
+	)
 }
 
 // revokeHostKey removes a registered host key this build trusts; keys of
-// other networks and chains are not visible to it.
+// other networks and chains are not visible to it. The last key of the device
+// stays: an empty list is the bootstrap state, so only a device wipe empties
+// it.
 func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	if s.multi() {
 		return s.revokeHostKeyMulti(req)
@@ -503,6 +550,10 @@ func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 
 	if !found {
 		return HostKeyResponse{}, errHostKeyUnknown
+	}
+
+	if len(entries) == 0 {
+		return HostKeyResponse{}, errLastHostKey
 	}
 
 	return s.writeHostKeys(entries)

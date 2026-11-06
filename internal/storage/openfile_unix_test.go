@@ -25,7 +25,11 @@ import (
 )
 
 func openRegularFileForRead(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	return os.OpenFile(
+		path,
+		os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK,
+		0,
+	)
 }
 
 // The wallet load inspects a path and then opens it, and what the path names

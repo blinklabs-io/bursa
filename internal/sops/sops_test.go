@@ -53,9 +53,13 @@ func TestMasterKeysCombinesConfiguredResources(t *testing.T) {
 	id, err := age.GenerateX25519Identity()
 	require.NoError(t, err)
 	keys, err := masterKeys(&config.Config{
-		Google: config.GoogleConfig{ResourceId: "projects/p/locations/l/keyRings/r/cryptoKeys/k"},
-		Aws:    config.AwsConfig{KMSKeyARN: "arn:aws:kms:us-east-1:123456789012:key/abcd"},
-		Age:    config.AgeConfig{Recipients: id.Recipient().String()},
+		Google: config.GoogleConfig{
+			ResourceId: "projects/p/locations/l/keyRings/r/cryptoKeys/k",
+		},
+		Aws: config.AwsConfig{
+			KMSKeyARN: "arn:aws:kms:us-east-1:123456789012:key/abcd",
+		},
+		Age: config.AgeConfig{Recipients: id.Recipient().String()},
 	})
 	require.NoError(t, err)
 	require.Len(t, keys, 3)

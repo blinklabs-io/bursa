@@ -39,9 +39,18 @@ type GCPSecretSource struct {
 }
 
 type gcpSecretClient interface {
-	ListSecrets(context.Context, *secretmanager.ListSecretsRequest) gcpSecretIterator
-	ListSecretVersions(context.Context, *secretmanager.ListSecretVersionsRequest) gcpSecretVersionIterator
-	AccessSecretVersion(context.Context, *secretmanager.AccessSecretVersionRequest) (*secretmanager.AccessSecretVersionResponse, error)
+	ListSecrets(
+		context.Context,
+		*secretmanager.ListSecretsRequest,
+	) gcpSecretIterator
+	ListSecretVersions(
+		context.Context,
+		*secretmanager.ListSecretVersionsRequest,
+	) gcpSecretVersionIterator
+	AccessSecretVersion(
+		context.Context,
+		*secretmanager.AccessSecretVersionRequest,
+	) (*secretmanager.AccessSecretVersionResponse, error)
 }
 
 type gcpSecretIterator interface {
@@ -56,15 +65,24 @@ type gcpSecretManagerClient struct {
 	*secretmanagerclient.Client
 }
 
-func (c gcpSecretManagerClient) ListSecrets(ctx context.Context, req *secretmanager.ListSecretsRequest) gcpSecretIterator {
+func (c gcpSecretManagerClient) ListSecrets(
+	ctx context.Context,
+	req *secretmanager.ListSecretsRequest,
+) gcpSecretIterator {
 	return c.Client.ListSecrets(ctx, req)
 }
 
-func (c gcpSecretManagerClient) ListSecretVersions(ctx context.Context, req *secretmanager.ListSecretVersionsRequest) gcpSecretVersionIterator {
+func (c gcpSecretManagerClient) ListSecretVersions(
+	ctx context.Context,
+	req *secretmanager.ListSecretVersionsRequest,
+) gcpSecretVersionIterator {
 	return c.Client.ListSecretVersions(ctx, req)
 }
 
-func (c gcpSecretManagerClient) AccessSecretVersion(ctx context.Context, req *secretmanager.AccessSecretVersionRequest) (*secretmanager.AccessSecretVersionResponse, error) {
+func (c gcpSecretManagerClient) AccessSecretVersion(
+	ctx context.Context,
+	req *secretmanager.AccessSecretVersionRequest,
+) (*secretmanager.AccessSecretVersionResponse, error) {
 	return c.Client.AccessSecretVersion(ctx, req)
 }
 
@@ -85,10 +103,15 @@ var newSopsSecretSource = func(ctx context.Context, c config.SignerBackendConfig
 // project comes from the global config singleton (google.project — one
 // project per process, as elsewhere in bursa); the secret prefix is
 // per-backend configuration (signer.backends[].secret_prefix).
-func NewGCPSecretSource(ctx context.Context, prefix string) (*GCPSecretSource, error) {
+func NewGCPSecretSource(
+	ctx context.Context,
+	prefix string,
+) (*GCPSecretSource, error) {
 	cfg := config.GetConfig()
 	if cfg.Google.Project == "" {
-		return nil, errors.New("google.project is required for the sops backend")
+		return nil, errors.New(
+			"google.project is required for the sops backend",
+		)
 	}
 	client, err := secretmanagerclient.NewClient(ctx)
 	if err != nil {
@@ -137,25 +160,37 @@ func (s *GCPSecretSource) List(ctx context.Context) ([]string, error) {
 }
 
 // Get fetches the newest enabled version payload of the named secret.
-func (s *GCPSecretSource) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *GCPSecretSource) Get(
+	ctx context.Context,
+	name string,
+) ([]byte, error) {
 	versionName, err := s.latestEnabledVersion(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.client.AccessSecretVersion(ctx, &secretmanager.AccessSecretVersionRequest{
-		Name: versionName,
-	})
+	resp, err := s.client.AccessSecretVersion(
+		ctx,
+		&secretmanager.AccessSecretVersionRequest{
+			Name: versionName,
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("access secret %q: %w", name, err)
 	}
 	return resp.GetPayload().GetData(), nil
 }
 
-func (s *GCPSecretSource) latestEnabledVersion(ctx context.Context, name string) (string, error) {
-	it := s.client.ListSecretVersions(ctx, &secretmanager.ListSecretVersionsRequest{
-		Parent:   s.parent + "/secrets/" + name,
-		PageSize: 100,
-	})
+func (s *GCPSecretSource) latestEnabledVersion(
+	ctx context.Context,
+	name string,
+) (string, error) {
+	it := s.client.ListSecretVersions(
+		ctx,
+		&secretmanager.ListSecretVersionsRequest{
+			Parent:   s.parent + "/secrets/" + name,
+			PageSize: 100,
+		},
+	)
 	for {
 		version, err := it.Next()
 		if errors.Is(err, iterator.Done) {
@@ -168,7 +203,10 @@ func (s *GCPSecretSource) latestEnabledVersion(ctx context.Context, name string)
 			continue
 		}
 		if version.GetName() == "" {
-			return "", fmt.Errorf("list secret versions %q: enabled version has empty name", name)
+			return "", fmt.Errorf(
+				"list secret versions %q: enabled version has empty name",
+				name,
+			)
 		}
 		return version.GetName(), nil
 	}

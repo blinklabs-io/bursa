@@ -51,7 +51,9 @@ func TestConnSetAddAfterCloseAllIsRefused(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	t.Cleanup(func() { _ = server.Close() })
 	if s.add(server) {
-		t.Fatal("add after closeAll must be refused so the caller closes the connection")
+		t.Fatal(
+			"add after closeAll must be refused so the caller closes the connection",
+		)
 	}
 }
 

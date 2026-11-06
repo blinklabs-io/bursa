@@ -42,7 +42,8 @@ func ParseLink(doc []byte) (Ref, bool) {
 		return Ref{}, false
 	}
 	l := d.Body.CIP179
-	if string(l.SpecVersion) != strconv.FormatUint(SpecVersion, 10) || l.Kind != "survey-link" {
+	if string(l.SpecVersion) != strconv.FormatUint(SpecVersion, 10) ||
+		l.Kind != "survey-link" {
 		return Ref{}, false
 	}
 	txid, err := hex.DecodeString(l.SurveyTxID)

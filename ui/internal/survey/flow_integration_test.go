@@ -64,7 +64,9 @@ func newFlowChain(t *testing.T, address string) *flowChain {
 	out := &flowOutput{address: addr, lovelace: 50_000_000}
 	return &flowChain{
 		utxos: map[string][]common.Utxo{address: {{Id: input, Output: out}}},
-		txs:   make(map[string]chain.TxInfo), signers: make(map[string][]string), height: 100,
+		txs: make(
+			map[string]chain.TxInfo,
+		), signers: make(map[string][]string), height: 100,
 		params: backend.ProtocolParameters{
 			MinFeeConstant: 155381, MinFeeCoefficient: 44, MaxTxSize: 16384,
 			CoinsPerUtxoByte: "4310", KeyDeposits: "2000000", PoolDeposits: "500000000",
@@ -77,32 +79,55 @@ type flowOutput struct {
 	lovelace uint64
 }
 
-func (o *flowOutput) Address() common.Address                                 { return o.address }
-func (o *flowOutput) Amount() *big.Int                                        { return new(big.Int).SetUint64(o.lovelace) }
+func (o *flowOutput) Address() common.Address { return o.address }
+
+func (o *flowOutput) Amount() *big.Int { return new(big.Int).SetUint64(o.lovelace) }
+
 func (o *flowOutput) Assets() *common.MultiAsset[common.MultiAssetTypeOutput] { return nil }
-func (o *flowOutput) Datum() *common.Datum                                    { return nil }
-func (o *flowOutput) DatumHash() *common.Blake2b256                           { return nil }
-func (o *flowOutput) Cbor() []byte                                            { return nil }
-func (o *flowOutput) Utxorpc() (*utxorpc.TxOutput, error)                     { return nil, nil }
-func (o *flowOutput) ScriptRef() common.Script                                { return nil }
-func (o *flowOutput) ToPlutusData() data.PlutusData                           { return nil }
-func (o *flowOutput) String() string                                          { return o.address.String() }
+
+func (o *flowOutput) Datum() *common.Datum { return nil }
+
+func (o *flowOutput) DatumHash() *common.Blake2b256 { return nil }
+
+func (o *flowOutput) Cbor() []byte { return nil }
+
+func (o *flowOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
+
+func (o *flowOutput) ScriptRef() common.Script { return nil }
+
+func (o *flowOutput) ToPlutusData() data.PlutusData { return nil }
+
+func (o *flowOutput) String() string { return o.address.String() }
 
 func (f *flowChain) ProtocolParams() (backend.ProtocolParameters, error) { return f.params, nil }
 func (f *flowChain) GenesisParams() (backend.GenesisParameters, error) {
-	return backend.GenesisParameters{ActiveSlotsCoefficient: 0.05, EpochLength: 432000, SlotLength: 1, NetworkMagic: 1}, nil
+	return backend.GenesisParameters{
+		ActiveSlotsCoefficient: 0.05,
+		EpochLength:            432000,
+		SlotLength:             1,
+		NetworkMagic:           1,
+	}, nil
 }
 func (f *flowChain) NetworkId() uint8              { return 0 }
 func (f *flowChain) CurrentEpoch() (uint64, error) { return 50, nil }
-func (f *flowChain) MaxTxFee() (uint64, error)     { return backend.ComputeMaxTxFee(f.params) }
-func (f *flowChain) Tip() (uint64, error)          { return 10_000_000, nil }
+
+func (f *flowChain) MaxTxFee() (uint64, error) { return backend.ComputeMaxTxFee(f.params) }
+func (f *flowChain) Tip() (uint64, error)      { return 10_000_000, nil }
 func (f *flowChain) Utxos(address common.Address) ([]common.Utxo, error) {
 	return f.utxos[address.String()], nil
 }
-func (f *flowChain) EvaluateTx([]byte, []common.Utxo) (map[common.RedeemerKey]common.ExUnits, error) {
+
+func (f *flowChain) EvaluateTx(
+	[]byte,
+	[]common.Utxo,
+) (map[common.RedeemerKey]common.ExUnits, error) {
 	return nil, nil
 }
-func (f *flowChain) UtxoByRef(hash common.Blake2b256, index uint32) (*common.Utxo, error) {
+
+func (f *flowChain) UtxoByRef(
+	hash common.Blake2b256,
+	index uint32,
+) (*common.Utxo, error) {
 	for _, list := range f.utxos {
 		for _, u := range list {
 			if u.Id.Id() == hash && u.Id.Index() == index {
@@ -113,7 +138,12 @@ func (f *flowChain) UtxoByRef(hash common.Blake2b256, index uint32) (*common.Utx
 	}
 	return nil, nil
 }
-func (f *flowChain) ScriptCbor(common.Blake2b224) ([]byte, error) { return nil, nil }
+
+func (f *flowChain) ScriptCbor(
+	common.Blake2b224,
+) ([]byte, error) {
+	return nil, nil
+}
 
 func (f *flowChain) SubmitTx(raw []byte) (common.Blake2b256, error) {
 	tx, err := ledger.NewConwayTransactionFromCbor(raw)
@@ -122,18 +152,23 @@ func (f *flowChain) SubmitTx(raw []byte) (common.Blake2b256, error) {
 	}
 	metadata, ok := tx.Metadata().(common.MetaMap)
 	if !ok {
-		return common.Blake2b256{}, errors.New("submitted transaction has no metadata map")
+		return common.Blake2b256{}, errors.New(
+			"submitted transaction has no metadata map",
+		)
 	}
 	var labelValue common.TransactionMetadatum
 	for _, pair := range metadata.Pairs {
 		key, ok := pair.Key.(common.MetaInt)
-		if ok && key.Value != nil && key.Value.IsUint64() && key.Value.Uint64() == survey.Label {
+		if ok && key.Value != nil && key.Value.IsUint64() &&
+			key.Value.Uint64() == survey.Label {
 			labelValue = pair.Value
 			break
 		}
 	}
 	if labelValue == nil {
-		return common.Blake2b256{}, errors.New("submitted transaction has no label-17 value")
+		return common.Blake2b256{}, errors.New(
+			"submitted transaction has no label-17 value",
+		)
 	}
 	labelCBOR, err := cbor.Encode(labelValue)
 	if err != nil {
@@ -141,16 +176,31 @@ func (f *flowChain) SubmitTx(raw []byte) (common.Blake2b256, error) {
 	}
 	hash := tx.Id()
 	hashHex := hex.EncodeToString(hash[:])
-	f.labels = append(f.labels, chain.LabelMetadata{TxHash: hashHex, CBOR: labelCBOR})
+	f.labels = append(
+		f.labels,
+		chain.LabelMetadata{TxHash: hashHex, CBOR: labelCBOR},
+	)
 	f.height++
-	f.txs[hashHex] = chain.TxInfo{Hash: hashHex, BlockHeight: f.height, Index: 0, BlockTime: time.Now().Unix()}
+	f.txs[hashHex] = chain.TxInfo{
+		Hash:        hashHex,
+		BlockHeight: f.height,
+		Index:       0,
+		BlockTime:   time.Now().Unix(),
+	}
 	for _, signer := range tx.RequiredSigners() {
-		f.signers[hashHex] = append(f.signers[hashHex], hex.EncodeToString(signer[:]))
+		f.signers[hashHex] = append(
+			f.signers[hashHex],
+			hex.EncodeToString(signer[:]),
+		)
 	}
 	return hash, nil
 }
 
-func (f *flowChain) MetadataByLabelPage(_ context.Context, label uint64, page int) ([]chain.LabelMetadata, error) {
+func (f *flowChain) MetadataByLabelPage(
+	_ context.Context,
+	label uint64,
+	page int,
+) ([]chain.LabelMetadata, error) {
 	if label != survey.Label || page < 1 {
 		return nil, errors.New("unexpected metadata page request")
 	}
@@ -158,19 +208,31 @@ func (f *flowChain) MetadataByLabelPage(_ context.Context, label uint64, page in
 	end := min(start+chain.LabelPageSize, len(f.labels))
 	return append([]chain.LabelMetadata(nil), f.labels[start:end]...), nil
 }
-func (f *flowChain) Transaction(_ context.Context, hash string) (chain.TxInfo, error) {
+
+func (f *flowChain) Transaction(
+	_ context.Context,
+	hash string,
+) (chain.TxInfo, error) {
 	tx, ok := f.txs[hash]
 	if !ok {
 		return chain.TxInfo{}, chain.ErrNotFound
 	}
 	return tx, nil
 }
-func (f *flowChain) RequiredSigners(_ context.Context, hash string) ([]string, error) {
+
+func (f *flowChain) RequiredSigners(
+	_ context.Context,
+	hash string,
+) ([]string, error) {
 	return append([]string(nil), f.signers[hash]...), nil
 }
 func (f *flowChain) LatestEpoch(context.Context) (chain.EpochInfo, error) {
 	now := time.Now().Unix()
-	return chain.EpochInfo{Epoch: 50, StartTime: now - 50, EndTime: now + 50}, nil
+	return chain.EpochInfo{
+		Epoch:     50,
+		StartTime: now - 50,
+		EndTime:   now + 50,
+	}, nil
 }
 func (f *flowChain) Genesis(context.Context) (chain.Genesis, error) {
 	return chain.Genesis{EpochLength: 100, SlotLength: 1}, nil
@@ -181,10 +243,17 @@ func (f *flowChain) DRep(context.Context, string) (chain.DRepInfo, error) {
 func (f *flowChain) Pool(context.Context, string) (chain.PoolInfo, error) {
 	return chain.PoolInfo{}, chain.ErrNotFound
 }
-func (f *flowChain) Account(context.Context, string) (chain.AccountInfo, error) {
+
+func (f *flowChain) Account(
+	context.Context,
+	string,
+) (chain.AccountInfo, error) {
 	return chain.AccountInfo{}, chain.ErrNotFound
 }
-func (f *flowChain) GovernanceAnchorDocuments(context.Context) ([]chain.AnchorDocument, error) {
+
+func (f *flowChain) GovernanceAnchorDocuments(
+	context.Context,
+) ([]chain.AnchorDocument, error) {
 	return nil, nil
 }
 
@@ -210,7 +279,11 @@ func TestCreateRespondCancelRoundTripsThroughSignedTransactions(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := newFlowChain(t, account.ReceiveAddresses[0])
-	spends := spend.NewService(node, keystore.New(filepath.Join(t.TempDir(), "wallet.json")), nil)
+	spends := spend.NewService(
+		node,
+		keystore.New(filepath.Join(t.TempDir(), "wallet.json")),
+		nil,
+	)
 	if _, err := spends.SetWallet(flowMnemonic, "preview", password); err != nil {
 		t.Fatal(err)
 	}
@@ -218,15 +291,57 @@ func TestCreateRespondCancelRoundTripsThroughSignedTransactions(t *testing.T) {
 	surveys.SetBuilder(spends)
 
 	questions := []survey.Question{
-		{Kind: survey.KindCustom, Prompt: "Method", Anchor: &survey.Anchor{URI: "ipfs://schema", Hash: [32]byte{1}}},
-		{Kind: survey.KindSingleChoice, Prompt: "Pick", Options: []string{"a", "b"}},
-		{Kind: survey.KindMultiSelect, Prompt: "Select", Options: []string{"a", "b"}, Min: 0, Max: 2},
-		{Kind: survey.KindRanking, Prompt: "Rank", Options: []string{"a", "b"}, Min: 1, Max: 2},
-		{Kind: survey.KindNumericRange, Prompt: "Number", Range: &survey.Range{Min: 1, Max: 9}},
-		{Kind: survey.KindPointsAllocation, Prompt: "Points", Options: []string{"a", "b"}, Budget: 10},
-		{Kind: survey.KindRating, Prompt: "Rate", Options: []string{"a", "b"}, Scale: &survey.RatingScale{Levels: 5}},
+		{
+			Kind:   survey.KindCustom,
+			Prompt: "Method",
+			Anchor: &survey.Anchor{URI: "ipfs://schema", Hash: [32]byte{1}},
+		},
+		{
+			Kind:    survey.KindSingleChoice,
+			Prompt:  "Pick",
+			Options: []string{"a", "b"},
+		},
+		{
+			Kind:    survey.KindMultiSelect,
+			Prompt:  "Select",
+			Options: []string{"a", "b"},
+			Min:     0,
+			Max:     2,
+		},
+		{
+			Kind:    survey.KindRanking,
+			Prompt:  "Rank",
+			Options: []string{"a", "b"},
+			Min:     1,
+			Max:     2,
+		},
+		{
+			Kind:   survey.KindNumericRange,
+			Prompt: "Number",
+			Range:  &survey.Range{Min: 1, Max: 9},
+		},
+		{
+			Kind:    survey.KindPointsAllocation,
+			Prompt:  "Points",
+			Options: []string{"a", "b"},
+			Budget:  10,
+		},
+		{
+			Kind:    survey.KindRating,
+			Prompt:  "Rate",
+			Options: []string{"a", "b"},
+			Scale:   &survey.RatingScale{Levels: 5},
+		},
 	}
-	preview, err := surveys.Create(ctx, survey.CreateRequest{Title: "All kinds", Roles: []survey.Role{survey.RoleKeyholder}, EndEpoch: 60, Questions: questions})
+	preview, err := surveys.Create(
+		ctx,
+		survey.CreateRequest{
+			Title:     "All kinds",
+			Roles:     []survey.Role{survey.RoleKeyholder},
+			EndEpoch:  60,
+			Questions: questions,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +358,9 @@ func TestCreateRespondCancelRoundTripsThroughSignedTransactions(t *testing.T) {
 		t.Fatalf("discovered definition = %+v", detail)
 	}
 
-	custom, err := common.DecodeMetadatumRaw([]byte{0x82, 0x61, 0x78, 0x18, 0x2a})
+	custom, err := common.DecodeMetadatumRaw(
+		[]byte{0x82, 0x61, 0x78, 0x18, 0x2a},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,10 +370,28 @@ func TestCreateRespondCancelRoundTripsThroughSignedTransactions(t *testing.T) {
 		{Kind: survey.KindMultiSelect, Question: 2, Indices: []uint64{}},
 		{Kind: survey.KindRanking, Question: 3, Indices: []uint64{1, 0}},
 		{Kind: survey.KindNumericRange, Question: 4, Number: 5},
-		{Kind: survey.KindPointsAllocation, Question: 5, Pairs: []survey.Pair{{Option: 0, Value: 4}, {Option: 1, Value: 6}}},
-		{Kind: survey.KindRating, Question: 6, Pairs: []survey.Pair{{Option: 0, Value: 3}}},
+		{
+			Kind:     survey.KindPointsAllocation,
+			Question: 5,
+			Pairs: []survey.Pair{
+				{Option: 0, Value: 4},
+				{Option: 1, Value: 6},
+			},
+		},
+		{
+			Kind:     survey.KindRating,
+			Question: 6,
+			Pairs:    []survey.Pair{{Option: 0, Value: 3}},
+		},
 	}
-	preview, err = surveys.Respond(ctx, survey.RespondRequest{Survey: id, Role: survey.RoleKeyholder, Answers: answers})
+	preview, err = surveys.Respond(
+		ctx,
+		survey.RespondRequest{
+			Survey:  id,
+			Role:    survey.RoleKeyholder,
+			Answers: answers,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +402,8 @@ func TestCreateRespondCancelRoundTripsThroughSignedTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.Tally == nil || len(detail.Tally.Roles) != 1 || detail.Tally.Roles[0].Responses != 1 {
+	if detail.Tally == nil || len(detail.Tally.Roles) != 1 ||
+		detail.Tally.Roles[0].Responses != 1 {
 		t.Fatalf("tally = %+v", detail.Tally)
 	}
 	for i, question := range detail.Tally.Roles[0].Questions {

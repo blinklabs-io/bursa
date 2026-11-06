@@ -94,7 +94,10 @@ func NewAPIResolver() *APIResolver {
 	}}
 }
 
-func dialHandleAPI(ctx context.Context, network, address string) (net.Conn, error) {
+func dialHandleAPI(
+	ctx context.Context,
+	network, address string,
+) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || !strings.EqualFold(host, apiHost) || port != "443" {
 		return nil, fmt.Errorf("%w: refused destination", ErrRemoteUnavailable)
@@ -108,7 +111,11 @@ func dialHandleAPI(ctx context.Context, network, address string) (net.Conn, erro
 		if !publicIP(addr) {
 			continue
 		}
-		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+		conn, dialErr := dialer.DialContext(
+			ctx,
+			network,
+			net.JoinHostPort(addr.String(), port),
+		)
 		if dialErr == nil {
 			return conn, nil
 		}
@@ -145,7 +152,10 @@ func (r *APIResolver) Supports(network string) bool {
 
 // Resolve looks up input on api.handle.me. The hosted service is a mainnet
 // index, so test networks fail closed instead of accepting a mainnet address.
-func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name, address string, err error) {
+func (r *APIResolver) Resolve(
+	ctx context.Context,
+	network, input string,
+) (name, address string, err error) {
 	name, err = normalizeRemoteName(input)
 	if err != nil {
 		return "", "", chain.ErrNotFound
@@ -157,7 +167,12 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 		return name, "", ErrRemoteUnavailable
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL+url.PathEscape(name), nil)
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		apiBaseURL+url.PathEscape(name),
+		nil,
+	)
 	if err != nil {
 		return name, "", fmt.Errorf("%w: build request", ErrRemoteUnavailable)
 	}
@@ -173,18 +188,31 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 		return name, "", chain.ErrNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
-		return name, "", fmt.Errorf("%w: service status %d", ErrRemoteUnavailable, resp.StatusCode)
+		return name, "", fmt.Errorf(
+			"%w: service status %d",
+			ErrRemoteUnavailable,
+			resp.StatusCode,
+		)
 	}
 	if mediaType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])); mediaType != "application/json" {
-		return name, "", fmt.Errorf("%w: invalid content type", ErrRemoteUnavailable)
+		return name, "", fmt.Errorf(
+			"%w: invalid content type",
+			ErrRemoteUnavailable,
+		)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRemoteBodyBytes+1))
 	if err != nil || len(body) > maxRemoteBodyBytes {
-		return name, "", fmt.Errorf("%w: invalid response size", ErrRemoteUnavailable)
+		return name, "", fmt.Errorf(
+			"%w: invalid response size",
+			ErrRemoteUnavailable,
+		)
 	}
 	if err := rejectDuplicateJSONKeys(body); err != nil {
-		return name, "", fmt.Errorf("%w: ambiguous response", ErrRemoteUnavailable)
+		return name, "", fmt.Errorf(
+			"%w: ambiguous response",
+			ErrRemoteUnavailable,
+		)
 	}
 	var result struct {
 		Name              string `json:"name"`
@@ -195,9 +223,13 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	if err := decoder.Decode(&result); err != nil {
-		return name, "", fmt.Errorf("%w: invalid response", ErrRemoteUnavailable)
+		return name, "", fmt.Errorf(
+			"%w: invalid response",
+			ErrRemoteUnavailable,
+		)
 	}
-	if result.Name != name || !validUTxO(result.UTxO) || result.ResolvedAddresses.ADA == "" {
+	if result.Name != name || !validUTxO(result.UTxO) ||
+		result.ResolvedAddresses.ADA == "" {
 		return name, "", ErrAmbiguousHolder
 	}
 	addr, err := lcommon.NewAddress(result.ResolvedAddresses.ADA)
@@ -205,7 +237,8 @@ func (r *APIResolver) Resolve(ctx context.Context, network, input string) (name,
 		return name, "", ErrAmbiguousHolder
 	}
 	wantNetwork, err := cardanonet.AddressNetworkID(network)
-	if err != nil || addr.NetworkId() != uint(wantNetwork) || addr.Type() > lcommon.AddressTypeScriptNone {
+	if err != nil || addr.NetworkId() != uint(wantNetwork) ||
+		addr.Type() > lcommon.AddressTypeScriptNone {
 		return name, "", ErrAmbiguousHolder
 	}
 	return name, result.ResolvedAddresses.ADA, nil
@@ -243,7 +276,9 @@ func normalizeRemoteName(input string) (string, error) {
 			return "", ErrInvalidName
 		}
 		for _, ch := range part {
-			if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '.' && ch != '_' && ch != '-' {
+			if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '.' &&
+				ch != '_' &&
+				ch != '-' {
 				return "", ErrInvalidName
 			}
 		}

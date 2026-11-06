@@ -31,9 +31,27 @@ func FormatEntry(e Entry) string {
 			cold = fmt.Sprintf(" cold=%x", e.ColdKeyHash)
 		}
 
-		return fmt.Sprintf("%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x%s %s",
-			e.Seq, e.Purpose, e.Profile, e.Role, e.IssueCounter, e.KESPeriod, e.KESKeyHash, cold, summary)
+		return fmt.Sprintf(
+			"%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x%s %s",
+			e.Seq,
+			e.Purpose,
+			e.Profile,
+			e.Role,
+			e.IssueCounter,
+			e.KESPeriod,
+			e.KESKeyHash,
+			cold,
+			summary,
+		)
 	}
 
-	return fmt.Sprintf("%d %s %s %s body=%x %s", e.Seq, e.Purpose, e.Profile, e.Role, e.BodyHash, summary)
+	return fmt.Sprintf(
+		"%d %s %s %s body=%x %s",
+		e.Seq,
+		e.Purpose,
+		e.Profile,
+		e.Role,
+		e.BodyHash,
+		summary,
+	)
 }

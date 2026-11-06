@@ -51,7 +51,14 @@ func newHeaderAgent(t *testing.T) (*Agent, coldKeyPair, headerSpec) {
 	if _, err := a.InstallKey(opcert); err != nil {
 		t.Fatalf("InstallKey: %v", err)
 	}
-	return a, cold, headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 7, kesPeriod: 3, coldSig: opCertColdSig(t, opcert)}
+	return a, cold, headerSpec{
+		slot:      52,
+		issuer:    cold.pub,
+		hotVkey:   vkey,
+		sequence:  7,
+		kesPeriod: 3,
+		coldSig:   opCertColdSig(t, opcert),
+	}
 }
 
 // opCertColdSig returns the cold-key signature an encoded opcert carries.
@@ -135,8 +142,14 @@ func TestSignHeaderRefusesUntypedOrMismatchedRequests(t *testing.T) {
 				msg = tc.raw(msg)
 			}
 			sig, err := a.SignHeader(5, msg)
-			if !errors.Is(err, ErrInvalidHeader) || !strings.Contains(err.Error(), tc.reason) {
-				t.Fatalf("SignHeader: got sig=%d bytes err=%v, want ErrInvalidHeader mentioning %q", len(sig), err, tc.reason)
+			if !errors.Is(err, ErrInvalidHeader) ||
+				!strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf(
+					"SignHeader: got sig=%d bytes err=%v, want ErrInvalidHeader mentioning %q",
+					len(sig),
+					err,
+					tc.reason,
+				)
 			}
 			// A refusal leaves the key intact.
 			if _, err := a.SignHeader(5, valid); err != nil {
@@ -152,11 +165,17 @@ func TestSignHeaderStillEnforcesPeriodRules(t *testing.T) {
 	t.Parallel()
 	a, _, spec := newHeaderAgent(t)
 	spec.slot = 62 // period 6, in the future
-	if _, err := a.SignHeader(6, spec.encode(t)); !errors.Is(err, ErrFuturePeriod) {
+	if _, err := a.SignHeader(6, spec.encode(t)); !errors.Is(
+		err,
+		ErrFuturePeriod,
+	) {
 		t.Fatalf("future period: got %v, want ErrFuturePeriod", err)
 	}
 	spec.slot = 42 // period 4, before the key's current period
-	if _, err := a.SignHeader(4, spec.encode(t)); !errors.Is(err, ErrPastPeriod) {
+	if _, err := a.SignHeader(4, spec.encode(t)); !errors.Is(
+		err,
+		ErrPastPeriod,
+	) {
 		t.Fatalf("past period: got %v, want ErrPastPeriod", err)
 	}
 }

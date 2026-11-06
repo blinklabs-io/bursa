@@ -26,14 +26,23 @@ import (
 // when allSigs is set, otherwise on the last only; the chain hashes cover
 // the rest. With strict set, everything after the end must be blank, except
 // that one torn record may sit directly at the end, reported as torn.
-func scan(m Medium, h Header, allSigs, strict bool) (entries []Entry, torn bool, err error) {
+func scan(
+	m Medium,
+	h Header,
+	allSigs, strict bool,
+) (entries []Entry, torn bool, err error) {
 	buf := make([]byte, RecordSize)
 	prev := h.Hash
 	end := h.Entries + 1 // first slot not holding an entry
 
 	for seq := uint64(1); seq <= h.Entries; seq++ {
 		if err = m.ReadBlocks(slotLBA(seq), buf); err != nil {
-			return nil, false, fmt.Errorf("%w: read entry %d: %w", ErrMedium, seq, err)
+			return nil, false, fmt.Errorf(
+				"%w: read entry %d: %w",
+				ErrMedium,
+				seq,
+				err,
+			)
 		}
 
 		e, derr := decodeRecord(buf, h.Version)
@@ -49,7 +58,12 @@ func scan(m Medium, h Header, allSigs, strict bool) (entries []Entry, torn bool,
 		}
 
 		if e.Seq != seq {
-			return nil, false, fmt.Errorf("%w: slot %d holds entry %d", ErrSequence, seq, e.Seq)
+			return nil, false, fmt.Errorf(
+				"%w: slot %d holds entry %d",
+				ErrSequence,
+				seq,
+				e.Seq,
+			)
 		}
 
 		if e.Prev != prev {
@@ -78,7 +92,12 @@ func scan(m Medium, h Header, allSigs, strict bool) (entries []Entry, torn bool,
 	// a torn record is the end only if nothing follows it
 	for seq := end + 1; seq <= h.Entries; seq++ {
 		if err = m.ReadBlocks(slotLBA(seq), buf); err != nil {
-			return nil, false, fmt.Errorf("%w: read entry %d: %w", ErrMedium, seq, err)
+			return nil, false, fmt.Errorf(
+				"%w: read entry %d: %w",
+				ErrMedium,
+				seq,
+				err,
+			)
 		}
 
 		if !isZero(buf) {
@@ -112,7 +131,12 @@ func readHeader(m Medium, pub ed25519.PublicKey) (Header, error) {
 	}
 
 	if m.NumBlocks() < slotLBA(h.Entries)+RecordBlocks {
-		return h, fmt.Errorf("%w: header declares %d slots, medium holds %d blocks", ErrMedium, h.Entries, m.NumBlocks())
+		return h, fmt.Errorf(
+			"%w: header declares %d slots, medium holds %d blocks",
+			ErrMedium,
+			h.Entries,
+			m.NumBlocks(),
+		)
 	}
 
 	return h, nil

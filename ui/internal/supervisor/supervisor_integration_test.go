@@ -52,7 +52,10 @@ func TestSupervisorBootsPreview(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	t.Fatalf("node did not reach syncing within deadline; last state=%s", s.Status().State)
+	t.Fatalf(
+		"node did not reach syncing within deadline; last state=%s",
+		s.Status().State,
+	)
 }
 
 func TestMithrilBootstrapLivePreview(t *testing.T) {
@@ -74,7 +77,9 @@ func TestMithrilBootstrapLivePreview(t *testing.T) {
 
 	// Expect a bootstrapping phase first, with progress, then a servable node.
 	sawBootstrapping := false
-	deadline := time.Now().Add(20 * time.Minute) // a preview snapshot import can take a while
+	deadline := time.Now().
+		Add(20 * time.Minute)
+		// a preview snapshot import can take a while
 	// Clamp to the harness deadline (default -timeout is 10m) so the test fails
 	// its own check with a real message instead of the binary's timeout panic.
 	if d, ok := t.Deadline(); ok && d.Before(deadline) {
@@ -86,24 +91,36 @@ func TestMithrilBootstrapLivePreview(t *testing.T) {
 		case StateBootstrapping:
 			sawBootstrapping = true
 			if st.Bootstrap != nil {
-				t.Logf("bootstrap: phase=%s percent=%.1f", st.Bootstrap.Phase, st.Bootstrap.Percent)
+				t.Logf(
+					"bootstrap: phase=%s percent=%.1f",
+					st.Bootstrap.Phase,
+					st.Bootstrap.Percent,
+				)
 			}
 		case StateSyncing, StateReady:
 			// The DB dir is a fresh TempDir and Start sets StateBootstrapping
 			// synchronously, so missing the window means the Mithril path was
 			// never exercised — that's a failure, not a benign race.
 			if !sawBootstrapping {
-				t.Fatal("node became servable without an observed bootstrapping window; Mithril path not exercised")
+				t.Fatal(
+					"node became servable without an observed bootstrapping window; Mithril path not exercised",
+				)
 			}
 			if st.Bootstrap != nil {
-				t.Fatalf("Bootstrap should be cleared once serving, got %+v", st.Bootstrap)
+				t.Fatalf(
+					"Bootstrap should be cleared once serving, got %+v",
+					st.Bootstrap,
+				)
 			}
 			return // success
 		case StateError:
 			t.Fatalf("bootstrap errored: %s", st.Err)
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("did not reach a servable state in time (a full run needs -timeout 25m or more); last = %s", st.State)
+			t.Fatalf(
+				"did not reach a servable state in time (a full run needs -timeout 25m or more); last = %s",
+				st.State,
+			)
 		}
 		time.Sleep(3 * time.Second)
 	}

@@ -36,12 +36,18 @@ type fakeGCPSecretClient struct {
 	accessNames     []string
 }
 
-func (f *fakeGCPSecretClient) ListSecrets(_ context.Context, req *secretmanager.ListSecretsRequest) gcpSecretIterator {
+func (f *fakeGCPSecretClient) ListSecrets(
+	_ context.Context,
+	req *secretmanager.ListSecretsRequest,
+) gcpSecretIterator {
 	f.listSecretsReq = req
 	return &fakeGCPSecretIterator{secrets: f.secrets}
 }
 
-func (f *fakeGCPSecretClient) ListSecretVersions(_ context.Context, req *secretmanager.ListSecretVersionsRequest) gcpSecretVersionIterator {
+func (f *fakeGCPSecretClient) ListSecretVersions(
+	_ context.Context,
+	req *secretmanager.ListSecretVersionsRequest,
+) gcpSecretVersionIterator {
 	f.listVersionsReq = req
 	return &fakeGCPSecretVersionIterator{
 		versions: f.versions,
@@ -49,7 +55,10 @@ func (f *fakeGCPSecretClient) ListSecretVersions(_ context.Context, req *secretm
 	}
 }
 
-func (f *fakeGCPSecretClient) AccessSecretVersion(_ context.Context, req *secretmanager.AccessSecretVersionRequest) (*secretmanager.AccessSecretVersionResponse, error) {
+func (f *fakeGCPSecretClient) AccessSecretVersion(
+	_ context.Context,
+	req *secretmanager.AccessSecretVersionRequest,
+) (*secretmanager.AccessSecretVersionResponse, error) {
 	f.accessNames = append(f.accessNames, req.GetName())
 	payload, ok := f.accessPayloads[req.GetName()]
 	if !ok {
@@ -126,7 +135,10 @@ func TestGCPSecretSourceGetUsesNewestEnabledVersion(t *testing.T) {
 		t.Fatalf("payload = %q, want %q", string(got), "enabled payload")
 	}
 	if client.listVersionsReq.GetParent() != parent+"/secrets/"+secret {
-		t.Fatalf("ListSecretVersions parent = %q", client.listVersionsReq.GetParent())
+		t.Fatalf(
+			"ListSecretVersions parent = %q",
+			client.listVersionsReq.GetParent(),
+		)
 	}
 	if !slices.Equal(client.accessNames, []string{v1}) {
 		t.Fatalf("accessed versions = %v, want [%s]", client.accessNames, v1)
@@ -140,8 +152,14 @@ func TestGCPSecretSourceGetFailsWhenNoEnabledVersion(t *testing.T) {
 	)
 	client := &fakeGCPSecretClient{
 		versions: []*secretmanager.SecretVersion{
-			{Name: parent + "/secrets/" + secret + "/versions/2", State: secretmanager.SecretVersion_DISABLED},
-			{Name: parent + "/secrets/" + secret + "/versions/1", State: secretmanager.SecretVersion_DESTROYED},
+			{
+				Name:  parent + "/secrets/" + secret + "/versions/2",
+				State: secretmanager.SecretVersion_DISABLED,
+			},
+			{
+				Name:  parent + "/secrets/" + secret + "/versions/1",
+				State: secretmanager.SecretVersion_DESTROYED,
+			},
 		},
 		accessPayloads: map[string][]byte{},
 	}
@@ -154,7 +172,10 @@ func TestGCPSecretSourceGetFailsWhenNoEnabledVersion(t *testing.T) {
 	if err == nil {
 		t.Fatal("Get: expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), `no enabled versions for secret "signer-payment"`) {
+	if !strings.Contains(
+		err.Error(),
+		`no enabled versions for secret "signer-payment"`,
+	) {
 		t.Fatalf("Get error = %q", err.Error())
 	}
 	if len(client.accessNames) != 0 {

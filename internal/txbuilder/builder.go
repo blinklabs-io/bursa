@@ -58,10 +58,20 @@ type BuiltTx struct {
 }
 
 func (b *BuiltTx) Enveloped() (string, error) {
-	return bursa.WriteCborEnvelope(b.TxEnvelopeType, "Unwitnessed Tx", b.TxCBOR, "")
+	return bursa.WriteCborEnvelope(
+		b.TxEnvelopeType,
+		"Unwitnessed Tx",
+		b.TxCBOR,
+		"",
+	)
 }
 
-func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *ProtocolParametersExtra) (uint64, uint64, error) {
+func computeDeposits(
+	certs [][]byte,
+	chain Chain,
+	ctx context.Context,
+	pp *ProtocolParametersExtra,
+) (uint64, uint64, error) {
 	wrappers := make([]common.CertificateWrapper, 0, len(certs))
 	for _, c := range certs {
 		var wrapper common.CertificateWrapper
@@ -81,14 +91,20 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 			key := StakeCredentialKeyFrom(cert.StakeCredential)
 			if !queried[key] {
 				queried[key] = true
-				legacyDeregCreds = append(legacyDeregCreds, cert.StakeCredential)
+				legacyDeregCreds = append(
+					legacyDeregCreds,
+					cert.StakeCredential,
+				)
 			}
 		}
 	}
 	recordedDeposits := map[StakeCredentialKey]uint64{}
 	if len(legacyDeregCreds) > 0 {
 		var err error
-		recordedDeposits, err = chain.GetStakeDelegDeposits(ctx, legacyDeregCreds)
+		recordedDeposits, err = chain.GetStakeDelegDeposits(
+			ctx,
+			legacyDeregCreds,
+		)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -173,7 +189,10 @@ func computeDeposits(certs [][]byte, chain Chain, ctx context.Context, pp *Proto
 
 // minUTxO is the Babbage minimum for an output:
 // (160 + serialized output size) * coinsPerUTxOByte.
-func minUTxO(out babbage.BabbageTransactionOutput, pp *ProtocolParametersExtra) (uint64, error) {
+func minUTxO(
+	out babbage.BabbageTransactionOutput,
+	pp *ProtocolParametersExtra,
+) (uint64, error) {
 	if pp == nil || pp.CoinsPerUTxOByte == 0 {
 		return 0, nil
 	}
@@ -184,7 +203,11 @@ func minUTxO(out babbage.BabbageTransactionOutput, pp *ProtocolParametersExtra) 
 	return uint64(160+len(b)) * pp.CoinsPerUTxOByte, nil
 }
 
-func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error) {
+func Build(
+	ctx context.Context,
+	chain Chain,
+	opts BuildOptions,
+) (*BuiltTx, error) {
 	if opts.ChangeAddress == "" {
 		return nil, errors.New("change address required")
 	}
@@ -224,17 +247,22 @@ func Build(ctx context.Context, chain Chain, opts BuildOptions) (*BuiltTx, error
 		return nil, err
 	}
 	if changeAddr.Type() == common.AddressTypeByron {
-		return nil, errors.New("change address must be a Shelley address: Byron inputs need bootstrap witnesses")
+		return nil, errors.New(
+			"change address must be a Shelley address: Byron inputs need bootstrap witnesses",
+		)
 	}
 	if _, ok := changeAddr.PayloadPayload().(common.AddressPayloadScriptHash); ok {
-		return nil, errors.New("change address payment credential must be a key, not a script")
+		return nil, errors.New(
+			"change address payment credential must be a key, not a script",
+		)
 	}
 
 	// Filter to ada-only UTxOs for coin selection. Assets are not needed
 	// for pool operations and would require multi-asset change handling.
 	var filtered []UTxO
 	for _, u := range utxos {
-		if assets := u.Output.Assets(); assets != nil && len(assets.Policies()) > 0 {
+		if assets := u.Output.Assets(); assets != nil &&
+			len(assets.Policies()) > 0 {
 			continue
 		}
 		filtered = append(filtered, u)

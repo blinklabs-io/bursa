@@ -84,7 +84,9 @@ func TestProvisionCold(t *testing.T) {
 
 	pub := ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey)
 
-	if resp.ColdKeyID != freeColdID || resp.PublicKey != hex.EncodeToString(pub) || resp.PoolID != hashHex(pub) {
+	if resp.ColdKeyID != freeColdID ||
+		resp.PublicKey != hex.EncodeToString(pub) ||
+		resp.PoolID != hashHex(pub) {
 		t.Fatalf("response %s does not match the imported key", body)
 	}
 
@@ -107,13 +109,38 @@ func TestProvisionColdRefusals(t *testing.T) {
 		key  string
 		want string
 	}{
-		{"below range", coldKeyFirst - 1, coldKeyHex(coldSeed), "outside the cold key range"},
-		{"above range", coldKeyLast + 1, coldKeyHex(coldSeed), "outside the cold key range"},
+		{
+			"below range",
+			coldKeyFirst - 1,
+			coldKeyHex(coldSeed),
+			"outside the cold key range",
+		},
+		{
+			"above range",
+			coldKeyLast + 1,
+			coldKeyHex(coldSeed),
+			"outside the cold key range",
+		},
 		{"occupied", testColdID, coldKeyHex(coldSeed), "already exists"},
 		{"not hex", freeColdID, "zz", "malformed signing key"},
-		{"no cbor prefix", freeColdID, hex.EncodeToString(coldSeed), "malformed signing key"},
-		{"short seed", freeColdID, "5820" + hex.EncodeToString(coldSeed[:31]), "malformed signing key"},
-		{"extended key", freeColdID, "5840" + strings.Repeat("11", 64), "malformed signing key"},
+		{
+			"no cbor prefix",
+			freeColdID,
+			hex.EncodeToString(coldSeed),
+			"malformed signing key",
+		},
+		{
+			"short seed",
+			freeColdID,
+			"5820" + hex.EncodeToString(coldSeed[:31]),
+			"malformed signing key",
+		},
+		{
+			"extended key",
+			freeColdID,
+			"5840" + strings.Repeat("11", 64),
+			"malformed signing key",
+		},
 		{"empty", freeColdID, "", "malformed signing key"},
 	}
 
@@ -128,11 +155,20 @@ func TestProvisionColdRefusals(t *testing.T) {
 				"cold_key_id": tc.id, "signing_key": tc.key,
 			})
 
-			if code == http.StatusOK || !strings.Contains(string(body), tc.want) {
-				t.Fatalf("got %d %q, want a refusal containing %q", code, body, tc.want)
+			if code == http.StatusOK ||
+				!strings.Contains(string(body), tc.want) {
+				t.Fatalf(
+					"got %d %q, want a refusal containing %q",
+					code,
+					body,
+					tc.want,
+				)
 			}
 
-			if after, _ := chip.PublicKeyEd25519(testColdID); !bytes.Equal(before, after) {
+			if after, _ := chip.PublicKeyEd25519(testColdID); !bytes.Equal(
+				before,
+				after,
+			) {
 				t.Fatal("existing cold key changed")
 			}
 
@@ -169,11 +205,15 @@ func TestProvisionColdChipErrors(t *testing.T) {
 				"cold_key_id": freeColdID, "signing_key": coldKeyHex(coldSeed),
 			})
 
-			if code == http.StatusOK || !strings.Contains(string(body), "device error") {
+			if code == http.StatusOK ||
+				!strings.Contains(string(body), "device error") {
 				t.Fatalf("got %d %q, want a device error", code, body)
 			}
 
-			if strings.Contains(string(body)+logs(), hex.EncodeToString(coldSeed)) {
+			if strings.Contains(
+				string(body)+logs(),
+				hex.EncodeToString(coldSeed),
+			) {
 				t.Fatal("seed leaked into the response or log")
 			}
 		})
@@ -185,7 +225,10 @@ func TestProvisionColdNeverOverwrites(t *testing.T) {
 
 	s, chip, _ := newLoggedService(t)
 
-	req := map[string]any{"cold_key_id": freeColdID, "signing_key": coldKeyHex(coldSeed)}
+	req := map[string]any{
+		"cold_key_id": freeColdID,
+		"signing_key": coldKeyHex(coldSeed),
+	}
 
 	if code, body := post(t, s, "/provision/cold", req); code != http.StatusOK {
 		t.Fatalf("first import: %d %s", code, body)
@@ -198,7 +241,10 @@ func TestProvisionColdNeverOverwrites(t *testing.T) {
 		t.Fatal("second import over an existing key was accepted")
 	}
 
-	if second, _ := chip.PublicKeyEd25519(freeColdID); !bytes.Equal(first, second) {
+	if second, _ := chip.PublicKeyEd25519(freeColdID); !bytes.Equal(
+		first,
+		second,
+	) {
 		t.Fatal("key was overwritten")
 	}
 }
@@ -209,7 +255,10 @@ func TestProvisionColdRetryWithSameKey(t *testing.T) {
 	t.Parallel()
 
 	s, chip, _ := newLoggedService(t)
-	req := map[string]any{"cold_key_id": freeColdID, "signing_key": coldKeyHex(coldSeed)}
+	req := map[string]any{
+		"cold_key_id": freeColdID,
+		"signing_key": coldKeyHex(coldSeed),
+	}
 
 	code, first := post(t, s, "/provision/cold", req)
 	if code != http.StatusOK {
@@ -222,7 +271,10 @@ func TestProvisionColdRetryWithSameKey(t *testing.T) {
 	}
 
 	pub, _ := chip.PublicKeyEd25519(freeColdID)
-	if !bytes.Equal(pub, ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey)) {
+	if !bytes.Equal(
+		pub,
+		ed25519.NewKeyFromSeed(coldSeed).Public().(ed25519.PublicKey),
+	) {
 		t.Fatal("stored key changed")
 	}
 }

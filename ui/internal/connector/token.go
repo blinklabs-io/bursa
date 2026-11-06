@@ -109,7 +109,10 @@ func (s *TokenStore) Clear() error {
 		return nil
 	}
 	if truncErr := os.Truncate(s.path, 0); truncErr != nil {
-		return fmt.Errorf("connector: pairing revoked but token file not removed: %w", errors.Join(err, truncErr))
+		return fmt.Errorf(
+			"connector: pairing revoked but token file not removed: %w",
+			errors.Join(err, truncErr),
+		)
 	}
 	return nil
 }

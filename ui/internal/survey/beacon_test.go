@@ -24,7 +24,10 @@ import (
 	"testing"
 )
 
-func relayServer(t *testing.T, handler http.HandlerFunc) func(context.Context, uint64) ([]byte, error) {
+func relayServer(
+	t *testing.T,
+	handler http.HandlerFunc,
+) func(context.Context, uint64) ([]byte, error) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -36,7 +39,11 @@ func TestRelayFetcherReadsTheQuicknetBeacon(t *testing.T) {
 	paths := make(chan string, 1)
 	fetch := relayServer(t, func(w http.ResponseWriter, r *http.Request) {
 		paths <- r.URL.Path
-		fmt.Fprintf(w, `{"round":100,"randomness":"79fe","signature":%q}`, quicknetRound100Sig)
+		fmt.Fprintf(
+			w,
+			`{"round":100,"randomness":"79fe","signature":%q}`,
+			quicknetRound100Sig,
+		)
 	})
 	got, err := fetch(context.Background(), 100)
 	noErr(t, err)

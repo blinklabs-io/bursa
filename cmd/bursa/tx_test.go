@@ -122,13 +122,27 @@ func TestTxDecodeMinFeeWitnessEstimate(t *testing.T) {
 			}
 			wantFee := uint64(155381 + 44*(got.SizeBytes+tc.addedBytes))
 			if got.MinFee != wantFee {
-				t.Errorf("min_fee = %d, want %d for decoded size %d plus %d witness bytes", got.MinFee, wantFee, got.SizeBytes, tc.addedBytes)
+				t.Errorf(
+					"min_fee = %d, want %d for decoded size %d plus %d witness bytes",
+					got.MinFee,
+					wantFee,
+					got.SizeBytes,
+					tc.addedBytes,
+				)
 			}
 			if !strings.Contains(got.MinFeeNote, "transaction as decoded") {
-				t.Errorf("min_fee_note = %q, want decoded-transaction fee basis", got.MinFeeNote)
+				t.Errorf(
+					"min_fee_note = %q, want decoded-transaction fee basis",
+					got.MinFeeNote,
+				)
 			}
-			if tc.witnessNote != "" && !strings.Contains(got.MinFeeNote, tc.witnessNote) {
-				t.Errorf("min_fee_note = %q, want %q", got.MinFeeNote, tc.witnessNote)
+			if tc.witnessNote != "" &&
+				!strings.Contains(got.MinFeeNote, tc.witnessNote) {
+				t.Errorf(
+					"min_fee_note = %q, want %q",
+					got.MinFeeNote,
+					tc.witnessNote,
+				)
 			}
 		})
 	}

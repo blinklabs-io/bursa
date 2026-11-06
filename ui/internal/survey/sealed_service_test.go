@@ -35,11 +35,21 @@ func sealedSimple(owner byte, endEpoch, round uint64) Definition {
 }
 
 // sealedResponse is a Keyholder response whose answers are sealed to round.
-func sealedResponse(t *testing.T, s Ref, who byte, round, choice uint64) Response {
+func sealedResponse(
+	t *testing.T,
+	s Ref,
+	who byte,
+	round, choice uint64,
+) Response {
 	t.Helper()
 	ct, err := SealAnswers(answer(choice), sealedMode(round, 128))
 	noErr(t, err)
-	return Response{Survey: s, Role: RoleKeyholder, Credential: cred(false, who), Sealed: ct}
+	return Response{
+		Survey:     s,
+		Role:       RoleKeyholder,
+		Credential: cred(false, who),
+		Sealed:     ct,
+	}
 }
 
 func relayStub(t *testing.T, sig string) (*Service, *fakeChain, *atomic.Int32) {
@@ -64,9 +74,40 @@ func revealFixture(t *testing.T, sig string) (*Service, *atomic.Int32) {
 	svc, f, calls := relayStub(t, sig)
 	s := ref(0xa1, 0)
 	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, 100)), credHex(1))
-	f.add(t, 0xd1, 110, 0, 41, respPayload(sealedResponse(t, s, 10, 100, 0)), credHex(10))
-	f.add(t, 0xd2, 111, 0, 41, respPayload(sealedResponse(t, s, 11, 100, 1)), credHex(11))
-	f.add(t, 0xd3, 112, 0, 41, respPayload(Response{Survey: s, Role: RoleKeyholder, Credential: cred(false, 12), Sealed: []byte("garbage")}), credHex(12))
+	f.add(
+		t,
+		0xd1,
+		110,
+		0,
+		41,
+		respPayload(sealedResponse(t, s, 10, 100, 0)),
+		credHex(10),
+	)
+	f.add(
+		t,
+		0xd2,
+		111,
+		0,
+		41,
+		respPayload(sealedResponse(t, s, 11, 100, 1)),
+		credHex(11),
+	)
+	f.add(
+		t,
+		0xd3,
+		112,
+		0,
+		41,
+		respPayload(
+			Response{
+				Survey:     s,
+				Role:       RoleKeyholder,
+				Credential: cred(false, 12),
+				Sealed:     []byte("garbage"),
+			},
+		),
+		credHex(12),
+	)
 	return svc, calls
 }
 
@@ -133,13 +174,20 @@ func TestRevealNeedsConsentBeforeFetchingAndThenTallies(t *testing.T) {
 	equal(t, uint64(2), rt.Responses)
 	equal(t, uint64(0), rt.Sealed)
 	equal(t, []OptionTally{{Count: 1}, {Count: 1}}, rt.Questions[0].Options)
-	isTrue(t, reasons(*d.Tally)[txHash(0xd3)] != "") // unopenable ciphertext is excluded
+	isTrue(
+		t,
+		reasons(*d.Tally)[txHash(0xd3)] != "",
+	) // unopenable ciphertext is excluded
 
 	// The beacon is now cached: reading tallies the revealed answers without
 	// another fetch, and revealing again does not need consent.
 	d, err = svc.Get(ctx, id)
 	noErr(t, err)
-	equal(t, []OptionTally{{Count: 1}, {Count: 1}}, keyholder(t, d).Questions[0].Options)
+	equal(
+		t,
+		[]OptionTally{{Count: 1}, {Count: 1}},
+		keyholder(t, d).Questions[0].Options,
+	)
 	_, err = svc.Reveal(ctx, RevealRequest{Survey: id})
 	noErr(t, err)
 	equal(t, int32(1), calls.Load())
@@ -148,7 +196,10 @@ func TestRevealNeedsConsentBeforeFetchingAndThenTallies(t *testing.T) {
 func TestRevealAcceptsAUserSuppliedBeaconWithoutFetching(t *testing.T) {
 	t.Parallel()
 	svc, calls := revealFixture(t, quicknetRound100Sig)
-	d, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xa1, 0), Beacon: quicknetRound100Sig})
+	d, err := svc.Reveal(
+		context.Background(),
+		RevealRequest{Survey: surveyID(0xa1, 0), Beacon: quicknetRound100Sig},
+	)
 	noErr(t, err)
 	equal(t, int32(0), calls.Load())
 	equal(t, uint64(2), keyholder(t, d).Responses)
@@ -171,22 +222,41 @@ func TestRevealRejectsBadBeaconsAndCachesNothing(t *testing.T) {
 		"another round": quicknetRound1Sig,
 		"truncated":     quicknetRound100Sig[:40],
 	} {
-		if _, err := svc.Reveal(ctx, RevealRequest{Survey: id, Beacon: beacon}); !errors.Is(err, ErrInvalid) {
+		if _, err := svc.Reveal(ctx, RevealRequest{Survey: id, Beacon: beacon}); !errors.Is(
+			err,
+			ErrInvalid,
+		) {
 			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
 		}
 	}
 
 	d, err := svc.Get(ctx, id)
 	noErr(t, err)
-	equal(t, uint64(3), keyholder(t, d).Sealed) // still sealed: no bad beacon was kept
+	equal(
+		t,
+		uint64(3),
+		keyholder(t, d).Sealed,
+	) // still sealed: no bad beacon was kept
 }
 
 func TestRevealRefusesBeforeTheRoundPublishes(t *testing.T) {
 	t.Parallel()
 	svc, f, calls := relayStub(t, quicknetRound100Sig)
-	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, futureRound())), credHex(1))
-	_, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xa1, 0), Consent: true})
-	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "not yet published") {
+	f.add(
+		t,
+		0xa1,
+		100,
+		0,
+		40,
+		defPayload(sealedSimple(1, 60, futureRound())),
+		credHex(1),
+	)
+	_, err := svc.Reveal(
+		context.Background(),
+		RevealRequest{Survey: surveyID(0xa1, 0), Consent: true},
+	)
+	if !errors.Is(err, ErrInvalid) ||
+		!strings.Contains(err.Error(), "not yet published") {
 		t.Fatalf("err = %v, want a not-yet-published rejection", err)
 	}
 	equal(t, int32(0), calls.Load())
@@ -196,10 +266,16 @@ func TestRevealRejectsPublicAndUnknownSurveys(t *testing.T) {
 	t.Parallel()
 	svc, f, calls := relayStub(t, quicknetRound100Sig)
 	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
-	if _, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xa1, 0), Consent: true}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xa1, 0), Consent: true}); !errors.Is(
+		err,
+		ErrInvalid,
+	) {
 		t.Fatalf("public survey: err = %v, want ErrInvalid", err)
 	}
-	if _, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xee, 0), Consent: true}); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xee, 0), Consent: true}); !errors.Is(
+		err,
+		ErrNotFound,
+	) {
 		t.Fatalf("unknown survey: err = %v, want ErrNotFound", err)
 	}
 	equal(t, int32(0), calls.Load())
@@ -209,12 +285,27 @@ func TestRespondSealsAnswersForASealedSurvey(t *testing.T) {
 	t.Parallel()
 	f := newFakeChain()
 	round := futureRound()
-	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, round)), credHex(1))
+	f.add(
+		t,
+		0xa1,
+		100,
+		0,
+		40,
+		defPayload(sealedSimple(1, 60, round)),
+		credHex(1),
+	)
 	svc := NewService(f, "preview")
 	b := &fakeBuilder{}
 	svc.SetBuilder(b)
 
-	_, err := svc.Respond(context.Background(), RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleKeyholder, Answers: answer(1)})
+	_, err := svc.Respond(
+		context.Background(),
+		RespondRequest{
+			Survey:  surveyID(0xa1, 0),
+			Role:    RoleKeyholder,
+			Answers: answer(1),
+		},
+	)
 	noErr(t, err)
 	_, p := b.built(t)
 	r := p.Responses[0]
@@ -236,11 +327,26 @@ func TestRespondToASealedSurveyRejectsWithoutBuilding(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newFakeChain()
-			f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, tc.round)), credHex(1))
+			f.add(
+				t,
+				0xa1,
+				100,
+				0,
+				40,
+				defPayload(sealedSimple(1, 60, tc.round)),
+				credHex(1),
+			)
 			svc := NewService(f, "preview")
 			b := &fakeBuilder{}
 			svc.SetBuilder(b)
-			_, err := svc.Respond(context.Background(), RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleKeyholder, Answers: tc.answers})
+			_, err := svc.Respond(
+				context.Background(),
+				RespondRequest{
+					Survey:  surveyID(0xa1, 0),
+					Role:    RoleKeyholder,
+					Answers: tc.answers,
+				},
+			)
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
 			}
@@ -269,7 +375,10 @@ func TestCreateSealedSurvey(t *testing.T) {
 		svc, _, b := newBuilderService(t)
 		req := createRequest()
 		req.Seal = seal
-		if _, err := svc.Create(context.Background(), req); !errors.Is(err, ErrInvalid) {
+		if _, err := svc.Create(context.Background(), req); !errors.Is(
+			err,
+			ErrInvalid,
+		) {
 			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
 		}
 		equal(t, 0, len(b.requests))
@@ -286,15 +395,39 @@ func TestOtherDrandChainsStaySealed(t *testing.T) {
 	other.Mode.ChainHash = [32]byte(rep(0x77, 32))
 	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, 100)), credHex(1))
 	f.add(t, 0xa2, 101, 0, 40, defPayload(other), credHex(2))
-	f.add(t, 0xd1, 110, 0, 41, respPayload(Response{Survey: ref(0xa2, 0), Role: RoleKeyholder, Credential: cred(false, 10), Sealed: []byte("ciphertext")}), credHex(10))
+	f.add(
+		t,
+		0xd1,
+		110,
+		0,
+		41,
+		respPayload(
+			Response{
+				Survey:     ref(0xa2, 0),
+				Role:       RoleKeyholder,
+				Credential: cred(false, 10),
+				Sealed:     []byte("ciphertext"),
+			},
+		),
+		credHex(10),
+	)
 	ctx := context.Background()
 
-	if _, err := svc.Reveal(ctx, RevealRequest{Survey: surveyID(0xa2, 0), Consent: true}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("Reveal on another drand chain: err = %v, want ErrInvalid", err)
+	if _, err := svc.Reveal(ctx, RevealRequest{Survey: surveyID(0xa2, 0), Consent: true}); !errors.Is(
+		err,
+		ErrInvalid,
+	) {
+		t.Fatalf(
+			"Reveal on another drand chain: err = %v, want ErrInvalid",
+			err,
+		)
 	}
 	equal(t, int32(0), calls.Load())
 
-	_, err := svc.Reveal(ctx, RevealRequest{Survey: surveyID(0xa1, 0), Consent: true})
+	_, err := svc.Reveal(
+		ctx,
+		RevealRequest{Survey: surveyID(0xa1, 0), Consent: true},
+	)
 	noErr(t, err)
 	d, err := svc.Get(ctx, surveyID(0xa2, 0))
 	noErr(t, err)
@@ -310,7 +443,10 @@ func TestRevealOfACancelledSurveyFetchesNoBeacon(t *testing.T) {
 	f.add(t, 0xa1, 100, 0, 40, defPayload(sealedSimple(1, 60, 100)), credHex(1))
 	f.add(t, 0xc1, 101, 0, 41, cancelPayload(ref(0xa1, 0)), credHex(1))
 
-	d, err := svc.Reveal(context.Background(), RevealRequest{Survey: surveyID(0xa1, 0), Consent: true})
+	d, err := svc.Reveal(
+		context.Background(),
+		RevealRequest{Survey: surveyID(0xa1, 0), Consent: true},
+	)
 	noErr(t, err)
 	equal(t, "cancelled", d.Status)
 	equal(t, int32(0), calls.Load())

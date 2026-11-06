@@ -45,12 +45,15 @@ func CallerFromContext(ctx context.Context) string {
 // Validator parses+validates a bearer token and returns the caller subject.
 type Validator func(token string) (subject string, err error)
 
-var errJWKSURLPolicy = errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+var errJWKSURLPolicy = errors.New(
+	"jwks_url must use https; plain http is allowed only for loopback addresses",
+)
 
 // checkJWKSURL applies the key transport policy to configured locations and
 // every resolved redirect destination.
 func checkJWKSURL(u *url.URL) error {
-	if u != nil && (u.Scheme == "https" || (u.Scheme == "http" && backend.IsLoopbackHost(u.Hostname()))) {
+	if u != nil &&
+		(u.Scheme == "https" || (u.Scheme == "http" && backend.IsLoopbackHost(u.Hostname()))) {
 		return nil
 	}
 	return errJWKSURLPolicy
@@ -74,12 +77,18 @@ func HS256Validator(secret []byte, issuer, audience string) Validator {
 	}
 	return func(token string) (string, error) {
 		claims := jwt.RegisteredClaims{}
-		_, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method %v", t.Header["alg"])
-			}
-			return secret, nil
-		},
+		_, err := jwt.ParseWithClaims(
+			token,
+			&claims,
+			func(t *jwt.Token) (any, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf(
+						"unexpected signing method %v",
+						t.Header["alg"],
+					)
+				}
+				return secret, nil
+			},
 			opts...,
 		)
 		if err != nil {
@@ -97,7 +106,10 @@ func HS256Validator(secret []byte, issuer, audience string) Validator {
 // HS256Validator remains for dev/simple deployments.
 //
 // Plain http is rejected unless the host is loopback (dev escape hatch).
-func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Validator, error) {
+func JWKSValidator(
+	ctx context.Context,
+	jwksURL, issuer, audience string,
+) (Validator, error) {
 	u, err := url.Parse(jwksURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid jwks url: %w", err)
@@ -107,17 +119,23 @@ func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Valid
 	}
 
 	noError := false
-	kf, err := keyfunc.NewDefaultOverrideCtx(ctx, []string{jwksURL}, keyfunc.Override{
-		Client: &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return errors.New("jwks fetch: stopped after 10 redirects")
-				}
-				return checkJWKSURL(req.URL)
+	kf, err := keyfunc.NewDefaultOverrideCtx(
+		ctx,
+		[]string{jwksURL},
+		keyfunc.Override{
+			Client: &http.Client{
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					if len(via) >= 10 {
+						return errors.New(
+							"jwks fetch: stopped after 10 redirects",
+						)
+					}
+					return checkJWKSURL(req.URL)
+				},
 			},
+			NoErrorReturnFirstHTTPReq: &noError,
 		},
-		NoErrorReturnFirstHTTPReq: &noError,
-	})
+	)
 	if err != nil {
 		return nil, fmt.Errorf("fetch jwks %q: %w", jwksURL, err)
 	}
@@ -193,10 +211,12 @@ var (
 	errUnknownKey       = errors.New("unknown authorized key")
 	errStaleTimestamp   = errors.New("request timestamp outside allowed window")
 	errReplay           = errors.New("request nonce already used")
-	errNoCertIdentity   = errors.New("client certificate carries no usable identity")
-	errNonceCacheFull   = errors.New("nonce cache full")
-	errBodyTooLarge     = errors.New("request body too large")
-	errNilRequest       = errors.New("nil request")
+	errNoCertIdentity   = errors.New(
+		"client certificate carries no usable identity",
+	)
+	errNonceCacheFull = errors.New("nonce cache full")
+	errBodyTooLarge   = errors.New("request body too large")
+	errNilRequest     = errors.New("nil request")
 )
 
 // Authenticator resolves the caller identity for a request from one credential
@@ -220,7 +240,11 @@ type jwtAuthenticator struct{ validate Validator }
 
 // JWTAuthenticator returns an Authenticator that validates Authorization:
 // Bearer tokens with the supplied Validator.
-func JWTAuthenticator(validate Validator) Authenticator { return jwtAuthenticator{validate} }
+func JWTAuthenticator(
+	validate Validator,
+) Authenticator {
+	return jwtAuthenticator{validate}
+}
 
 func (j jwtAuthenticator) Authenticate(r *http.Request) (string, bool, error) {
 	if r == nil || r.Header == nil {

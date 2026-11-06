@@ -66,7 +66,9 @@ type fakeChain struct {
 // cannedSubmitHash is the deterministic tx hash returned by fakeChain.SubmitTx.
 var cannedSubmitHash = func() lcommon.Blake2b256 {
 	var h lcommon.Blake2b256
-	b, _ := hex.DecodeString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	b, _ := hex.DecodeString(
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+	)
 	copy(h[:], b)
 	return h
 }()
@@ -75,7 +77,9 @@ func newFakeChain(lovelace uint64, addr string) *fakeChain {
 	// Build a fake UTxO at the given address with the given lovelace amount.
 	var txID lcommon.Blake2b256
 	// Use a deterministic non-zero tx hash.
-	hashBytes, _ := hex.DecodeString("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+	hashBytes, _ := hex.DecodeString(
+		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+	)
 	copy(txID[:], hashBytes)
 
 	input := shelley.ShelleyTransactionInput{
@@ -110,14 +114,22 @@ func newFakeChain(lovelace uint64, addr string) *fakeChain {
 }
 
 // addUTxO adds a second fake UTxO at a different address (with a distinct tx hash).
-func (fc *fakeChain) addUTxO(lovelace uint64, addr string, txHashHex string, outIdx uint32) {
+func (fc *fakeChain) addUTxO(
+	lovelace uint64,
+	addr string,
+	txHashHex string,
+	outIdx uint32,
+) {
 	var txID lcommon.Blake2b256
 	b, _ := hex.DecodeString(txHashHex)
 	copy(txID[:], b)
 	input := shelley.ShelleyTransactionInput{TxId: txID, OutputIndex: outIdx}
 	utxoAddr, _ := lcommon.NewAddress(addr)
 	output := &fakeOutput{address: utxoAddr, lovelace: lovelace}
-	fc.utxos[addr] = append(fc.utxos[addr], lcommon.Utxo{Id: input, Output: output})
+	fc.utxos[addr] = append(
+		fc.utxos[addr],
+		lcommon.Utxo{Id: input, Output: output},
+	)
 }
 
 // fakeOutput implements lcommon.TransactionOutput with lovelace only.
@@ -127,7 +139,9 @@ type fakeOutput struct {
 }
 
 func (o *fakeOutput) Address() lcommon.Address { return o.address }
-func (o *fakeOutput) Amount() *big.Int         { return new(big.Int).SetUint64(o.lovelace) }
+
+func (o *fakeOutput) Amount() *big.Int { return new(big.Int).SetUint64(o.lovelace) }
+
 func (o *fakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
 	return nil
 }
@@ -137,7 +151,8 @@ func (o *fakeOutput) Cbor() []byte                        { return nil }
 func (o *fakeOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
 func (o *fakeOutput) ScriptRef() lcommon.Script           { return nil }
 func (o *fakeOutput) ToPlutusData() data.PlutusData       { return nil }
-func (o *fakeOutput) String() string                      { return o.address.String() }
+
+func (o *fakeOutput) String() string { return o.address.String() }
 
 // fakeOutputWithAssets is like fakeOutput but also carries native assets — used
 // to construct test UTxOs that contain native tokens so apollo can forward them.
@@ -151,7 +166,10 @@ func (o *fakeOutputWithAssets) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTy
 }
 
 // newFakeMultiAsset creates a minimal MultiAsset with one policy/asset entry.
-func newFakeMultiAsset(policyHex, assetNameHex string, qty int64) *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
+func newFakeMultiAsset(
+	policyHex, assetNameHex string,
+	qty int64,
+) *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
 	policyBytes, _ := hex.DecodeString(policyHex)
 	assetBytes, _ := hex.DecodeString(assetNameHex)
 	var policyID lcommon.Blake2b224
@@ -226,11 +244,17 @@ func (fc *fakeChain) submittedTxCbor() []byte {
 	return append([]byte(nil), fc.submitCbor...)
 }
 
-func (fc *fakeChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+func (fc *fakeChain) EvaluateTx(
+	_ []byte,
+	_ []lcommon.Utxo,
+) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
 
-func (fc *fakeChain) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+func (fc *fakeChain) UtxoByRef(
+	txHash lcommon.Blake2b256,
+	index uint32,
+) (*lcommon.Utxo, error) {
 	for _, utxos := range fc.utxos {
 		for _, u := range utxos {
 			if u.Id.Id() == txHash && u.Id.Index() == index {
@@ -259,16 +283,30 @@ func TestSubmitClassifiesBackendOutcome(t *testing.T) {
 		"rejected": {backendErr: errors.New("ledger rejected")},
 	} {
 		t.Run(name, func(t *testing.T) {
-			service := NewService(&fakeChain{submitErr: want.backendErr}, nil, acct)
+			service := NewService(
+				&fakeChain{submitErr: want.backendErr},
+				nil,
+				acct,
+			)
 			_, err := service.Submit(context.Background(), []byte("signed-tx"))
 			if err == nil {
 				t.Fatal("Submit returned nil error")
 			}
 			if got := errors.Is(err, ErrSubmitUnknown); got != want.unknown {
-				t.Fatalf("ErrSubmitUnknown = %t, want %t: %v", got, want.unknown, err)
+				t.Fatalf(
+					"ErrSubmitUnknown = %t, want %t: %v",
+					got,
+					want.unknown,
+					err,
+				)
 			}
 			if got := errors.Is(err, ErrSubmitRejected); got == want.unknown {
-				t.Fatalf("ErrSubmitRejected = %t for unknown=%t: %v", got, want.unknown, err)
+				t.Fatalf(
+					"ErrSubmitRejected = %t for unknown=%t: %v",
+					got,
+					want.unknown,
+					err,
+				)
 			}
 		})
 	}
@@ -284,7 +322,10 @@ func TestBuildProducesPreview(t *testing.T) {
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -307,7 +348,10 @@ func TestBuildInsufficientFunds(t *testing.T) {
 	fc := newFakeChain(100_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	_, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "1000000"},
+	)
 	if !errors.Is(err, ErrInsufficientFunds) {
 		t.Fatalf("expected ErrInsufficientFunds, got %v", err)
 	}
@@ -328,26 +372,42 @@ func TestBuildRetriesDustChangeDeadZone(t *testing.T) {
 	// Two 5-ADA UTxOs at the same funding address. Selecting one to fund a 4-ADA
 	// send leaves ~0.83 ADA change — inside the dead-zone.
 	fc := newFakeChain(5_000_000, addr0)
-	fc.addUTxO(5_000_000, addr0, "1111111111111111111111111111111111111111111111111111111111111111", 0)
+	fc.addUTxO(
+		5_000_000,
+		addr0,
+		"1111111111111111111111111111111111111111111111111111111111111111",
+		0,
+	)
 	ks := fakeKeystore{mnemonic: testMnemonic}
 	s := NewService(fc, ks, acct)
 
 	ctx := context.Background()
 	pv, err := s.Build(ctx, SendRequest{To: recvAddr, Lovelace: "4000000"})
 	if err != nil {
-		t.Fatalf("Build in dust-change dead-zone should now succeed, got: %v", err)
+		t.Fatalf(
+			"Build in dust-change dead-zone should now succeed, got: %v",
+			err,
+		)
 	}
 	// The retry forces the other UTxO in, so both inputs are consumed and the
 	// combined change clears the min-UTxO floor.
 	if len(pv.Inputs) != 2 {
-		t.Fatalf("expected retry to include both inputs, got %d: %v", len(pv.Inputs), pv.Inputs)
+		t.Fatalf(
+			"expected retry to include both inputs, got %d: %v",
+			len(pv.Inputs),
+			pv.Inputs,
+		)
 	}
 	if pv.Fee == "" || pv.Fee == "0" {
 		t.Fatalf("expected non-zero Fee, got %q", pv.Fee)
 	}
 	change, err := strconv.ParseUint(pv.Change, 10, 64)
 	if err != nil || change == 0 {
-		t.Fatalf("expected non-zero change above the min-UTxO floor, got %q (err %v)", pv.Change, err)
+		t.Fatalf(
+			"expected non-zero change above the min-UTxO floor, got %q (err %v)",
+			pv.Change,
+			err,
+		)
 	}
 
 	// The built tx must be signable and submittable, proving it is valid.
@@ -376,12 +436,18 @@ func TestBuildDustChangeDeadZoneNoExtraInputs(t *testing.T) {
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+	_, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "4000000"},
+	)
 	if !errors.Is(err, ErrInsufficientFunds) {
 		t.Fatalf("expected ErrInsufficientFunds, got %v", err)
 	}
 	if strings.Contains(err.Error(), "did not converge") {
-		t.Fatalf("clear error should not leak Apollo's raw non-convergence message: %v", err)
+		t.Fatalf(
+			"clear error should not leak Apollo's raw non-convergence message: %v",
+			err,
+		)
 	}
 	if !strings.Contains(err.Error(), "no additional inputs are available") {
 		t.Fatalf("expected an actionable dust-change message, got: %v", err)
@@ -399,7 +465,10 @@ func TestBuildExactBalanceNoChange(t *testing.T) {
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, nil, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4827823"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "4827823"},
+	)
 	if err != nil {
 		t.Fatalf("exact-balance send should succeed, got: %v", err)
 	}
@@ -431,7 +500,11 @@ func TestBuildDeadZoneForcesBoundedInputs(t *testing.T) {
 
 	const walletUTxOs = 50
 	fc := newFakeChain(5_000_000, addr0)
-	fillDeadZoneUTxOs(fc, walletUTxOs-1, addr0) // newFakeChain already seeded one
+	fillDeadZoneUTxOs(
+		fc,
+		walletUTxOs-1,
+		addr0,
+	) // newFakeChain already seeded one
 
 	ks := fakeKeystore{mnemonic: testMnemonic}
 	s := NewService(fc, ks, acct)
@@ -444,10 +517,17 @@ func TestBuildDeadZoneForcesBoundedInputs(t *testing.T) {
 
 	// The retry must pull in only a handful of inputs, never the whole wallet.
 	if len(pv.Inputs) == 0 || len(pv.Inputs) >= walletUTxOs {
-		t.Fatalf("expected a small bounded input set, got %d of %d wallet UTxOs", len(pv.Inputs), walletUTxOs)
+		t.Fatalf(
+			"expected a small bounded input set, got %d of %d wallet UTxOs",
+			len(pv.Inputs),
+			walletUTxOs,
+		)
 	}
 	if len(pv.Inputs) > 5 {
-		t.Fatalf("input set is not bounded to the minimum needed: got %d inputs", len(pv.Inputs))
+		t.Fatalf(
+			"input set is not bounded to the minimum needed: got %d inputs",
+			len(pv.Inputs),
+		)
 	}
 
 	// It must still sign and submit — proving the bounded forced set is valid.
@@ -470,7 +550,11 @@ func TestBuildDeadZoneForcesBoundedInputs(t *testing.T) {
 		t.Fatalf("ProtocolParams: %v", err)
 	}
 	if n := len(fc.submittedTxCbor()); n >= pp.MaxTxSize {
-		t.Fatalf("signed tx size %d must be under MaxTxSize %d", n, pp.MaxTxSize)
+		t.Fatalf(
+			"signed tx size %d must be under MaxTxSize %d",
+			n,
+			pp.MaxTxSize,
+		)
 	}
 }
 
@@ -491,14 +575,21 @@ func TestBuildDeadZoneForcesLargestFirst(t *testing.T) {
 	fc.addUTxO(100_000_000, addr0, fmt.Sprintf("%064x", 0x1000), 0)
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "4000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build should succeed: %v", err)
 	}
 	// The lone 100-ADA input covers the send with change well clear of the floor,
 	// so convergence is at exactly one input.
 	if len(pv.Inputs) != 1 {
-		t.Fatalf("expected largest-first to converge at 1 input, got %d: %v", len(pv.Inputs), pv.Inputs)
+		t.Fatalf(
+			"expected largest-first to converge at 1 input, got %d: %v",
+			len(pv.Inputs),
+			pv.Inputs,
+		)
 	}
 }
 
@@ -554,7 +645,10 @@ func TestBuildDeadZoneRejectsOversizeTx(t *testing.T) {
 		t.Fatalf("expected a size-limit message, got: %v", err)
 	}
 	if fc.submitCalls != 0 {
-		t.Fatalf("oversized tx must never be submitted, got %d SubmitTx calls", fc.submitCalls)
+		t.Fatalf(
+			"oversized tx must never be submitted, got %d SubmitTx calls",
+			fc.submitCalls,
+		)
 	}
 }
 
@@ -571,9 +665,15 @@ func TestBuildDeadZoneSizeGuardDisabled(t *testing.T) {
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "4000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "4000000"},
+	)
 	if err != nil {
-		t.Fatalf("with the size guard disabled, Build should succeed, got: %v", err)
+		t.Fatalf(
+			"with the size guard disabled, Build should succeed, got: %v",
+			err,
+		)
 	}
 	if len(pv.Inputs) == 0 {
 		t.Fatal("expected a built tx with inputs")
@@ -613,7 +713,10 @@ func TestBuildRejectsOversizeTxOnPlainPath(t *testing.T) {
 		t.Fatalf("measurement build (guard disabled) should succeed: %v", err)
 	}
 	if len(mpv.Inputs) < 2 {
-		t.Fatalf("expected a multi-input coin selection, got %d", len(mpv.Inputs))
+		t.Fatalf(
+			"expected a multi-input coin selection, got %d",
+			len(mpv.Inputs),
+		)
 	}
 	ms.mu.Lock()
 	mp := ms.pending[mpv.PendingID]
@@ -635,13 +738,19 @@ func TestBuildRejectsOversizeTxOnPlainPath(t *testing.T) {
 
 	_, err = s.Build(context.Background(), req)
 	if !errors.Is(err, ErrInsufficientFunds) {
-		t.Fatalf("expected ErrInsufficientFunds for an oversize plain send, got %v", err)
+		t.Fatalf(
+			"expected ErrInsufficientFunds for an oversize plain send, got %v",
+			err,
+		)
 	}
 	if !strings.Contains(err.Error(), "exceed the maximum size") {
 		t.Fatalf("expected a size-limit message, got: %v", err)
 	}
 	if fc.submitCalls != 0 {
-		t.Fatalf("oversized tx must never be submitted, got %d SubmitTx calls", fc.submitCalls)
+		t.Fatalf(
+			"oversized tx must never be submitted, got %d SubmitTx calls",
+			fc.submitCalls,
+		)
 	}
 }
 
@@ -653,7 +762,9 @@ func TestIsInsufficientFundsError(t *testing.T) {
 	}{
 		{
 			name: "coin selection",
-			err:  errors.New("coin selection failed: insufficient UTxOs to cover required value"),
+			err: errors.New(
+				"coin selection failed: insufficient UTxOs to cover required value",
+			),
 			want: true,
 		},
 		{
@@ -663,22 +774,30 @@ func TestIsInsufficientFundsError(t *testing.T) {
 		},
 		{
 			name: "asset underflow",
-			err:  errors.New("insufficient funds: asset underflow for policy abc"),
+			err: errors.New(
+				"insufficient funds: asset underflow for policy abc",
+			),
 			want: true,
 		},
 		{
 			name: "change min utxo",
-			err:  errors.New("insufficient funds: need 123 more lovelace for change output min UTxO"),
+			err: errors.New(
+				"insufficient funds: need 123 more lovelace for change output min UTxO",
+			),
 			want: true,
 		},
 		{
 			name: "burn assets",
-			err:  errors.New("insufficient assets in inputs to cover burn: policy abc asset  short by 1"),
+			err: errors.New(
+				"insufficient assets in inputs to cover burn: policy abc asset  short by 1",
+			),
 			want: true,
 		},
 		{
 			name: "non funding",
-			err:  errors.New("failed to compute max tx fee for coin selection: backend down"),
+			err: errors.New(
+				"failed to compute max tx fee for coin selection: backend down",
+			),
 			want: false,
 		},
 		{
@@ -690,7 +809,12 @@ func TestIsInsufficientFundsError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isInsufficientFundsError(tt.err); got != tt.want {
-				t.Fatalf("isInsufficientFundsError(%q) = %v, want %v", tt.err, got, tt.want)
+				t.Fatalf(
+					"isInsufficientFundsError(%q) = %v, want %v",
+					tt.err,
+					got,
+					tt.want,
+				)
 			}
 		})
 	}
@@ -705,12 +829,18 @@ func TestBuildCompleteErrorDoesNotMapToInsufficientFunds(t *testing.T) {
 	fc.maxTxFeeErr = errors.New("fee unavailable")
 	s := NewService(fc, nil, acct)
 
-	_, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	_, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "1000000"},
+	)
 	if err == nil {
 		t.Fatal("expected Build error")
 	}
 	if errors.Is(err, ErrInsufficientFunds) {
-		t.Fatalf("non-funding Complete error mapped to ErrInsufficientFunds: %v", err)
+		t.Fatalf(
+			"non-funding Complete error mapped to ErrInsufficientFunds: %v",
+			err,
+		)
 	}
 	if !strings.Contains(err.Error(), "fee unavailable") {
 		t.Fatalf("Build error lost underlying cause: %v", err)
@@ -837,7 +967,10 @@ func paymentKeyHashForAddress(t *testing.T, addrStr string) string {
 	return hex.EncodeToString(addr.PaymentKeyHash().Bytes())
 }
 
-func hashedSignDataFixture(t *testing.T, acct *wallet.Account) (string, string, []byte, string) {
+func hashedSignDataFixture(
+	t *testing.T,
+	acct *wallet.Account,
+) (string, string, []byte, string) {
 	t.Helper()
 	addrStr := acct.ReceiveAddresses[0]
 	addr, err := lcommon.NewAddress(addrStr)
@@ -870,7 +1003,9 @@ func hashedSignDataFixture(t *testing.T, acct *wallet.Account) (string, string, 
 		t.Fatalf("encode protected headers: %v", err)
 	}
 	hash := lcommon.Blake2b224Hash(payload)
-	toBeSigned, err := cbor.Encode([]any{"Signature1", protected, []byte{}, hash[:]})
+	toBeSigned, err := cbor.Encode(
+		[]any{"Signature1", protected, []byte{}, hash[:]},
+	)
 	if err != nil {
 		t.Fatalf("encode Sig_structure: %v", err)
 	}
@@ -893,7 +1028,11 @@ func hashedSignDataFixture(t *testing.T, acct *wallet.Account) (string, string, 
 	if err != nil {
 		t.Fatalf("encode COSE_Key: %v", err)
 	}
-	return hex.EncodeToString(coseSign1Bytes), hex.EncodeToString(coseKey), payload, addrStr
+	return hex.EncodeToString(
+			coseSign1Bytes,
+		), hex.EncodeToString(
+			coseKey,
+		), payload, addrStr
 }
 
 func witnessCount(t *testing.T, wit Witness) int {
@@ -914,7 +1053,10 @@ func decodeWitnesses(t *testing.T, wit Witness) []lcommon.VkeyWitness {
 	return witnesses
 }
 
-func bodyRequiredSigners(t *testing.T, unsignedTxCBOR string) []lcommon.Blake2b224 {
+func bodyRequiredSigners(
+	t *testing.T,
+	unsignedTxCBOR string,
+) []lcommon.Blake2b224 {
 	t.Helper()
 	txBytes, err := hex.DecodeString(unsignedTxCBOR)
 	if err != nil {
@@ -979,7 +1121,10 @@ func unsignedWithIndefiniteBodyMap(t *testing.T, unsignedTxCBOR string) string {
 	}
 	body := []byte(arr[0])
 	if len(body) == 0 || body[0] < 0xa0 || body[0] > 0xb7 {
-		t.Fatalf("body CBOR does not start with a definite map header: %x", body[:min(len(body), 8)])
+		t.Fatalf(
+			"body CBOR does not start with a definite map header: %x",
+			body[:min(len(body), 8)],
+		)
 	}
 	driftedBody := make([]byte, 0, len(body)+1)
 	driftedBody = append(driftedBody, 0xbf)
@@ -1027,7 +1172,9 @@ func TestConfirmSignsAndSubmits(t *testing.T) {
 	// Second Confirm with same id must fail (single-use).
 	_, err = s.Confirm(ctx, pv.PendingID, "pw")
 	if err == nil {
-		t.Fatal("expected error on second Confirm with same pending id, got nil")
+		t.Fatal(
+			"expected error on second Confirm with same pending id, got nil",
+		)
 	}
 	t.Logf("second Confirm correctly rejected: %v", err)
 }
@@ -1047,7 +1194,10 @@ func TestBuildRejectsWalletChangedBeforeStore(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.Build(context.Background(), SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"})
+		_, err := s.Build(
+			context.Background(),
+			SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"},
+		)
 		done <- err
 	}()
 
@@ -1073,14 +1223,20 @@ func TestConfirmUsesPendingWalletAfterAccountSwitch(t *testing.T) {
 	}
 	fc := newFakeChain(5_000_000, acctA.ReceiveAddresses[0])
 	ks := &blockingSeedStore{
-		mnemonicByID: map[string]string{"a": testMnemonic, "b": differentMnemonic},
-		unlockForID:  make(chan string, 1),
-		release:      make(chan struct{}),
+		mnemonicByID: map[string]string{
+			"a": testMnemonic,
+			"b": differentMnemonic,
+		},
+		unlockForID: make(chan string, 1),
+		release:     make(chan struct{}),
 	}
 	s := NewService(fc, ks, nil)
 	s.SetAccount("a", acctA)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1119,14 +1275,20 @@ func TestSignTxUsesActiveWalletBindingAfterAccountSwitch(t *testing.T) {
 	}
 	fc := newFakeChain(5_000_000, acctA.ReceiveAddresses[0])
 	ks := &blockingSeedStore{
-		mnemonicByID: map[string]string{"a": testMnemonic, "b": differentMnemonic},
-		unlockForID:  make(chan string, 1),
-		release:      make(chan struct{}),
+		mnemonicByID: map[string]string{
+			"a": testMnemonic,
+			"b": differentMnemonic,
+		},
+		unlockForID: make(chan string, 1),
+		release:     make(chan struct{}),
 	}
 	s := NewService(fc, ks, nil)
 	s.SetAccount("a", acctA)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acctA.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1137,7 +1299,11 @@ func TestSignTxUsesActiveWalletBindingAfterAccountSwitch(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners)
+		_, err := s.SignTx(
+			unsigned.UnsignedTxCBOR,
+			"pw",
+			unsigned.RequiredSigners,
+		)
 		done <- err
 	}()
 
@@ -1163,12 +1329,17 @@ func TestWalletBoundUnlockRequiresUnlockFor(t *testing.T) {
 	s := NewService(nil, ks, nil)
 
 	if _, err := s.unlockSeed("wallet-a", "pw"); err == nil {
-		t.Fatal("wallet-bound unlock with generic keystore succeeded, want error")
+		t.Fatal(
+			"wallet-bound unlock with generic keystore succeeded, want error",
+		)
 	} else if !strings.Contains(err.Error(), "UnlockFor") {
 		t.Fatalf("wallet-bound unlock error = %v, want UnlockFor support error", err)
 	}
 	if ks.unlockCalls != 0 {
-		t.Fatalf("generic Unlock calls = %d, want 0 for wallet-bound unlock", ks.unlockCalls)
+		t.Fatalf(
+			"generic Unlock calls = %d, want 0 for wallet-bound unlock",
+			ks.unlockCalls,
+		)
 	}
 
 	mnemonic, err := s.unlockSeed("", "pw")
@@ -1179,7 +1350,10 @@ func TestWalletBoundUnlockRequiresUnlockFor(t *testing.T) {
 		t.Fatal("legacy unlock returned wrong mnemonic")
 	}
 	if ks.unlockCalls != 1 {
-		t.Fatalf("generic Unlock calls after legacy unlock = %d, want 1", ks.unlockCalls)
+		t.Fatalf(
+			"generic Unlock calls after legacy unlock = %d, want 1",
+			ks.unlockCalls,
+		)
 	}
 }
 
@@ -1195,7 +1369,11 @@ func TestSignDataRoundTrip(t *testing.T) {
 		t.Fatalf("SignData: %v", err)
 	}
 	if sig == "" || key == "" {
-		t.Fatalf("expected non-empty signature and key, got sig=%q key=%q", sig, key)
+		t.Fatalf(
+			"expected non-empty signature and key, got sig=%q key=%q",
+			sig,
+			key,
+		)
 	}
 	// The COSE_Sign1 must verify against the COSE_Key + payload via the keys layer.
 	ok, err := bursa.VerifyData(sig, key, msg)
@@ -1214,7 +1392,11 @@ func TestSignDataRoundTrip(t *testing.T) {
 func TestSignDataHardwareRequest(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t) // preview network, account index 0
 	addr0 := acct.ReceiveAddresses[0]
-	s := NewService(newFakeChain(0, addr0), fakeKeystore{mnemonic: testMnemonic}, acct)
+	s := NewService(
+		newFakeChain(0, addr0),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
 
 	req, err := s.SignDataHardwareRequest(addr0)
 	if err != nil {
@@ -1227,7 +1409,11 @@ func TestSignDataHardwareRequest(t *testing.T) {
 		t.Fatalf("StakePath = %q, want 1852'/1815'/0'/2/0", req.StakePath)
 	}
 	if req.NetworkID != 0 || req.ProtocolMagic != 2 { // preview
-		t.Fatalf("network = (id %d, magic %d), want (0, 2)", req.NetworkID, req.ProtocolMagic)
+		t.Fatalf(
+			"network = (id %d, magic %d), want (0, 2)",
+			req.NetworkID,
+			req.ProtocolMagic,
+		)
 	}
 	if req.AddressBech32 != addr0 {
 		t.Fatalf("AddressBech32 = %q, want %q", req.AddressBech32, addr0)
@@ -1242,7 +1428,11 @@ func TestSignDataHardwareRequest(t *testing.T) {
 		t.Fatalf("addr.Bytes: %v", err)
 	}
 	if req.AddressHex != hex.EncodeToString(b) {
-		t.Fatalf("AddressHex = %q, want %q", req.AddressHex, hex.EncodeToString(b))
+		t.Fatalf(
+			"AddressHex = %q, want %q",
+			req.AddressHex,
+			hex.EncodeToString(b),
+		)
 	}
 
 	// A later receive address resolves to its window index in the payment path.
@@ -1251,25 +1441,41 @@ func TestSignDataHardwareRequest(t *testing.T) {
 		t.Fatalf("SignDataHardwareRequest[3]: %v", err)
 	}
 	if req3.SigningPath != "1852'/1815'/0'/0/3" {
-		t.Fatalf("SigningPath[3] = %q, want 1852'/1815'/0'/0/3", req3.SigningPath)
+		t.Fatalf(
+			"SigningPath[3] = %q, want 1852'/1815'/0'/0/3",
+			req3.SigningPath,
+		)
 	}
 }
 
 func TestSignDataHardwareRequestRejectsForeignAddress(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	s := NewService(
+		newFakeChain(0, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
 	foreign, err := wallet.Derive(differentMnemonic, "preview", 5)
 	if err != nil {
 		t.Fatalf("derive foreign: %v", err)
 	}
-	if _, err := s.SignDataHardwareRequest(foreign.ReceiveAddresses[0]); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("expected ErrInvalidRequest for a foreign address, got %v", err)
+	if _, err := s.SignDataHardwareRequest(foreign.ReceiveAddresses[0]); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
+		t.Fatalf(
+			"expected ErrInvalidRequest for a foreign address, got %v",
+			err,
+		)
 	}
 }
 
 func TestSignDataHardwareRequestNoWallet(t *testing.T) {
 	s := NewService(newFakeChain(0, ""), fakeKeystore{}, nil)
-	if _, err := s.SignDataHardwareRequest("addr_test1xyz"); !errors.Is(err, ErrNoWallet) {
+	if _, err := s.SignDataHardwareRequest("addr_test1xyz"); !errors.Is(
+		err,
+		ErrNoWallet,
+	) {
 		t.Fatalf("expected ErrNoWallet with no bound account, got %v", err)
 	}
 }
@@ -1303,8 +1509,13 @@ func TestVerifyDataRoundTrip(t *testing.T) {
 		t.Fatal("expected valid when expected_address matches signer")
 	}
 	// A different expected_address makes it invalid (not an error).
-	if v, _, err := s.VerifyData(sig, key, msg, false, acct.ReceiveAddresses[1]); err != nil || v {
-		t.Fatalf("expected invalid for mismatched expected_address, got valid=%v err=%v", v, err)
+	if v, _, err := s.VerifyData(sig, key, msg, false, acct.ReceiveAddresses[1]); err != nil ||
+		v {
+		t.Fatalf(
+			"expected invalid for mismatched expected_address, got valid=%v err=%v",
+			v,
+			err,
+		)
 	}
 	// A tampered message must not verify.
 	if v, _, _ := s.VerifyData(sig, key, []byte("tampered"), false, ""); v {
@@ -1315,7 +1526,11 @@ func TestVerifyDataRoundTrip(t *testing.T) {
 func TestVerifyDataHashedPayload(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	sig, key, msg, addr := hashedSignDataFixture(t, acct)
-	s := NewService(newFakeChain(0, addr), fakeKeystore{mnemonic: testMnemonic}, acct)
+	s := NewService(
+		newFakeChain(0, addr),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
 
 	valid, gotAddr, err := s.VerifyData(sig, key, msg, true, addr)
 	if err != nil {
@@ -1332,27 +1547,50 @@ func TestVerifyDataHashedPayload(t *testing.T) {
 func TestVerifyDataRejectsHashedFlagMismatch(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
 	addr := acct.ReceiveAddresses[0]
-	s := NewService(newFakeChain(0, addr), fakeKeystore{mnemonic: testMnemonic}, acct)
+	s := NewService(
+		newFakeChain(0, addr),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
 
 	msg := []byte("prove I control this address")
 	sig, key, err := s.SignData(addr, msg, "pw")
 	if err != nil {
 		t.Fatalf("SignData: %v", err)
 	}
-	if _, _, err := s.VerifyData(sig, key, msg, true, ""); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("expected ErrInvalidRequest for unhashed signature with hashed=true, got %v", err)
+	if _, _, err := s.VerifyData(sig, key, msg, true, ""); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
+		t.Fatalf(
+			"expected ErrInvalidRequest for unhashed signature with hashed=true, got %v",
+			err,
+		)
 	}
 
 	hashedSig, hashedKey, hashedMsg, _ := hashedSignDataFixture(t, acct)
-	if _, _, err := s.VerifyData(hashedSig, hashedKey, hashedMsg, false, ""); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("expected ErrInvalidRequest for hashed signature with hashed=false, got %v", err)
+	if _, _, err := s.VerifyData(hashedSig, hashedKey, hashedMsg, false, ""); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
+		t.Fatalf(
+			"expected ErrInvalidRequest for hashed signature with hashed=false, got %v",
+			err,
+		)
 	}
 }
 
 func TestVerifyDataMalformedReturnsInvalidRequest(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
-	if _, _, err := s.VerifyData("zz", "a4", []byte("x"), false, ""); !errors.Is(err, ErrInvalidRequest) {
+	s := NewService(
+		newFakeChain(0, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
+	if _, _, err := s.VerifyData("zz", "a4", []byte("x"), false, ""); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Fatalf("expected ErrInvalidRequest for bad hex, got %v", err)
 	}
 }
@@ -1384,11 +1622,19 @@ func TestAirGapRoundTrip(t *testing.T) {
 		t.Fatal("expected non-empty unsigned tx cbor")
 	}
 	if len(unsigned.RequiredSigners) != 1 {
-		t.Fatalf("required signers = %d (%v), want 1", len(unsigned.RequiredSigners), unsigned.RequiredSigners)
+		t.Fatalf(
+			"required signers = %d (%v), want 1",
+			len(unsigned.RequiredSigners),
+			unsigned.RequiredSigners,
+		)
 	}
 
 	// Sign offline (keystore + password, no chain access used).
-	wit, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners)
+	wit, err := s.SignTx(
+		unsigned.UnsignedTxCBOR,
+		"pw",
+		unsigned.RequiredSigners,
+	)
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
@@ -1396,7 +1642,11 @@ func TestAirGapRoundTrip(t *testing.T) {
 		t.Fatal("expected non-empty witness cbor")
 	}
 	if got := witnessCount(t, wit); got != len(unsigned.RequiredSigners) {
-		t.Fatalf("offline witnesses = %d, want %d", got, len(unsigned.RequiredSigners))
+		t.Fatalf(
+			"offline witnesses = %d, want %d",
+			got,
+			len(unsigned.RequiredSigners),
+		)
 	}
 
 	// Submit on the online instance: attaches only the needed witness.
@@ -1445,7 +1695,11 @@ func TestExportUnsignedBindsRequiredSignersInBody(t *testing.T) {
 	}
 	body := bodyRequiredSigners(t, unsigned.UnsignedTxCBOR)
 	if !sameKeyHashSet(sidecar, body) {
-		t.Fatalf("body required signers %v do not match sidecar %v", keyHashesHex(body), unsigned.RequiredSigners)
+		t.Fatalf(
+			"body required signers %v do not match sidecar %v",
+			keyHashesHex(body),
+			unsigned.RequiredSigners,
+		)
 	}
 }
 
@@ -1479,19 +1733,27 @@ func TestSignTxRejectsSidecarMismatchBeforeUnlock(t *testing.T) {
 			),
 		},
 		{
-			name:    "stake key only",
-			signers: []string{stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])},
+			name: "stake key only",
+			signers: []string{
+				stakeKeyHashForAddress(t, acct.ReceiveAddresses[0]),
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", tt.signers); !errors.Is(err, ErrInvalidRequest) {
+			if _, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", tt.signers); !errors.Is(
+				err,
+				ErrInvalidRequest,
+			) {
 				t.Fatalf("expected ErrInvalidRequest, got %v", err)
 			}
 		})
 	}
 	if ks.unlockCalls != 0 {
-		t.Fatalf("SignTx unlocked keystore %d times for mismatched sidecar", ks.unlockCalls)
+		t.Fatalf(
+			"SignTx unlocked keystore %d times for mismatched sidecar",
+			ks.unlockCalls,
+		)
 	}
 }
 
@@ -1591,7 +1853,10 @@ func TestSubmitSignedAttachesBodyRequiredSigner(t *testing.T) {
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
 	ctx := context.Background()
-	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := s.Build(
+		ctx,
+		SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1601,12 +1866,18 @@ func TestSubmitSignedAttachesBodyRequiredSigner(t *testing.T) {
 	}
 
 	required := bodyRequiredSigners(t, unsigned.UnsignedTxCBOR)
-	stakeRequired, err := parseRequiredSignerHashes([]string{stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])})
+	stakeRequired, err := parseRequiredSignerHashes(
+		[]string{stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])},
+	)
 	if err != nil {
 		t.Fatalf("parse stake signer: %v", err)
 	}
 	required = append(required, stakeRequired...)
-	mutatedTx := unsignedWithRequiredSigners(t, unsigned.UnsignedTxCBOR, required)
+	mutatedTx := unsignedWithRequiredSigners(
+		t,
+		unsigned.UnsignedTxCBOR,
+		required,
+	)
 	wit, err := s.SignTx(mutatedTx, "pw", keyHashesHex(required))
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
@@ -1635,7 +1906,12 @@ func TestAirGapMultiInput(t *testing.T) {
 	recvAddr := acct.ReceiveAddresses[2]
 
 	fc := newFakeChain(3_000_000, addr0)
-	fc.addUTxO(3_000_000, addr1, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0", 0)
+	fc.addUTxO(
+		3_000_000,
+		addr1,
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0",
+		0,
+	)
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
 	ctx := context.Background()
@@ -1650,12 +1926,20 @@ func TestAirGapMultiInput(t *testing.T) {
 	if len(unsigned.RequiredSigners) != 2 {
 		t.Fatalf("required signers = %d, want 2", len(unsigned.RequiredSigners))
 	}
-	wit, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners)
+	wit, err := s.SignTx(
+		unsigned.UnsignedTxCBOR,
+		"pw",
+		unsigned.RequiredSigners,
+	)
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
 	if got := witnessCount(t, wit); got != len(unsigned.RequiredSigners) {
-		t.Fatalf("offline witnesses = %d, want %d", got, len(unsigned.RequiredSigners))
+		t.Fatalf(
+			"offline witnesses = %d, want %d",
+			got,
+			len(unsigned.RequiredSigners),
+		)
 	}
 	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); err != nil {
 		t.Fatalf("SubmitSigned: %v", err)
@@ -1671,7 +1955,11 @@ func TestAirGapMultiInput(t *testing.T) {
 
 func TestExportUnsignedUnknownPending(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(5_000_000, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	s := NewService(
+		newFakeChain(5_000_000, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
 	if _, err := s.ExportUnsigned("nope"); !errors.Is(err, ErrUnknownPending) {
 		t.Fatalf("expected ErrUnknownPending, got %v", err)
 	}
@@ -1684,7 +1972,10 @@ func TestSignTxWrongPassword(t *testing.T) {
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
 	ctx := context.Background()
-	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := s.Build(
+		ctx,
+		SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1694,14 +1985,21 @@ func TestSignTxWrongPassword(t *testing.T) {
 	}
 	// A service whose keystore rejects the password.
 	bad := NewService(fc, fakeKeystore{err: keystore.ErrDecryptFailed}, acct)
-	if _, err := bad.SignTx(unsigned.UnsignedTxCBOR, "wrong", unsigned.RequiredSigners); !errors.Is(err, ErrWrongPassword) {
+	if _, err := bad.SignTx(unsigned.UnsignedTxCBOR, "wrong", unsigned.RequiredSigners); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("expected ErrWrongPassword, got %v", err)
 	}
 }
 
 func TestSignTxInvalidCbor(t *testing.T) {
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(0, acct.ReceiveAddresses[0]), fakeKeystore{mnemonic: testMnemonic}, acct)
+	s := NewService(
+		newFakeChain(0, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
 	if _, err := s.SignTx("zzzz", "pw", nil); !errors.Is(err, ErrInvalidTx) {
 		t.Fatalf("expected ErrInvalidTx, got %v", err)
 	}
@@ -1714,7 +2012,10 @@ func TestSubmitSignedRejectsMismatchedWitness(t *testing.T) {
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
 	ctx := context.Background()
-	pv, err := s.Build(ctx, SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := s.Build(
+		ctx,
+		SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1731,14 +2032,22 @@ func TestSubmitSignedRejectsMismatchedWitness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive foreign account: %v", err)
 	}
-	foreign := NewService(fc, fakeKeystore{mnemonic: differentMnemonic}, foreignAcct)
+	foreign := NewService(
+		fc,
+		fakeKeystore{mnemonic: differentMnemonic},
+		foreignAcct,
+	)
 	foreignRequired, err := parseRequiredSignerHashes([]string{
 		paymentKeyHashForAddress(t, foreignAcct.ReceiveAddresses[0]),
 	})
 	if err != nil {
 		t.Fatalf("parse foreign required signer: %v", err)
 	}
-	foreignTx := unsignedWithRequiredSigners(t, unsigned.UnsignedTxCBOR, foreignRequired)
+	foreignTx := unsignedWithRequiredSigners(
+		t,
+		unsigned.UnsignedTxCBOR,
+		foreignRequired,
+	)
 	wit, err := foreign.SignTx(
 		foreignTx,
 		"pw",
@@ -1747,7 +2056,10 @@ func TestSubmitSignedRejectsMismatchedWitness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("foreign SignTx: %v", err)
 	}
-	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); !errors.Is(err, ErrInvalidWitness) {
+	if _, err := s.SubmitSigned(ctx, unsigned.UnsignedTxCBOR, wit.WitnessCBOR); !errors.Is(
+		err,
+		ErrInvalidWitness,
+	) {
 		t.Fatalf("expected ErrInvalidWitness for foreign witness, got %v", err)
 	}
 	if fc.submitCalls != 0 {
@@ -1763,7 +2075,10 @@ func TestSignDataRejectsForeignAddress(t *testing.T) {
 	// before any signing.
 	_, _, err := s.SignData("addr_test1qqqqqforeignnotours", []byte("x"), "pw")
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("expected ErrInvalidRequest for a foreign address, got %v", err)
+		t.Fatalf(
+			"expected ErrInvalidRequest for a foreign address, got %v",
+			err,
+		)
 	}
 }
 
@@ -1795,7 +2110,10 @@ func TestConfirmConsumesPendingBeforeSubmit(t *testing.T) {
 	defer release()
 
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1822,17 +2140,27 @@ func TestConfirmConsumesPendingBeforeSubmit(t *testing.T) {
 	select {
 	case secondErr = <-secondDone:
 		if !errors.Is(secondErr, ErrUnknownPending) {
-			t.Fatalf("second Confirm error = %v, want ErrUnknownPending", secondErr)
+			t.Fatalf(
+				"second Confirm error = %v, want ErrUnknownPending",
+				secondErr,
+			)
 		}
 	case <-fc.submitStarted:
 		release()
 		firstErr := <-firstDone
 		secondErr = <-secondDone
-		t.Fatalf("second Confirm reached SubmitTx; first err=%v second err=%v", firstErr, secondErr)
+		t.Fatalf(
+			"second Confirm reached SubmitTx; first err=%v second err=%v",
+			firstErr,
+			secondErr,
+		)
 	case <-time.After(2 * time.Second):
 		release()
 		firstErr := <-firstDone
-		t.Fatalf("second Confirm did not return while first was submitting; first err=%v", firstErr)
+		t.Fatalf(
+			"second Confirm did not return while first was submitting; first err=%v",
+			firstErr,
+		)
 	}
 
 	release()
@@ -1889,7 +2217,10 @@ func TestConfirmUnlockInfrastructureErrorIsNotWrongPassword(t *testing.T) {
 		t.Fatal("expected Confirm error")
 	}
 	if errors.Is(err, ErrWrongPassword) {
-		t.Fatalf("infrastructure unlock error mapped to ErrWrongPassword: %v", err)
+		t.Fatalf(
+			"infrastructure unlock error mapped to ErrWrongPassword: %v",
+			err,
+		)
 	}
 	if fc.submitCalls != 0 {
 		t.Fatalf("expected SubmitTx not called, got %d calls", fc.submitCalls)
@@ -1912,7 +2243,10 @@ func TestConfirmExpiredPending(t *testing.T) {
 	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, fakeKeystore{mnemonic: testMnemonic}, acct)
 
-	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acct.ReceiveAddresses[2], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1924,7 +2258,10 @@ func TestConfirmExpiredPending(t *testing.T) {
 		t.Fatalf("expected ErrExpiredPending, got %v", err)
 	}
 	if fc.submitCalls != 0 {
-		t.Fatalf("expected no submit on an expired pending, got %d", fc.submitCalls)
+		t.Fatalf(
+			"expected no submit on an expired pending, got %d",
+			fc.submitCalls,
+		)
 	}
 }
 
@@ -1936,7 +2273,12 @@ func TestConfirmMultiInput(t *testing.T) {
 
 	// Fund both addr0 and addr1 with 3 ADA each so coin selection uses both.
 	fc := newFakeChain(3_000_000, addr0)
-	fc.addUTxO(3_000_000, addr1, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0", 0)
+	fc.addUTxO(
+		3_000_000,
+		addr1,
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0",
+		0,
+	)
 
 	ks := fakeKeystore{mnemonic: testMnemonic}
 	s := NewService(fc, ks, acct)
@@ -1948,7 +2290,11 @@ func TestConfirmMultiInput(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	if len(pv.Inputs) != 2 {
-		t.Fatalf("Build selected %d inputs (%v), want 2", len(pv.Inputs), pv.Inputs)
+		t.Fatalf(
+			"Build selected %d inputs (%v), want 2",
+			len(pv.Inputs),
+			pv.Inputs,
+		)
 	}
 
 	res, err := s.Confirm(ctx, pv.PendingID, "pw")
@@ -1993,7 +2339,9 @@ func TestWitnessTxRequiredSignerIncludesStakeAndDRepKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDRepKey: %v", err)
 	}
-	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
+	stakeVkey := append(
+		[]byte(nil),
+		bip32.XPrv(stakeKey).Public().PublicKey()...)
 	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
 	bodyCbor, err := cbor.Encode(conway.ConwayTransactionBody{
 		TxRequiredSigners: cbor.NewSetType([]lcommon.Blake2b224{
@@ -2037,7 +2385,9 @@ func TestWitnessTxRequiredSignerIncludesStakeAndDRepKeys(t *testing.T) {
 	}
 }
 
-func TestWitnessTxIncludesCertificateAndWithdrawalKeysWithoutRequiredSigners(t *testing.T) {
+func TestWitnessTxIncludesCertificateAndWithdrawalKeysWithoutRequiredSigners(
+	t *testing.T,
+) {
 	acct := mustDeriveConfirmAccount(t)
 
 	rootKey, err := bursa.GetRootKeyFromMnemonic(testMnemonic, "")
@@ -2056,7 +2406,9 @@ func TestWitnessTxIncludesCertificateAndWithdrawalKeysWithoutRequiredSigners(t *
 	if err != nil {
 		t.Fatalf("GetDRepKey: %v", err)
 	}
-	stakeVkey := append([]byte(nil), bip32.XPrv(stakeKey).Public().PublicKey()...)
+	stakeVkey := append(
+		[]byte(nil),
+		bip32.XPrv(stakeKey).Public().PublicKey()...)
 	drepVkey := append([]byte(nil), bip32.XPrv(drepKey).Public().PublicKey()...)
 	drepHash := lcommon.Blake2b224Hash(drepVkey)
 
@@ -2133,8 +2485,10 @@ func TestWitnessTxNonPartialRejectsCommitteeCertColdKey(t *testing.T) {
 						Credential: committeeColdHash,
 					},
 					HotCredential: lcommon.Credential{
-						CredType:   lcommon.CredentialTypeAddrKeyHash,
-						Credential: lcommon.Blake2b224Hash([]byte("committee hot key")),
+						CredType: lcommon.CredentialTypeAddrKeyHash,
+						Credential: lcommon.Blake2b224Hash(
+							[]byte("committee hot key"),
+						),
 					},
 				},
 			},
@@ -2169,11 +2523,24 @@ func TestWitnessTxNonPartialRejectsCommitteeCertColdKey(t *testing.T) {
 			// witness was silently dropped.
 			inputAddrs := []string{acct.ReceiveAddresses[0]}
 
-			if _, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", false); !errors.Is(err, ErrInvalidRequest) {
-				t.Fatalf("WitnessTx(partialSign=false) = %v, want ErrInvalidRequest", err)
+			if _, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", false); !errors.Is(
+				err,
+				ErrInvalidRequest,
+			) {
+				t.Fatalf(
+					"WitnessTx(partialSign=false) = %v, want ErrInvalidRequest",
+					err,
+				)
 			}
 
-			wsCbor, err := s.WitnessTx("", bodyCbor, nil, inputAddrs, "pw", true)
+			wsCbor, err := s.WitnessTx(
+				"",
+				bodyCbor,
+				nil,
+				inputAddrs,
+				"pw",
+				true,
+			)
 			if err != nil {
 				t.Fatalf("WitnessTx(partialSign=true): %v", err)
 			}
@@ -2182,7 +2549,10 @@ func TestWitnessTxNonPartialRejectsCommitteeCertColdKey(t *testing.T) {
 				t.Fatalf("decode witness set: %v", err)
 			}
 			if got := len(ws.VkeyWitnesses.Items()); got != 1 {
-				t.Fatalf("partial witness count = %d, want 1 (payment key only)", got)
+				t.Fatalf(
+					"partial witness count = %d, want 1 (payment key only)",
+					got,
+				)
 			}
 		})
 	}
@@ -2214,8 +2584,14 @@ func TestWitnessTxNonPartialRejectsUnmatchedRequiredSigner(t *testing.T) {
 	}
 
 	s := NewService(nil, fakeKeystore{mnemonic: testMnemonic}, acct)
-	if _, err := s.WitnessTx("", bodyCbor, required, nil, "pw", false); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("WitnessTx(partialSign=false) = %v, want ErrInvalidRequest", err)
+	if _, err := s.WitnessTx("", bodyCbor, required, nil, "pw", false); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
+		t.Fatalf(
+			"WitnessTx(partialSign=false) = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 
 	wsCbor, err := s.WitnessTx("", bodyCbor, required, nil, "pw", true)
@@ -2251,7 +2627,10 @@ func TestWitnessTxRejectsWalletChanged(t *testing.T) {
 		true,
 	)
 	if !errors.Is(err, ErrWalletChanged) {
-		t.Fatalf("WitnessTx with stale walletID = %v, want ErrWalletChanged", err)
+		t.Fatalf(
+			"WitnessTx with stale walletID = %v, want ErrWalletChanged",
+			err,
+		)
 	}
 }
 
@@ -2278,7 +2657,10 @@ func TestSetWalletCreatesKeystoreAndEnablesBuild(t *testing.T) {
 
 	// No account yet: Build must report ErrNoWallet.
 	s := NewService(fc, ks, nil)
-	if _, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"}); !errors.Is(err, ErrNoWallet) {
+	if _, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"}); !errors.Is(
+		err,
+		ErrNoWallet,
+	) {
 		t.Fatalf("Build before SetWallet: got %v, want ErrNoWallet", err)
 	}
 
@@ -2326,7 +2708,10 @@ func TestHardwareSignRequest(t *testing.T) {
 	s := NewService(fc, nil, acct)
 
 	// Build a pending transaction.
-	pv, err := s.Build(context.Background(), SendRequest{To: recipientAddr, Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recipientAddr, Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -2351,10 +2736,15 @@ func TestHardwareSignRequest(t *testing.T) {
 		t.Fatalf("BodySetTagPolicy = %q, want untagged", req.BodySetTagPolicy)
 	}
 	if !req.IncludeNetworkID {
-		t.Fatal("IncludeNetworkID must preserve the network-id field from the payment body")
+		t.Fatal(
+			"IncludeNetworkID must preserve the network-id field from the payment body",
+		)
 	}
 	if req.Unsupported != "" {
-		t.Fatalf("Unsupported must be empty for simple payment, got %q", req.Unsupported)
+		t.Fatalf(
+			"Unsupported must be empty for simple payment, got %q",
+			req.Unsupported,
+		)
 	}
 	if req.Fee == "" || req.Fee == "0" {
 		t.Fatalf("Fee = %q, want non-zero", req.Fee)
@@ -2363,8 +2753,13 @@ func TestHardwareSignRequest(t *testing.T) {
 		t.Fatal("UnsignedTxCBOR must not be empty")
 	}
 	wantRequired := keyHashesHex(bodyRequiredSigners(t, req.UnsignedTxCBOR))
-	if !equalStringSets(req.RequiredSigners, wantRequired) || len(req.RequiredSigners) == 0 {
-		t.Fatalf("RequiredSigners = %v, want body required signers %v", req.RequiredSigners, wantRequired)
+	if !equalStringSets(req.RequiredSigners, wantRequired) ||
+		len(req.RequiredSigners) == 0 {
+		t.Fatalf(
+			"RequiredSigners = %v, want body required signers %v",
+			req.RequiredSigners,
+			wantRequired,
+		)
 	}
 
 	// Verify inputs have paths (payment tx funds from addr0 at index 0).
@@ -2384,10 +2779,17 @@ func TestHardwareSignRequest(t *testing.T) {
 		// air-gapped signer can display the inputs and compute the fee. The
 		// single fake UTxO holds 10_000_000 lovelace at addr0.
 		if inp.Lovelace != "10000000" {
-			t.Fatalf("input Lovelace = %q, want 10000000 (resolved from coin selection)", inp.Lovelace)
+			t.Fatalf(
+				"input Lovelace = %q, want 10000000 (resolved from coin selection)",
+				inp.Lovelace,
+			)
 		}
 		if inp.AddressBech32 != addr0 {
-			t.Fatalf("input AddressBech32 = %q, want %q", inp.AddressBech32, addr0)
+			t.Fatalf(
+				"input AddressBech32 = %q, want %q",
+				inp.AddressBech32,
+				addr0,
+			)
 		}
 		if len(inp.Assets) != 0 {
 			t.Fatalf("ADA-only input must carry no assets, got %+v", inp.Assets)
@@ -2417,15 +2819,24 @@ func TestHardwareSignRequest(t *testing.T) {
 		case recipientAddr:
 			sawRecipient = true
 			if out.PaymentPath != "" || out.StakePath != "" {
-				t.Fatalf("third-party recipient must not have device paths: %+v", out)
+				t.Fatalf(
+					"third-party recipient must not have device paths: %+v",
+					out,
+				)
 			}
 		case addr0:
 			sawChange = true
 			if out.PaymentPath != "1852'/1815'/0'/0/0" {
-				t.Fatalf("change payment path = %q, want account 0 external index 0", out.PaymentPath)
+				t.Fatalf(
+					"change payment path = %q, want account 0 external index 0",
+					out.PaymentPath,
+				)
 			}
 			if out.StakePath != "1852'/1815'/0'/2/0" {
-				t.Fatalf("change stake path = %q, want account 0 stake index 0", out.StakePath)
+				t.Fatalf(
+					"change stake path = %q, want account 0 stake index 0",
+					out.StakePath,
+				)
 			}
 		}
 	}
@@ -2484,14 +2895,23 @@ func TestHardwareSignRequestProtocolMagicForNewNetworks(t *testing.T) {
 				t.Fatalf("HardwareSignRequest: %v", err)
 			}
 			if req.NetworkID != 0 || req.ProtocolMagic != magic {
-				t.Fatalf("network = (id %d, magic %d), want (0, %d)", req.NetworkID, req.ProtocolMagic, magic)
+				t.Fatalf(
+					"network = (id %d, magic %d), want (0, %d)",
+					req.NetworkID,
+					req.ProtocolMagic,
+					magic,
+				)
 			}
 			dr, err := s.SignDataHardwareRequest(acct.ReceiveAddresses[0])
 			if err != nil {
 				t.Fatalf("SignDataHardwareRequest: %v", err)
 			}
 			if dr.ProtocolMagic != magic {
-				t.Fatalf("sign-data magic = %d, want %d", dr.ProtocolMagic, magic)
+				t.Fatalf(
+					"sign-data magic = %d, want %d",
+					dr.ProtocolMagic,
+					magic,
+				)
 			}
 		})
 	}
@@ -2506,7 +2926,12 @@ func TestHardwareSignRequestUsesAccountIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account key: %v", err)
 	}
-	acct, err := wallet.DeriveFromAccountXpub(accountKey.Public().String(), "preview", 2, 3)
+	acct, err := wallet.DeriveFromAccountXpub(
+		accountKey.Public().String(),
+		"preview",
+		2,
+		3,
+	)
 	if err != nil {
 		t.Fatalf("derive account 2: %v", err)
 	}
@@ -2526,11 +2951,18 @@ func TestHardwareSignRequestUsesAccountIndex(t *testing.T) {
 		t.Fatalf("input path = %q, want account 2", got)
 	}
 	for _, out := range req.Outputs {
-		if out.PaymentPath != "" && !strings.HasPrefix(out.PaymentPath, "1852'/1815'/2'/") {
-			t.Fatalf("owned output payment path = %q, want account 2", out.PaymentPath)
+		if out.PaymentPath != "" &&
+			!strings.HasPrefix(out.PaymentPath, "1852'/1815'/2'/") {
+			t.Fatalf(
+				"owned output payment path = %q, want account 2",
+				out.PaymentPath,
+			)
 		}
 		if out.StakePath != "" && out.StakePath != "1852'/1815'/2'/2/0" {
-			t.Fatalf("owned output stake path = %q, want account 2", out.StakePath)
+			t.Fatalf(
+				"owned output stake path = %q, want account 2",
+				out.StakePath,
+			)
 		}
 	}
 }
@@ -2571,13 +3003,20 @@ func TestHardwareSignRequestGuard(t *testing.T) {
 			policyHex    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 28 bytes
 			assetNameHex = "74657374"                                                 // "test"
 		)
-		nativeAssets := newFakeMultiAsset(policyHex, assetNameHex, 1) //nolint:gomnd
+		nativeAssets := newFakeMultiAsset(
+			policyHex,
+			assetNameHex,
+			1,
+		) //nolint:gomnd
 		nativeToken := apollo.NewUnit(policyHex, assetNameHex, 1)
 
 		// Build the input UTxO manually with native assets.
 		var txIDBytes lcommon.Blake2b256
 		copy(txIDBytes[:], make([]byte, 32)) // all-zero hash
-		inputID := shelley.ShelleyTransactionInput{TxId: txIDBytes, OutputIndex: 0}
+		inputID := shelley.ShelleyTransactionInput{
+			TxId:        txIDBytes,
+			OutputIndex: 0,
+		}
 		addr0Parsed, _ := lcommon.NewAddress(addr0)
 		inputOutput := &fakeOutputWithAssets{
 			fakeOutput: fakeOutput{address: addr0Parsed, lovelace: 5_000_000},
@@ -2589,7 +3028,10 @@ func TestHardwareSignRequestGuard(t *testing.T) {
 		fc := &fakeChain{utxos: map[string][]lcommon.Utxo{addr0: {inputUTxO}}}
 		s := NewService(fc, nil, acct)
 
-		pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+		pv, err := s.Build(
+			context.Background(),
+			SendRequest{To: recvAddr, Lovelace: "1000000"},
+		)
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -2629,11 +3071,16 @@ func TestHardwareSignRequestGuard(t *testing.T) {
 			t.Fatalf("HardwareSignRequest: %v", err)
 		}
 		if req.Unsupported == "" {
-			t.Fatal("expected Unsupported to be set for a native-asset output tx")
+			t.Fatal(
+				"expected Unsupported to be set for a native-asset output tx",
+			)
 		}
 		// Guard fires before inputs are built: no inputs should leak.
 		if len(req.Inputs) > 0 {
-			t.Fatalf("native-asset guard: expected no inputs in result, got %d", len(req.Inputs))
+			t.Fatalf(
+				"native-asset guard: expected no inputs in result, got %d",
+				len(req.Inputs),
+			)
 		}
 	})
 }
@@ -2647,18 +3094,54 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 		name   string
 		mutate mutateBody
 	}{
-		{"auxiliary data hash", func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash }},
-		{"validity interval start", func(b *conway.ConwayTransactionBody) { b.TxValidityIntervalStart = 1 }},
-		{"mint", func(b *conway.ConwayTransactionBody) { b.TxMint = &lcommon.MultiAsset[lcommon.MultiAssetTypeMint]{} }},
-		{"script data hash", func(b *conway.ConwayTransactionBody) { b.TxScriptDataHash = &hash }},
-		{"collateral", func(b *conway.ConwayTransactionBody) { b.TxCollateral = cbor.NewSetType(b.TxInputs.Items(), true) }},
-		{"mismatched network id", func(b *conway.ConwayTransactionBody) { b.TxNetworkId = &networkID }},
-		{"collateral return", func(b *conway.ConwayTransactionBody) { out := b.TxOutputs[0]; b.TxCollateralReturn = &out }},
-		{"total collateral", func(b *conway.ConwayTransactionBody) { b.TxTotalCollateral = 1 }},
-		{"reference inputs", func(b *conway.ConwayTransactionBody) { b.TxReferenceInputs = cbor.NewSetType(b.TxInputs.Items(), true) }},
-		{"proposal procedures", func(b *conway.ConwayTransactionBody) { b.TxProposalProcedures = []conway.ConwayProposalProcedure{{}} }},
-		{"current treasury value", func(b *conway.ConwayTransactionBody) { b.TxCurrentTreasuryValue = 1 }},
-		{"donation", func(b *conway.ConwayTransactionBody) { b.TxDonation = 1 }},
+		{
+			"auxiliary data hash",
+			func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash },
+		},
+		{
+			"validity interval start",
+			func(b *conway.ConwayTransactionBody) { b.TxValidityIntervalStart = 1 },
+		},
+		{
+			"mint",
+			func(b *conway.ConwayTransactionBody) { b.TxMint = &lcommon.MultiAsset[lcommon.MultiAssetTypeMint]{} },
+		},
+		{
+			"script data hash",
+			func(b *conway.ConwayTransactionBody) { b.TxScriptDataHash = &hash },
+		},
+		{
+			"collateral",
+			func(b *conway.ConwayTransactionBody) { b.TxCollateral = cbor.NewSetType(b.TxInputs.Items(), true) },
+		},
+		{
+			"mismatched network id",
+			func(b *conway.ConwayTransactionBody) { b.TxNetworkId = &networkID },
+		},
+		{
+			"collateral return",
+			func(b *conway.ConwayTransactionBody) { out := b.TxOutputs[0]; b.TxCollateralReturn = &out },
+		},
+		{
+			"total collateral",
+			func(b *conway.ConwayTransactionBody) { b.TxTotalCollateral = 1 },
+		},
+		{
+			"reference inputs",
+			func(b *conway.ConwayTransactionBody) { b.TxReferenceInputs = cbor.NewSetType(b.TxInputs.Items(), true) },
+		},
+		{
+			"proposal procedures",
+			func(b *conway.ConwayTransactionBody) { b.TxProposalProcedures = []conway.ConwayProposalProcedure{{}} },
+		},
+		{
+			"current treasury value",
+			func(b *conway.ConwayTransactionBody) { b.TxCurrentTreasuryValue = 1 },
+		},
+		{
+			"donation",
+			func(b *conway.ConwayTransactionBody) { b.TxDonation = 1 },
+		},
 	}
 
 	for _, tt := range tests {
@@ -2666,7 +3149,10 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 			acct := mustDeriveTestAccount(t)
 			fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 			s := NewService(fc, nil, acct)
-			pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+			pv, err := s.Build(
+				context.Background(),
+				SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+			)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -2690,7 +3176,9 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 		})
 	}
 
-	datumOptionCBOR, err := cbor.Encode([]any{babbage.DatumOptionTypeHash, hash})
+	datumOptionCBOR, err := cbor.Encode(
+		[]any{babbage.DatumOptionTypeHash, hash},
+	)
 	if err != nil {
 		t.Fatalf("encode datum option: %v", err)
 	}
@@ -2705,19 +3193,25 @@ func TestHardwareSignRequestRejectsOtherConwayFeatures(t *testing.T) {
 		{"output datum", func(out *babbage.BabbageTransactionOutput) {
 			out.DatumOption = &datumOption
 		}},
-		{"output script reference", func(out *babbage.BabbageTransactionOutput) {
-			out.TxOutScriptRef = &lcommon.ScriptRef{
-				Type:   lcommon.ScriptRefTypePlutusV1,
-				Script: lcommon.PlutusV1Script{0x01},
-			}
-		}},
+		{
+			"output script reference",
+			func(out *babbage.BabbageTransactionOutput) {
+				out.TxOutScriptRef = &lcommon.ScriptRef{
+					Type:   lcommon.ScriptRefTypePlutusV1,
+					Script: lcommon.PlutusV1Script{0x01},
+				}
+			},
+		},
 	}
 	for _, tt := range outputTests {
 		t.Run(tt.name, func(t *testing.T) {
 			acct := mustDeriveTestAccount(t)
 			fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 			s := NewService(fc, nil, acct)
-			pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+			pv, err := s.Build(
+				context.Background(),
+				SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+			)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -2750,9 +3244,14 @@ func TestHardwareSignRequestStakeDelegationCarriesCertSigners(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
 	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
-	s.SetChainQuerier(newFakeQuerier()) // fresh wallet → stake registration + delegation
+	s.SetChainQuerier(
+		newFakeQuerier(),
+	) // fresh wallet → stake registration + delegation
 
-	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{PoolID: validPoolID})
+	pv, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{PoolID: validPoolID},
+	)
 	if err != nil {
 		t.Fatalf("BuildDelegation: %v", err)
 	}
@@ -2761,7 +3260,10 @@ func TestHardwareSignRequestStakeDelegationCarriesCertSigners(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported != "" {
-		t.Fatalf("staking tx must be signable, got Unsupported = %q", req.Unsupported)
+		t.Fatalf(
+			"staking tx must be signable, got Unsupported = %q",
+			req.Unsupported,
+		)
 	}
 
 	addr0 := mustNewAddress(t, acct.ReceiveAddresses[0])
@@ -2777,27 +3279,51 @@ func TestHardwareSignRequestStakeDelegationCarriesCertSigners(t *testing.T) {
 			t.Fatalf("cert signer path = %q, want %q", cs.Path, wantStakePath)
 		}
 		if cs.KeyHashHex != wantStakeHash {
-			t.Fatalf("cert signer key hash = %q, want stake key hash %q", cs.KeyHashHex, wantStakeHash)
+			t.Fatalf(
+				"cert signer key hash = %q, want stake key hash %q",
+				cs.KeyHashHex,
+				wantStakeHash,
+			)
 		}
 	}
 	for _, want := range []string{"stake_registration", "stake_delegation"} {
 		if !seen[want] {
-			t.Fatalf("missing cert signer for %q; got %+v", want, req.CertificateSigners)
+			t.Fatalf(
+				"missing cert signer for %q; got %+v",
+				want,
+				req.CertificateSigners,
+			)
 		}
 	}
 	// Change returns to the wallet → a change-output path is surfaced.
 	if len(req.ChangeOutputs) == 0 {
-		t.Fatalf("expected at least one change output path; outputs=%+v", req.Outputs)
+		t.Fatalf(
+			"expected at least one change output path; outputs=%+v",
+			req.Outputs,
+		)
 	}
 	for _, co := range req.ChangeOutputs {
 		if co.Path == "" || co.StakePath != wantStakePath {
-			t.Fatalf("change output = %+v, want non-empty path and stake path %q", co, wantStakePath)
+			t.Fatalf(
+				"change output = %+v, want non-empty path and stake path %q",
+				co,
+				wantStakePath,
+			)
 		}
 		if co.Index < 0 || co.Index >= len(req.Outputs) {
-			t.Fatalf("change output index %d out of range (%d outputs)", co.Index, len(req.Outputs))
+			t.Fatalf(
+				"change output index %d out of range (%d outputs)",
+				co.Index,
+				len(req.Outputs),
+			)
 		}
 		if req.Outputs[co.Index].PaymentPath != co.Path {
-			t.Fatalf("change output index %d path %q != output payment path %q", co.Index, co.Path, req.Outputs[co.Index].PaymentPath)
+			t.Fatalf(
+				"change output index %d path %q != output payment path %q",
+				co.Index,
+				co.Path,
+				req.Outputs[co.Index].PaymentPath,
+			)
 		}
 	}
 }
@@ -2805,16 +3331,28 @@ func TestHardwareSignRequestStakeDelegationCarriesCertSigners(t *testing.T) {
 // TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner verifies a
 // self-DRep registration surfaces the wallet's DRep-key path (role 3) for the
 // drep_registration certificate.
-func TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner(t *testing.T) {
+func TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner(
+	t *testing.T,
+) {
 	acct := mustDeriveTestAccount(t)
-	fc := newFakeChain(700_000_000, acct.ReceiveAddresses[0]) // cover 2₳ + 500₳ deposits + fee
+	fc := newFakeChain(
+		700_000_000,
+		acct.ReceiveAddresses[0],
+	) // cover 2₳ + 500₳ deposits + fee
 	s := NewService(fc, nil, acct)
 	q := newFakeQuerier()
-	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		WithdrawableAmount: "0",
+	}
 	q.drepErr = chain.ErrNotFound // own DRep not yet registered → emit the reg cert
 	s.SetChainQuerier(q)
 
-	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}})
+	pv, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}},
+	)
 	if err != nil {
 		t.Fatalf("BuildDelegation register self: %v", err)
 	}
@@ -2823,7 +3361,10 @@ func TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner(t *testing.T) 
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported != "" {
-		t.Fatalf("governance tx must be signable, got Unsupported = %q", req.Unsupported)
+		t.Fatalf(
+			"governance tx must be signable, got Unsupported = %q",
+			req.Unsupported,
+		)
 	}
 	const wantDRepPath = "1852'/1815'/0'/3/0"
 	wantDRepHash := strings.ToLower(acct.DRepKeyHash)
@@ -2834,14 +3375,25 @@ func TestHardwareSignRequestSelfDRepRegistrationCarriesDRepSigner(t *testing.T) 
 		}
 		found = true
 		if cs.Role != "drep" || cs.Path != wantDRepPath {
-			t.Fatalf("drep cert signer = %+v, want role drep path %q", cs, wantDRepPath)
+			t.Fatalf(
+				"drep cert signer = %+v, want role drep path %q",
+				cs,
+				wantDRepPath,
+			)
 		}
 		if cs.KeyHashHex != wantDRepHash {
-			t.Fatalf("drep cert signer key hash = %q, want %q", cs.KeyHashHex, wantDRepHash)
+			t.Fatalf(
+				"drep cert signer key hash = %q, want %q",
+				cs.KeyHashHex,
+				wantDRepHash,
+			)
 		}
 	}
 	if !found {
-		t.Fatalf("no registration_drep cert signer; got %+v", req.CertificateSigners)
+		t.Fatalf(
+			"no registration_drep cert signer; got %+v",
+			req.CertificateSigners,
+		)
 	}
 }
 
@@ -2857,7 +3409,10 @@ func TestHardwareSignRequestWithdrawalCarriesStakeSigner(t *testing.T) {
 
 	fc := newFakeChain(5_000_000, addr0)
 	s := NewService(fc, nil, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: recvAddr, Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: recvAddr, Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -2903,19 +3458,34 @@ func TestHardwareSignRequestWithdrawalCarriesStakeSigner(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported != "" {
-		t.Fatalf("withdrawal tx must be signable, got Unsupported = %q", req.Unsupported)
+		t.Fatalf(
+			"withdrawal tx must be signable, got Unsupported = %q",
+			req.Unsupported,
+		)
 	}
 	if len(req.WithdrawalSigners) != 1 {
-		t.Fatalf("want exactly one withdrawal signer, got %+v", req.WithdrawalSigners)
+		t.Fatalf(
+			"want exactly one withdrawal signer, got %+v",
+			req.WithdrawalSigners,
+		)
 	}
 	ws := req.WithdrawalSigners[0]
 	addr0Parsed := mustNewAddress(t, addr0)
 	wantStakeHash := hex.EncodeToString(addr0Parsed.StakeKeyHash().Bytes())
-	if ws.Role != "stake" || ws.Path != "1852'/1815'/0'/2/0" || ws.KeyHashHex != wantStakeHash {
-		t.Fatalf("withdrawal signer = %+v, want stake role, path 1852'/1815'/0'/2/0, key hash %q", ws, wantStakeHash)
+	if ws.Role != "stake" || ws.Path != "1852'/1815'/0'/2/0" ||
+		ws.KeyHashHex != wantStakeHash {
+		t.Fatalf(
+			"withdrawal signer = %+v, want stake role, path 1852'/1815'/0'/2/0, key hash %q",
+			ws,
+			wantStakeHash,
+		)
 	}
 	if ws.RewardAddressBech32 != acct.StakeAddress {
-		t.Fatalf("withdrawal reward address = %q, want %q", ws.RewardAddressBech32, acct.StakeAddress)
+		t.Fatalf(
+			"withdrawal reward address = %q, want %q",
+			ws.RewardAddressBech32,
+			acct.StakeAddress,
+		)
 	}
 }
 
@@ -2926,7 +3496,10 @@ func TestHardwareSignRequestDRepVoteCarriesVoteSigner(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
 	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -2953,17 +3526,28 @@ func TestHardwareSignRequestDRepVoteCarriesVoteSigner(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported != "" {
-		t.Fatalf("vote tx must be signable, got Unsupported = %q", req.Unsupported)
+		t.Fatalf(
+			"vote tx must be signable, got Unsupported = %q",
+			req.Unsupported,
+		)
 	}
 	if len(req.VoteSigners) != 1 {
 		t.Fatalf("want exactly one vote signer, got %+v", req.VoteSigners)
 	}
 	vs := req.VoteSigners[0]
-	if vs.Voter != "drep" || vs.Role != "drep" || vs.Path != "1852'/1815'/0'/3/0" {
-		t.Fatalf("vote signer = %+v, want drep voter/role, path 1852'/1815'/0'/3/0", vs)
+	if vs.Voter != "drep" || vs.Role != "drep" ||
+		vs.Path != "1852'/1815'/0'/3/0" {
+		t.Fatalf(
+			"vote signer = %+v, want drep voter/role, path 1852'/1815'/0'/3/0",
+			vs,
+		)
 	}
 	if vs.KeyHashHex != strings.ToLower(acct.DRepKeyHash) {
-		t.Fatalf("vote signer key hash = %q, want %q", vs.KeyHashHex, acct.DRepKeyHash)
+		t.Fatalf(
+			"vote signer key hash = %q, want %q",
+			vs.KeyHashHex,
+			acct.DRepKeyHash,
+		)
 	}
 }
 
@@ -2975,7 +3559,10 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
 	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -2997,7 +3584,10 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported != "" {
-		t.Fatalf("multisig-style tx must be signable, got Unsupported = %q", req.Unsupported)
+		t.Fatalf(
+			"multisig-style tx must be signable, got Unsupported = %q",
+			req.Unsupported,
+		)
 	}
 
 	// Inputs the wallet spends still carry their derivation path.
@@ -3008,7 +3598,10 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 		}
 	}
 	if !hasInputPath {
-		t.Fatalf("expected the owned input to keep its path; inputs=%+v", req.Inputs)
+		t.Fatalf(
+			"expected the owned input to keep its path; inputs=%+v",
+			req.Inputs,
+		)
 	}
 
 	// The stake key (not an input signer) is surfaced as an extra signer.
@@ -3018,7 +3611,10 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 		if es.KeyHashHex == wantStakeHash {
 			found = true
 			if es.Role != "stake" || es.Path != "1852'/1815'/0'/2/0" {
-				t.Fatalf("extra signer = %+v, want stake role, path 1852'/1815'/0'/2/0", es)
+				t.Fatalf(
+					"extra signer = %+v, want stake role, path 1852'/1815'/0'/2/0",
+					es,
+				)
 			}
 		}
 		// A payment key already covered by an input must NOT be duplicated here.
@@ -3027,7 +3623,10 @@ func TestHardwareSignRequestMultisigExtraSigners(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("stake participant key not surfaced as extra signer; got %+v", req.ExtraSigners)
+		t.Fatalf(
+			"stake participant key not surfaced as extra signer; got %+v",
+			req.ExtraSigners,
+		)
 	}
 }
 
@@ -3042,7 +3641,10 @@ func TestHardwareSignRequestForeignDRepVoteUnsupported(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
 	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -3067,10 +3669,15 @@ func TestHardwareSignRequestForeignDRepVoteUnsupported(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported == "" {
-		t.Fatal("foreign DRep vote must set Unsupported, not be presented as signable")
+		t.Fatal(
+			"foreign DRep vote must set Unsupported, not be presented as signable",
+		)
 	}
 	if len(req.VoteSigners) != 0 {
-		t.Fatalf("no vote signer may be fabricated for a foreign DRep; got %+v", req.VoteSigners)
+		t.Fatalf(
+			"no vote signer may be fabricated for a foreign DRep; got %+v",
+			req.VoteSigners,
+		)
 	}
 }
 
@@ -3083,7 +3690,10 @@ func TestHardwareSignRequestForeignCertCredentialUnsupported(t *testing.T) {
 	acct := mustDeriveTestAccount(t)
 	fc := newFakeChain(10_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
-	pv, err := s.Build(context.Background(), SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	pv, err := s.Build(
+		context.Background(),
+		SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -3112,9 +3722,14 @@ func TestHardwareSignRequestForeignCertCredentialUnsupported(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if req.Unsupported == "" {
-		t.Fatal("foreign certificate credential must set Unsupported, not be presented as signable")
+		t.Fatal(
+			"foreign certificate credential must set Unsupported, not be presented as signable",
+		)
 	}
 	if len(req.CertificateSigners) != 0 {
-		t.Fatalf("no cert signer may be fabricated for a foreign credential; got %+v", req.CertificateSigners)
+		t.Fatalf(
+			"no cert signer may be fabricated for a foreign credential; got %+v",
+			req.CertificateSigners,
+		)
 	}
 }

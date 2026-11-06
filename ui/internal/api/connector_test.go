@@ -37,41 +37,106 @@ import (
 type fakeConnectorBackend struct{}
 
 func (f *fakeConnectorBackend) NetworkID() int { return 0 }
-func (f *fakeConnectorBackend) Utxos(_ context.Context, _ string, _ *connector.Paginate) ([]string, error) {
-	return nil, nil
-}
-func (f *fakeConnectorBackend) Balance(_ context.Context) (string, error) { return "", nil }
-func (f *fakeConnectorBackend) UsedAddresses(_ context.Context, _ *connector.Paginate) ([]string, error) {
-	return nil, nil
-}
-func (f *fakeConnectorBackend) UnusedAddresses(_ context.Context) ([]string, error) { return nil, nil }
-func (f *fakeConnectorBackend) ChangeAddress(_ context.Context) (string, error)     { return "", nil }
-func (f *fakeConnectorBackend) RewardAddresses(_ context.Context) ([]string, error) { return nil, nil }
-func (f *fakeConnectorBackend) Collateral(_ context.Context, _ string) ([]string, error) {
+
+func (f *fakeConnectorBackend) Utxos(
+	_ context.Context,
+	_ string,
+	_ *connector.Paginate,
+) ([]string, error) {
 	return nil, nil
 }
 
-func (f *fakeConnectorBackend) InspectTx(_ context.Context, _ string) (spend.TxSummary, error) {
+func (f *fakeConnectorBackend) Balance(
+	_ context.Context,
+) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConnectorBackend) UsedAddresses(
+	_ context.Context,
+	_ *connector.Paginate,
+) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeConnectorBackend) UnusedAddresses(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeConnectorBackend) ChangeAddress(
+	_ context.Context,
+) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConnectorBackend) RewardAddresses(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeConnectorBackend) Collateral(
+	_ context.Context,
+	_ string,
+) ([]string, error) {
+	return nil, nil
+}
+
+func (f *fakeConnectorBackend) InspectTx(
+	_ context.Context,
+	_ string,
+) (spend.TxSummary, error) {
 	return spend.TxSummary{}, nil
 }
 
-func (f *fakeConnectorBackend) SignTx(_ context.Context, _ string, _ bool, _ string) (string, error) {
+func (f *fakeConnectorBackend) SignTx(
+	_ context.Context,
+	_ string,
+	_ bool,
+	_ string,
+) (string, error) {
 	return "", nil
 }
-func (f *fakeConnectorBackend) SignData(_, _, _ string) (string, string, error)      { return "", "", nil }
-func (f *fakeConnectorBackend) SubmitTx(_ context.Context, _ string) (string, error) { return "", nil }
-func (f *fakeConnectorBackend) PubDRepKey(_ string) (string, error)                  { return "", nil }
-func (f *fakeConnectorBackend) RegisteredPubStakeKeys(_ string) ([]string, error) {
+
+func (f *fakeConnectorBackend) SignData(
+	_, _, _ string,
+) (string, string, error) {
+	return "", "", nil
+}
+
+func (f *fakeConnectorBackend) SubmitTx(
+	_ context.Context,
+	_ string,
+) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConnectorBackend) PubDRepKey(
+	_ string,
+) (string, error) {
+	return "", nil
+}
+
+func (f *fakeConnectorBackend) RegisteredPubStakeKeys(
+	_ string,
+) ([]string, error) {
 	return nil, nil
 }
 
-func (f *fakeConnectorBackend) UnregisteredPubStakeKeys(_ string) ([]string, error) {
+func (f *fakeConnectorBackend) UnregisteredPubStakeKeys(
+	_ string,
+) ([]string, error) {
 	return nil, nil
 }
 
 // newTestService creates a real connector.Service, pairs it with the given
 // extensionID, and returns the service along with the bearer token minted.
-func newTestService(t *testing.T, extensionID string) (*connector.Service, string) {
+func newTestService(
+	t *testing.T,
+	extensionID string,
+) (*connector.Service, string) {
 	t.Helper()
 	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
 	svc.SetActiveAccount("test-wallet", &wallet.Account{AccountIndex: 0})
@@ -113,7 +178,11 @@ func TestConnectorPairRoute(t *testing.T) {
 		registerConnector(mux, svc)
 
 		body := `{"extension_id":"` + extID + `","code":""}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pair",
+			strings.NewReader(body),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
@@ -124,7 +193,10 @@ func TestConnectorPairRoute(t *testing.T) {
 		}
 		// Security: ensure no numeric pairing code leaked in response body.
 		if numericCodeRe.MatchString(rec.Body.String()) {
-			t.Errorf("response body contains a numeric pairing code (security leak): %q", rec.Body.String())
+			t.Errorf(
+				"response body contains a numeric pairing code (security leak): %q",
+				rec.Body.String(),
+			)
 		}
 		var resp map[string]string
 		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -135,32 +207,43 @@ func TestConnectorPairRoute(t *testing.T) {
 		}
 	})
 
-	t.Run("confirm: correct code → 200 with non-empty token", func(t *testing.T) {
-		svc := newSvc(t)
-		mux := http.NewServeMux()
-		registerConnector(mux, svc)
+	t.Run(
+		"confirm: correct code → 200 with non-empty token",
+		func(t *testing.T) {
+			svc := newSvc(t)
+			mux := http.NewServeMux()
+			registerConnector(mux, svc)
 
-		// Learn the code directly (simulates in-app display).
-		code, _ := svc.BeginPair(extID)
+			// Learn the code directly (simulates in-app display).
+			code, _ := svc.BeginPair(extID)
 
-		body := `{"extension_id":"` + extID + `","code":"` + code + `"}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Origin", extID)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			body := `{"extension_id":"` + extID + `","code":"` + code + `"}`
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/connector/pair",
+				strings.NewReader(body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", extID)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-		}
-		var resp map[string]string
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("response is not valid JSON: %v", err)
-		}
-		if resp["token"] == "" {
-			t.Error("expected non-empty token in response, got empty")
-		}
-	})
+			if rec.Code != http.StatusOK {
+				t.Fatalf(
+					"status = %d, want 200; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+			var resp map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("response is not valid JSON: %v", err)
+			}
+			if resp["token"] == "" {
+				t.Error("expected non-empty token in response, got empty")
+			}
+		},
+	)
 
 	t.Run("confirm: wrong code → 403", func(t *testing.T) {
 		svc := newSvc(t)
@@ -171,7 +254,11 @@ func TestConnectorPairRoute(t *testing.T) {
 		svc.BeginPair(extID)
 
 		body := `{"extension_id":"` + extID + `","code":"000000"}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pair",
+			strings.NewReader(body),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
@@ -187,7 +274,11 @@ func TestConnectorPairRoute(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader("{bad json"))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pair",
+			strings.NewReader("{bad json"),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
@@ -204,7 +295,11 @@ func TestConnectorPairRoute(t *testing.T) {
 		registerConnector(mux, svc)
 
 		body := `{"extension_id":"","code":""}`
-		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pair",
+			strings.NewReader(body),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", extID)
 		rec := httptest.NewRecorder()
@@ -224,7 +319,11 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 		t.Helper()
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
-		req := httptest.NewRequest(http.MethodPost, "/connector/pair", strings.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pair",
+			strings.NewReader(body),
+		)
 		if origin != "" {
 			req.Header.Set("Origin", origin)
 		}
@@ -242,82 +341,172 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 		{"different extension", "chrome-extension://other"},
 	}
 	for _, tc := range tests {
-		t.Run(tc.name+" is refused without creating a pairing", func(t *testing.T) {
-			t.Parallel()
-			svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-			rec := post(t, svc, tc.origin, `{"extension_id":"`+extID+`"}`)
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("initiate status = %d, want 403; body: %s", rec.Code, rec.Body.String())
-			}
-			if got := len(svc.PendingPairings()); got != 0 {
-				t.Fatalf("refused request created %d pending pairings", got)
-			}
-		})
+		t.Run(
+			tc.name+" is refused without creating a pairing",
+			func(t *testing.T) {
+				t.Parallel()
+				svc := connector.NewService(
+					t.TempDir(),
+					&fakeConnectorBackend{},
+					nil,
+				)
+				rec := post(t, svc, tc.origin, `{"extension_id":"`+extID+`"}`)
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf(
+						"initiate status = %d, want 403; body: %s",
+						rec.Code,
+						rec.Body.String(),
+					)
+				}
+				if got := len(svc.PendingPairings()); got != 0 {
+					t.Fatalf("refused request created %d pending pairings", got)
+				}
+			},
+		)
 	}
 
-	t.Run("confirm with a foreign origin is refused and keeps the code usable", func(t *testing.T) {
-		t.Parallel()
-		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-		code, err := svc.BeginPair(extID)
-		if err != nil {
-			t.Fatalf("BeginPair: %v", err)
-		}
-		rec := post(t, svc, "https://evil.example", `{"extension_id":"`+extID+`","code":"`+code+`"}`)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d, want 403; body: %s", rec.Code, rec.Body.String())
-		}
-		rec = post(t, svc, extID, `{"extension_id":"`+extID+`","code":"`+code+`"}`)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("matching origin status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-		}
-	})
+	t.Run(
+		"confirm with a foreign origin is refused and keeps the code usable",
+		func(t *testing.T) {
+			t.Parallel()
+			svc := connector.NewService(
+				t.TempDir(),
+				&fakeConnectorBackend{},
+				nil,
+			)
+			code, err := svc.BeginPair(extID)
+			if err != nil {
+				t.Fatalf("BeginPair: %v", err)
+			}
+			rec := post(
+				t,
+				svc,
+				"https://evil.example",
+				`{"extension_id":"`+extID+`","code":"`+code+`"}`,
+			)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf(
+					"status = %d, want 403; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+			rec = post(
+				t,
+				svc,
+				extID,
+				`{"extension_id":"`+extID+`","code":"`+code+`"}`,
+			)
+			if rec.Code != http.StatusOK {
+				t.Fatalf(
+					"matching origin status = %d, want 200; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+		},
+	)
 
-	t.Run("bare extension id matches its normalized origin", func(t *testing.T) {
-		t.Parallel()
-		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-		rec := post(t, svc, extID, `{"extension_id":"testpair"}`)
-		if rec.Code != http.StatusAccepted {
-			t.Fatalf("status = %d, want 202; body: %s", rec.Code, rec.Body.String())
-		}
-	})
+	t.Run(
+		"bare extension id matches its normalized origin",
+		func(t *testing.T) {
+			t.Parallel()
+			svc := connector.NewService(
+				t.TempDir(),
+				&fakeConnectorBackend{},
+				nil,
+			)
+			rec := post(t, svc, extID, `{"extension_id":"testpair"}`)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf(
+					"status = %d, want 202; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+		},
+	)
 
-	t.Run("oversized pairing body is refused before decoding", func(t *testing.T) {
-		t.Parallel()
-		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-		// Well under the mux-wide request limit, far over what a pairing needs.
-		body := `{"extension_id":"` + extID + `","code":"` + strings.Repeat("0", 64<<10) + `"}`
-		rec := post(t, svc, extID, body)
-		if rec.Code != http.StatusRequestEntityTooLarge {
-			t.Fatalf("status = %d, want 413; body: %s", rec.Code, rec.Body.String())
-		}
-	})
+	t.Run(
+		"oversized pairing body is refused before decoding",
+		func(t *testing.T) {
+			t.Parallel()
+			svc := connector.NewService(
+				t.TempDir(),
+				&fakeConnectorBackend{},
+				nil,
+			)
+			// Well under the mux-wide request limit, far over what a pairing needs.
+			body := `{"extension_id":"` + extID + `","code":"` + strings.Repeat(
+				"0",
+				64<<10,
+			) + `"}`
+			rec := post(t, svc, extID, body)
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf(
+					"status = %d, want 413; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+		},
+	)
 
-	t.Run("valid pairing object followed by oversized trailing data is refused", func(t *testing.T) {
-		t.Parallel()
-		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-		body := `{"extension_id":"testpair"}` + strings.Repeat(" ", 64<<10) + `x`
-		rec := post(t, svc, extID, body)
-		if rec.Code != http.StatusRequestEntityTooLarge {
-			t.Fatalf("status = %d, want 413; body: %s", rec.Code, rec.Body.String())
-		}
-		if got := len(svc.PendingPairings()); got != 0 {
-			t.Fatalf("oversized request created %d pending pairings", got)
-		}
-	})
+	t.Run(
+		"valid pairing object followed by oversized trailing data is refused",
+		func(t *testing.T) {
+			t.Parallel()
+			svc := connector.NewService(
+				t.TempDir(),
+				&fakeConnectorBackend{},
+				nil,
+			)
+			body := `{"extension_id":"testpair"}` + strings.Repeat(
+				" ",
+				64<<10,
+			) + `x`
+			rec := post(t, svc, extID, body)
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf(
+					"status = %d, want 413; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+			if got := len(svc.PendingPairings()); got != 0 {
+				t.Fatalf("oversized request created %d pending pairings", got)
+			}
+		},
+	)
 
-	t.Run("valid pairing object followed by trailing data is refused", func(t *testing.T) {
-		t.Parallel()
-		svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-		rec := post(t, svc, extID, `{"extension_id":"testpair"} {}`)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-		}
-	})
+	t.Run(
+		"valid pairing object followed by trailing data is refused",
+		func(t *testing.T) {
+			t.Parallel()
+			svc := connector.NewService(
+				t.TempDir(),
+				&fakeConnectorBackend{},
+				nil,
+			)
+			rec := post(t, svc, extID, `{"extension_id":"testpair"} {}`)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"status = %d, want 400; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+		},
+	)
 }
 
 // decideWhenPending polls svc.Pending() until at least one request appears (or
 // 2 seconds elapse), then calls svc.Decide with the given Decision.
-func decideWhenPending(t *testing.T, svc *connector.Service, d connector.Decision) {
+func decideWhenPending(
+	t *testing.T,
+	svc *connector.Service,
+	d connector.Decision,
+) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -345,20 +534,83 @@ func TestConnectorErrorCode(t *testing.T) {
 		wantInfo   string
 	}{
 		// ErrNotGranted → 403, -3
-		{"ErrNotGranted/getBalance", "getBalance", connector.ErrNotGranted, 403, -3, "connector: origin not granted"},
+		{
+			"ErrNotGranted/getBalance",
+			"getBalance",
+			connector.ErrNotGranted,
+			403,
+			-3,
+			"connector: origin not granted",
+		},
 		// ErrRefused → 403, -3
-		{"ErrRefused/unknown", "unknown", connector.ErrRefused, 403, -3, "connector: refused"},
+		{
+			"ErrRefused/unknown",
+			"unknown",
+			connector.ErrRefused,
+			403,
+			-3,
+			"connector: refused",
+		},
 		// Unknown address usage is temporarily unavailable but remains a CIP-30 Refused error.
-		{"ErrAddressUsageUnknown", "getUsedAddresses", connector.ErrAddressUsageUnknown, 503, -3, "connector: address usage is unavailable"},
+		{
+			"ErrAddressUsageUnknown",
+			"getUsedAddresses",
+			connector.ErrAddressUsageUnknown,
+			503,
+			-3,
+			"connector: address usage is unavailable",
+		},
 		// ErrTimeout → 408, -3
-		{"ErrTimeout", "signTx", connector.ErrTimeout, 408, -3, "request timed out"},
+		{
+			"ErrTimeout",
+			"signTx",
+			connector.ErrTimeout,
+			408,
+			-3,
+			"request timed out",
+		},
 		// ErrQueueFull → 429, -3
-		{"ErrQueueFull", "signTx", connector.ErrQueueFull, 429, -3, "connector: too many pending requests"},
+		{
+			"ErrQueueFull",
+			"signTx",
+			connector.ErrQueueFull,
+			429,
+			-3,
+			"connector: too many pending requests",
+		},
 		// ErrUserDeclined by method
-		{"ErrUserDeclined/signData", "signData", connector.ErrUserDeclined, 403, 3, "connector: user declined"},
-		{"ErrUserDeclined/signTx", "signTx", connector.ErrUserDeclined, 403, 2, "connector: user declined"},
-		{"ErrUserDeclined/submitTx", "submitTx", connector.ErrUserDeclined, 403, 1, "connector: user declined"},
-		{"ErrUserDeclined/other", "enable", connector.ErrUserDeclined, 403, -3, "connector: user declined"},
+		{
+			"ErrUserDeclined/signData",
+			"signData",
+			connector.ErrUserDeclined,
+			403,
+			3,
+			"connector: user declined",
+		},
+		{
+			"ErrUserDeclined/signTx",
+			"signTx",
+			connector.ErrUserDeclined,
+			403,
+			2,
+			"connector: user declined",
+		},
+		{
+			"ErrUserDeclined/submitTx",
+			"submitTx",
+			connector.ErrUserDeclined,
+			403,
+			1,
+			"connector: user declined",
+		},
+		{
+			"ErrUserDeclined/other",
+			"enable",
+			connector.ErrUserDeclined,
+			403,
+			-3,
+			"connector: user declined",
+		},
 		// internal error → 500, -2
 		{"internalError", "getBalance", errors.New("boom"), 500, -2, "boom"},
 	}
@@ -399,7 +651,11 @@ func TestConnectorRequest(t *testing.T) {
 	// The returned *http.Response body is already read and closed.
 	postRequest := func(t *testing.T, srv *httptest.Server, token, body string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/connector/request", strings.NewReader(body))
+		req, err := http.NewRequest(
+			http.MethodPost,
+			srv.URL+"/connector/request",
+			strings.NewReader(body),
+		)
 		if err != nil {
 			t.Fatalf("NewRequest: %v", err)
 		}
@@ -550,7 +806,10 @@ func TestConnectorRequest(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		if out.ErrorCode != 2 {
-			t.Errorf("error_code = %d, want 2 (TxSignError.UserDeclined)", out.ErrorCode)
+			t.Errorf(
+				"error_code = %d, want 2 (TxSignError.UserDeclined)",
+				out.ErrorCode,
+			)
 		}
 	})
 }
@@ -576,7 +835,11 @@ func TestConnectorSelfRevoke(t *testing.T) {
 
 	postSelfRevoke := func(t *testing.T, srv *httptest.Server, token, body string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/connector/self-revoke", strings.NewReader(body))
+		req, err := http.NewRequest(
+			http.MethodPost,
+			srv.URL+"/connector/self-revoke",
+			strings.NewReader(body),
+		)
 		if err != nil {
 			t.Fatalf("NewRequest: %v", err)
 		}
@@ -597,7 +860,12 @@ func TestConnectorSelfRevoke(t *testing.T) {
 		go func() {
 			defer close(done)
 			//nolint:errcheck
-			svc.Handle(context.Background(), "https://selfrevoke.io", "enable", nil)
+			svc.Handle(
+				context.Background(),
+				"https://selfrevoke.io",
+				"enable",
+				nil,
+			)
 		}()
 		decideWhenPending(t, svc, connector.Decision{Approved: true})
 		<-done
@@ -613,7 +881,12 @@ func TestConnectorSelfRevoke(t *testing.T) {
 			t.Fatalf("grant not present before revoke: %v", grants)
 		}
 
-		resp := postSelfRevoke(t, srv, token, `{"origin":"https://selfrevoke.io"}`)
+		resp := postSelfRevoke(
+			t,
+			srv,
+			token,
+			`{"origin":"https://selfrevoke.io"}`,
+		)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -621,7 +894,10 @@ func TestConnectorSelfRevoke(t *testing.T) {
 
 		for _, g := range svc.Grants() {
 			if g == "https://selfrevoke.io" {
-				t.Fatalf("origin still granted after self-revoke: %v", svc.Grants())
+				t.Fatalf(
+					"origin still granted after self-revoke: %v",
+					svc.Grants(),
+				)
 			}
 		}
 	})
@@ -633,12 +909,22 @@ func TestConnectorSelfRevoke(t *testing.T) {
 		go func() {
 			defer close(done)
 			//nolint:errcheck
-			svc.Handle(context.Background(), "https://stillgranted.io", "enable", nil)
+			svc.Handle(
+				context.Background(),
+				"https://stillgranted.io",
+				"enable",
+				nil,
+			)
 		}()
 		decideWhenPending(t, svc, connector.Decision{Approved: true})
 		<-done
 
-		resp := postSelfRevoke(t, srv, "wrong-token", `{"origin":"https://stillgranted.io"}`)
+		resp := postSelfRevoke(
+			t,
+			srv,
+			"wrong-token",
+			`{"origin":"https://stillgranted.io"}`,
+		)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", resp.StatusCode)
@@ -681,7 +967,12 @@ func TestConnectorEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/connector/events", nil)
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		srv.URL+"/connector/events",
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -704,7 +995,12 @@ func TestConnectorEvents(t *testing.T) {
 	// The SSE stream should emit a data event for this pending request.
 	go func() {
 		//nolint:errcheck // background; we only care about whether a request appears
-		svc.Handle(context.Background(), "https://a.io", "enable", nil) //nolint:errcheck
+		svc.Handle(
+			context.Background(),
+			"https://a.io",
+			"enable",
+			nil,
+		) //nolint:errcheck
 	}()
 
 	type queueSnapshot struct {
@@ -722,7 +1018,8 @@ func TestConnectorEvents(t *testing.T) {
 		}
 		payload := strings.TrimPrefix(line, "data: ")
 		var snapshot queueSnapshot
-		if err := json.Unmarshal([]byte(payload), &snapshot); err != nil || snapshot.Type != "snapshot" {
+		if err := json.Unmarshal([]byte(payload), &snapshot); err != nil ||
+			snapshot.Type != "snapshot" {
 			continue
 		}
 		for _, pending := range snapshot.Pending {
@@ -737,7 +1034,9 @@ func TestConnectorEvents(t *testing.T) {
 	}
 
 	if !found {
-		t.Error("did not receive expected SSE data event for pending enable request")
+		t.Error(
+			"did not receive expected SSE data event for pending enable request",
+		)
 	}
 
 	// Decide the request and require a subsequent authoritative empty snapshot,
@@ -753,7 +1052,8 @@ func TestConnectorEvents(t *testing.T) {
 		}
 		var snapshot queueSnapshot
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &snapshot); err == nil &&
-			snapshot.Type == "snapshot" && len(snapshot.Pending) == 0 {
+			snapshot.Type == "snapshot" &&
+			len(snapshot.Pending) == 0 {
 			removed = true
 			break
 		}
@@ -796,7 +1096,11 @@ func TestConnectorEventsRejectsCrossOrigin(t *testing.T) {
 			handler.ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusForbidden {
-				t.Fatalf("status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+				t.Fatalf(
+					"status = %d, want 403; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
 			}
 		})
 	}
@@ -814,15 +1118,22 @@ func (w *writeDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
 
 func TestConnectorRequestClearsWriteDeadline(t *testing.T) {
 	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
-	req := httptest.NewRequest(http.MethodPost, "/connector/request", strings.NewReader(
-		`{"origin":"https://a.io","method":"isEnabled"}`,
-	))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/connector/request",
+		strings.NewReader(
+			`{"origin":"https://a.io","method":"isEnabled"}`,
+		),
+	)
 	rec := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
 
 	handleConnectorRequest(svc).ServeHTTP(rec, req)
 
 	if len(rec.deadlines) != 1 || !rec.deadlines[0].IsZero() {
-		t.Fatalf("write deadlines = %v, want one cleared deadline", rec.deadlines)
+		t.Fatalf(
+			"write deadlines = %v, want one cleared deadline",
+			rec.deadlines,
+		)
 	}
 }
 
@@ -854,142 +1165,175 @@ func TestConnectorGrants(t *testing.T) {
 		return req
 	}
 
-	t.Run("GET /connector/grants returns grants + paired info", func(t *testing.T) {
-		svc, mux := newSvcPaired(t)
+	t.Run(
+		"GET /connector/grants returns grants + paired info",
+		func(t *testing.T) {
+			svc, mux := newSvcPaired(t)
 
-		// Grant an origin by doing enable+decide via the service directly.
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			//nolint:errcheck
-			svc.Handle(context.Background(), "https://dapp.io", "enable", nil)
-		}()
-		decideWhenPending(t, svc, connector.Decision{Approved: true})
-		<-done
+			// Grant an origin by doing enable+decide via the service directly.
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				//nolint:errcheck
+				svc.Handle(
+					context.Background(),
+					"https://dapp.io",
+					"enable",
+					nil,
+				)
+			}()
+			decideWhenPending(t, svc, connector.Decision{Approved: true})
+			<-done
 
-		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
-		// No Origin header + loopback Host → same-origin (the real SPA GET).
-		req.Host = "127.0.0.1:8090"
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
+			// No Origin header + loopback Host → same-origin (the real SPA GET).
+			req.Host = "127.0.0.1:8090"
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-		}
-		var resp struct {
-			Origins     []string `json:"origins"`
-			Paired      bool     `json:"paired"`
-			ExtensionID string   `json:"extension_id"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if !resp.Paired {
-			t.Error("expected paired = true")
-		}
-		if resp.ExtensionID != extID {
-			t.Errorf("extension_id = %q, want %q", resp.ExtensionID, extID)
-		}
-		found := false
-		for _, o := range resp.Origins {
-			if o == "https://dapp.io" {
-				found = true
+			if rec.Code != http.StatusOK {
+				t.Fatalf(
+					"status = %d, want 200; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
 			}
-		}
-		if !found {
-			t.Errorf("expected https://dapp.io in origins, got %v", resp.Origins)
-		}
-	})
-
-	t.Run("GET /connector/grants unpaired has paired=false and empty extension_id", func(t *testing.T) {
-		svc := newSvc(t)
-		mux := http.NewServeMux()
-		registerConnector(mux, svc)
-
-		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
-		req.Host = "127.0.0.1:8090"
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rec.Code)
-		}
-		var resp struct {
-			Origins     []string `json:"origins"`
-			Paired      bool     `json:"paired"`
-			ExtensionID string   `json:"extension_id"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if resp.Paired {
-			t.Error("expected paired = false for unpaired service")
-		}
-		if resp.ExtensionID != "" {
-			t.Errorf("extension_id = %q, want empty", resp.ExtensionID)
-		}
-	})
-
-	t.Run("POST /connector/grants/revoke removes a granted origin", func(t *testing.T) {
-		svc, mux := newSvcPaired(t)
-
-		// Grant an origin first.
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			//nolint:errcheck
-			svc.Handle(context.Background(), "https://revoke.io", "enable", nil)
-		}()
-		decideWhenPending(t, svc, connector.Decision{Approved: true})
-		<-done
-
-		// Verify it's granted.
-		grants := svc.Grants()
-		found := false
-		for _, g := range grants {
-			if g == "https://revoke.io" {
-				found = true
+			var resp struct {
+				Origins     []string `json:"origins"`
+				Paired      bool     `json:"paired"`
+				ExtensionID string   `json:"extension_id"`
 			}
-		}
-		if !found {
-			t.Fatalf("grant not present before revoke: %v", grants)
-		}
-
-		body := `{"origin":"https://revoke.io"}`
-		req := strictReq(http.MethodPost, "/connector/grants/revoke", body)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-		}
-		var resp map[string]bool
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if !resp["ok"] {
-			t.Error("expected ok=true")
-		}
-		// Verify revoked.
-		for _, g := range svc.Grants() {
-			if g == "https://revoke.io" {
-				t.Error("origin still present after revoke")
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
 			}
-		}
-	})
+			if !resp.Paired {
+				t.Error("expected paired = true")
+			}
+			if resp.ExtensionID != extID {
+				t.Errorf("extension_id = %q, want %q", resp.ExtensionID, extID)
+			}
+			found := false
+			for _, o := range resp.Origins {
+				if o == "https://dapp.io" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf(
+					"expected https://dapp.io in origins, got %v",
+					resp.Origins,
+				)
+			}
+		},
+	)
 
-	t.Run("POST /connector/grants/revoke empty origin → 400", func(t *testing.T) {
-		_, mux := newSvcPaired(t)
+	t.Run(
+		"GET /connector/grants unpaired has paired=false and empty extension_id",
+		func(t *testing.T) {
+			svc := newSvc(t)
+			mux := http.NewServeMux()
+			registerConnector(mux, svc)
 
-		body := `{"origin":""}`
-		req := strictReq(http.MethodPost, "/connector/grants/revoke", body)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
+			req.Host = "127.0.0.1:8090"
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want 400", rec.Code)
-		}
-	})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			var resp struct {
+				Origins     []string `json:"origins"`
+				Paired      bool     `json:"paired"`
+				ExtensionID string   `json:"extension_id"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Paired {
+				t.Error("expected paired = false for unpaired service")
+			}
+			if resp.ExtensionID != "" {
+				t.Errorf("extension_id = %q, want empty", resp.ExtensionID)
+			}
+		},
+	)
+
+	t.Run(
+		"POST /connector/grants/revoke removes a granted origin",
+		func(t *testing.T) {
+			svc, mux := newSvcPaired(t)
+
+			// Grant an origin first.
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				//nolint:errcheck
+				svc.Handle(
+					context.Background(),
+					"https://revoke.io",
+					"enable",
+					nil,
+				)
+			}()
+			decideWhenPending(t, svc, connector.Decision{Approved: true})
+			<-done
+
+			// Verify it's granted.
+			grants := svc.Grants()
+			found := false
+			for _, g := range grants {
+				if g == "https://revoke.io" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("grant not present before revoke: %v", grants)
+			}
+
+			body := `{"origin":"https://revoke.io"}`
+			req := strictReq(http.MethodPost, "/connector/grants/revoke", body)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf(
+					"status = %d, want 200; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
+			var resp map[string]bool
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if !resp["ok"] {
+				t.Error("expected ok=true")
+			}
+			// Verify revoked.
+			for _, g := range svc.Grants() {
+				if g == "https://revoke.io" {
+					t.Error("origin still present after revoke")
+				}
+			}
+		},
+	)
+
+	t.Run(
+		"POST /connector/grants/revoke empty origin → 400",
+		func(t *testing.T) {
+			_, mux := newSvcPaired(t)
+
+			body := `{"origin":""}`
+			req := strictReq(http.MethodPost, "/connector/grants/revoke", body)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+		},
+	)
 
 	t.Run("POST /connector/decide unknown id → 404", func(t *testing.T) {
 		_, mux := newSvcPaired(t)
@@ -1000,52 +1344,70 @@ func TestConnectorGrants(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+			t.Fatalf(
+				"status = %d, want 404; body: %s",
+				rec.Code,
+				rec.Body.String(),
+			)
 		}
 	})
 
-	t.Run("POST /connector/decide real pending id → 200, goroutine unblocks", func(t *testing.T) {
-		svc, mux := newSvcPaired(t)
+	t.Run(
+		"POST /connector/decide real pending id → 200, goroutine unblocks",
+		func(t *testing.T) {
+			svc, mux := newSvcPaired(t)
 
-		// Enqueue a request via Handle so we get a real pending id.
-		enableDone := make(chan error, 1)
-		go func() {
-			_, err := svc.Handle(context.Background(), "https://decide.io", "enable", nil)
-			enableDone <- err
-		}()
+			// Enqueue a request via Handle so we get a real pending id.
+			enableDone := make(chan error, 1)
+			go func() {
+				_, err := svc.Handle(
+					context.Background(),
+					"https://decide.io",
+					"enable",
+					nil,
+				)
+				enableDone <- err
+			}()
 
-		// Wait for the request to appear in the queue.
-		deadline := time.Now().Add(2 * time.Second)
-		var pendingID string
-		for time.Now().Before(deadline) {
-			p := svc.Pending()
-			if len(p) > 0 {
-				pendingID = p[0].ID
-				break
+			// Wait for the request to appear in the queue.
+			deadline := time.Now().Add(2 * time.Second)
+			var pendingID string
+			for time.Now().Before(deadline) {
+				p := svc.Pending()
+				if len(p) > 0 {
+					pendingID = p[0].ID
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
 			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		if pendingID == "" {
-			t.Fatal("no pending request within 2s")
-		}
+			if pendingID == "" {
+				t.Fatal("no pending request within 2s")
+			}
 
-		body := `{"id":"` + pendingID + `","approved":true,"password":""}`
-		req := strictReq(http.MethodPost, "/connector/decide", body)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			body := `{"id":"` + pendingID + `","approved":true,"password":""}`
+			req := strictReq(http.MethodPost, "/connector/decide", body)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-		}
+			if rec.Code != http.StatusOK {
+				t.Fatalf(
+					"status = %d, want 200; body: %s",
+					rec.Code,
+					rec.Body.String(),
+				)
+			}
 
-		// Goroutine should unblock now.
-		select {
-		case <-enableDone:
-			// Good.
-		case <-time.After(2 * time.Second):
-			t.Error("Handle goroutine did not unblock within 2s after Decide")
-		}
-	})
+			// Goroutine should unblock now.
+			select {
+			case <-enableDone:
+				// Good.
+			case <-time.After(2 * time.Second):
+				t.Error(
+					"Handle goroutine did not unblock within 2s after Decide",
+				)
+			}
+		},
+	)
 
 	t.Run("POST /connector/decide malformed body → 400", func(t *testing.T) {
 		_, mux := newSvcPaired(t)
@@ -1068,7 +1430,12 @@ func TestConnectorGrants(t *testing.T) {
 			mux.ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusOK {
-				t.Fatalf("attempt %d: status = %d, want 200; body: %s", i+1, rec.Code, rec.Body.String())
+				t.Fatalf(
+					"attempt %d: status = %d, want 200; body: %s",
+					i+1,
+					rec.Code,
+					rec.Body.String(),
+				)
 			}
 			var resp map[string]bool
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -1110,7 +1477,11 @@ func TestConnectorGrants(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+			t.Fatalf(
+				"status = %d, want 500; body: %s",
+				rec.Code,
+				rec.Body.String(),
+			)
 		}
 		if svc.VerifyToken(token, extID) {
 			t.Fatal("failed unpair must still revoke the in-memory token")
@@ -1126,8 +1497,16 @@ func TestConnectorGrants(t *testing.T) {
 			body   string
 		}{
 			{http.MethodGet, "/connector/grants", ""},
-			{http.MethodPost, "/connector/grants/revoke", `{"origin":"https://x.io"}`},
-			{http.MethodPost, "/connector/decide", `{"id":"x","approved":false}`},
+			{
+				http.MethodPost,
+				"/connector/grants/revoke",
+				`{"origin":"https://x.io"}`,
+			},
+			{
+				http.MethodPost,
+				"/connector/decide",
+				`{"id":"x","approved":false}`,
+			},
 			{http.MethodPost, "/connector/unpair", ""},
 		}
 		for _, p := range paths {
@@ -1143,41 +1522,58 @@ func TestConnectorGrants(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 			if rec.Code != http.StatusForbidden {
-				t.Errorf("%s %s with evil Origin: status = %d, want 403", p.method, p.path, rec.Code)
+				t.Errorf(
+					"%s %s with evil Origin: status = %d, want 403",
+					p.method,
+					p.path,
+					rec.Code,
+				)
 			}
 		}
 	})
 
-	t.Run("same-origin guard: GET grants no Origin header, loopback Host → allowed", func(t *testing.T) {
-		_, mux := newSvcPaired(t)
+	t.Run(
+		"same-origin guard: GET grants no Origin header, loopback Host → allowed",
+		func(t *testing.T) {
+			_, mux := newSvcPaired(t)
 
-		// The SPA's own same-origin GET omits Origin but always arrives over a
-		// loopback Host — that case must still be allowed.
-		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
-		req.Host = "127.0.0.1:8090"
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			// The SPA's own same-origin GET omits Origin but always arrives over a
+			// loopback Host — that case must still be allowed.
+			req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
+			req.Host = "127.0.0.1:8090"
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200 for no-Origin GET over loopback", rec.Code)
-		}
-	})
+			if rec.Code != http.StatusOK {
+				t.Errorf(
+					"status = %d, want 200 for no-Origin GET over loopback",
+					rec.Code,
+				)
+			}
+		},
+	)
 
-	t.Run("same-origin guard: GET grants no Origin header, rebound Host → rejected", func(t *testing.T) {
-		_, mux := newSvcPaired(t)
+	t.Run(
+		"same-origin guard: GET grants no Origin header, rebound Host → rejected",
+		func(t *testing.T) {
+			_, mux := newSvcPaired(t)
 
-		// A DNS-rebound page (evil.com → 127.0.0.1) fetching a relative URL sends
-		// no Origin header but a public Host. This must be refused so the paired
-		// extension ID and connected-origin list cannot leak.
-		req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
-		req.Host = "evil.com"
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			// A DNS-rebound page (evil.com → 127.0.0.1) fetching a relative URL sends
+			// no Origin header but a public Host. This must be refused so the paired
+			// extension ID and connected-origin list cannot leak.
+			req := httptest.NewRequest(http.MethodGet, "/connector/grants", nil)
+			req.Host = "evil.com"
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("status = %d, want 403 for no-Origin GET over rebound Host", rec.Code)
-		}
-	})
+			if rec.Code != http.StatusForbidden {
+				t.Errorf(
+					"status = %d, want 403 for no-Origin GET over rebound Host",
+					rec.Code,
+				)
+			}
+		},
+	)
 }
 
 // TestConnectorSameOriginDNSRebinding verifies the DNS-rebinding defence in
@@ -1200,7 +1596,11 @@ func TestConnectorSameOriginDNSRebinding(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("DNS-rebind: status = %d, want 403 (got body: %s)", rec.Code, rec.Body.String())
+		t.Errorf(
+			"DNS-rebind: status = %d, want 403 (got body: %s)",
+			rec.Code,
+			rec.Body.String(),
+		)
 	}
 
 	// Loopback host on any port must still pass.
@@ -1372,12 +1772,20 @@ func TestConnectorMiddleware(t *testing.T) {
 				t.Errorf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
 			if nextCalled != tc.wantNextCalled {
-				t.Errorf("next handler called = %v, want %v", nextCalled, tc.wantNextCalled)
+				t.Errorf(
+					"next handler called = %v, want %v",
+					nextCalled,
+					tc.wantNextCalled,
+				)
 			}
 			if tc.wantCORSOrigin != "" {
 				got := rec.Header().Get("Access-Control-Allow-Origin")
 				if got != tc.wantCORSOrigin {
-					t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, tc.wantCORSOrigin)
+					t.Errorf(
+						"Access-Control-Allow-Origin = %q, want %q",
+						got,
+						tc.wantCORSOrigin,
+					)
 				}
 			}
 		})
@@ -1404,7 +1812,10 @@ func TestConnectorMiddlewareNormalizesRawPairedExtensionID(t *testing.T) {
 		t.Fatal("next handler was not called")
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "chrome-extension://abc123" {
-		t.Fatalf("Access-Control-Allow-Origin = %q, want chrome-extension://abc123", got)
+		t.Fatalf(
+			"Access-Control-Allow-Origin = %q, want chrome-extension://abc123",
+			got,
+		)
 	}
 }
 
@@ -1422,7 +1833,12 @@ func TestConnectorMiddlewareAcceptsFirefoxExtensionOrigin(t *testing.T) {
 	mw(newOKHandler(&nextCalled)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK || !nextCalled {
-		t.Fatalf("status = %d, next called = %v; body: %s", rec.Code, nextCalled, rec.Body.String())
+		t.Fatalf(
+			"status = %d, next called = %v; body: %s",
+			rec.Code,
+			nextCalled,
+			rec.Body.String(),
+		)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
@@ -1439,107 +1855,146 @@ func TestHandlePendingPairings(t *testing.T) {
 	}
 
 	strictReq := func(method, body string) *http.Request {
-		req := httptest.NewRequest(method, "/connector/pending-pairings", strings.NewReader(body))
+		req := httptest.NewRequest(
+			method,
+			"/connector/pending-pairings",
+			strings.NewReader(body),
+		)
 		req.Host = "127.0.0.1:8090"
 		req.Header.Set("Origin", "http://127.0.0.1:8090")
 		return req
 	}
 
-	t.Run("strict same-origin no pending pairings returns empty array", func(t *testing.T) {
-		svc := newSvc(t)
-		mux := http.NewServeMux()
-		registerConnector(mux, svc)
+	t.Run(
+		"strict same-origin no pending pairings returns empty array",
+		func(t *testing.T) {
+			svc := newSvc(t)
+			mux := http.NewServeMux()
+			registerConnector(mux, svc)
 
-		req := strictReq(http.MethodPost, "")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			req := strictReq(http.MethodPost, "")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rec.Code)
-		}
-		var pairings []map[string]string
-		if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if len(pairings) != 0 {
-			t.Fatalf("want empty array, got %v", pairings)
-		}
-	})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			var pairings []map[string]string
+			if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(pairings) != 0 {
+				t.Fatalf("want empty array, got %v", pairings)
+			}
+		},
+	)
 
-	t.Run("strict same-origin with pending pairing hides code without password", func(t *testing.T) {
-		svc := newSvc(t)
-		mux := http.NewServeMux()
-		registerConnector(mux, svc)
+	t.Run(
+		"strict same-origin with pending pairing hides code without password",
+		func(t *testing.T) {
+			svc := newSvc(t)
+			mux := http.NewServeMux()
+			registerConnector(mux, svc)
 
-		code, _ := svc.BeginPair(extID)
+			code, _ := svc.BeginPair(extID)
 
-		req := strictReq(http.MethodPost, "")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			req := strictReq(http.MethodPost, "")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rec.Code)
-		}
-		var pairings []map[string]string
-		if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if len(pairings) != 1 {
-			t.Fatalf("want 1 pairing, got %d", len(pairings))
-		}
-		if pairings[0]["extension_id"] != extID {
-			t.Errorf("extension_id: want %q, got %q", extID, pairings[0]["extension_id"])
-		}
-		if pairings[0]["code"] != "" {
-			t.Errorf("code leaked without password: got %q", pairings[0]["code"])
-		}
-		if strings.Contains(rec.Body.String(), code) {
-			t.Fatalf("response leaked pairing code %q: %s", code, rec.Body.String())
-		}
-	})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			var pairings []map[string]string
+			if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(pairings) != 1 {
+				t.Fatalf("want 1 pairing, got %d", len(pairings))
+			}
+			if pairings[0]["extension_id"] != extID {
+				t.Errorf(
+					"extension_id: want %q, got %q",
+					extID,
+					pairings[0]["extension_id"],
+				)
+			}
+			if pairings[0]["code"] != "" {
+				t.Errorf(
+					"code leaked without password: got %q",
+					pairings[0]["code"],
+				)
+			}
+			if strings.Contains(rec.Body.String(), code) {
+				t.Fatalf(
+					"response leaked pairing code %q: %s",
+					code,
+					rec.Body.String(),
+				)
+			}
+		},
+	)
 
-	t.Run("strict same-origin with password returns extension_id + code", func(t *testing.T) {
-		svc := newSvc(t)
-		mux := http.NewServeMux()
-		var gotPassword string
-		registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(password string) error {
-			gotPassword = password
-			return nil
-		}))
+	t.Run(
+		"strict same-origin with password returns extension_id + code",
+		func(t *testing.T) {
+			svc := newSvc(t)
+			mux := http.NewServeMux()
+			var gotPassword string
+			registerConnector(
+				mux,
+				svc,
+				withConnectorPairingCodeAuthorizer(func(password string) error {
+					gotPassword = password
+					return nil
+				}),
+			)
 
-		code, _ := svc.BeginPair(extID)
+			code, _ := svc.BeginPair(extID)
 
-		req := strictReq(http.MethodPost, `{"password":"vault-secret"}`)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
+			req := strictReq(http.MethodPost, `{"password":"vault-secret"}`)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rec.Code)
-		}
-		if gotPassword != "vault-secret" {
-			t.Fatalf("authorizer password = %q, want vault-secret", gotPassword)
-		}
-		var pairings []map[string]string
-		if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if len(pairings) != 1 {
-			t.Fatalf("want 1 pairing, got %d", len(pairings))
-		}
-		if pairings[0]["extension_id"] != extID {
-			t.Errorf("extension_id: want %q, got %q", extID, pairings[0]["extension_id"])
-		}
-		if pairings[0]["code"] != code {
-			t.Errorf("code: want %q, got %q", code, pairings[0]["code"])
-		}
-	})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if gotPassword != "vault-secret" {
+				t.Fatalf(
+					"authorizer password = %q, want vault-secret",
+					gotPassword,
+				)
+			}
+			var pairings []map[string]string
+			if err := json.NewDecoder(rec.Body).Decode(&pairings); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(pairings) != 1 {
+				t.Fatalf("want 1 pairing, got %d", len(pairings))
+			}
+			if pairings[0]["extension_id"] != extID {
+				t.Errorf(
+					"extension_id: want %q, got %q",
+					extID,
+					pairings[0]["extension_id"],
+				)
+			}
+			if pairings[0]["code"] != code {
+				t.Errorf("code: want %q, got %q", code, pairings[0]["code"])
+			}
+		},
+	)
 
 	t.Run("wrong password does not expose pairing code", func(t *testing.T) {
 		svc := newSvc(t)
 		mux := http.NewServeMux()
-		registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(string) error {
-			return vault.ErrWrongPassword
-		}))
+		registerConnector(
+			mux,
+			svc,
+			withConnectorPairingCodeAuthorizer(func(string) error {
+				return vault.ErrWrongPassword
+			}),
+		)
 
 		code, _ := svc.BeginPair(extID)
 
@@ -1551,7 +2006,11 @@ func TestHandlePendingPairings(t *testing.T) {
 			t.Fatalf("status = %d, want 401", rec.Code)
 		}
 		if strings.Contains(rec.Body.String(), code) {
-			t.Fatalf("response leaked pairing code %q: %s", code, rec.Body.String())
+			t.Fatalf(
+				"response leaked pairing code %q: %s",
+				code,
+				rec.Body.String(),
+			)
 		}
 	})
 
@@ -1561,7 +2020,11 @@ func TestHandlePendingPairings(t *testing.T) {
 		registerConnector(mux, svc)
 		code, _ := svc.BeginPair(extID)
 
-		req := httptest.NewRequest(http.MethodPost, "/connector/pending-pairings", nil)
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pending-pairings",
+			nil,
+		)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -1569,7 +2032,11 @@ func TestHandlePendingPairings(t *testing.T) {
 			t.Fatalf("status = %d, want 403", rec.Code)
 		}
 		if strings.Contains(rec.Body.String(), code) {
-			t.Fatalf("response leaked pairing code %q: %s", code, rec.Body.String())
+			t.Fatalf(
+				"response leaked pairing code %q: %s",
+				code,
+				rec.Body.String(),
+			)
 		}
 	})
 
@@ -1579,7 +2046,11 @@ func TestHandlePendingPairings(t *testing.T) {
 		registerConnector(mux, svc)
 		code, _ := svc.BeginPair(extID)
 
-		req := httptest.NewRequest(http.MethodGet, "/connector/pending-pairings", nil)
+		req := httptest.NewRequest(
+			http.MethodGet,
+			"/connector/pending-pairings",
+			nil,
+		)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -1587,7 +2058,11 @@ func TestHandlePendingPairings(t *testing.T) {
 			t.Fatalf("GET status = 200, want non-200")
 		}
 		if strings.Contains(rec.Body.String(), code) {
-			t.Fatalf("GET response leaked pairing code %q: %s", code, rec.Body.String())
+			t.Fatalf(
+				"GET response leaked pairing code %q: %s",
+				code,
+				rec.Body.String(),
+			)
 		}
 	})
 
@@ -1596,7 +2071,11 @@ func TestHandlePendingPairings(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		req := httptest.NewRequest(http.MethodPost, "/connector/pending-pairings", nil)
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/connector/pending-pairings",
+			nil,
+		)
 		req.Host = "127.0.0.1:8090"
 		req.Header.Set("Origin", "https://evil.example.com")
 		rec := httptest.NewRecorder()

@@ -45,7 +45,9 @@ var (
 	ErrNoCard = errors.New("sdmedium: no SD card")
 	// ErrVerify is returned by Sync when a block reads back different from
 	// what was written.
-	ErrVerify = errors.New("sdmedium: block reads back differently from what was written")
+	ErrVerify = errors.New(
+		"sdmedium: block reads back differently from what was written",
+	)
 	// ErrRedetected is returned by Sync when a write since the previous Sync
 	// succeeded only after the card was re-detected.
 	ErrRedetected = errors.New("sdmedium: card was re-detected during a write")
@@ -106,7 +108,12 @@ func Open(card Card) (*Medium, error) {
 
 	size, blocks := card.Geometry()
 	if size != signlog.BlockSize || blocks == 0 {
-		return nil, fmt.Errorf("sdmedium: card has %d blocks of %d bytes; need %d-byte blocks", blocks, size, signlog.BlockSize)
+		return nil, fmt.Errorf(
+			"sdmedium: card has %d blocks of %d bytes; need %d-byte blocks",
+			blocks,
+			size,
+			signlog.BlockSize,
+		)
 	}
 
 	return &Medium{card: card, blocks: blocks, sleep: time.Sleep}, nil
@@ -116,7 +123,11 @@ func Open(card Card) (*Medium, error) {
 func (m *Medium) NumBlocks() uint64 { return m.blocks }
 
 func (m *Medium) check(lba uint64, n int) error {
-	if n%signlog.BlockSize != 0 || lba > m.blocks || uint64(n) > (m.blocks-lba)*signlog.BlockSize { //nolint:gosec // n is a slice length
+	//nolint:gosec // n is a slice length
+	if n%signlog.BlockSize != 0 || lba > m.blocks ||
+		uint64(
+			n,
+		) > (m.blocks-lba)*signlog.BlockSize {
 		return fmt.Errorf("%w: %d bytes at block %d", signlog.ErrMedium, n, lba)
 	}
 
@@ -195,7 +206,9 @@ func (m *Medium) WriteBlocks(lba uint64, p []byte) error {
 		return nil
 	}
 
-	redetected, err := m.once(func() error { return split(m.card.WriteBlocks, lba, p) })
+	redetected, err := m.once(
+		func() error { return split(m.card.WriteBlocks, lba, p) },
+	)
 	if err != nil {
 		return err
 	}
@@ -246,7 +259,12 @@ func (m *Medium) Sync() error {
 		}
 
 		if !bytes.Equal(got, w.data) {
-			return fmt.Errorf("%w: %d blocks at %d", ErrVerify, len(w.data)/signlog.BlockSize, w.lba)
+			return fmt.Errorf(
+				"%w: %d blocks at %d",
+				ErrVerify,
+				len(w.data)/signlog.BlockSize,
+				w.lba,
+			)
 		}
 
 		m.pending = m.pending[1:]

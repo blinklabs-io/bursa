@@ -50,15 +50,24 @@ func NewNSMRecipient() (Recipient, error) {
 	})
 }
 
-func newNSMRecipient(privateKey *rsa.PrivateKey, openSession func() (nsmSession, error)) (*nsmRecipient, error) {
+func newNSMRecipient(
+	privateKey *rsa.PrivateKey,
+	openSession func() (nsmSession, error),
+) (*nsmRecipient, error) {
 	if privateKey == nil || openSession == nil {
-		return nil, errors.New("NSM recipient key and session factory are required")
+		return nil, errors.New(
+			"NSM recipient key and session factory are required",
+		)
 	}
 	publicKey, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("marshal KMS recipient key: %w", err)
 	}
-	return &nsmRecipient{privateKey: privateKey, publicKey: publicKey, openSession: openSession}, nil
+	return &nsmRecipient{
+		privateKey:  privateKey,
+		publicKey:   publicKey,
+		openSession: openSession,
+	}, nil
 }
 
 func (r *nsmRecipient) request(value *request.Attestation) ([]byte, error) {
@@ -71,7 +80,8 @@ func (r *nsmRecipient) request(value *request.Attestation) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request NSM attestation: %w", err)
 	}
-	if result.Error != "" || result.Attestation == nil || len(result.Attestation.Document) == 0 {
+	if result.Error != "" || result.Attestation == nil ||
+		len(result.Attestation.Document) == 0 {
 		return nil, errors.New("NSM did not return an attestation document")
 	}
 	return bytes.Clone(result.Attestation.Document), nil

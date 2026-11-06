@@ -33,7 +33,10 @@ import (
 // registration locks the pool deposit; a re-registration of a registered pool
 // is a parameter update and locks none.
 type PoolRegistry interface {
-	PoolRegistered(ctx context.Context, poolID string) (registered bool, err error)
+	PoolRegistered(
+		ctx context.Context,
+		poolID string,
+	) (registered bool, err error)
 }
 
 // RegistrationTxResult is returned after a pool registration or update
@@ -64,7 +67,11 @@ func (s *Service) poolRegistry() PoolRegistry {
 // pool cold key) and submits it. The pool deposit is locked only when the pool
 // is not yet registered on chain. Every owner must be the wallet's own stake
 // key: an owner the wallet cannot sign for needs the air-gap flow.
-func (s *Service) SubmitRegistration(ctx context.Context, password string, p RegistrationParams) (RegistrationTxResult, error) {
+func (s *Service) SubmitRegistration(
+	ctx context.Context,
+	password string,
+	p RegistrationParams,
+) (RegistrationTxResult, error) {
 	walletID, acct := s.currentBinding()
 	if acct == nil {
 		return RegistrationTxResult{}, ErrNoWallet
@@ -77,10 +84,15 @@ func (s *Service) SubmitRegistration(ctx context.Context, password string, p Reg
 		return RegistrationTxResult{}, errors.New("no pool registry configured")
 	}
 	if len(acct.ReceiveAddresses) == 0 {
-		return RegistrationTxResult{}, errors.New("account has no receive addresses")
+		return RegistrationTxResult{}, errors.New(
+			"account has no receive addresses",
+		)
 	}
 	if strings.TrimSpace(p.ColdVKeyHex) != "" {
-		return RegistrationTxResult{}, fmt.Errorf("%w: an external cold key cannot be submitted in-app; use the air-gap flow", ErrInvalidRequest)
+		return RegistrationTxResult{}, fmt.Errorf(
+			"%w: an external cold key cannot be submitted in-app; use the air-gap flow",
+			ErrInvalidRequest,
+		)
 	}
 	root, zero, err := s.unlockRoot(walletID, password)
 	if err != nil {
@@ -111,17 +123,26 @@ func (s *Service) SubmitRegistration(ctx context.Context, password string, p Reg
 	if err != nil {
 		return RegistrationTxResult{}, fmt.Errorf("stake key: %w", err)
 	}
-	stakeHash := lcommon.Blake2b224Hash(bip32.XPrv(stakeKey).Public().PublicKey())
+	stakeHash := lcommon.Blake2b224Hash(
+		bip32.XPrv(stakeKey).Public().PublicKey(),
+	)
 	zeroBytes(stakeKey)
 	for _, owner := range cert.PoolOwners {
 		if lcommon.Blake2b224(owner) != stakeHash {
-			return RegistrationTxResult{}, fmt.Errorf("%w: owner %x is not this wallet's stake key; use the air-gap flow", ErrInvalidRequest, owner[:])
+			return RegistrationTxResult{}, fmt.Errorf(
+				"%w: owner %x is not this wallet's stake key; use the air-gap flow",
+				ErrInvalidRequest,
+				owner[:],
+			)
 		}
 	}
 
 	registered, err := registry.PoolRegistered(ctx, built.PoolID)
 	if err != nil {
-		return RegistrationTxResult{}, fmt.Errorf("check pool registration: %w", err)
+		return RegistrationTxResult{}, fmt.Errorf(
+			"check pool registration: %w",
+			err,
+		)
 	}
 
 	cold, err := deriveCold(root, defaultColdIndex)
@@ -158,7 +179,10 @@ type noPoolDepositChain struct {
 	backend.ChainContext
 }
 
-func (c noPoolDepositChain) zeroDeposit(pp backend.ProtocolParameters, err error) (backend.ProtocolParameters, error) {
+func (c noPoolDepositChain) zeroDeposit(
+	pp backend.ProtocolParameters,
+	err error,
+) (backend.ProtocolParameters, error) {
 	pp.PoolDeposits = "0"
 	return pp, err
 }
@@ -167,19 +191,27 @@ func (c noPoolDepositChain) ProtocolParams() (backend.ProtocolParameters, error)
 	return c.zeroDeposit(c.ChainContext.ProtocolParams())
 }
 
-func (c noPoolDepositChain) ProtocolParamsContext(ctx context.Context) (backend.ProtocolParameters, error) {
+func (c noPoolDepositChain) ProtocolParamsContext(
+	ctx context.Context,
+) (backend.ProtocolParameters, error) {
 	return c.zeroDeposit(backend.ProtocolParamsContext(ctx, c.ChainContext))
 }
 
-func (c noPoolDepositChain) GenesisParamsContext(ctx context.Context) (backend.GenesisParameters, error) {
+func (c noPoolDepositChain) GenesisParamsContext(
+	ctx context.Context,
+) (backend.GenesisParameters, error) {
 	return backend.GenesisParamsContext(ctx, c.ChainContext)
 }
 
-func (c noPoolDepositChain) CurrentEpochContext(ctx context.Context) (uint64, error) {
+func (c noPoolDepositChain) CurrentEpochContext(
+	ctx context.Context,
+) (uint64, error) {
 	return backend.CurrentEpochContext(ctx, c.ChainContext)
 }
 
-func (c noPoolDepositChain) MaxTxFeeContext(ctx context.Context) (uint64, error) {
+func (c noPoolDepositChain) MaxTxFeeContext(
+	ctx context.Context,
+) (uint64, error) {
 	return backend.MaxTxFeeContext(ctx, c.ChainContext)
 }
 
@@ -187,23 +219,45 @@ func (c noPoolDepositChain) TipContext(ctx context.Context) (uint64, error) {
 	return backend.TipContext(ctx, c.ChainContext)
 }
 
-func (c noPoolDepositChain) UtxosContext(ctx context.Context, address lcommon.Address) ([]lcommon.Utxo, error) {
+func (c noPoolDepositChain) UtxosContext(
+	ctx context.Context,
+	address lcommon.Address,
+) ([]lcommon.Utxo, error) {
 	return backend.UtxosContext(ctx, c.ChainContext, address)
 }
 
-func (c noPoolDepositChain) SubmitTxContext(ctx context.Context, txCbor []byte) (lcommon.Blake2b256, error) {
+func (c noPoolDepositChain) SubmitTxContext(
+	ctx context.Context,
+	txCbor []byte,
+) (lcommon.Blake2b256, error) {
 	return backend.SubmitTxContext(ctx, c.ChainContext, txCbor)
 }
 
-func (c noPoolDepositChain) EvaluateTxContext(ctx context.Context, txCbor []byte, additionalUtxos []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
-	return backend.EvaluateTxContext(ctx, c.ChainContext, txCbor, additionalUtxos)
+func (c noPoolDepositChain) EvaluateTxContext(
+	ctx context.Context,
+	txCbor []byte,
+	additionalUtxos []lcommon.Utxo,
+) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+	return backend.EvaluateTxContext(
+		ctx,
+		c.ChainContext,
+		txCbor,
+		additionalUtxos,
+	)
 }
 
-func (c noPoolDepositChain) UtxoByRefContext(ctx context.Context, txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+func (c noPoolDepositChain) UtxoByRefContext(
+	ctx context.Context,
+	txHash lcommon.Blake2b256,
+	index uint32,
+) (*lcommon.Utxo, error) {
 	return backend.UtxoByRefContext(ctx, c.ChainContext, txHash, index)
 }
 
-func (c noPoolDepositChain) ScriptCborContext(ctx context.Context, scriptHash lcommon.Blake2b224) ([]byte, error) {
+func (c noPoolDepositChain) ScriptCborContext(
+	ctx context.Context,
+	scriptHash lcommon.Blake2b224,
+) ([]byte, error) {
 	return backend.ScriptCborContext(ctx, c.ChainContext, scriptHash)
 }
 

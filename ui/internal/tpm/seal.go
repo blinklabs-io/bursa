@@ -83,7 +83,10 @@ func flush(tp transport.TPM, h tpm2.TPMHandle) {
 	_, _ = tpm2.FlushContext{FlushHandle: h}.Execute(tp)
 }
 
-func saltedEncryptOptions(srk *tpm2.CreatePrimaryResponse, encryptOut bool) ([]tpm2.AuthOption, error) {
+func saltedEncryptOptions(
+	srk *tpm2.CreatePrimaryResponse,
+	encryptOut bool,
+) ([]tpm2.AuthOption, error) {
 	pub, err := srk.OutPublic.Contents()
 	if err != nil {
 		return nil, fmt.Errorf("tpm: decode SRK public: %w", err)
@@ -132,7 +135,12 @@ func sealTemplate(authPolicy []byte) tpm2.TPMTPublic {
 //
 // Seal issues only the TPM commands needed (CreatePrimary, optional policy
 // digest computation, Create) and flushes every transient handle.
-func Seal(tp transport.TPM, secret []byte, password string, pcrBound bool) (*Sealed, error) {
+func Seal(
+	tp transport.TPM,
+	secret []byte,
+	password string,
+	pcrBound bool,
+) (*Sealed, error) {
 	srk, err := createSRK(tp)
 	if err != nil {
 		return nil, err
@@ -243,7 +251,11 @@ func Unseal(tp transport.TPM, sealed *Sealed, password string) ([]byte, error) {
 	}
 	unseal := tpm2.Unseal{}
 	if sealed.PCRBound {
-		sess, cleanup, perr := pcrPolicySession(tp, sealed.PCRs, auth, encOpts...)
+		sess, cleanup, perr := pcrPolicySession(
+			tp,
+			sealed.PCRs,
+			auth,
+			encOpts...)
 		if perr != nil {
 			return nil, perr
 		}
@@ -266,7 +278,8 @@ func Unseal(tp transport.TPM, sealed *Sealed, password string) ([]byte, error) {
 	}
 	rsp, err := unseal.Execute(tp)
 	if err != nil {
-		if errors.Is(err, tpm2.TPMRCBadAuth) || errors.Is(err, tpm2.TPMRCAuthFail) {
+		if errors.Is(err, tpm2.TPMRCBadAuth) ||
+			errors.Is(err, tpm2.TPMRCAuthFail) {
 			return nil, fmt.Errorf("%w: %w", ErrWrongPassword, err)
 		}
 		return nil, fmt.Errorf("tpm: unseal: %w", err)

@@ -21,20 +21,38 @@ import (
 
 func singleDef() Definition {
 	return Definition{
-		Owner: cred(false, 1), Roles: []Role{RoleDRep, RoleStakeholder}, EndEpoch: 100,
-		Questions: []Question{{Kind: KindSingleChoice, Options: []string{"yes", "no"}}},
+		Owner: cred(
+			false,
+			1,
+		), Roles: []Role{RoleDRep, RoleStakeholder}, EndEpoch: 100,
+		Questions: []Question{
+			{Kind: KindSingleChoice, Options: []string{"yes", "no"}},
+		},
 	}
 }
 
 func vote(role Role, who byte, choice uint64) Response {
 	return Response{
 		Role: role, Credential: cred(false, who),
-		Answers: []Answer{{Kind: KindSingleChoice, Question: 0, Choice: choice}},
+		Answers: []Answer{
+			{Kind: KindSingleChoice, Question: 0, Choice: choice},
+		},
 	}
 }
 
-func obs(tx string, h uint64, txIdx, idx int, epoch uint64, r Response) Observed {
-	return Observed{TxHash: tx, Pos: Position{Height: h, TxIndex: txIdx, Index: idx}, Epoch: epoch, Response: r}
+func obs(
+	tx string,
+	h uint64,
+	txIdx, idx int,
+	epoch uint64,
+	r Response,
+) Observed {
+	return Observed{
+		TxHash:   tx,
+		Pos:      Position{Height: h, TxIndex: txIdx, Index: idx},
+		Epoch:    epoch,
+		Response: r,
+	}
 }
 
 func roleTally(t *testing.T, tally Tally, role Role) RoleTally {
@@ -90,7 +108,11 @@ func TestAggregateOrdersWithinABlockAndBatch(t *testing.T) {
 	equal(t, []OptionTally{{Count: 1}, {}}, rt.Questions[0].Options)
 
 	tally = singleDef().Aggregate([]Observed{secondInTx, first})
-	equal(t, []OptionTally{{}, {Count: 1}}, roleTally(t, tally, RoleDRep).Questions[0].Options)
+	equal(
+		t,
+		[]OptionTally{{}, {Count: 1}},
+		roleTally(t, tally, RoleDRep).Questions[0].Options,
+	)
 }
 
 func TestAggregateInvalidLaterResponseDoesNotReplaceValidOne(t *testing.T) {
@@ -128,19 +150,33 @@ func TestAggregateKeepsRolesAndCredentialsSeparate(t *testing.T) {
 	t.Parallel()
 	tally := singleDef().Aggregate([]Observed{
 		obs("a", 1, 0, 0, 5, vote(RoleDRep, 1, 0)),
-		obs("b", 2, 0, 0, 5, vote(RoleStakeholder, 1, 1)), // same credential, other role
-		obs("c", 3, 0, 0, 5, vote(RoleDRep, 2, 1)),        // other credential
+		obs(
+			"b",
+			2,
+			0,
+			0,
+			5,
+			vote(RoleStakeholder, 1, 1),
+		), // same credential, other role
+		obs("c", 3, 0, 0, 5, vote(RoleDRep, 2, 1)), // other credential
 	})
 	equal(t, uint64(2), roleTally(t, tally, RoleDRep).Responses)
 	equal(t, uint64(1), roleTally(t, tally, RoleStakeholder).Responses)
-	equal(t, 2, len(tally.Roles)) // one entry per eligible role, no weighted total
+	equal(
+		t,
+		2,
+		len(tally.Roles),
+	) // one entry per eligible role, no weighted total
 	equal(t, 0, len(tally.Excluded))
 }
 
 func TestAggregateReportsAbstainsPerRole(t *testing.T) {
 	t.Parallel()
 	d := singleDef()
-	d.Questions = append(d.Questions, Question{Kind: KindSingleChoice, Options: []string{"x", "y"}})
+	d.Questions = append(
+		d.Questions,
+		Question{Kind: KindSingleChoice, Options: []string{"x", "y"}},
+	)
 	tally := d.Aggregate([]Observed{obs("a", 1, 0, 0, 5, vote(RoleDRep, 1, 0))})
 	q := roleTally(t, tally, RoleDRep).Questions
 	equal(t, uint64(1), q[0].Answered)
@@ -154,7 +190,11 @@ func TestAggregateSealedResponses(t *testing.T) {
 	d := singleDef()
 	d.Mode = SubmissionMode{Sealed: true, Round: 9, PaddingSize: 1}
 	sealed := func(who byte) Response {
-		return Response{Role: RoleDRep, Credential: cred(false, who), Sealed: []byte{1, 2, 3}}
+		return Response{
+			Role:       RoleDRep,
+			Credential: cred(false, who),
+			Sealed:     []byte{1, 2, 3},
+		}
 	}
 
 	// Still sealed: counted as participation, nothing to tally.
@@ -166,9 +206,13 @@ func TestAggregateSealedResponses(t *testing.T) {
 
 	// Unsealed: the revealed answers are validated and tallied.
 	revealed := obs("b", 2, 0, 0, 5, sealed(2))
-	revealed.Unsealed = []Answer{{Kind: KindSingleChoice, Question: 0, Choice: 1}}
+	revealed.Unsealed = []Answer{
+		{Kind: KindSingleChoice, Question: 0, Choice: 1},
+	}
 	invalid := obs("c", 3, 0, 0, 5, sealed(3))
-	invalid.Unsealed = []Answer{{Kind: KindSingleChoice, Question: 0, Choice: 5}}
+	invalid.Unsealed = []Answer{
+		{Kind: KindSingleChoice, Question: 0, Choice: 5},
+	}
 	tally = d.Aggregate([]Observed{revealed, invalid})
 	rt = roleTally(t, tally, RoleDRep)
 	equal(t, uint64(1), rt.Responses)
@@ -181,9 +225,15 @@ func TestAggregateTalliesARepeatedRoleOnce(t *testing.T) {
 	t.Parallel()
 	d := singleDef()
 	d.Roles = []Role{RoleDRep, RoleStakeholder, RoleDRep}
-	tally := d.Aggregate([]Observed{obs("a", 1, 0, 0, 50, vote(RoleDRep, 0x11, 0))})
+	tally := d.Aggregate(
+		[]Observed{obs("a", 1, 0, 0, 50, vote(RoleDRep, 0x11, 0))},
+	)
 	equal(t, 2, len(tally.Roles))
-	equal(t, []OptionTally{{Count: 1}, {}}, roleTally(t, tally, RoleDRep).Questions[0].Options)
+	equal(
+		t,
+		[]OptionTally{{Count: 1}, {}},
+		roleTally(t, tally, RoleDRep).Questions[0].Options,
+	)
 }
 
 func TestAggregateSumsDoNotOverflow(t *testing.T) {
@@ -192,16 +242,33 @@ func TestAggregateSumsDoNotOverflow(t *testing.T) {
 		Owner: cred(false, 1), Roles: []Role{RoleDRep}, EndEpoch: 100,
 		Questions: []Question{
 			{Kind: KindNumericRange, Range: &Range{Min: 0, Max: math.MaxInt64}},
-			{Kind: KindPointsAllocation, Options: []string{"a", "b"}, Budget: math.MaxInt64},
+			{
+				Kind:    KindPointsAllocation,
+				Options: []string{"a", "b"},
+				Budget:  math.MaxInt64,
+			},
 		},
 	}
 	big := func(who byte) Response {
-		return Response{Role: RoleDRep, Credential: cred(false, who), Answers: []Answer{
-			{Kind: KindNumericRange, Question: 0, Number: math.MaxInt64},
-			{Kind: KindPointsAllocation, Question: 1, Pairs: []Pair{{0, math.MaxInt64}}},
-		}}
+		return Response{
+			Role:       RoleDRep,
+			Credential: cred(false, who),
+			Answers: []Answer{
+				{Kind: KindNumericRange, Question: 0, Number: math.MaxInt64},
+				{
+					Kind:     KindPointsAllocation,
+					Question: 1,
+					Pairs:    []Pair{{0, math.MaxInt64}},
+				},
+			},
+		}
 	}
-	tally := d.Aggregate([]Observed{obs("a", 1, 0, 0, 50, big(0x11)), obs("b", 2, 0, 0, 50, big(0x12))})
+	tally := d.Aggregate(
+		[]Observed{
+			obs("a", 1, 0, 0, 50, big(0x11)),
+			obs("b", 2, 0, 0, 50, big(0x12)),
+		},
+	)
 	rt := roleTally(t, tally, RoleDRep)
 	equal(t, 0, len(tally.Excluded))
 	equal(t, 2*float64(math.MaxInt64), rt.Questions[0].Numeric.Sum)

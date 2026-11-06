@@ -28,7 +28,9 @@ const (
 	proxyIdleTimeout    = 2 * time.Minute
 )
 
-var awsRegionPattern = regexp.MustCompile(`^[a-z]{2}(?:-gov)?-[a-z]+-[1-9][0-9]?$`)
+var awsRegionPattern = regexp.MustCompile(
+	`^[a-z]{2}(?:-gov)?-[a-z]+-[1-9][0-9]?$`,
+)
 
 // KMSEndpoint returns the fixed AWS commercial KMS endpoint for region.
 func KMSEndpoint(region string) (string, error) {
@@ -55,7 +57,11 @@ func NewKMSProxyHTTPClient(port uint32) *http.Client {
 
 // RunKMSProxy forwards opaque, end-to-end TLS bytes from an enclave vsock
 // listener to one fixed regional KMS endpoint.
-func RunKMSProxy(ctx context.Context, listener net.Listener, region string) error {
+func RunKMSProxy(
+	ctx context.Context,
+	listener net.Listener,
+	region string,
+) error {
 	if listener == nil {
 		return errors.New("KMS proxy listener is required")
 	}

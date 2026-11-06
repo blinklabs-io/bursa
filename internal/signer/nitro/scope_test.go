@@ -41,8 +41,13 @@ func TestServiceRefusesUnsupportedSignScope(t *testing.T) {
 			binary.BigEndian.PutUint64(payload[40:48], 120)
 			request := backend.AttestedRequest{
 				Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
-				KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
-				Nonce: bytes.Repeat([]byte{7}, requestNonceSize), Payload: payload,
+				KeyHash: backend.HashPublicKey(env.PublicKey).
+					String(),
+				Role: backend.KeyTypePool,
+				Nonce: bytes.Repeat(
+					[]byte{7},
+					requestNonceSize,
+				), Payload: payload,
 			}
 			refused := request
 			mutate(&refused)
@@ -51,7 +56,10 @@ func TestServiceRefusesUnsupportedSignScope(t *testing.T) {
 
 			signed, err := service.Sign(context.Background(), &request)
 			require.NoError(t, err)
-			require.True(t, ed25519.Verify(env.PublicKey, payload, signed.Signature))
+			require.True(
+				t,
+				ed25519.Verify(env.PublicKey, payload, signed.Signature),
+			)
 		})
 	}
 }
@@ -59,7 +67,9 @@ func TestServiceRefusesUnsupportedSignScope(t *testing.T) {
 func TestProxyRefusesProfiledInventory(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	handler, err := NewProxyHandler(&badSignatureEnclave{pub: publicKey, key: privateKey})
+	handler, err := NewProxyHandler(
+		&badSignatureEnclave{pub: publicKey, key: privateKey},
+	)
 	require.NoError(t, err)
 	request := httptest.NewRequest(http.MethodPost, "/v1/inventory",
 		strings.NewReader(`{"nonce":"","profile":"pool@mainnet"}`))

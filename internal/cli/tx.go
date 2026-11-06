@@ -41,12 +41,19 @@ func readTxFile(path, era string) ([]byte, uint, error) {
 	}
 	txBytes, txType, err := bursa.ReadTxInput(data, era)
 	if errors.Is(err, bursa.ErrAmbiguousTxEra) {
-		return nil, 0, fmt.Errorf("%w; pass --era or an era-typed envelope such as \"Tx ConwayEra\"", err)
+		return nil, 0, fmt.Errorf(
+			"%w; pass --era or an era-typed envelope such as \"Tx ConwayEra\"",
+			err,
+		)
 	}
 	return txBytes, txType, err
 }
 
-func RunTxSign(txFile string, signingKeyFiles []string, outFile, era string) error {
+func RunTxSign(
+	txFile string,
+	signingKeyFiles []string,
+	outFile, era string,
+) error {
 	txBytes, txType, err := readTxFile(txFile, era)
 	if err != nil {
 		return err
@@ -67,7 +74,12 @@ func RunTxSign(txFile string, signingKeyFiles []string, outFile, era string) err
 		return err
 	}
 	envType, _ := bursa.TxEnvelopeTypes(txType)
-	out, err := bursa.WriteCborEnvelope(envType, "Signed transaction", signed, outFile)
+	out, err := bursa.WriteCborEnvelope(
+		envType,
+		"Signed transaction",
+		signed,
+		outFile,
+	)
 	if err != nil {
 		return err
 	}
@@ -95,7 +107,12 @@ func RunTxWitness(txFile, signingKeyFile, outFile, era string) error {
 		return err
 	}
 	_, envType := bursa.TxEnvelopeTypes(txType)
-	out, err := bursa.WriteCborEnvelope(envType, "Detached vkey witness", witCbor, outFile)
+	out, err := bursa.WriteCborEnvelope(
+		envType,
+		"Detached vkey witness",
+		witCbor,
+		outFile,
+	)
 	if err != nil {
 		return err
 	}
@@ -105,7 +122,11 @@ func RunTxWitness(txFile, signingKeyFile, outFile, era string) error {
 	return nil
 }
 
-func RunTxAssemble(txFile string, witnessFiles []string, outFile, era string) error {
+func RunTxAssemble(
+	txFile string,
+	witnessFiles []string,
+	outFile, era string,
+) error {
 	txBytes, txType, err := readTxFile(txFile, era)
 	if err != nil {
 		return err
@@ -130,7 +151,12 @@ func RunTxAssemble(txFile string, witnessFiles []string, outFile, era string) er
 		return err
 	}
 	envType, _ := bursa.TxEnvelopeTypes(txType)
-	out, err := bursa.WriteCborEnvelope(envType, "Assembled signed transaction", signed, outFile)
+	out, err := bursa.WriteCborEnvelope(
+		envType,
+		"Assembled signed transaction",
+		signed,
+		outFile,
+	)
 	if err != nil {
 		return err
 	}
@@ -153,7 +179,10 @@ func RunTxId(txFile string) error {
 	return nil
 }
 
-func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCount uint) error {
+func RunTxDecode(
+	txFile, protocolParamsFile string,
+	witnessCount, byronWitnessCount uint,
+) error {
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
 		return err
@@ -177,7 +206,11 @@ func RunTxDecode(txFile, protocolParamsFile string, witnessCount, byronWitnessCo
 		if err != nil {
 			return err
 		}
-		estimatedSize, err := bursa.EstimateWitnessedTxSize(txBytes, witnessCount, byronWitnessCount)
+		estimatedSize, err := bursa.EstimateWitnessedTxSize(
+			txBytes,
+			witnessCount,
+			byronWitnessCount,
+		)
 		if err != nil {
 			return fmt.Errorf("calculate minimum fee: %w", err)
 		}
@@ -274,7 +307,15 @@ func (f PoolVoteFlags) poolVote() (*txbuilder.PoolVote, error) {
 	return pv, nil
 }
 
-func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []string, witnessCount uint, outFile string, ttlMargin uint64, timeoutSeconds int64, voteFlags PoolVoteFlags) error {
+func RunTxBuild(
+	socketPath, network, changeAddress string,
+	certificateFiles []string,
+	witnessCount uint,
+	outFile string,
+	ttlMargin uint64,
+	timeoutSeconds int64,
+	voteFlags PoolVoteFlags,
+) error {
 	if ttlMargin == 0 {
 		return errors.New("--ttl-margin must be at least 1")
 	}
@@ -285,7 +326,10 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(
+			ctx,
+			time.Duration(timeoutSeconds)*time.Second,
+		)
 		defer cancel()
 	} else {
 		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
@@ -309,7 +353,12 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 	for _, w := range built.RequiredWitnesses {
 		fmt.Fprintf(os.Stderr, "%s %x\n", w.Role, w.Hash)
 	}
-	out, err := bursa.WriteCborEnvelope(built.TxEnvelopeType, "Unwitnessed Tx", built.TxCBOR, outFile)
+	out, err := bursa.WriteCborEnvelope(
+		built.TxEnvelopeType,
+		"Unwitnessed Tx",
+		built.TxCBOR,
+		outFile,
+	)
 	if err != nil {
 		return err
 	}
@@ -319,22 +368,38 @@ func RunTxBuild(socketPath, network, changeAddress string, certificateFiles []st
 	return nil
 }
 
-func RunTxSubmit(socketPath, network, txFile string, timeoutSeconds int64) error {
+func RunTxSubmit(
+	socketPath, network, txFile string,
+	timeoutSeconds int64,
+) error {
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeoutSeconds > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(
+			ctx,
+			time.Duration(timeoutSeconds)*time.Second,
+		)
 		defer cancel()
 	} else {
 		ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 	}
-	return submitTx(ctx, txbuilder.NewN2C(socketPath, network), txFile, os.Stdout)
+	return submitTx(
+		ctx,
+		txbuilder.NewN2C(socketPath, network),
+		txFile,
+		os.Stdout,
+	)
 }
 
 // submitTx submits the transaction in txFile and prints its id. A rejection
 // is returned with the node's reason.
-func submitTx(ctx context.Context, chain txbuilder.Chain, txFile string, w io.Writer) error {
+func submitTx(
+	ctx context.Context,
+	chain txbuilder.Chain,
+	txFile string,
+	w io.Writer,
+) error {
 	txBytes, err := bursa.ReadCborInputFile(txFile)
 	if err != nil {
 		return err
@@ -347,7 +412,11 @@ func submitTx(ctx context.Context, chain txbuilder.Chain, txFile string, w io.Wr
 		var rejected localtxsubmission.TransactionRejectedError
 		if errors.As(err, &rejected) {
 			if rejected.Reason != nil {
-				return fmt.Errorf("node rejected transaction %s: %w", id, rejected.Reason)
+				return fmt.Errorf(
+					"node rejected transaction %s: %w",
+					id,
+					rejected.Reason,
+				)
 			}
 			return fmt.Errorf("node rejected transaction %s: %w", id, err)
 		}

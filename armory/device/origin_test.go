@@ -107,10 +107,30 @@ func TestRoutesRefuseForeignRequests(t *testing.T) {
 	}
 
 	paths := map[string][]string{
-		"combined":     {"/v1/inventory", "/v1/sign", "/provision/host-key", "/provision/floor"},
-		"signing":      {"/v1/inventory", "/v1/challenge", "/v1/sign", "/v1/signlog"},
-		"provisioning": {"/provision/identity", "/provision/host-key", "/provision/reward", "/provision/floor"},
-		"wipe":         {"/wipe/objects", "/wipe/device", "/wipe/profile", "/wipe/signlog"},
+		"combined": {
+			"/v1/inventory",
+			"/v1/sign",
+			"/provision/host-key",
+			"/provision/floor",
+		},
+		"signing": {
+			"/v1/inventory",
+			"/v1/challenge",
+			"/v1/sign",
+			"/v1/signlog",
+		},
+		"provisioning": {
+			"/provision/identity",
+			"/provision/host-key",
+			"/provision/reward",
+			"/provision/floor",
+		},
+		"wipe": {
+			"/wipe/objects",
+			"/wipe/device",
+			"/wipe/profile",
+			"/wipe/signlog",
+		},
 	}
 
 	cases := []struct {
@@ -120,12 +140,37 @@ func TestRoutesRefuseForeignRequests(t *testing.T) {
 		want        int
 	}{
 		{"text plain", Address, "text/plain", http.StatusUnsupportedMediaType},
-		{"form", Address, "application/x-www-form-urlencoded", http.StatusUnsupportedMediaType},
+		{
+			"form",
+			Address,
+			"application/x-www-form-urlencoded",
+			http.StatusUnsupportedMediaType,
+		},
 		{"no content type", Address, "", http.StatusUnsupportedMediaType},
-		{"lookalike type", Address, "application/jsonp", http.StatusUnsupportedMediaType},
-		{"rebound host", "attacker.example", "application/json", http.StatusForbidden},
-		{"rebound host with port", "attacker.example:80", "application/json", http.StatusForbidden},
-		{"other port", Address + ":8080", "application/json", http.StatusForbidden},
+		{
+			"lookalike type",
+			Address,
+			"application/jsonp",
+			http.StatusUnsupportedMediaType,
+		},
+		{
+			"rebound host",
+			"attacker.example",
+			"application/json",
+			http.StatusForbidden,
+		},
+		{
+			"rebound host with port",
+			"attacker.example:80",
+			"application/json",
+			http.StatusForbidden,
+		},
+		{
+			"other port",
+			Address + ":8080",
+			"application/json",
+			http.StatusForbidden,
+		},
 		{"loopback", "127.0.0.1", "application/json", http.StatusForbidden},
 		{"empty host", "", "application/json", http.StatusForbidden},
 	}
@@ -153,15 +198,26 @@ func TestRoutesRefuseForeignRequests(t *testing.T) {
 					mk(s).ServeHTTP(w, r)
 
 					if w.Code != tc.want {
-						t.Errorf("status %d, want %d: %s", w.Code, tc.want, w.Body.String())
+						t.Errorf(
+							"status %d, want %d: %s",
+							w.Code,
+							tc.want,
+							w.Body.String(),
+						)
 					}
 
 					if n := cc.calls.Load(); n != 0 {
-						t.Errorf("%d chip calls before the request was refused", n)
+						t.Errorf(
+							"%d chip calls before the request was refused",
+							n,
+						)
 					}
 
 					if n := body.reads.Load(); n != 0 {
-						t.Errorf("body read %d times before the request was refused", n)
+						t.Errorf(
+							"body read %d times before the request was refused",
+							n,
+						)
 					}
 				})
 			}
@@ -190,8 +246,15 @@ func TestRoutesAcceptDeviceHostAndJSONParameters(t *testing.T) {
 
 		// the empty nonce is refused by the handler itself: the request got
 		// past the origin checks
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid nonce") {
-			t.Errorf("%q %q: status %d: %s", tc.host, tc.contentType, w.Code, w.Body.String())
+		if w.Code != http.StatusBadRequest ||
+			!strings.Contains(w.Body.String(), "invalid nonce") {
+			t.Errorf(
+				"%q %q: status %d: %s",
+				tc.host,
+				tc.contentType,
+				w.Code,
+				w.Body.String(),
+			)
 		}
 	}
 }
@@ -202,7 +265,12 @@ func TestGuardRefusesForeignRequests(t *testing.T) {
 
 	var reached atomic.Int64
 
-	h := Guard(Address, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached.Add(1) }))
+	h := Guard(
+		Address,
+		http.HandlerFunc(
+			func(http.ResponseWriter, *http.Request) { reached.Add(1) },
+		),
+	)
 
 	do := func(method, host, contentType string) int {
 		r := httptest.NewRequest(method, "/reset", strings.NewReader("00"))

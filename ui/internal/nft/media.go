@@ -47,12 +47,21 @@ func validateImage(data []byte) error {
 		return fmt.Errorf("%w: empty media", ErrUnsafeImage)
 	}
 	if len(data) > maxImageBytes {
-		return fmt.Errorf("%w: compressed image %d bytes exceeds cap %d", ErrUnsafeImage, len(data), maxImageBytes)
+		return fmt.Errorf(
+			"%w: compressed image %d bytes exceeds cap %d",
+			ErrUnsafeImage,
+			len(data),
+			maxImageBytes,
+		)
 	}
 
 	contentType := http.DetectContentType(data)
 	if !allowedImageContentType(contentType) {
-		return fmt.Errorf("%w: unsupported media type %q", ErrUnsafeImage, contentType)
+		return fmt.Errorf(
+			"%w: unsupported media type %q",
+			ErrUnsafeImage,
+			contentType,
+		)
 	}
 
 	var width, height uint32
@@ -77,7 +86,12 @@ func validateImage(data []byte) error {
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("%w: invalid %s: %w", ErrUnsafeImage, contentType, err)
+		return fmt.Errorf(
+			"%w: invalid %s: %w",
+			ErrUnsafeImage,
+			contentType,
+			err,
+		)
 	}
 	if width == 0 || height == 0 {
 		return fmt.Errorf("%w: image has zero dimensions", ErrUnsafeImage)
@@ -143,7 +157,11 @@ func gifResourceCost(data []byte) (uint64, error) {
 				return 0, errors.New("zero-sized GIF frame")
 			}
 			if w > maxImageDimension || h > maxImageDimension {
-				return 0, fmt.Errorf("GIF frame dimensions %dx%d exceed limit", w, h)
+				return 0, fmt.Errorf(
+					"GIF frame dimensions %dx%d exceed limit",
+					w,
+					h,
+				)
 			}
 			// Animation compositing may retain a full logical canvas per
 			// displayed frame even when this frame updates a tiny rectangle.
@@ -216,7 +234,11 @@ func pngResourceCost(data []byte, staticPixels uint64) (uint64, error) {
 				return 0, errors.New("zero-sized APNG frame")
 			}
 			if w > maxImageDimension || h > maxImageDimension {
-				return 0, fmt.Errorf("APNG frame dimensions %dx%d exceed limit", w, h)
+				return 0, fmt.Errorf(
+					"APNG frame dimensions %dx%d exceed limit",
+					w,
+					h,
+				)
 			}
 			// APNG frames are composited onto the IHDR canvas. Charge at least
 			// one complete canvas allocation for every frame.
@@ -239,8 +261,11 @@ func pngResourceCost(data []byte, staticPixels uint64) (uint64, error) {
 	return 0, errors.New("missing PNG end chunk")
 }
 
-func webpResourceCost(data []byte) (width, height uint32, pixels uint64, err error) {
-	if len(data) < 20 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+func webpResourceCost(
+	data []byte,
+) (width, height uint32, pixels uint64, err error) {
+	if len(data) < 20 || string(data[:4]) != "RIFF" ||
+		string(data[8:12]) != "WEBP" {
 		return 0, 0, 0, errors.New("bad WebP header")
 	}
 	declared := uint64(binary.LittleEndian.Uint32(data[4:8])) + 8
@@ -266,8 +291,20 @@ func webpResourceCost(data []byte) (width, height uint32, pixels uint64, err err
 			if len(chunk) < 10 {
 				return 0, 0, 0, errors.New("short WebP extended header")
 			}
-			width = uint32(chunk[4]) | uint32(chunk[5])<<8 | uint32(chunk[6])<<16
-			height = uint32(chunk[7]) | uint32(chunk[8])<<8 | uint32(chunk[9])<<16
+			width = uint32(
+				chunk[4],
+			) | uint32(
+				chunk[5],
+			)<<8 | uint32(
+				chunk[6],
+			)<<16
+			height = uint32(
+				chunk[7],
+			) | uint32(
+				chunk[8],
+			)<<8 | uint32(
+				chunk[9],
+			)<<16
 			width++
 			height++
 		case "VP8 ":
@@ -295,7 +332,11 @@ func webpResourceCost(data []byte) (width, height uint32, pixels uint64, err err
 			w := 1 + (uint32(chunk[6]) | uint32(chunk[7])<<8 | uint32(chunk[8])<<16)
 			h := 1 + (uint32(chunk[9]) | uint32(chunk[10])<<8 | uint32(chunk[11])<<16)
 			if w > maxImageDimension || h > maxImageDimension {
-				return 0, 0, 0, fmt.Errorf("animated WebP frame dimensions %dx%d exceed limit", w, h)
+				return 0, 0, 0, fmt.Errorf(
+					"animated WebP frame dimensions %dx%d exceed limit",
+					w,
+					h,
+				)
 			}
 			cost := uint64(w) * uint64(h)
 			// Validate the embedded VP8/VP8L dimensions too. A hostile
@@ -303,10 +344,14 @@ func webpResourceCost(data []byte) (width, height uint32, pixels uint64, err err
 			// notices that it disagrees with the ANMF rectangle.
 			for nested := 16; nested+8 <= len(chunk); {
 				nestedType := string(chunk[nested : nested+4])
-				nestedSize := int(binary.LittleEndian.Uint32(chunk[nested+4 : nested+8]))
+				nestedSize := int(
+					binary.LittleEndian.Uint32(chunk[nested+4 : nested+8]),
+				)
 				nested += 8
 				if nestedSize > len(chunk)-nested {
-					return 0, 0, 0, errors.New("truncated animated WebP subchunk")
+					return 0, 0, 0, errors.New(
+						"truncated animated WebP subchunk",
+					)
 				}
 				if nestedType == "VP8 " || nestedType == "VP8L" {
 					innerW, innerH, dimensionErr := webpBitstreamDimensions(
@@ -346,7 +391,8 @@ func webpBitstreamDimensions(typ string, chunk []byte) (uint32, uint32, error) {
 	var width, height uint32
 	switch typ {
 	case "VP8 ":
-		if len(chunk) < 10 || !bytes.Equal(chunk[3:6], []byte{0x9d, 0x01, 0x2a}) {
+		if len(chunk) < 10 ||
+			!bytes.Equal(chunk[3:6], []byte{0x9d, 0x01, 0x2a}) {
 			return 0, 0, errors.New("invalid WebP lossy frame header")
 		}
 		width = uint32(binary.LittleEndian.Uint16(chunk[6:8]) & 0x3fff)
@@ -365,7 +411,11 @@ func webpBitstreamDimensions(typ string, chunk []byte) (uint32, uint32, error) {
 		return 0, 0, errors.New("zero-sized WebP bitstream")
 	}
 	if width > maxImageDimension || height > maxImageDimension {
-		return 0, 0, fmt.Errorf("WebP bitstream dimensions %dx%d exceed limit", width, height)
+		return 0, 0, fmt.Errorf(
+			"WebP bitstream dimensions %dx%d exceed limit",
+			width,
+			height,
+		)
 	}
 	return width, height, nil
 }

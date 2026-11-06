@@ -27,10 +27,21 @@ func TestCheckRejectsUnsafeReleaseURL(t *testing.T) {
 		"https://example.com/update",
 		"https://attacker@github.com/blinklabs-io/bursa/releases/tag/v1.2.3",
 	} {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = fmt.Fprintf(w, `{"tag_name":"v1.2.3","html_url":%q}`, releaseURL)
-		}))
-		_, _, err := checkAt(context.Background(), server.Client(), "v1.0.0", server.URL)
+		server := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprintf(
+					w,
+					`{"tag_name":"v1.2.3","html_url":%q}`,
+					releaseURL,
+				)
+			}),
+		)
+		_, _, err := checkAt(
+			context.Background(),
+			server.Client(),
+			"v1.0.0",
+			server.URL,
+		)
 		server.Close()
 		if err == nil {
 			t.Errorf("Check accepted an untrusted release URL %q", releaseURL)
@@ -39,17 +50,32 @@ func TestCheckRejectsUnsafeReleaseURL(t *testing.T) {
 }
 
 func TestCheckReportsNewRelease(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v1.2.4","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v1.2.4"}`))
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(
+				[]byte(
+					`{"tag_name":"v1.2.4","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v1.2.4"}`,
+				),
+			)
+		}),
+	)
 	defer server.Close()
 
-	release, update, err := checkAt(context.Background(), server.Client(), "v1.2.3", server.URL)
+	release, update, err := checkAt(
+		context.Background(),
+		server.Client(),
+		"v1.2.3",
+		server.URL,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !update || release.TagName != "v1.2.4" {
-		t.Fatalf("release = %#v, update = %v; want v1.2.4 and true", release, update)
+		t.Fatalf(
+			"release = %#v, update = %v; want v1.2.4 and true",
+			release,
+			update,
+		)
 	}
 }
 
@@ -73,18 +99,35 @@ func TestVersionCompare(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := latest.compare(current) > 0; got != tc.want {
-			t.Errorf("%s -> %s = %v, want %v", tc.current, tc.latest, got, tc.want)
+			t.Errorf(
+				"%s -> %s = %v, want %v",
+				tc.current,
+				tc.latest,
+				got,
+				tc.want,
+			)
 		}
 	}
 }
 
 func TestCheckDevelopmentBuildDoesNotReportUpdate(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v1.2.4","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v1.2.4"}`))
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(
+				[]byte(
+					`{"tag_name":"v1.2.4","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v1.2.4"}`,
+				),
+			)
+		}),
+	)
 	defer server.Close()
 
-	_, update, err := checkAt(context.Background(), server.Client(), "", server.URL)
+	_, update, err := checkAt(
+		context.Background(),
+		server.Client(),
+		"",
+		server.URL,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,9 +137,15 @@ func TestCheckDevelopmentBuildDoesNotReportUpdate(t *testing.T) {
 }
 
 func TestCheckGitDescribeBuildIsDevelopment(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v0.18.0","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v0.18.0"}`))
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write(
+				[]byte(
+					`{"tag_name":"v0.18.0","html_url":"https://github.com/blinklabs-io/bursa/releases/tag/v0.18.0"}`,
+				),
+			)
+		}),
+	)
 	defer server.Close()
 
 	// Packaging builds outside a release tag embed `git describe --tags
@@ -105,7 +154,12 @@ func TestCheckGitDescribeBuildIsDevelopment(t *testing.T) {
 		if !DevelopmentBuild(current) {
 			t.Errorf("DevelopmentBuild(%q) = false, want true", current)
 		}
-		_, update, err := checkAt(context.Background(), server.Client(), current, server.URL)
+		_, update, err := checkAt(
+			context.Background(),
+			server.Client(),
+			current,
+			server.URL,
+		)
 		if err != nil {
 			t.Errorf("%s: %v", current, err)
 		}

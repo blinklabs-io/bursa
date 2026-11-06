@@ -48,10 +48,16 @@ func TestStartReturnsContextErrorIfAlreadyCanceled(t *testing.T) {
 
 	err := s.Start(ctx)
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Start with already-canceled ctx = %v, want context.Canceled", err)
+		t.Fatalf(
+			"Start with already-canceled ctx = %v, want context.Canceled",
+			err,
+		)
 	}
 	if factory.calls != 0 {
-		t.Fatalf("Start constructed a node with an already-canceled context (New called %d times)", factory.calls)
+		t.Fatalf(
+			"Start constructed a node with an already-canceled context (New called %d times)",
+			factory.calls,
+		)
 	}
 	if got := s.Status().State; got != StateStopped {
 		t.Fatalf("state after canceled Start = %q, want stopped", got)
@@ -64,7 +70,10 @@ func TestStartReturnsContextErrorIfAlreadyCanceled(t *testing.T) {
 	}
 	t.Cleanup(s.Stop)
 	if factory.calls != 1 {
-		t.Fatalf("Start after a canceled attempt: New called %d times, want 1", factory.calls)
+		t.Fatalf(
+			"Start after a canceled attempt: New called %d times, want 1",
+			factory.calls,
+		)
 	}
 }
 

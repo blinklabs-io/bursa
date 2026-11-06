@@ -84,7 +84,8 @@ func (b *unlockBudget) begin() (func(bool), error) {
 }
 
 func (b *unlockBudget) resetExpired(now time.Time) {
-	if !b.windowStart.IsZero() && now.Sub(b.windowStart) >= unlockFailureWindow {
+	if !b.windowStart.IsZero() &&
+		now.Sub(b.windowStart) >= unlockFailureWindow {
 		b.failures = 0
 		b.windowStart = time.Time{}
 	}
@@ -136,7 +137,10 @@ func (k *Keystore) Exists() bool {
 // keystore.
 func (k *Keystore) Create(mnemonic, password string) error {
 	if utf8.RuneCountInString(password) < MinPasswordLen {
-		return fmt.Errorf("password must be at least %d characters", MinPasswordLen)
+		return fmt.Errorf(
+			"password must be at least %d characters",
+			MinPasswordLen,
+		)
 	}
 	if mnemonic == "" {
 		return errors.New("mnemonic must not be empty")
@@ -194,7 +198,10 @@ func (k *Keystore) Unlock(password string) ([]byte, error) {
 		return nil, err
 	}
 	if len(blob) > maxContainerLen {
-		return nil, fmt.Errorf("keystore file exceeds %d bytes", maxContainerLen)
+		return nil, fmt.Errorf(
+			"keystore file exceeds %d bytes",
+			maxContainerLen,
+		)
 	}
 	var c container
 	if err := json.Unmarshal(blob, &c); err != nil {

@@ -18,18 +18,22 @@ import (
 func TestPoolRegistryAdapterBypassesStaleCache(t *testing.T) {
 	t.Parallel()
 	var registered atomic.Bool
-	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v0/pools/extended" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if registered.Load() {
-			_, _ = w.Write([]byte(`[{"pool_id":"pool1other"},{"pool_id":"pool1new"}]`))
-			return
-		}
-		_, _ = w.Write([]byte(`[{"pool_id":"pool1other"}]`))
-	}))
+	node := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v0/pools/extended" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if registered.Load() {
+				_, _ = w.Write(
+					[]byte(`[{"pool_id":"pool1other"},{"pool_id":"pool1new"}]`),
+				)
+				return
+			}
+			_, _ = w.Write([]byte(`[{"pool_id":"pool1other"}]`))
+		}),
+	)
 	defer node.Close()
 
 	c := chain.NewClientURL(node.URL)
@@ -39,7 +43,10 @@ func TestPoolRegistryAdapterBypassesStaleCache(t *testing.T) {
 	}
 	registered.Store(true)
 	if _, err := c.Pool(ctx, "pool1new"); !errors.Is(err, chain.ErrNotFound) {
-		t.Fatalf("cached Pool after registration: err = %v, want ErrNotFound from the cached complete list", err)
+		t.Fatalf(
+			"cached Pool after registration: err = %v, want ErrNotFound from the cached complete list",
+			err,
+		)
 	}
 
 	got, err := poolRegistryAdapter{c: c}.PoolRegistered(ctx, "pool1new")
@@ -47,6 +54,8 @@ func TestPoolRegistryAdapterBypassesStaleCache(t *testing.T) {
 		t.Fatalf("PoolRegistered: %v", err)
 	}
 	if !got {
-		t.Fatal("PoolRegistered = false for a pool the node now lists; the stale cached list decided the deposit")
+		t.Fatal(
+			"PoolRegistered = false for a pool the node now lists; the stale cached list decided the deposit",
+		)
 	}
 }

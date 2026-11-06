@@ -32,10 +32,18 @@ type SparseMedium struct {
 // whose length must be whole blocks and no longer than the medium.
 func NewSparseMedium(blocks uint64, prefix []byte) (*SparseMedium, error) {
 	if len(prefix)%BlockSize != 0 || uint64(len(prefix))/BlockSize > blocks {
-		return nil, fmt.Errorf("%w: prefix of %d bytes for a medium of %d blocks", ErrMedium, len(prefix), blocks)
+		return nil, fmt.Errorf(
+			"%w: prefix of %d bytes for a medium of %d blocks",
+			ErrMedium,
+			len(prefix),
+			blocks,
+		)
 	}
 
-	return &SparseMedium{blocks: blocks, prefix: append([]byte(nil), prefix...)}, nil
+	return &SparseMedium{
+		blocks: blocks,
+		prefix: append([]byte(nil), prefix...),
+	}, nil
 }
 
 // NumBlocks implements Medium.
@@ -43,7 +51,8 @@ func (m *SparseMedium) NumBlocks() uint64 { return m.blocks }
 
 // ReadBlocks implements Medium.
 func (m *SparseMedium) ReadBlocks(lba uint64, p []byte) error {
-	if len(p)%BlockSize != 0 || lba > m.blocks || uint64(len(p)) > (m.blocks-lba)*BlockSize {
+	if len(p)%BlockSize != 0 || lba > m.blocks ||
+		uint64(len(p)) > (m.blocks-lba)*BlockSize {
 		return fmt.Errorf("%w: %d bytes at block %d", ErrMedium, len(p), lba)
 	}
 

@@ -73,7 +73,9 @@ func (r *Resolver) CheckAmbiguous(ctx context.Context) error {
 			if prev, ok := seen[h]; ok {
 				return fmt.Errorf(
 					"key hash %s appears in both backend %q and %q; remove the duplicate",
-					h.String(), prev, b.Name(),
+					h.String(),
+					prev,
+					b.Name(),
 				)
 			}
 			seen[h] = b.Name()

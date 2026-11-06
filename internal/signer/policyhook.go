@@ -85,9 +85,15 @@ type PolicyHook interface {
 }
 
 // summarizeTx builds an OperationSummary for a tx-signing decision.
-func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps) (OperationSummary, error) {
+func summarizeTx(
+	caller, key string,
+	insp *bursa.TxInspection,
+	ops policy.TxOps,
+) (OperationSummary, error) {
 	if insp == nil {
-		return OperationSummary{}, errors.New("policy hook: transaction inspection is unavailable")
+		return OperationSummary{}, errors.New(
+			"policy hook: transaction inspection is unavailable",
+		)
 	}
 	if len(ops.Certificates) != insp.CertificateCount {
 		return OperationSummary{}, fmt.Errorf(
@@ -141,12 +147,19 @@ func summarizeTx(caller, key string, insp *bursa.TxInspection, ops policy.TxOps)
 	}
 	for _, v := range ops.Voters {
 		if v.Kind == "" {
-			return OperationSummary{}, errors.New("policy hook: voter kind is unavailable")
+			return OperationSummary{}, errors.New(
+				"policy hook: voter kind is unavailable",
+			)
 		}
 		if policy.IsDrepVoterKind(v.Kind) && v.DrepId == "" {
-			return OperationSummary{}, errors.New("policy hook: DRep voter id is unavailable")
+			return OperationSummary{}, errors.New(
+				"policy hook: DRep voter id is unavailable",
+			)
 		}
-		sum.Voters = append(sum.Voters, HookVoter{Kind: v.Kind, DrepID: v.DrepId})
+		sum.Voters = append(
+			sum.Voters,
+			HookVoter{Kind: v.Kind, DrepID: v.DrepId},
+		)
 		sum.VoterKinds = append(sum.VoterKinds, v.Kind)
 		if v.DrepId != "" {
 			sum.DrepIds = append(sum.DrepIds, v.DrepId)
@@ -167,7 +180,10 @@ type HTTPPolicyHook struct {
 // NewHTTPPolicyHook builds an HTTPS policy hook. The server certificate is
 // verified against the system trust store, and redirects are refused. A
 // non-positive timeout defaults to 5 seconds.
-func NewHTTPPolicyHook(rawURL string, timeout time.Duration) (*HTTPPolicyHook, error) {
+func NewHTTPPolicyHook(
+	rawURL string,
+	timeout time.Duration,
+) (*HTTPPolicyHook, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid policy hook URL: %w", err)
@@ -192,12 +208,20 @@ func NewHTTPPolicyHook(rawURL string, timeout time.Duration) (*HTTPPolicyHook, e
 	}, nil
 }
 
-func (h *HTTPPolicyHook) Authorize(ctx context.Context, sum OperationSummary) error {
+func (h *HTTPPolicyHook) Authorize(
+	ctx context.Context,
+	sum OperationSummary,
+) error {
 	body, err := json.Marshal(sum)
 	if err != nil {
 		return fmt.Errorf("policy hook: marshal summary: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		h.url,
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return fmt.Errorf("policy hook: build request: %w", err)
 	}

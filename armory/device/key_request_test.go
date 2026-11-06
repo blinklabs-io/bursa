@@ -42,7 +42,12 @@ func setDeviceHeaders(r *http.Request) {
 	r.Header.Set("Content-Type", "application/json")
 }
 
-func postCold(t *testing.T, s *Service, path string, req any) (int, coldResult, string) {
+func postCold(
+	t *testing.T,
+	s *Service,
+	path string,
+	req any,
+) (int, coldResult, string) {
 	t.Helper()
 
 	code, body := post(t, s, path, req)
@@ -105,8 +110,12 @@ func TestProvisioningZeroesRequestBody(t *testing.T) {
 			}
 
 			for i, b := range body.bufs {
-				if strings.Contains(string(b), seedHex) || bytes.Contains(b, coldSeed) {
-					t.Fatalf("read buffer %d still holds the key after the request", i)
+				if strings.Contains(string(b), seedHex) ||
+					bytes.Contains(b, coldSeed) {
+					t.Fatalf(
+						"read buffer %d still holds the key after the request",
+						i,
+					)
 				}
 			}
 		})
@@ -120,7 +129,11 @@ func secretBytes(t *testing.T, req any, field string) []byte {
 
 	f := reflect.ValueOf(req).FieldByName(field)
 	if f.Kind() != reflect.Slice || f.Type().Elem().Kind() != reflect.Uint8 {
-		t.Fatalf("%s is a %s, not a byte slice: its copy of the key cannot be zeroed", field, f.Kind())
+		t.Fatalf(
+			"%s is a %s, not a byte slice: its copy of the key cannot be zeroed",
+			field,
+			f.Kind(),
+		)
 	}
 
 	return f.Bytes()
@@ -149,17 +162,23 @@ func TestProvisioningZeroesDecodedKeys(t *testing.T) {
 		var captured []byte
 
 		mux := http.NewServeMux()
-		mux.HandleFunc("POST /c", handle(s, func(req ColdRequest) (ColdResponse, error) {
-			captured = secretBytes(t, req, "SigningKey")
-			if len(captured) == 0 || allZero(captured) {
-				t.Error("key field empty before the import")
-			}
+		mux.HandleFunc(
+			"POST /c",
+			handle(s, func(req ColdRequest) (ColdResponse, error) {
+				captured = secretBytes(t, req, "SigningKey")
+				if len(captured) == 0 || allZero(captured) {
+					t.Error("key field empty before the import")
+				}
 
-			return s.provisionCold(req)
-		}))
+				return s.provisionCold(req)
+			}),
+		)
 
 		req := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(
-			`{"cold_key_id":551878673,"signing_key":"`+coldKeyHex(coldSeed)+`"}`))
+			`{"cold_key_id":551878673,"signing_key":"`+coldKeyHex(
+				coldSeed,
+			)+`"}`,
+		))
 		setDeviceHeaders(req)
 
 		w := httptest.NewRecorder()
@@ -182,17 +201,23 @@ func TestProvisioningZeroesDecodedKeys(t *testing.T) {
 		var captured []byte
 
 		mux := http.NewServeMux()
-		mux.HandleFunc("POST /p", handle(s, func(req ProvisionRequest) (ProvisionResponse, error) {
-			captured = secretBytes(t, req, "OwnerSigningKey")
-			if len(captured) == 0 || allZero(captured) {
-				t.Error("key field empty before the import")
-			}
+		mux.HandleFunc(
+			"POST /p",
+			handle(s, func(req ProvisionRequest) (ProvisionResponse, error) {
+				captured = secretBytes(t, req, "OwnerSigningKey")
+				if len(captured) == 0 || allZero(captured) {
+					t.Error("key field empty before the import")
+				}
 
-			return s.provisionProfile(req)
-		}))
+				return s.provisionProfile(req)
+			}),
+		)
 
 		req := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(
-			`{"name":"a@preview","slot":1,"cold_key_id":`+"551878672"+`,"reward_account":"`+testReward+`","owner_signing_key":"`+coldKeyHex(coldSeed)+`"}`))
+			`{"name":"a@preview","slot":1,"cold_key_id":`+"551878672"+`,"reward_account":"`+testReward+`","owner_signing_key":"`+coldKeyHex(
+				coldSeed,
+			)+`"}`,
+		))
 		setDeviceHeaders(req)
 
 		w := httptest.NewRecorder()
@@ -274,15 +299,21 @@ func TestSecretHexDecodesEscapes(t *testing.T) {
 
 	s, _, _ := newLoggedService(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/provision/cold", strings.NewReader(
-		`{"cold_key_id":551878673,"signing_key":"`+escapeHex(key)+`"}`))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/provision/cold",
+		strings.NewReader(
+			`{"cold_key_id":551878673,"signing_key":"`+escapeHex(key)+`"}`),
+	)
 	setDeviceHeaders(req)
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
 
 	var res coldResult
-	if err := json.Unmarshal(w.Body.Bytes(), &res); w.Code != http.StatusOK || err != nil || res.PublicKey == "" {
+	if err := json.Unmarshal(w.Body.Bytes(), &res); w.Code != http.StatusOK ||
+		err != nil ||
+		res.PublicKey == "" {
 		t.Fatalf("escaped key: %d %s", w.Code, w.Body)
 	}
 
@@ -306,7 +337,10 @@ func TestSecretHexRefusesNonHexEscapes(t *testing.T) {
 		`"\/5820"`,
 	} {
 		var h secretHex
-		if err := h.UnmarshalJSON([]byte(in)); !errors.Is(err, errMalformedKey) {
+		if err := h.UnmarshalJSON([]byte(in)); !errors.Is(
+			err,
+			errMalformedKey,
+		) {
 			t.Errorf("%s: got %v, want %v", in, err, errMalformedKey)
 		}
 

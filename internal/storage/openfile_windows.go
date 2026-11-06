@@ -228,7 +228,9 @@ func openWalletBase(baseDir string, create bool) (*os.File, error) {
 	}
 	relative := strings.TrimLeft(fullPath[len(volume):], `\/`)
 	if relative == "" {
-		return nil, errors.New("wallet storage directory cannot be a volume root")
+		return nil, errors.New(
+			"wallet storage directory cannot be a volume root",
+		)
 	}
 	current, err := openWalletObject(
 		0,
@@ -304,7 +306,11 @@ func secureWalletObject(file *os.File) error {
 	return bursa.CheckSecretFilePermissions(file)
 }
 
-func openWalletDirectory(base *os.File, name string, create, deleteAccess bool) (*os.File, error) {
+func openWalletDirectory(
+	base *os.File,
+	name string,
+	create, deleteAccess bool,
+) (*os.File, error) {
 	access := uint32(windows.FILE_GENERIC_READ)
 	disposition := uint32(windows.FILE_OPEN)
 	if create {
@@ -425,7 +431,9 @@ func renameOpenWalletFile(file, walletDir *os.File, name string) error {
 	info := (*walletFileRenameInformation)(unsafe.Pointer(&buffer[0]))
 	info.ReplaceIfExists = 1
 	info.RootDirectory = windows.Handle(walletDir.Fd())
-	info.FileNameLength = uint32(nameLength) // #nosec G115 -- nameLength < bufferLength
+	info.FileNameLength = uint32(
+		nameLength,
+	) // #nosec G115 -- nameLength < bufferLength
 	destination := unsafe.Slice(&info.FileName[0], len(nameUTF16)-1)
 	copy(destination, nameUTF16[:len(nameUTF16)-1])
 	err = windows.NtSetInformationFile(

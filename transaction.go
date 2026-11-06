@@ -42,24 +42,36 @@ func decodeVkeyWitnessField(raw []byte) ([]lcommon.VkeyWitness, bool, error) {
 	var tag cbor.RawTag
 	if _, err := cbor.Decode(raw, &tag); err == nil {
 		if tag.Number != cbor.CborTagSet {
-			return nil, false, fmt.Errorf("unexpected CBOR tag %d on vkey witnesses", tag.Number)
+			return nil, false, fmt.Errorf(
+				"unexpected CBOR tag %d on vkey witnesses",
+				tag.Number,
+			)
 		}
 		var items []lcommon.VkeyWitness
 		if _, err := cbor.Decode([]byte(tag.Content), &items); err != nil {
-			return nil, false, fmt.Errorf("failed to decode tagged vkey witnesses: %w", err)
+			return nil, false, fmt.Errorf(
+				"failed to decode tagged vkey witnesses: %w",
+				err,
+			)
 		}
 		return items, true, nil
 	}
 	var items []lcommon.VkeyWitness
 	if _, err := cbor.Decode(raw, &items); err != nil {
-		return nil, false, fmt.Errorf("failed to decode vkey witnesses: %w", err)
+		return nil, false, fmt.Errorf(
+			"failed to decode vkey witnesses: %w",
+			err,
+		)
 	}
 	return items, false, nil
 }
 
 // encodeVkeyWitnessField encodes vkey witnesses as witness-set key 0, using the
 // tag-258 set form when useTag is true (required for Conway+).
-func encodeVkeyWitnessField(items []lcommon.VkeyWitness, useTag bool) ([]byte, error) {
+func encodeVkeyWitnessField(
+	items []lcommon.VkeyWitness,
+	useTag bool,
+) ([]byte, error) {
 	st := cbor.NewSetType[lcommon.VkeyWitness](items, useTag)
 	out, err := st.MarshalCBOR()
 	if err != nil {
@@ -75,7 +87,11 @@ func dedupeVkeyWitnesses(items []lcommon.VkeyWitness) []lcommon.VkeyWitness {
 	seen := make(map[string]struct{}, len(items))
 	out := make([]lcommon.VkeyWitness, 0, len(items))
 	for _, item := range items {
-		key := hex.EncodeToString(item.Vkey) + ":" + hex.EncodeToString(item.Signature)
+		key := hex.EncodeToString(
+			item.Vkey,
+		) + ":" + hex.EncodeToString(
+			item.Signature,
+		)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -88,13 +104,20 @@ func dedupeVkeyWitnesses(items []lcommon.VkeyWitness) []lcommon.VkeyWitness {
 // injectVkeyWitnesses adds vkey witnesses to a transaction's witness set
 // without re-encoding the transaction body. Only the witness_set element of the
 // [body, witness_set, is_valid, aux_data] array is rewritten.
-func injectVkeyWitnesses(txCbor []byte, newWits []lcommon.VkeyWitness, useTag bool) ([]byte, error) {
+func injectVkeyWitnesses(
+	txCbor []byte,
+	newWits []lcommon.VkeyWitness,
+	useTag bool,
+) ([]byte, error) {
 	var arr []cbor.RawMessage
 	if _, err := cbor.Decode(txCbor, &arr); err != nil {
 		return nil, fmt.Errorf("failed to decode transaction array: %w", err)
 	}
 	if len(arr) < 2 {
-		return nil, fmt.Errorf("unexpected transaction shape: %d elements", len(arr))
+		return nil, fmt.Errorf(
+			"unexpected transaction shape: %d elements",
+			len(arr),
+		)
 	}
 	ws := map[uint64]cbor.RawMessage{}
 	if len(arr[1]) > 0 {
@@ -145,8 +168,12 @@ const MaxEstimatedWitnesses = 1 << 16
 // address attributes of a testnet address with the largest network magic, as in
 // the ledger's estimateMinFeeTx: 144 bytes each, 7 more than a mainnet witness
 // needs. A legacy derivation-path attribute is not counted.
-func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int, error) {
-	if vkeyCount > MaxEstimatedWitnesses || bootstrapCount > MaxEstimatedWitnesses {
+func EstimateWitnessedTxSize(
+	txCbor []byte,
+	vkeyCount, bootstrapCount uint,
+) (int, error) {
+	if vkeyCount > MaxEstimatedWitnesses ||
+		bootstrapCount > MaxEstimatedWitnesses {
 		return 0, fmt.Errorf("witness count exceeds %d", MaxEstimatedWitnesses)
 	}
 	if vkeyCount == 0 && bootstrapCount == 0 {
@@ -161,7 +188,10 @@ func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int
 		return 0, fmt.Errorf("failed to decode transaction array: %w", err)
 	}
 	if len(arr) < 2 {
-		return 0, fmt.Errorf("unexpected transaction shape: %d elements", len(arr))
+		return 0, fmt.Errorf(
+			"unexpected transaction shape: %d elements",
+			len(arr),
+		)
 	}
 	ws := map[uint64]cbor.RawMessage{}
 	if len(arr[1]) > 0 {
@@ -175,7 +205,10 @@ func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int
 		Network: &maxNetworkMagic,
 	}.MarshalCBOR()
 	if err != nil {
-		return 0, fmt.Errorf("failed to encode placeholder address attributes: %w", err)
+		return 0, fmt.Errorf(
+			"failed to encode placeholder address attributes: %w",
+			err,
+		)
 	}
 	for _, add := range []struct {
 		key         uint64
@@ -204,7 +237,12 @@ func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int
 		if add.count == 0 {
 			continue
 		}
-		field, err := appendWitnessPlaceholders(ws[add.key], add.placeholder, add.count, useTag)
+		field, err := appendWitnessPlaceholders(
+			ws[add.key],
+			add.placeholder,
+			add.count,
+			useTag,
+		)
 		if err != nil {
 			return 0, err
 		}
@@ -224,14 +262,22 @@ func EstimateWitnessedTxSize(txCbor []byte, vkeyCount, bootstrapCount uint) (int
 
 // appendWitnessPlaceholders appends count copies of placeholder to a
 // witness-set field, keeping its tag-258 form if it already has one.
-func appendWitnessPlaceholders(raw []byte, placeholder any, count uint, useTag bool) ([]byte, error) {
+func appendWitnessPlaceholders(
+	raw []byte,
+	placeholder any,
+	count uint,
+	useTag bool,
+) ([]byte, error) {
 	var items []cbor.RawMessage
 	if len(raw) > 0 {
 		content := raw
 		var tag cbor.RawTag
 		if _, err := cbor.Decode(raw, &tag); err == nil {
 			if tag.Number != cbor.CborTagSet {
-				return nil, fmt.Errorf("unexpected CBOR tag %d on witnesses", tag.Number)
+				return nil, fmt.Errorf(
+					"unexpected CBOR tag %d on witnesses",
+					tag.Number,
+				)
 			}
 			content = []byte(tag.Content)
 			useTag = true
@@ -263,7 +309,9 @@ func appendWitnessPlaceholders(raw []byte, placeholder any, count uint, useTag b
 // since a faulted second signing of the same message would otherwise leak the
 // private scalar — or a signing-math bug. The signature is discarded, never
 // returned.
-var ErrSignatureVerification = errors.New("produced signature failed self-verification")
+var ErrSignatureVerification = errors.New(
+	"produced signature failed self-verification",
+)
 
 // verifyingSigner wraps a raw signing function with a verify-after-sign
 // self-check: it signs, then confirms the result verifies against pub before
@@ -274,7 +322,10 @@ var ErrSignatureVerification = errors.New("produced signature failed self-verifi
 // signatures. This is defense-in-depth applied at the lowest signing layer so
 // every caller — offline tx signing, CIP-8 data signing, and the remote
 // signer's custody backends — inherits the same guarantee.
-func verifyingSigner(pub []byte, raw func(msg []byte) []byte) func(msg []byte) ([]byte, error) {
+func verifyingSigner(
+	pub []byte,
+	raw func(msg []byte) []byte,
+) func(msg []byte) ([]byte, error) {
 	return func(msg []byte) ([]byte, error) {
 		sig := raw(msg)
 		if len(pub) != ed25519.PublicKeySize ||
@@ -290,7 +341,9 @@ func verifyingSigner(pub []byte, raw func(msg []byte) []byte) func(msg []byte) (
 // BIP32-Ed25519 signing; standard keys (64-byte ed25519 private key) use
 // crypto/ed25519. The returned closure verifies every signature it produces
 // against vkey before returning it (see verifyingSigner / ErrSignatureVerification).
-func signerForKey(lk *LoadedKey) (vkey []byte, sign func(msg []byte) ([]byte, error), err error) {
+func signerForKey(
+	lk *LoadedKey,
+) (vkey []byte, sign func(msg []byte) ([]byte, error), err error) {
 	if lk == nil {
 		return nil, nil, errors.New("signing key cannot be nil")
 	}
@@ -302,9 +355,15 @@ func signerForKey(lk *LoadedKey) (vkey []byte, sign func(msg []byte) ([]byte, er
 	case 64:
 		priv := ed25519.PrivateKey(lk.SKey)
 		pub := priv.Public().(ed25519.PublicKey)
-		return pub, verifyingSigner(pub, func(msg []byte) []byte { return ed25519.Sign(priv, msg) }), nil
+		return pub, verifyingSigner(
+			pub,
+			func(msg []byte) []byte { return ed25519.Sign(priv, msg) },
+		), nil
 	default:
-		return nil, nil, fmt.Errorf("unsupported signing key length %d (want 64 or 96)", len(lk.SKey))
+		return nil, nil, fmt.Errorf(
+			"unsupported signing key length %d (want 64 or 96)",
+			len(lk.SKey),
+		)
 	}
 }
 
@@ -312,7 +371,10 @@ func signerForKey(lk *LoadedKey) (vkey []byte, sign func(msg []byte) ([]byte, er
 // returns a vkey witness.
 func CreateWitness(txID []byte, lk *LoadedKey) (lcommon.VkeyWitness, error) {
 	if len(txID) != 32 {
-		return lcommon.VkeyWitness{}, fmt.Errorf("transaction id must be 32 bytes, got %d", len(txID))
+		return lcommon.VkeyWitness{}, fmt.Errorf(
+			"transaction id must be 32 bytes, got %d",
+			len(txID),
+		)
 	}
 	vkey, sign, err := signerForKey(lk)
 	if err != nil {
@@ -340,7 +402,11 @@ func SignTransaction(txCbor []byte, signers []*LoadedKey) ([]byte, error) {
 
 // SignTransactionForEra is SignTransaction for a transaction of a known era
 // (a ledger.TxType value), which selects the witness set encoding.
-func SignTransactionForEra(txCbor []byte, txType uint, signers []*LoadedKey) ([]byte, error) {
+func SignTransactionForEra(
+	txCbor []byte,
+	txType uint,
+	signers []*LoadedKey,
+) ([]byte, error) {
 	if len(signers) == 0 {
 		return nil, errors.New("no signing keys provided")
 	}
@@ -362,21 +428,33 @@ func SignTransactionForEra(txCbor []byte, txType uint, signers []*LoadedKey) ([]
 
 // WitnessTransaction produces a single detached vkey witness for the
 // transaction using the given key (for multi-party / multisig assembly).
-func WitnessTransaction(txCbor []byte, lk *LoadedKey) (lcommon.VkeyWitness, error) {
+func WitnessTransaction(
+	txCbor []byte,
+	lk *LoadedKey,
+) (lcommon.VkeyWitness, error) {
 	txType, err := ledger.DetermineTransactionType(txCbor)
 	if err != nil {
-		return lcommon.VkeyWitness{}, fmt.Errorf("failed to determine transaction era: %w", err)
+		return lcommon.VkeyWitness{}, fmt.Errorf(
+			"failed to determine transaction era: %w",
+			err,
+		)
 	}
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
-		return lcommon.VkeyWitness{}, fmt.Errorf("failed to decode transaction: %w", err)
+		return lcommon.VkeyWitness{}, fmt.Errorf(
+			"failed to decode transaction: %w",
+			err,
+		)
 	}
 	return CreateWitness(tx.Hash().Bytes(), lk)
 }
 
 // AssembleTransaction merges the provided detached witnesses into the
 // transaction and returns the assembled signed transaction CBOR.
-func AssembleTransaction(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, error) {
+func AssembleTransaction(
+	txCbor []byte,
+	wits []lcommon.VkeyWitness,
+) ([]byte, error) {
 	if len(wits) == 0 {
 		return nil, errors.New("no witnesses provided")
 	}
@@ -389,7 +467,11 @@ func AssembleTransaction(txCbor []byte, wits []lcommon.VkeyWitness) ([]byte, err
 
 // AssembleTransactionForEra is AssembleTransaction for a transaction of a
 // known era (a ledger.TxType value), which selects the witness set encoding.
-func AssembleTransactionForEra(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+func AssembleTransactionForEra(
+	txCbor []byte,
+	txType uint,
+	wits []lcommon.VkeyWitness,
+) ([]byte, error) {
 	if len(wits) == 0 {
 		return nil, errors.New("no witnesses provided")
 	}
@@ -409,7 +491,10 @@ func EncodeWitness(w lcommon.VkeyWitness) ([]byte, error) {
 func DecodeWitness(data []byte) (lcommon.VkeyWitness, error) {
 	var w lcommon.VkeyWitness
 	if _, err := cbor.Decode(data, &w); err != nil {
-		return lcommon.VkeyWitness{}, fmt.Errorf("failed to decode witness: %w", err)
+		return lcommon.VkeyWitness{}, fmt.Errorf(
+			"failed to decode witness: %w",
+			err,
+		)
 	}
 	return w, nil
 }
@@ -492,7 +577,9 @@ type TxInspection struct {
 	TreasuryDonationLovelace string `json:"treasury_donation_lovelace,omitempty"`
 }
 
-func inspectCertificateValues(certs []lcommon.Certificate) (string, string, int, int, bool) {
+func inspectCertificateValues(
+	certs []lcommon.Certificate,
+) (string, string, int, int, bool) {
 	deposits := new(big.Int)
 	refunds := new(big.Int)
 	unresolvedDeposits := 0
@@ -581,7 +668,9 @@ func inspectCertificateValues(certs []lcommon.Certificate) (string, string, int,
 	return depositTotal, refundTotal, unresolvedDeposits, unresolvedRefunds, complete
 }
 
-func inspectProposalDeposit(proposals []lcommon.ProposalProcedure) (string, bool) {
+func inspectProposalDeposit(
+	proposals []lcommon.ProposalProcedure,
+) (string, bool) {
 	if len(proposals) == 0 {
 		return "", true
 	}
@@ -728,11 +817,18 @@ func envelopeTxType(envType string) (txType uint, declared bool, err error) {
 		}
 		name, hasSuffix := strings.CutSuffix(rest, "Era")
 		if !hasSuffix {
-			return 0, false, fmt.Errorf("unsupported transaction envelope type %q", envType)
+			return 0, false, fmt.Errorf(
+				"unsupported transaction envelope type %q",
+				envType,
+			)
 		}
 		txType, err := txTypeFromEraName(name)
 		if err != nil {
-			return 0, false, fmt.Errorf("unsupported transaction envelope type %q: %w", envType, err)
+			return 0, false, fmt.Errorf(
+				"unsupported transaction envelope type %q: %w",
+				envType,
+				err,
+			)
 		}
 		return txType, true, nil
 	}
@@ -751,9 +847,17 @@ func inferTxType(txCbor []byte) (uint, error) {
 	var candidates []uint
 	switch txType {
 	case ledger.TxTypeShelley, ledger.TxTypeAllegra, ledger.TxTypeMary:
-		candidates = []uint{ledger.TxTypeShelley, ledger.TxTypeAllegra, ledger.TxTypeMary}
+		candidates = []uint{
+			ledger.TxTypeShelley,
+			ledger.TxTypeAllegra,
+			ledger.TxTypeMary,
+		}
 	case ledger.TxTypeAlonzo, ledger.TxTypeBabbage, ledger.TxTypeConway:
-		candidates = []uint{ledger.TxTypeAlonzo, ledger.TxTypeBabbage, ledger.TxTypeConway}
+		candidates = []uint{
+			ledger.TxTypeAlonzo,
+			ledger.TxTypeBabbage,
+			ledger.TxTypeConway,
+		}
 	default:
 		// Byron has its own shape; Dijkstra is only reported when the CBOR
 		// carries Dijkstra-only fields.
@@ -766,7 +870,11 @@ func inferTxType(txCbor []byte) (uint, error) {
 		}
 	}
 	if len(eras) > 1 {
-		return 0, fmt.Errorf("%w: the CBOR is valid in the %s eras", ErrAmbiguousTxEra, strings.Join(eras, ", "))
+		return 0, fmt.Errorf(
+			"%w: the CBOR is valid in the %s eras",
+			ErrAmbiguousTxEra,
+			strings.Join(eras, ", "),
+		)
 	}
 	return txType, nil
 }
@@ -792,7 +900,11 @@ func ReadTxInput(data []byte, era string) ([]byte, uint, error) {
 			return nil, 0, err
 		}
 		if declared && eraType != txType {
-			return nil, 0, fmt.Errorf("era %q conflicts with envelope type %q", era, envType)
+			return nil, 0, fmt.Errorf(
+				"era %q conflicts with envelope type %q",
+				era,
+				envType,
+			)
 		}
 		txType, declared = eraType, true
 	}
@@ -804,7 +916,11 @@ func ReadTxInput(data []byte, era string) ([]byte, uint, error) {
 		return raw, txType, nil
 	}
 	if _, err := ledger.NewTransactionFromCbor(txType, raw); err != nil {
-		return nil, 0, fmt.Errorf("transaction is not valid %s era CBOR: %w", eraEnvelopeName(txType), err)
+		return nil, 0, fmt.Errorf(
+			"transaction is not valid %s era CBOR: %w",
+			eraEnvelopeName(txType),
+			err,
+		)
 	}
 	return raw, txType, nil
 }
@@ -820,7 +936,10 @@ func InspectTransaction(txCbor []byte) (*TxInspection, error) {
 
 // InspectTransactionForEra is InspectTransaction for a transaction of a known
 // era (a ledger.TxType value).
-func InspectTransactionForEra(txCbor []byte, txType uint) (*TxInspection, error) {
+func InspectTransactionForEra(
+	txCbor []byte,
+	txType uint,
+) (*TxInspection, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode transaction: %w", err)
@@ -862,7 +981,9 @@ func InspectTransactionForEra(txCbor []byte, txType uint) (*TxInspection, error)
 	}
 	certificates := tx.Certificates()
 	insp.CertificateCount = len(certificates)
-	depositTotal, refundTotal, unresolvedDeposits, unresolvedRefunds, certificateValuesComplete := inspectCertificateValues(certificates)
+	depositTotal, refundTotal, unresolvedDeposits, unresolvedRefunds, certificateValuesComplete := inspectCertificateValues(
+		certificates,
+	)
 	insp.CertificateDepositTotal = depositTotal
 	insp.CertificateRefundTotal = refundTotal
 	insp.UnresolvedCertificateDeposits = unresolvedDeposits
@@ -875,7 +996,9 @@ func InspectTransactionForEra(txCbor []byte, txType uint) (*TxInspection, error)
 	insp.VotingProcedureCount = len(tx.VotingProcedures())
 	proposals := tx.ProposalProcedures()
 	insp.ProposalProcedureCount = len(proposals)
-	proposalDepositTotal, proposalDepositsComplete := inspectProposalDeposit(proposals)
+	proposalDepositTotal, proposalDepositsComplete := inspectProposalDeposit(
+		proposals,
+	)
 	if proposalDepositsComplete {
 		insp.ProposalDepositTotal = proposalDepositTotal
 	}
@@ -905,12 +1028,20 @@ func ParseProtocolParams(data []byte) (ProtocolParams, error) {
 		TxFeeFixed   *uint64 `json:"txFeeFixed"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return ProtocolParams{}, fmt.Errorf("failed to parse protocol params: %w", err)
+		return ProtocolParams{}, fmt.Errorf(
+			"failed to parse protocol params: %w",
+			err,
+		)
 	}
 	if raw.TxFeePerByte == nil || raw.TxFeeFixed == nil {
-		return ProtocolParams{}, errors.New("protocol params missing txFeePerByte/txFeeFixed")
+		return ProtocolParams{}, errors.New(
+			"protocol params missing txFeePerByte/txFeeFixed",
+		)
 	}
-	return ProtocolParams{TxFeePerByte: *raw.TxFeePerByte, TxFeeFixed: *raw.TxFeeFixed}, nil
+	return ProtocolParams{
+		TxFeePerByte: *raw.TxFeePerByte,
+		TxFeeFixed:   *raw.TxFeeFixed,
+	}, nil
 }
 
 // MinFee returns the minimum fee in lovelace for a transaction of the given
@@ -926,7 +1057,10 @@ func MinFee(sizeBytes int, params ProtocolParams) (uint64, error) {
 		return 0, fmt.Errorf("min fee: negative transaction size %d", sizeBytes)
 	}
 
-	productHigh, productLow := bits.Mul64(params.TxFeePerByte, uint64(sizeBytes))
+	productHigh, productLow := bits.Mul64(
+		params.TxFeePerByte,
+		uint64(sizeBytes),
+	)
 	if productHigh != 0 {
 		return 0, fmt.Errorf(
 			"min fee overflow: %d * %d exceeds uint64",

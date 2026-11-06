@@ -49,78 +49,350 @@ func TestEvaluate(t *testing.T) {
 	}
 
 	cases := []tc{
-		{"cold pool re-registration", RoleCold, conway, reg(poolReg(k.Pool, k.Owner)), true},
-		{"owner pool re-registration", RoleOwner, conway, reg(poolReg(k.Pool, k.Owner)), true},
-		{"cold retirement of own pool", RoleCold, conway, reg(retire(k.Pool)), true},
-		{"cold SPO vote by own pool", RoleCold, conway, baseBody().with(19, votes(4, k.Pool)).cbor(), true},
-		{"owner reg-deleg to own pool", RoleOwner, conway, reg(regDeleg(k.Owner, k.Pool)), true},
+		{
+			"cold pool re-registration",
+			RoleCold,
+			conway,
+			reg(poolReg(k.Pool, k.Owner)),
+			true,
+		},
+		{
+			"owner pool re-registration",
+			RoleOwner,
+			conway,
+			reg(poolReg(k.Pool, k.Owner)),
+			true,
+		},
+		{
+			"cold retirement of own pool",
+			RoleCold,
+			conway,
+			reg(retire(k.Pool)),
+			true,
+		},
+		{
+			"cold SPO vote by own pool",
+			RoleCold,
+			conway,
+			baseBody().with(19, votes(4, k.Pool)).cbor(),
+			true,
+		},
+		{
+			"owner reg-deleg to own pool",
+			RoleOwner,
+			conway,
+			reg(regDeleg(k.Owner, k.Pool)),
+			true,
+		},
 		{"owner registration then delegation", RoleOwner, conway,
 			reg(registration(k.Owner), delegation(k.Owner, k.Pool)), true},
-		{"owner shelley stake registration", RoleOwner, conway, reg(stakeReg(k.Owner)), true},
+		{
+			"owner shelley stake registration",
+			RoleOwner,
+			conway,
+			reg(stakeReg(k.Owner)),
+			true,
+		},
 		{"payer pays any fee", RoleCold, conway,
-			baseBody().with(2, uint64(50_000_000)).with(4, certs(retire(k.Pool))).cbor(), true},
+			baseBody().with(2, uint64(50_000_000)).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			true},
 		{"outputs to several payer addresses", RoleCold, conway,
 			baseBody().with(1, []any{output(enterprise(0, payer)), output(base(0, foreign, foreign))}).
-				with(4, certs(retire(k.Pool))).cbor(), true},
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			true},
 		{"matching network id", RoleCold, conway,
-			baseBody().with(15, uint64(0)).with(4, certs(retire(k.Pool))).cbor(), true},
+			baseBody().with(15, uint64(0)).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			true},
 		{"dijkstra pool reg with leios key", RoleCold, dijkstra,
-			reg(poolRegFields(k.Pool, leiosKey(), rewardAddr(rewardHash, false), k.Owner)), true},
+			reg(
+				poolRegFields(
+					k.Pool,
+					leiosKey(),
+					rewardAddr(rewardHash, false),
+					k.Owner,
+				),
+			), true},
 
 		{"pool reg with foreign reward account", RoleCold, conway,
-			reg(poolRegFields(k.Pool, nil, rewardAddr(foreign, false), k.Owner)), false},
+			reg(
+				poolRegFields(k.Pool, nil, rewardAddr(foreign, false), k.Owner),
+			), false},
 		{"pool reg with script reward of the pinned hash", RoleCold, conway,
-			reg(poolRegFields(k.Pool, nil, rewardAddr(rewardHash, true), k.Owner)), false},
+			reg(
+				poolRegFields(
+					k.Pool,
+					nil,
+					rewardAddr(rewardHash, true),
+					k.Owner,
+				),
+			), false},
 		{"pool reg with mainnet reward account", RoleOwner, conway,
-			reg(poolRegFields(k.Pool, nil, append([]byte{0xe1}, rewardHash[:]...), k.Owner)), false},
-		{"two pool registrations, cold", RoleCold, conway, reg(poolReg(k.Pool, k.Owner), otherPledge), false},
-		{"two pool registrations, owner", RoleOwner, conway, reg(poolReg(k.Pool, k.Owner), otherPledge), false},
-		{"pool reg with second owner", RoleCold, conway, reg(poolReg(k.Pool, k.Owner, foreign)), false},
-		{"pool reg with no owner", RoleCold, conway, reg(poolReg(k.Pool)), false},
-		{"pool reg with foreign operator", RoleCold, conway, reg(poolReg(foreign, k.Owner)), false},
-		{"retirement of foreign pool", RoleCold, conway, reg(retire(foreign)), false},
+			reg(
+				poolRegFields(
+					k.Pool,
+					nil,
+					append([]byte{0xe1}, rewardHash[:]...),
+					k.Owner,
+				),
+			), false},
+		{
+			"two pool registrations, cold",
+			RoleCold,
+			conway,
+			reg(poolReg(k.Pool, k.Owner), otherPledge),
+			false,
+		},
+		{
+			"two pool registrations, owner",
+			RoleOwner,
+			conway,
+			reg(poolReg(k.Pool, k.Owner), otherPledge),
+			false,
+		},
+		{
+			"pool reg with second owner",
+			RoleCold,
+			conway,
+			reg(poolReg(k.Pool, k.Owner, foreign)),
+			false,
+		},
+		{
+			"pool reg with no owner",
+			RoleCold,
+			conway,
+			reg(poolReg(k.Pool)),
+			false,
+		},
+		{
+			"pool reg with foreign operator",
+			RoleCold,
+			conway,
+			reg(poolReg(foreign, k.Owner)),
+			false,
+		},
+		{
+			"retirement of foreign pool",
+			RoleCold,
+			conway,
+			reg(retire(foreign)),
+			false,
+		},
 		{"foreign stake registration beside pool reg", RoleCold, conway,
 			reg(poolReg(k.Pool, k.Owner), registration(foreign)), false},
-		{"owner delegation to foreign pool", RoleOwner, conway, reg(delegation(k.Owner, foreign)), false},
-		{"vote by foreign pool", RoleCold, conway, baseBody().with(19, votes(4, foreign)).cbor(), false},
-		{"drep vote", RoleCold, conway, baseBody().with(19, votes(2, k.Pool)).cbor(), false},
+		{
+			"owner delegation to foreign pool",
+			RoleOwner,
+			conway,
+			reg(delegation(k.Owner, foreign)),
+			false,
+		},
+		{
+			"vote by foreign pool",
+			RoleCold,
+			conway,
+			baseBody().with(19, votes(4, foreign)).cbor(),
+			false,
+		},
+		{
+			"drep vote",
+			RoleCold,
+			conway,
+			baseBody().with(19, votes(2, k.Pool)).cbor(),
+			false,
+		},
 		{"withdrawal", RoleOwner, conway,
-			baseBody().with(5, map[string]uint64{}).with(4, certs(stakeReg(k.Owner))).cbor(), false},
-		{"mint", RoleCold, conway, baseBody().with(9, map[string]uint64{}).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"proposal procedure", RoleCold, conway, baseBody().with(20, []any{}).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"donation", RoleCold, conway, baseBody().with(22, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"no ttl", RoleCold, conway, baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"no ttl under dijkstra", RoleCold, dijkstra, baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(), false},
+			baseBody().with(5, map[string]uint64{}).
+				with(4, certs(stakeReg(k.Owner))).
+				cbor(),
+			false},
+		{
+			"mint",
+			RoleCold,
+			conway,
+			baseBody().with(9, map[string]uint64{}).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false,
+		},
+		{
+			"proposal procedure",
+			RoleCold,
+			conway,
+			baseBody().with(20, []any{}).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"donation",
+			RoleCold,
+			conway,
+			baseBody().with(22, uint64(1)).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false,
+		},
+		{
+			"no ttl",
+			RoleCold,
+			conway,
+			baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"no ttl under dijkstra",
+			RoleCold,
+			dijkstra,
+			baseBody().without(3).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
 		{"validity start without ttl", RoleCold, conway,
-			baseBody().without(3).with(8, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
+			baseBody().without(3).
+				with(8, uint64(1)).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false},
 		{"ttl with validity start", RoleCold, conway,
-			baseBody().with(8, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), true},
-		{"null ttl", RoleCold, conway, baseBody().with(3, nil).with(4, certs(retire(k.Pool))).cbor(), false},
+			baseBody().with(8, uint64(1)).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			true},
+		{
+			"null ttl",
+			RoleCold,
+			conway,
+			baseBody().with(3, nil).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
 		{"undefined ttl", RoleCold, conway,
-			baseBody().with(3, cbor.RawMessage{0xf7}).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"text ttl", RoleCold, conway, baseBody().with(3, "90000000").with(4, certs(retire(k.Pool))).cbor(), false},
-		{"negative ttl", RoleCold, conway, baseBody().with(3, int64(-1)).with(4, certs(retire(k.Pool))).cbor(), false},
+			baseBody().with(3, cbor.RawMessage{0xf7}).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false},
+		{
+			"text ttl",
+			RoleCold,
+			conway,
+			baseBody().with(3, "90000000").
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false,
+		},
+		{
+			"negative ttl",
+			RoleCold,
+			conway,
+			baseBody().with(3, int64(-1)).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
 		{"duplicate ttl key", RoleCold, conway, duplicateTTL(), false},
-		{"null validity start", RoleCold, conway, baseBody().with(8, nil).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"null fee", RoleCold, conway, baseBody().with(2, nil).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"null fee under dijkstra", RoleCold, dijkstra, baseBody().with(2, nil).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"null network id", RoleCold, conway, baseBody().with(15, nil).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"no fee key", RoleCold, dijkstra, baseBody().without(2).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"key 23", RoleCold, dijkstra, baseBody().with(23, []any{}).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"unknown key 99", RoleCold, conway, baseBody().with(99, uint64(1)).cbor(), false},
+		{
+			"null validity start",
+			RoleCold,
+			conway,
+			baseBody().with(8, nil).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"null fee",
+			RoleCold,
+			conway,
+			baseBody().with(2, nil).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"null fee under dijkstra",
+			RoleCold,
+			dijkstra,
+			baseBody().with(2, nil).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"null network id",
+			RoleCold,
+			conway,
+			baseBody().with(15, nil).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"no fee key",
+			RoleCold,
+			dijkstra,
+			baseBody().without(2).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"key 23",
+			RoleCold,
+			dijkstra,
+			baseBody().with(23, []any{}).with(4, certs(retire(k.Pool))).cbor(),
+			false,
+		},
+		{
+			"unknown key 99",
+			RoleCold,
+			conway,
+			baseBody().with(99, uint64(1)).cbor(),
+			false,
+		},
 		{"duplicate map key", RoleCold, conway, duplicateFee(), false},
 		{"indefinite body map", RoleCold, conway, indefiniteBody(), false},
-		{"trailing bytes", RoleCold, conway, append(reg(retire(k.Pool)), 0x00), false},
-		{"shelley stake registration under dijkstra", RoleOwner, dijkstra, reg(stakeReg(k.Owner)), false},
+		{
+			"trailing bytes",
+			RoleCold,
+			conway,
+			append(reg(retire(k.Pool)), 0x00),
+			false,
+		},
+		{
+			"shelley stake registration under dijkstra",
+			RoleOwner,
+			dijkstra,
+			reg(stakeReg(k.Owner)),
+			false,
+		},
 		{"mainnet output on testnet profile", RoleCold, conway,
-			baseBody().with(1, []any{output(enterprise(1, payer))}).with(4, certs(retire(k.Pool))).cbor(), false},
+			baseBody().with(1, []any{output(enterprise(1, payer))}).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false},
 		{"mainnet network id on testnet profile", RoleCold, conway,
-			baseBody().with(15, uint64(1)).with(4, certs(retire(k.Pool))).cbor(), false},
-		{"cold with only owner certs", RoleCold, conway, reg(regDeleg(k.Owner, k.Pool)), false},
-		{"owner with only retirement", RoleOwner, conway, reg(retire(k.Pool)), false},
-		{"cold with nothing to authorize", RoleCold, conway, baseBody().cbor(), false},
+			baseBody().with(15, uint64(1)).
+				with(4, certs(retire(k.Pool))).
+				cbor(),
+			false},
+		{
+			"cold with only owner certs",
+			RoleCold,
+			conway,
+			reg(regDeleg(k.Owner, k.Pool)),
+			false,
+		},
+		{
+			"owner with only retirement",
+			RoleOwner,
+			conway,
+			reg(retire(k.Pool)),
+			false,
+		},
+		{
+			"cold with nothing to authorize",
+			RoleCold,
+			conway,
+			baseBody().cbor(),
+			false,
+		},
 		{"unknown role", Role(2), conway, reg(poolReg(k.Pool, k.Owner)), false},
-		{"babbage era", RoleCold, uint(ledger.TxTypeBabbage), reg(retire(k.Pool)), false},
+		{
+			"babbage era",
+			RoleCold,
+			uint(ledger.TxTypeBabbage),
+			reg(retire(k.Pool)),
+			false,
+		},
 	}
 
 	for _, c := range cases {
@@ -147,9 +419,16 @@ func TestEvaluate(t *testing.T) {
 }
 
 func TestEvaluateSummary(t *testing.T) {
-	body := baseBody().with(4, certs(poolReg(testKeys.Pool, testKeys.Owner))).cbor()
+	body := baseBody().with(4, certs(poolReg(testKeys.Pool, testKeys.Owner))).
+		cbor()
 
-	d, err := Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), body)
+	d, err := Evaluate(
+		testProfile,
+		testKeys,
+		RoleCold,
+		uint(ledger.TxTypeConway),
+		body,
+	)
 
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +446,13 @@ func TestEvaluateSummaryValidity(t *testing.T) {
 
 	retirement := baseBody().with(4, certs(retire(testKeys.Pool)))
 
-	d, err := Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), retirement.cbor())
+	d, err := Evaluate(
+		testProfile,
+		testKeys,
+		RoleCold,
+		uint(ledger.TxTypeConway),
+		retirement.cbor(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +465,25 @@ func TestEvaluateSummaryValidity(t *testing.T) {
 		t.Errorf("summary %q names a validity start the body lacks", d.Summary)
 	}
 
-	d, err = Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), retirement.with(8, uint64(80_000_000)).cbor())
+	d, err = Evaluate(
+		testProfile,
+		testKeys,
+		RoleCold,
+		uint(ledger.TxTypeConway),
+		retirement.with(8, uint64(80_000_000)).cbor(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.HasPrefix(d.Summary, "fee=200000 ttl=90000000 valid-from=80000000 ") {
-		t.Errorf("summary %q does not start with the fee, ttl and validity start", d.Summary)
+	if !strings.HasPrefix(
+		d.Summary,
+		"fee=200000 ttl=90000000 valid-from=80000000 ",
+	) {
+		t.Errorf(
+			"summary %q does not start with the fee, ttl and validity start",
+			d.Summary,
+		)
 	}
 }
 
@@ -198,7 +495,8 @@ func TestEvaluateMainnetProfile(t *testing.T) {
 	main := baseBody().with(1, []any{output(enterprise(1, payer))})
 	reward := append([]byte{0xe1}, rewardHash[:]...)
 
-	body := main.with(4, certs(poolRegFields(testKeys.Pool, nil, reward, testKeys.Owner))).cbor()
+	body := main.with(4, certs(poolRegFields(testKeys.Pool, nil, reward, testKeys.Owner))).
+		cbor()
 
 	if _, err := Evaluate(p, testKeys, RoleCold, uint(ledger.TxTypeConway), body); err != nil {
 		t.Fatalf("mainnet registration denied: %v", err)
@@ -213,7 +511,8 @@ func TestEvaluateNoPinnedRewardAccount(t *testing.T) {
 	p := testProfile
 	p.RewardAccount = ""
 
-	body := baseBody().with(4, certs(poolReg(testKeys.Pool, testKeys.Owner))).cbor()
+	body := baseBody().with(4, certs(poolReg(testKeys.Pool, testKeys.Owner))).
+		cbor()
 
 	if _, err := Evaluate(p, testKeys, RoleCold, uint(ledger.TxTypeConway), body); err == nil {
 		t.Fatal("registration signed without a pinned reward account")

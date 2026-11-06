@@ -128,7 +128,8 @@ func (d Definition) Aggregate(observed []Observed) Tally {
 		var sets [][]Answer
 		for _, o := range valid {
 			id := identity{o.Response.Role, o.Response.Credential}
-			if o.Response.Role != role || latest[id].TxHash != o.TxHash || latest[id].Pos != o.Pos {
+			if o.Response.Role != role || latest[id].TxHash != o.TxHash ||
+				latest[id].Pos != o.Pos {
 				continue
 			}
 			rt.Responses++

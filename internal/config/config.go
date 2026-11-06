@@ -41,73 +41,73 @@ type Config struct {
 type KESAgentConfig struct {
 	// Mode is "serve-key" (push the KES signing key to the producer) or "sign"
 	// (sign block headers on the producer's behalf; key never leaves the agent).
-	Mode string `yaml:"mode" envconfig:"KESAGENT_MODE"`
+	Mode string `yaml:"mode"                    envconfig:"KESAGENT_MODE"`
 	// ServiceSocket is the Unix socket the producer connects to.
-	ServiceSocket string `yaml:"service_socket" envconfig:"KESAGENT_SERVICE_SOCKET"`
+	ServiceSocket string `yaml:"service_socket"          envconfig:"KESAGENT_SERVICE_SOCKET"`
 	// ControlSocket is the Unix socket for gen/install/drop/info commands.
-	ControlSocket string `yaml:"control_socket" envconfig:"KESAGENT_CONTROL_SOCKET"`
+	ControlSocket string `yaml:"control_socket"          envconfig:"KESAGENT_CONTROL_SOCKET"`
 	// ServiceSocketMode is the octal file mode for the service socket, which
 	// the block producer connects to (default 0600). It may be widened (e.g.
 	// "0660" with the producer added to the agent's group) to let a
 	// different-UID producer reach it.
-	ServiceSocketMode string `yaml:"service_socket_mode" envconfig:"KESAGENT_SERVICE_SOCKET_MODE"`
+	ServiceSocketMode string `yaml:"service_socket_mode"     envconfig:"KESAGENT_SERVICE_SOCKET_MODE"`
 	// ControlSocketMode is the octal file mode for the control socket, which
 	// handles gen-staged-key/install-key/drop-key/info (default 0600). It must
 	// never be widened to group/other access: those commands can drop or
 	// install KES keys.
-	ControlSocketMode string `yaml:"control_socket_mode" envconfig:"KESAGENT_CONTROL_SOCKET_MODE"`
+	ControlSocketMode string `yaml:"control_socket_mode"     envconfig:"KESAGENT_CONTROL_SOCKET_MODE"`
 	// ColdVKeyFile is a path to the pool cold verification key (cardano-cli
 	// text envelope or raw/hex). The agent only ever holds the cold vkey.
-	ColdVKeyFile string `yaml:"cold_vkey_file" envconfig:"KESAGENT_COLD_VKEY_FILE"`
+	ColdVKeyFile string `yaml:"cold_vkey_file"          envconfig:"KESAGENT_COLD_VKEY_FILE"`
 	// ColdVKeyHex is the cold verification key as hex (alternative to the file).
-	ColdVKeyHex string `yaml:"cold_vkey_hex" envconfig:"KESAGENT_COLD_VKEY_HEX"`
+	ColdVKeyHex string `yaml:"cold_vkey_hex"           envconfig:"KESAGENT_COLD_VKEY_HEX"`
 	// SystemStart is the Shelley genesis system start (RFC3339).
-	SystemStart string `yaml:"system_start" envconfig:"KESAGENT_SYSTEM_START"`
+	SystemStart string `yaml:"system_start"            envconfig:"KESAGENT_SYSTEM_START"`
 	// SlotLength is the wall-clock length of one slot in seconds (default 1).
-	SlotLength float64 `yaml:"slot_length" envconfig:"KESAGENT_SLOT_LENGTH"`
+	SlotLength float64 `yaml:"slot_length"             envconfig:"KESAGENT_SLOT_LENGTH"`
 	// SlotsPerKESPeriod is the number of slots per KES period (e.g. 129600).
-	SlotsPerKESPeriod uint64 `yaml:"slots_per_kes_period" envconfig:"KESAGENT_SLOTS_PER_KES_PERIOD"`
+	SlotsPerKESPeriod uint64 `yaml:"slots_per_kes_period"    envconfig:"KESAGENT_SLOTS_PER_KES_PERIOD"`
 	// MaxKESEvolutions is the max opcert evolutions (mainnet 62).
-	MaxKESEvolutions uint64 `yaml:"max_kes_evolutions" envconfig:"KESAGENT_MAX_KES_EVOLUTIONS"`
+	MaxKESEvolutions uint64 `yaml:"max_kes_evolutions"      envconfig:"KESAGENT_MAX_KES_EVOLUTIONS"`
 	// EvolveInterval is the scheduler tick as a Go duration string (default 1m).
-	EvolveInterval string `yaml:"evolve_interval" envconfig:"KESAGENT_EVOLVE_INTERVAL"`
+	EvolveInterval string `yaml:"evolve_interval"         envconfig:"KESAGENT_EVOLVE_INTERVAL"`
 	// GuardFile is the required durable monotonic-period store path.
-	GuardFile string `yaml:"guard_file" envconfig:"KESAGENT_GUARD_FILE"`
+	GuardFile string `yaml:"guard_file"              envconfig:"KESAGENT_GUARD_FILE"`
 	// AttestedListenAddress optionally exposes sign mode to a remote producer.
 	// The listener always requires a verified TLS client certificate.
 	AttestedListenAddress string `yaml:"attested_listen_address" envconfig:"KESAGENT_ATTESTED_LISTEN_ADDRESS"`
-	AttestedTLSCertFile   string `yaml:"attested_tls_cert_file" envconfig:"KESAGENT_ATTESTED_TLS_CERT_FILE"`
-	AttestedTLSKeyFile    string `yaml:"attested_tls_key_file" envconfig:"KESAGENT_ATTESTED_TLS_KEY_FILE"`
+	AttestedTLSCertFile   string `yaml:"attested_tls_cert_file"  envconfig:"KESAGENT_ATTESTED_TLS_CERT_FILE"`
+	AttestedTLSKeyFile    string `yaml:"attested_tls_key_file"   envconfig:"KESAGENT_ATTESTED_TLS_KEY_FILE"`
 	AttestedClientCAFile  string `yaml:"attested_client_ca_file" envconfig:"KESAGENT_ATTESTED_CLIENT_CA_FILE"`
 	// AttestationProvider identifies the verifier the producer must use.
-	AttestationProvider string `yaml:"attestation_provider" envconfig:"KESAGENT_ATTESTATION_PROVIDER"`
+	AttestationProvider string `yaml:"attestation_provider"    envconfig:"KESAGENT_ATTESTATION_PROVIDER"`
 	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
 	// inside the protected workload that produces nonce-bound evidence.
-	AttesterAddress string `yaml:"attester_address" envconfig:"KESAGENT_ATTESTER_ADDRESS"`
+	AttesterAddress string `yaml:"attester_address"        envconfig:"KESAGENT_ATTESTER_ADDRESS"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.
 type SignerConfig struct {
-	ListenAddress string `yaml:"listen_address" envconfig:"SIGNER_LISTEN_ADDRESS"`
-	ListenPort    uint   `yaml:"listen_port"    envconfig:"SIGNER_LISTEN_PORT"`
-	JWTSecret     string `yaml:"jwt_secret"     envconfig:"SIGNER_JWT_SECRET"`
-	JWKSURL       string `yaml:"jwks_url"       envconfig:"SIGNER_JWKS_URL"`
-	JWTIssuer     string `yaml:"jwt_issuer"     envconfig:"SIGNER_JWT_ISSUER"`
-	JWTAudience   string `yaml:"jwt_audience"   envconfig:"SIGNER_JWT_AUDIENCE"`
-	TLSCertFile   string `yaml:"tls_cert_file"  envconfig:"SIGNER_TLS_CERT_FILE"`
-	TLSKeyFile    string `yaml:"tls_key_file"   envconfig:"SIGNER_TLS_KEY_FILE"`
+	ListenAddress string `yaml:"listen_address"              envconfig:"SIGNER_LISTEN_ADDRESS"`
+	ListenPort    uint   `yaml:"listen_port"                 envconfig:"SIGNER_LISTEN_PORT"`
+	JWTSecret     string `yaml:"jwt_secret"                  envconfig:"SIGNER_JWT_SECRET"`
+	JWKSURL       string `yaml:"jwks_url"                    envconfig:"SIGNER_JWKS_URL"`
+	JWTIssuer     string `yaml:"jwt_issuer"                  envconfig:"SIGNER_JWT_ISSUER"`
+	JWTAudience   string `yaml:"jwt_audience"                envconfig:"SIGNER_JWT_AUDIENCE"`
+	TLSCertFile   string `yaml:"tls_cert_file"               envconfig:"SIGNER_TLS_CERT_FILE"`
+	TLSKeyFile    string `yaml:"tls_key_file"                envconfig:"SIGNER_TLS_KEY_FILE"`
 	// ClientCACert is a PEM file of CA certificate(s) used to verify TLS client
 	// certificates (mTLS). When set, TLS client-cert auth is enabled and the
 	// caller identity is derived from the verified client certificate.
-	ClientCACert string `yaml:"client_ca_cert" envconfig:"SIGNER_CLIENT_CA_CERT"`
+	ClientCACert string `yaml:"client_ca_cert"              envconfig:"SIGNER_CLIENT_CA_CERT"`
 	// RequireClientCert makes a verified client certificate mandatory on every
 	// connection (tls.RequireAndVerifyClientCert). When false and ClientCACert
 	// is set, a client cert is optional (tls.VerifyClientCertIfGiven) and other
 	// auth modes remain available on connections without one.
-	RequireClientCert bool `yaml:"require_client_cert" envconfig:"SIGNER_REQUIRE_CLIENT_CERT"`
+	RequireClientCert bool `yaml:"require_client_cert"         envconfig:"SIGNER_REQUIRE_CLIENT_CERT"`
 	// RequestSignSkewSeconds is the ± timestamp window (seconds) accepted for
 	// authorized-keys request signatures. Zero uses the 60s default.
-	RequestSignSkewSeconds int `yaml:"request_sign_skew_seconds" envconfig:"SIGNER_REQUEST_SIGN_SKEW_SECONDS"`
+	RequestSignSkewSeconds int `yaml:"request_sign_skew_seconds"   envconfig:"SIGNER_REQUEST_SIGN_SKEW_SECONDS"`
 	// AllowInsecureFileBackend opts in to running the plaintext software/file
 	// key backend while bound to a non-loopback address. The software backend
 	// loads private key material into process memory and is intended for
@@ -129,8 +129,8 @@ type SignerConfig struct {
 	// policy allows, the signer POSTs the parsed operation summary over HTTPS and
 	// signs only on an allow response (fail closed). Redirects are refused. Off
 	// by default.
-	PolicyHookURL       string `yaml:"policy_hook_url"        envconfig:"SIGNER_POLICY_HOOK_URL"`
-	PolicyHookTimeoutMs uint   `yaml:"policy_hook_timeout_ms" envconfig:"SIGNER_POLICY_HOOK_TIMEOUT_MS"`
+	PolicyHookURL       string `yaml:"policy_hook_url"             envconfig:"SIGNER_POLICY_HOOK_URL"`
+	PolicyHookTimeoutMs uint   `yaml:"policy_hook_timeout_ms"      envconfig:"SIGNER_POLICY_HOOK_TIMEOUT_MS"`
 }
 
 // SignerAuthorizedKeyConfig registers an Ed25519 public key that may
@@ -157,7 +157,7 @@ type SignerWatermarkConfig struct {
 	// DSN is the Postgres connection string (type "postgres"). Prefer DSNEnv so
 	// credentials are not written to the config file; DSN is a plaintext
 	// fallback for non-secret local/dev connection strings.
-	DSN string `yaml:"dsn" envconfig:"SIGNER_WATERMARK_DSN"`
+	DSN string `yaml:"dsn"     envconfig:"SIGNER_WATERMARK_DSN"`
 	// DSNEnv names an environment variable holding the Postgres connection
 	// string. When set it takes precedence over DSN so credentials stay out of
 	// the config file.
@@ -212,27 +212,27 @@ type SignerKeyConfig struct {
 }
 
 type StorageConfig struct {
-	Backend string `yaml:"backend"                            envconfig:"STORAGE_BACKEND"`
-	Dir     string `yaml:"dir"                                envconfig:"STORAGE_DIR"`
-	DSN     string `yaml:"dsn"                                envconfig:"STORAGE_DSN"`
+	Backend string `yaml:"backend"                          envconfig:"STORAGE_BACKEND"`
+	Dir     string `yaml:"dir"                              envconfig:"STORAGE_DIR"`
+	DSN     string `yaml:"dsn"                              envconfig:"STORAGE_DSN"`
 	// AllowUnencryptedWalletStorage opts into file storage without SOPS or SQLite storage.
 	AllowUnencryptedWalletStorage bool `yaml:"allow_unencrypted_wallet_storage" envconfig:"STORAGE_ALLOW_UNENCRYPTED_WALLET_STORAGE"`
 }
 
 type ApiConfig struct {
-	ListenAddress string `yaml:"address"     envconfig:"API_LISTEN_ADDRESS"`
-	ListenPort    uint   `yaml:"port"        envconfig:"API_LISTEN_PORT"`
-	TLSCertFile   string `yaml:"tls_cert_file" envconfig:"API_TLS_CERT_FILE"`
-	TLSKeyFile    string `yaml:"tls_key_file"  envconfig:"API_TLS_KEY_FILE"`
+	ListenAddress string `yaml:"address"            envconfig:"API_LISTEN_ADDRESS"`
+	ListenPort    uint   `yaml:"port"               envconfig:"API_LISTEN_PORT"`
+	TLSCertFile   string `yaml:"tls_cert_file"      envconfig:"API_TLS_CERT_FILE"`
+	TLSKeyFile    string `yaml:"tls_key_file"       envconfig:"API_TLS_KEY_FILE"`
 	// JWTSecret enables HS256 bearer authentication for sensitive legacy API
 	// routes. Keep it in an environment variable or an external secret store;
 	// do not commit it to a config file.
-	JWTSecret string `yaml:"jwt_secret" envconfig:"API_JWT_SECRET"`
+	JWTSecret string `yaml:"jwt_secret"         envconfig:"API_JWT_SECRET"`
 	// JWKSURL enables RS256, ES256, or EdDSA bearer authentication. It is
 	// mutually exclusive with JWTSecret and must use HTTPS except on loopback.
-	JWKSURL     string `yaml:"jwks_url" envconfig:"API_JWKS_URL"`
-	JWTIssuer   string `yaml:"jwt_issuer" envconfig:"API_JWT_ISSUER"`
-	JWTAudience string `yaml:"jwt_audience" envconfig:"API_JWT_AUDIENCE"`
+	JWKSURL     string `yaml:"jwks_url"           envconfig:"API_JWKS_URL"`
+	JWTIssuer   string `yaml:"jwt_issuer"         envconfig:"API_JWT_ISSUER"`
+	JWTAudience string `yaml:"jwt_audience"       envconfig:"API_JWT_AUDIENCE"`
 	// JWTAdminSubjects identifies the authenticated principals allowed to list,
 	// retrieve, update, or delete persisted wallets. An empty list denies those
 	// operations whenever API authentication is enabled.
@@ -346,10 +346,18 @@ func LoadConfigFile(path string) (*Config, error) {
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
+			return nil, fmt.Errorf(
+				"failed to read config file %q: %w",
+				path,
+				err,
+			)
 		}
 		if err := yaml.Unmarshal(data, &globalConfig); err != nil {
-			return nil, fmt.Errorf("failed to parse config file %q: %w", path, err)
+			return nil, fmt.Errorf(
+				"failed to parse config file %q: %w",
+				path,
+				err,
+			)
 		}
 	}
 	if err := envconfig.Process("bursa", &globalConfig); err != nil {

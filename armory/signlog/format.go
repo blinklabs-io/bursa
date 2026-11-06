@@ -142,7 +142,11 @@ func truncate(s string, n int) string {
 }
 
 // versionOK reports whether ver is a format version this package reads.
-func versionOK(ver uint32) bool { return ver == formatV1 || ver == FormatVersion }
+func versionOK(
+	ver uint32,
+) bool {
+	return ver == formatV1 || ver == FormatVersion
+}
 
 // normalize validates rec for its purpose under format version ver and cuts
 // the summary. A version 1 record has no cold key hash.
@@ -156,26 +160,49 @@ func normalize(rec Record, ver uint32) (Record, error) {
 
 	for _, s := range []string{rec.Profile, rec.Role, rec.Purpose} {
 		if len(s) > maxName {
-			return rec, fmt.Errorf("%w: name of %d bytes", ErrInvalidRecord, len(s))
+			return rec, fmt.Errorf(
+				"%w: name of %d bytes",
+				ErrInvalidRecord,
+				len(s),
+			)
 		}
 	}
 
 	switch rec.Purpose {
 	case PurposeTxBody, PurposeRaw:
-		if len(rec.BodyHash) != HashSize || rec.IssueCounter != 0 || rec.KESPeriod != 0 || rec.KESKeyHash != nil || rec.ColdKeyHash != nil {
-			return rec, fmt.Errorf("%w: %s needs a %d-byte body hash and no opcert fields", ErrInvalidRecord, rec.Purpose, HashSize)
+		if len(rec.BodyHash) != HashSize || rec.IssueCounter != 0 ||
+			rec.KESPeriod != 0 ||
+			rec.KESKeyHash != nil ||
+			rec.ColdKeyHash != nil {
+			return rec, fmt.Errorf(
+				"%w: %s needs a %d-byte body hash and no opcert fields",
+				ErrInvalidRecord,
+				rec.Purpose,
+				HashSize,
+			)
 		}
 	case PurposeOpCertNext:
 		if len(rec.KESKeyHash) != HashSize || rec.BodyHash != nil {
-			return rec, fmt.Errorf("%w: opcert-next needs a %d-byte KES key hash and no body hash", ErrInvalidRecord, HashSize)
+			return rec, fmt.Errorf(
+				"%w: opcert-next needs a %d-byte KES key hash and no body hash",
+				ErrInvalidRecord,
+				HashSize,
+			)
 		}
 
 		if ver == formatV1 && rec.ColdKeyHash != nil {
-			return rec, fmt.Errorf("%w: a version 1 record has no cold key hash", ErrInvalidRecord)
+			return rec, fmt.Errorf(
+				"%w: a version 1 record has no cold key hash",
+				ErrInvalidRecord,
+			)
 		}
 
 		if ver != formatV1 && len(rec.ColdKeyHash) != ColdHashSize {
-			return rec, fmt.Errorf("%w: opcert-next needs a %d-byte cold key hash", ErrInvalidRecord, ColdHashSize)
+			return rec, fmt.Errorf(
+				"%w: opcert-next needs a %d-byte cold key hash",
+				ErrInvalidRecord,
+				ColdHashSize,
+			)
 		}
 	default:
 		return rec, fmt.Errorf("%w: purpose %q", ErrInvalidRecord, rec.Purpose)
@@ -290,7 +317,11 @@ func frameEntry(e Entry, id Identity) ([]byte, error) {
 	}
 
 	if len(enc) > maxPayload {
-		return nil, fmt.Errorf("%w: payload of %d bytes", ErrInvalidRecord, len(enc))
+		return nil, fmt.Errorf(
+			"%w: payload of %d bytes",
+			ErrInvalidRecord,
+			len(enc),
+		)
 	}
 
 	sig, err := id.Sign(signDigest(enc))
@@ -299,12 +330,19 @@ func frameEntry(e Entry, id Identity) ([]byte, error) {
 	}
 
 	if len(sig) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("signlog: identity returned a %d-byte signature", len(sig))
+		return nil, fmt.Errorf(
+			"signlog: identity returned a %d-byte signature",
+			len(sig),
+		)
 	}
 
 	out := make([]byte, RecordSize)
 	copy(out, recordMagic)
-	binary.BigEndian.PutUint16(out[recLenOff:], uint16(len(enc))) //nolint:gosec // bounded by maxPayload
+	//nolint:gosec // bounded by maxPayload
+	binary.BigEndian.PutUint16(
+		out[recLenOff:],
+		uint16(len(enc)),
+	)
 	copy(out[recPayloadOff:], enc)
 	copy(out[recSigOff:], sig)
 
@@ -353,7 +391,8 @@ func decodeRecord(slot []byte, ver uint32) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: non-canonical payload", ErrCorrupt)
 	}
 
-	if _, err := normalize(e.Record, ver); err != nil || len(e.Summary) > MaxSummary {
+	if _, err := normalize(e.Record, ver); err != nil ||
+		len(e.Summary) > MaxSummary {
 		return Entry{}, fmt.Errorf("%w: invalid record content", ErrCorrupt)
 	}
 
@@ -410,7 +449,10 @@ func formatHeader(id Identity, n uint64, ver uint32) ([]byte, error) {
 	}
 
 	if len(sig) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("signlog: identity returned a %d-byte signature", len(sig))
+		return nil, fmt.Errorf(
+			"signlog: identity returned a %d-byte signature",
+			len(sig),
+		)
 	}
 
 	copy(out[hdrSigOff:], sig)
@@ -436,9 +478,12 @@ func parseHeader(b []byte, pub ed25519.PublicKey) (Header, error) {
 	h.RecordBlocks = binary.BigEndian.Uint32(b[hdrRecBlocksOf:])
 	h.Entries = binary.BigEndian.Uint64(b[hdrEntriesOff:])
 
-	if binary.BigEndian.Uint32(b[hdrBlockOff:]) != BlockSize || h.RecordBlocks != RecordBlocks ||
-		binary.BigEndian.Uint32(b[hdrReservedOff:]) != 0 || h.Entries == 0 ||
-		h.Entries > (1<<62)/RecordBlocks || !isZero(b[hdrUsedLen:]) {
+	if binary.BigEndian.Uint32(b[hdrBlockOff:]) != BlockSize ||
+		h.RecordBlocks != RecordBlocks ||
+		binary.BigEndian.Uint32(b[hdrReservedOff:]) != 0 ||
+		h.Entries == 0 ||
+		h.Entries > (1<<62)/RecordBlocks ||
+		!isZero(b[hdrUsedLen:]) {
 		return h, fmt.Errorf("%w: header geometry", ErrCorrupt)
 	}
 
@@ -450,7 +495,11 @@ func parseHeader(b []byte, pub ed25519.PublicKey) (Header, error) {
 		return h, ErrWrongDevice
 	}
 
-	if !ed25519.Verify(h.Identity, headerDigest(b[:hdrSignedLen]), b[hdrSigOff:hdrUsedLen]) {
+	if !ed25519.Verify(
+		h.Identity,
+		headerDigest(b[:hdrSignedLen]),
+		b[hdrSigOff:hdrUsedLen],
+	) {
 		return h, fmt.Errorf("%w: header", ErrBadSignature)
 	}
 
