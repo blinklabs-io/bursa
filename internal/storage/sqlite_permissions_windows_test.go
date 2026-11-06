@@ -40,19 +40,26 @@ import (
 func permissiveDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	makePermissive(t, dir)
+	return dir
+}
+
+// makePermissive gives dir the DACL permissiveDir describes.
+func makePermissive(t *testing.T, dir string) {
+	t.Helper()
 	sd, err := windows.SecurityDescriptorFromString(
 		"D:(A;;0x1201bf;;;WD)(A;OICIIO;GA;;;WD)",
 	)
 	require.NoError(t, err)
 	dacl, _, err := sd.DACL()
 	require.NoError(t, err)
+	// The extended-length prefix lets this reach a path past MAX_PATH.
 	require.NoError(t, windows.SetNamedSecurityInfo(
-		dir,
+		`\\?\`+dir,
 		windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil,
 	))
-	return dir
 }
 
 func requireOwnerOnly(t *testing.T, path string) {
@@ -154,12 +161,16 @@ func TestSQLiteFilesAreOwnerOnlyBeforeSQLiteOpensThem(t *testing.T) {
 // A path longer than MAX_PATH has to reach CreateFile in extended-length form.
 func TestSQLiteFilePermissionsAcceptLongPaths(t *testing.T) {
 	t.Parallel()
+	// Only the database's own directory is permissive: every directory above
+	// it must deny other users the right to rename entries, or the store
+	// rejects the path.
 	dir := filepath.Join(
-		permissiveDir(t),
+		t.TempDir(),
 		strings.Repeat("d", 200),
 		strings.Repeat("e", 60),
 	)
 	require.NoError(t, os.MkdirAll(dir, 0o700))
+	makePermissive(t, dir)
 	dbPath := filepath.Join(dir, "wallets.db")
 	require.Greater(t, len(dbPath), windows.MAX_PATH)
 	require.NoError(t, ensureSQLiteFilePermissions(dbPath, ""))
