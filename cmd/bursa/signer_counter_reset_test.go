@@ -84,6 +84,7 @@ func TestSignerCounterReset_WithoutYesWritesNothing(t *testing.T) {
 		&out,
 		cfg,
 		resetKeyHex,
+		"",
 		10,
 		false,
 	)
@@ -103,7 +104,7 @@ func TestSignerCounterReset_YesAppliesToOneKey(t *testing.T) {
 	t.Parallel()
 	cfg, wm := seedResetStore(t)
 	var out bytes.Buffer
-	if err := runSignerCounterReset(context.Background(), &out, cfg, resetKeyHex, 10, true); err != nil {
+	if err := runSignerCounterReset(context.Background(), &out, cfg, resetKeyHex, "", 10, true); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	r := resetRecords(t, wm, resetKeyHex)
@@ -154,6 +155,7 @@ func TestSignerCounterReset_Refusals(t *testing.T) {
 			&bytes.Buffer{},
 			tc.cfg,
 			tc.key,
+			"",
 			10,
 			true,
 		)
@@ -173,7 +175,7 @@ func TestSignerCounterResetCommandRegistered(t *testing.T) {
 	if err != nil || c.Name() != "counter-reset" {
 		t.Fatalf("counter-reset not under signer: %v", err)
 	}
-	for _, f := range []string{"key", "chain-counter", "yes", "config"} {
+	for _, f := range []string{"key", "chain-counter", "yes", "config", "profile", "unprofiled"} {
 		if c.Flags().Lookup(f) == nil {
 			t.Errorf("missing flag --%s", f)
 		}

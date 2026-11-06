@@ -42,7 +42,7 @@ func dryRunReset(
 	t.Helper()
 	var out bytes.Buffer
 	err := runSignerCounterReset(
-		context.Background(), &out, cfg, key, 10, false,
+		context.Background(), &out, cfg, key, "", 10, false,
 	)
 	if !errors.Is(err, errCounterResetNotConfirmed) {
 		t.Fatalf("err = %v, want errCounterResetNotConfirmed", err)
