@@ -27,6 +27,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/opcertrule"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
@@ -46,17 +47,33 @@ var ErrCounterRegression = errors.New(
 	"operational-certificate issue counter is out of sequence",
 )
 
+// counterState is the durable counter record. NextIssueNumber serves the
+// explicit-counter path. The remaining fields serve opcert-next and are
+// omitted from the object while zero, so an object written before they
+// existed decodes with all of them zero: no recorded chain floor, no recorded
+// last-issued number (derived from NextIssueNumber), and an unknown KES
+// period. An unknown period is 0 and never refuses a reissue.
 type counterState struct {
 	Version         string `json:"version"`
 	KeyHash         string `json:"key_hash"`
 	NextIssueNumber uint64 `json:"next_issue_number"`
+	// OpCertFloor is the highest chain counter an opcert-next request has
+	// reported.
+	OpCertFloor uint64 `json:"opcert_floor,omitempty"`
+	// LastIssued is the issue number of the latest certificate, 0 if none.
+	LastIssued uint64 `json:"last_issued,omitempty"`
+	// LastIssuedPeriod is the KES period of that certificate, 0 if unknown.
+	LastIssuedPeriod uint64 `json:"last_issued_period,omitempty"`
 }
 
 type counterStateWire struct {
-	Version         string  `json:"version"`
-	KeyHash         string  `json:"key_hash"`
-	IssueNumber     *uint64 `json:"issue_number,omitempty"`
-	NextIssueNumber *uint64 `json:"next_issue_number,omitempty"`
+	Version          string  `json:"version"`
+	KeyHash          string  `json:"key_hash"`
+	IssueNumber      *uint64 `json:"issue_number,omitempty"`
+	NextIssueNumber  *uint64 `json:"next_issue_number,omitempty"`
+	OpCertFloor      uint64  `json:"opcert_floor,omitempty"`
+	LastIssued       uint64  `json:"last_issued,omitempty"`
+	LastIssuedPeriod uint64  `json:"last_issued_period,omitempty"`
 }
 
 type counterObject interface {
@@ -158,11 +175,10 @@ func (s *CloudCounterStore) CheckAndAdvance(
 		); err != nil {
 			return err
 		}
-		next := counterState{
-			Version:         counterStateVersion,
-			KeyHash:         keyHash,
-			NextIssueNumber: issueNumber + 1,
-		}
+		next := current
+		next.NextIssueNumber = issueNumber + 1
+		// the period of an explicitly numbered certificate is not known
+		next.LastIssued, next.LastIssuedPeriod = issueNumber, 0
 		if err := s.store(ctx, next, generation, exists); err == nil {
 			return nil
 		} else if !isPreconditionFailure(err) {
@@ -170,6 +186,87 @@ func (s *CloudCounterStore) CheckAndAdvance(
 		}
 	}
 	return errors.New("counter state changed too often")
+}
+
+// NextOpCert chooses the issue number for an opcert-next request with the
+// armory device's rules (internal/signer/opcertrule) and persists the raised
+// floor, the issue number and the KES period before returning it. A repeat of
+// the recorded request writes nothing.
+func (s *CloudCounterStore) NextOpCert(
+	ctx context.Context,
+	key backend.KeyHash,
+	chain, period uint64,
+) (uint64, error) {
+	keyHash := key.String()
+	for range maxCounterCASRetries {
+		current, generation, exists, err := s.loadCurrent(ctx, keyHash)
+		if err != nil {
+			return 0, err
+		}
+		if !exists {
+			return 0, errors.New(
+				"counter state is missing for the pool cold key",
+			)
+		}
+		next, issue, err := applyOpCertNext(current, chain, period)
+		if err != nil {
+			return 0, err
+		}
+		if next == current {
+			return issue, nil
+		}
+		if err := s.store(ctx, next, generation, exists); err == nil {
+			return issue, nil
+		} else if !isPreconditionFailure(err) {
+			return 0, err
+		}
+	}
+	return 0, errors.New("counter state changed too often")
+}
+
+// applyOpCertNext returns the state after an opcert-next request and the
+// issue number chosen, or the rule that refused it.
+func applyOpCertNext(
+	cur counterState,
+	chain, period uint64,
+) (counterState, uint64, error) {
+	// A record from before opcert-next has no last-issued number; the
+	// explicit path issued every number below NextIssueNumber in sequence, so
+	// the last one is the number before it.
+	last := cur.LastIssued
+	if last == 0 && cur.NextIssueNumber > 0 {
+		last = cur.NextIssueNumber - 1
+		// issue number 0 is below the rule's "unset" marker
+		if last == 0 && chain > 0 {
+			return counterState{}, 0, opcertrule.ErrAboveIssued
+		}
+	}
+	// a floor of 0 refuses nothing, so it needs no separate set flag
+	issue, floor, err := opcertrule.Next(
+		cur.OpCertFloor,
+		true,
+		last,
+		chain,
+	)
+	if err != nil {
+		return counterState{}, 0, err
+	}
+	if issue >= math.MaxUint64-1 {
+		return counterState{}, 0, opcertrule.ErrOutOfRange
+	}
+	if err := opcertrule.CheckPeriod(
+		issue,
+		last,
+		cur.LastIssuedPeriod,
+		period,
+	); err != nil {
+		return counterState{}, 0, err
+	}
+	next := cur
+	next.OpCertFloor = floor
+	next.LastIssued, next.LastIssuedPeriod = issue, period
+	next.NextIssueNumber = max(cur.NextIssueNumber, issue+1)
+	return next, issue, nil
 }
 
 func checkCounterSequence(expected, next uint64) error {
@@ -248,12 +345,17 @@ func normalizeCounterState(
 			)
 		}
 		return counterState{
-			Version:         counterStateVersion,
-			KeyHash:         keyHash,
-			NextIssueNumber: *wire.NextIssueNumber,
+			Version:          counterStateVersion,
+			KeyHash:          keyHash,
+			NextIssueNumber:  *wire.NextIssueNumber,
+			OpCertFloor:      wire.OpCertFloor,
+			LastIssued:       wire.LastIssued,
+			LastIssuedPeriod: wire.LastIssuedPeriod,
 		}, false, nil
 	case counterStateVersionV1:
 		if wire.IssueNumber == nil || wire.NextIssueNumber != nil ||
+			wire.OpCertFloor != 0 || wire.LastIssued != 0 ||
+			wire.LastIssuedPeriod != 0 ||
 			*wire.IssueNumber == math.MaxUint64 {
 			return counterState{}, false, errors.New(
 				"legacy counter state cannot be migrated",

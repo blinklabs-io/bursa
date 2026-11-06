@@ -248,17 +248,36 @@ protocol for one pool cold key. It runs from the signer container image, obtains
 custom tokens from the Confidential Space launcher socket, and exposes only
 `/v1/inventory` and `/v1/sign` over TLS 1.3. Both endpoints require a client
 certificate signed by `--client-ca-file`. The sign endpoint accepts only a
-`pool` key with the `opcert` purpose and the canonical 48-byte
+`pool` key with the `opcert` or `opcert-next` purpose and the 48-byte
 operational-certificate payload. It rejects reused request nonces and verifies
 each signature before returning it.
 
-Two signer features are refused by design:
+The workload serves both opcert forms, and keeps all counter state in the
+Cloud Storage counter object:
 
-- `chain_counter` requests. The signer sends these as `opcert-next`, which
-  accepts the same chain counter again so a KES rotation can reuse an issue
-  number. The workload's durable counter only advances, so it never signs a
-  second certificate at an issue number it has already used. Send
-  `issue_counter` instead.
+- `issue_counter` requests (`opcert`) must carry the next number in the
+  object's sequence.
+- `chain_counter` requests (`opcert-next`) follow the armory device's rules.
+  The workload issues the chain counter plus one and returns it as
+  `issue_counter`. It records the highest chain counter reported, the last
+  number issued and that certificate's KES period. It refuses a chain counter
+  below the recorded one ("chain counter below the recorded on-chain counter")
+  or above the last issued number ("chain counter above the last counter the
+  device issued"); the signer maps both to HTTP 409. It also refuses
+  reissuing the last number at a lower KES period ("KES period below the
+  logged opcert at this counter"). Repeating the recorded request signs
+  again without a write.
+
+The counter object keeps its version. It gains `opcert_floor`, `last_issued`
+and `last_issued_period`, omitted while zero, so an object written earlier
+loads unchanged. For such an object the last issued number is taken to be the
+one before `next_issue_number`, and the unknown KES period is 0 and refuses
+nothing. An earlier workload release cannot read an object that has the new
+fields; roll the workload forward, not back, once `chain_counter` requests are
+in use.
+
+One signer feature is still refused:
+
 - A backend `profile`. The workload signs no profile binding, so leave
   `profile` unset on its `confidential-space` backend; with it set, the
   inventory request is refused and the backend does not load.
