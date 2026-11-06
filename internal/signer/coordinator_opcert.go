@@ -107,6 +107,33 @@ func (r opcertCounterRule) conflict(stored uint64, known bool) error {
 	)
 }
 
+// opcertCounterFor reads the counter record under scope for a resolved key.
+// A profiled key with no record under its profile reads the one written
+// before profile scoping, while its backend is the key's only holder: that
+// record is then this profile's. With several holders it may be another
+// network's, and no unscoped record applies.
+func (c *Coordinator) opcertCounterFor(
+	ctx context.Context,
+	cw watermark.CounterWatermark,
+	hash backend.KeyHash,
+	ref backend.KeyRef,
+	scope string,
+) (uint64, bool, error) {
+	scoped := profileScope(ref, scope)
+	v, ok, err := cw.CounterFor(ctx, hash, scoped)
+	if err != nil || ok || scoped == scope {
+		return v, ok, err
+	}
+	_, rerr := c.deps.Resolver.Resolve(ctx, hash, "")
+	if errors.Is(rerr, backend.ErrProfileRequired) {
+		return 0, false, nil
+	}
+	if rerr != nil {
+		return 0, false, rerr
+	}
+	return cw.CounterFor(ctx, hash, scope)
+}
+
 // OpCertResult is the outcome of an operational-certificate cold-signing request.
 type OpCertResult struct {
 	// SignatureHex is the 64-byte Ed25519 cold-key signature over the
@@ -277,6 +304,7 @@ func (c *Coordinator) signOpCert(
 
 	// Counter records are per profile for a key served by a profiled backend,
 	// so one cold key held under several profiles keeps one history each.
+	formScope := rule.scope
 	rule.scope = profileScope(ref, rule.scope)
 	issuedScope := profileScope(ref, opcertChainIssuedScope)
 
@@ -353,7 +381,7 @@ func (c *Coordinator) signOpCert(
 			)
 		}
 		counterWM = cw
-		stored, exists, cerr := cw.CounterFor(ctx, hash, rule.scope)
+		stored, exists, cerr := c.opcertCounterFor(ctx, cw, hash, ref, formScope)
 		if cerr != nil {
 			logger.Info(
 				"sign",
@@ -416,10 +444,12 @@ func (c *Coordinator) signOpCert(
 		// Both request forms are checked against the one issued record, so
 		// switching forms cannot go back below a counter already issued.
 		if !counterConflictReported {
-			issued, issuedExists, ierr := cw.CounterFor(
+			issued, issuedExists, ierr := c.opcertCounterFor(
 				ctx,
+				cw,
 				hash,
-				issuedScope,
+				ref,
+				opcertChainIssuedScope,
 			)
 			if ierr != nil {
 				logger.Info(

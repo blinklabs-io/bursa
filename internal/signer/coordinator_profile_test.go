@@ -386,3 +386,71 @@ func TestProfiledSignLogs_NameBackendAndProfile(t *testing.T) {
 		}
 	}
 }
+
+// seedLegacyOpCert writes the unscoped opcert records a key had before
+// profile scoping: issued counter issued, chain floor floor.
+func seedLegacyOpCert(t *testing.T, wm *watermark.MemWatermark, h backend.KeyHash, issued, floor uint64) {
+	t.Helper()
+	ctx := context.Background()
+	if err := wm.CheckAndCommitCounter(ctx, h, opcertChainIssuedScope, issued); err != nil {
+		t.Fatalf("seed issued: %v", err)
+	}
+	if err := wm.CheckAndCommitCounter(ctx, h, opcertCounterScope, issued); err != nil {
+		t.Fatalf("seed counter: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, h, opcertChainFloorScope, floor); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+}
+
+// A profiled key that is its backend's alone is bounded by the records it
+// wrote before profile scoping until it has records under its profile.
+func TestProfiledOpCert_SoleHolderKeepsLegacyBounds(t *testing.T) {
+	t.Parallel()
+	k := newFakeKey(t)
+	c, wm := newProfiledCoordinator(t, k, profiledFakeBackend{"dev-preview", profPreview, k})
+	seedLegacyOpCert(t, wm, k.hash, 5, 4)
+	kes := make([]byte, kesVkeySize)
+	id := k.hash.String()
+	ctx := WithProfile(context.Background(), profPreview)
+
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 100, 1, id); code != CodeConflict {
+		t.Fatalf("chain 100 above legacy issued 5: want conflict, got code=%s err=%v", code, err)
+	}
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 3, 1, id); code != CodeConflict {
+		t.Fatalf("chain 3 below legacy floor 4: want conflict, got code=%s err=%v", code, err)
+	}
+	if _, code, err := c.SignOpCert(ctx, kes, 5, 1, id); code != CodeConflict {
+		t.Fatalf("issue 5 at legacy issued 5: want conflict, got code=%s err=%v", code, err)
+	}
+	for _, scope := range []string{opcertChainFloorScope, opcertChainIssuedScope, opcertCounterScope} {
+		if v, ok, _ := wm.CounterFor(context.Background(), k.hash, scope+"|"+profPreview); ok {
+			t.Fatalf("refused request recorded %s|%s = %d", scope, profPreview, v)
+		}
+	}
+	res, code, err := c.SignOpCertFromChain(ctx, kes, 5, 1, id)
+	if err != nil || res.IssueCounter != 6 {
+		t.Fatalf("chain 5 at legacy issued 5: res=%v code=%s err=%v", res, code, err)
+	}
+	if v, ok, _ := wm.CounterFor(context.Background(), k.hash, opcertChainIssuedScope+"|"+profPreview); !ok || v != 6 {
+		t.Fatalf("profiled issued record = %d (ok=%v), want 6", v, ok)
+	}
+}
+
+// With several holders the records written before profile scoping cannot be
+// attributed to one profile, so they bound none of them.
+func TestProfiledOpCert_SharedKeyIgnoresLegacyRecords(t *testing.T) {
+	t.Parallel()
+	k := newFakeKey(t)
+	c, wm := newProfiledCoordinator(t, k,
+		profiledFakeBackend{"dev-preview", profPreview, k},
+		profiledFakeBackend{"dev-musashi", profMusashi, k})
+	seedLegacyOpCert(t, wm, k.hash, 5, 4)
+	kes := make([]byte, kesVkeySize)
+	musashi := WithProfile(context.Background(), profMusashi)
+
+	res, code, err := c.SignOpCertFromChain(musashi, kes, 0, 1, k.hash.String())
+	if err != nil || res.IssueCounter != 1 {
+		t.Fatalf("musashi chain 0 beside legacy floor 4: res=%v code=%s err=%v", res, code, err)
+	}
+}

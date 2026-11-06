@@ -322,9 +322,14 @@ only routes: the caller is authorized by key hash.
 Records of a key served by a profiled backend carry the profile:
 `<hash>|<scope>|<profile>` for the opcert counter, floor and issued scopes and
 for tx records, so each network keeps its own history. Records of an
-unprofiled backend are unchanged. Records an armory-backed key wrote before
-profile scoping are keyed without the profile and are no longer consulted; the
-device's own counter bound covers that gap.
+unprofiled backend are unchanged. Opcert records an armory-backed key wrote
+before profile scoping are keyed without the profile. While one backend holds
+the key, they still bound its opcert requests until a record under its profile
+exists. Once several backends hold it they are not consulted, as they cannot
+be attributed to one profile: before adding a second profile for a key, append
+`|<profile>` to the `record_key` of each of its `opcert-counter`,
+`opcert-chain-floor` and `opcert-chain-issued` rows, naming the profile that
+wrote them.
 
 ### High availability
 
