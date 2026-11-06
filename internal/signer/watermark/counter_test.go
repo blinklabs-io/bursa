@@ -304,3 +304,109 @@ func TestSqliteWatermark_CounterConcurrency(t *testing.T) {
 	defer wm.Close()
 	runCounterConcurrency(t, wm)
 }
+
+// runCheckAndCommitCounters covers the two-scope commit for one key: both
+// scopes written on success, and neither written when either check fails.
+func runCheckAndCommitCounters(t *testing.T, wm counterStore, key backend.KeyHash) {
+	t.Helper()
+	ctx := context.Background()
+	const form, issued = "opcert-chain-floor", "opcert-chain-issued"
+	get := func(scope string) (uint64, bool) {
+		t.Helper()
+		v, ok, err := wm.CounterFor(ctx, key, scope)
+		if err != nil {
+			t.Fatalf("CounterFor(%s): %v", scope, err)
+		}
+		return v, ok
+	}
+	wantScope := func(err error, scope string) {
+		t.Helper()
+		var re *CounterRegressionError
+		if !errors.Is(err, ErrCounterRegression) || !errors.As(err, &re) || re.Scope != scope {
+			t.Fatalf("got %v, want ErrCounterRegression for scope %s", err, scope)
+		}
+	}
+
+	// both succeed on an empty key and write both scopes
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: form, Value: 4, Kind: CounterFloor},
+		CounterOp{Scope: issued, Value: 5, Kind: CounterFloorFrom, Min: 4}); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	if v, ok := get(form); !ok || v != 4 {
+		t.Fatalf("form = (%d,%v), want 4", v, ok)
+	}
+	if v, ok := get(issued); !ok || v != 5 {
+		t.Fatalf("issued = (%d,%v), want 5", v, ok)
+	}
+
+	// issued-scope failure: the form scope would advance but must not
+	err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: form, Value: 6, Kind: CounterFloor},
+		CounterOp{Scope: issued, Value: 5, Kind: CounterStrict})
+	wantScope(err, issued)
+	if v, _ := get(form); v != 4 {
+		t.Fatalf("form = %d after issued-scope failure, want 4 (rolled back)", v)
+	}
+	if v, _ := get(issued); v != 5 {
+		t.Fatalf("issued = %d after issued-scope failure, want 5", v)
+	}
+
+	// form-scope failure: the issued scope would advance but must not
+	err = wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: form, Value: 3, Kind: CounterFloor},
+		CounterOp{Scope: issued, Value: 9, Kind: CounterStrict})
+	wantScope(err, form)
+	if v, _ := get(form); v != 4 {
+		t.Fatalf("form = %d after form-scope failure, want 4", v)
+	}
+	if v, _ := get(issued); v != 5 {
+		t.Fatalf("issued = %d after form-scope failure, want 5 (not written)", v)
+	}
+
+	// a floor-from min above the stored issued value refuses that scope
+	err = wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: form, Value: 8, Kind: CounterStrict},
+		CounterOp{Scope: issued, Value: 9, Kind: CounterFloorFrom, Min: 8})
+	wantScope(err, issued)
+	if v, _ := get(form); v != 4 {
+		t.Fatalf("form = %d after floor-from failure, want 4", v)
+	}
+
+	// both pass again, with strict on the form scope and an equal floor value
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: form, Value: 5, Kind: CounterStrict},
+		CounterOp{Scope: issued, Value: 5, Kind: CounterFloorFrom, Min: 5}); err != nil {
+		t.Fatalf("second commit: %v", err)
+	}
+	if v, _ := get(form); v != 5 {
+		t.Fatalf("form = %d, want 5", v)
+	}
+
+	// duplicate scopes and an empty list are refused without writing
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: form, Value: 9}, CounterOp{Scope: form, Value: 10}); err == nil || errors.Is(err, ErrCounterRegression) {
+		t.Fatalf("duplicate scopes: got %v, want a non-regression error", err)
+	}
+	if err := wm.CheckAndCommitCounters(ctx, key); err == nil {
+		t.Fatalf("no ops: want an error")
+	}
+	if v, _ := get(form); v != 5 {
+		t.Fatalf("form = %d after refused op lists, want 5", v)
+	}
+}
+
+func TestMemWatermark_CheckAndCommitCounters(t *testing.T) {
+	t.Parallel()
+	runCheckAndCommitCounters(t, NewMemWatermark(), backend.KeyHash{0xBD})
+}
+
+func TestSqliteWatermark_CheckAndCommitCounters(t *testing.T) {
+	t.Parallel()
+	wm, err := NewSqliteWatermark(filepath.Join(t.TempDir(), "wm.db"))
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	defer wm.Close()
+	runCheckAndCommitCounters(t, wm, backend.KeyHash{0xBD})
+}

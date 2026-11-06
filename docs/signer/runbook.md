@@ -284,6 +284,10 @@ mode it is logged and signed, and the record does not change. A key with no
 record (first use, or signed before this record existed) is not bounded until
 its next opcert.
 
+After signing, the request's own record (issue counter or floor) and this
+record are written in one database transaction. A request refused at either
+leaves both unchanged.
+
 If opcerts for the same cold key are also issued by another signer, this
 record falls behind. To clear it, stop opcert requests for the key on
 every signer instance and let in-flight requests finish, then delete the row

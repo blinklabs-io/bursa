@@ -428,3 +428,9 @@ func TestPostgres_PingHonorsCancellation(t *testing.T) {
 		t.Fatalf("Ping canceled context: want context.Canceled, got %v", err)
 	}
 }
+
+func TestPostgres_CheckAndCommitCounters(t *testing.T) {
+	t.Parallel()
+	// the CI database is shared across runs, so each run uses a fresh key
+	runCheckAndCommitCounters(t, newTestPG(t, testPGDSN(t)), randKey(t))
+}

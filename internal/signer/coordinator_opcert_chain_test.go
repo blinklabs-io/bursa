@@ -444,3 +444,98 @@ func TestSignOpCertFromChain_BelowIssuedWarnKeepsFloor(t *testing.T) {
 		t.Fatalf("floor = %d after a warned request, want none", v)
 	}
 }
+
+// raceOpCert runs first against a pausing store, lets second complete while
+// first is paused after its pre-sign checks, then releases first and returns
+// its outcome.
+func raceOpCert(t *testing.T, pw *pausingCounterWatermark, first, second func() (*OpCertResult, ErrorCode, error)) (*OpCertResult, ErrorCode, error) {
+	t.Helper()
+	var (
+		wg   sync.WaitGroup
+		res  *OpCertResult
+		code ErrorCode
+		err  error
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		res, code, err = first()
+	}()
+	<-pw.paused
+	if _, scode, serr := second(); serr != nil {
+		close(pw.release)
+		wg.Wait()
+		t.Fatalf("second request: %v (code=%s)", serr, scode)
+	}
+	close(pw.release)
+	wg.Wait()
+	return res, code, err
+}
+
+func requireNoRecord(t *testing.T, pw *pausingCounterWatermark, k *fakeKey, scope string) {
+	t.Helper()
+	if v, ok, err := pw.counter.CounterFor(context.Background(), k.hash, scope); err != nil || ok {
+		t.Fatalf("%s record = (%d, %v, %v) after a refused request, want none", scope, v, ok, err)
+	}
+}
+
+// An issue_counter request refused at the issued record must not leave its own
+// record behind.
+func TestSignOpCert_ConcurrentChainIssuedLeavesNoIssueRecord(t *testing.T) {
+	t.Parallel()
+	c, pw, k := newPausingOpCert(t, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	res, code, err := raceOpCert(t, pw,
+		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 9, 100, k.hash.String()) },
+		func() (*OpCertResult, ErrorCode, error) {
+			return c.SignOpCertFromChain(ctx, kes, 8, 101, k.hash.String())
+		})
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("issue 9 racing chain 8: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+	}
+	requireNoRecord(t, pw, k, opcertCounterScope)
+	if res, code, err := c.SignOpCert(ctx, kes, 10, 102, k.hash.String()); err != nil || res == nil {
+		t.Fatalf("issue 10 after the refused request: res=%v code=%s err=%v", res, code, err)
+	}
+}
+
+// A chain_counter request refused at the issued record must not leave its
+// floor behind: a floor above the issued record locks out every renewal.
+func TestSignOpCertFromChain_ConcurrentFirstIssueBelowLeavesNoFloor(t *testing.T) {
+	t.Parallel()
+	c, pw, k := newPausingOpCert(t, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	res, code, err := raceOpCert(t, pw,
+		func() (*OpCertResult, ErrorCode, error) {
+			return c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
+		},
+		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 5, 101, k.hash.String()) })
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+	}
+	requireNoRecord(t, pw, k, opcertChainFloorScope)
+	if res, code, err := c.SignOpCertFromChain(ctx, kes, 5, 102, k.hash.String()); err != nil || res == nil {
+		t.Fatalf("chain 5 after the refused request: res=%v code=%s err=%v", res, code, err)
+	}
+}
+
+func TestSignOpCertFromChain_ConcurrentIssueAboveLeavesNoFloor(t *testing.T) {
+	t.Parallel()
+	c, pw, k := newPausingOpCert(t, watermark.ModeEnforce)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	res, code, err := raceOpCert(t, pw,
+		func() (*OpCertResult, ErrorCode, error) {
+			return c.SignOpCertFromChain(ctx, kes, 8, 100, k.hash.String())
+		},
+		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 10, 101, k.hash.String()) })
+	if code != CodeConflict || err == nil || res != nil {
+		t.Fatalf("chain 8 racing issue 10: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+	}
+	requireNoRecord(t, pw, k, opcertChainFloorScope)
+}
