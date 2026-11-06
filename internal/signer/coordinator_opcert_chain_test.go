@@ -697,3 +697,42 @@ func TestSignOpCertFromChain_ConcurrentIssueAboveLeavesNoFloor(t *testing.T) {
 	}
 	requireNoRecord(t, pw, k, opcertChainFloorScope)
 }
+
+// Warn mode returns the signature of a chain_counter request refused at the
+// issued record at commit, but leaves its floor unwritten, as it does when the
+// pre-sign check finds the conflict.
+func TestSignOpCertFromChain_ConcurrentFirstIssueBelowWarnLeavesNoFloor(
+	t *testing.T,
+) {
+	t.Parallel()
+	c, pw, k := newPausingOpCert(t, watermark.ModeWarn)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	res, code, err := raceOpCert(
+		t,
+		pw,
+		func() (*OpCertResult, ErrorCode, error) {
+			return c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
+		},
+		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 5, 101, k.hash.String()) },
+	)
+	if err != nil || res == nil {
+		t.Fatalf(
+			"chain 20 racing issue 5 in warn mode: res=%v code=%s err=%v, want a signature",
+			res,
+			code,
+			err,
+		)
+	}
+	requireNoRecord(t, pw, k, opcertChainFloorScope)
+	if res, code, err := c.SignOpCertFromChain(ctx, kes, 5, 102, k.hash.String()); err != nil ||
+		res == nil {
+		t.Fatalf(
+			"chain 5 after the warned request: res=%v code=%s err=%v",
+			res,
+			code,
+			err,
+		)
+	}
+}

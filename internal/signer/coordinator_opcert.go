@@ -703,22 +703,8 @@ func (c *Coordinator) signOpCert(
 				"reason",
 				"issued counter regression detected at commit (concurrent signer; warn mode)",
 			)
-			// warn mode returns the signature, and the form record still
-			// advances as it does for a request with no issued record
-			if ferr := rule.commit(ctx, counterWM, hash); ferr != nil &&
-				!errors.Is(ferr, watermark.ErrCounterRegression) {
-				c.deps.Logger.Error(
-					"sign",
-					"type",
-					"opcert",
-					"caller-key",
-					hash.String(),
-					"result",
-					"error",
-					"reason",
-					ferr.Error(),
-				)
-			}
+			// warn mode returns the signature and writes neither record, as
+			// when the pre-sign check finds the issued-record conflict
 		case errors.Is(werr, watermark.ErrCounterRegression):
 			if c.deps.WMMode == watermark.ModeEnforce {
 				c.deps.Logger.Info(
