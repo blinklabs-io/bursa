@@ -193,7 +193,11 @@ func TestFileStoreListWalletsReleasesStoreLockBeforeLoading(t *testing.T) {
 	// writer must be able to acquire the store lock at this handoff.
 	writeLockAcquired := <-writeLockAvailable
 	close(continueLoading)
-	require.True(t, writeLockAcquired, "ListWallets retained the store read lock")
+	require.True(
+		t,
+		writeLockAcquired,
+		"ListWallets retained the store read lock",
+	)
 
 	select {
 	case err := <-listDone:
@@ -312,7 +316,10 @@ func TestFileStoreGetWalletRejectsSymlinkedWalletFile(t *testing.T) {
 		[]byte(`{"items":{"secret":"value"}}`),
 		0o600,
 	))
-	require.NoError(t, os.Symlink(target, filepath.Join(walletDir, "wallet.json")))
+	require.NoError(
+		t,
+		os.Symlink(target, filepath.Join(walletDir, "wallet.json")),
+	)
 
 	_, err := store.GetWallet(context.Background(), "linked-file")
 	require.Error(t, err)

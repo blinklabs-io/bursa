@@ -64,6 +64,8 @@ func TestNextOpCert(t *testing.T) {
 func TestOpCertRefusalText(t *testing.T) {
 	if errBelowFloor.Error() != "chain counter below the recorded on-chain counter" ||
 		errAboveIssued.Error() != "chain counter above the last counter the device issued" {
-		t.Fatal("opcert-next refusal text changed; update the host's attested backend")
+		t.Fatal(
+			"opcert-next refusal text changed; update the host's attested backend",
+		)
 	}
 }

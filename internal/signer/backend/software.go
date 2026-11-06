@@ -58,7 +58,10 @@ func NewSoftwareBackend(name string) *SoftwareBackend {
 
 // AddKey registers a loaded key and returns its key hash. Extended keys are
 // detected by a 96-byte signing key.
-func (b *SoftwareBackend) AddKey(lk *bursa.LoadedKey, typ KeyType) (KeyHash, error) {
+func (b *SoftwareBackend) AddKey(
+	lk *bursa.LoadedKey,
+	typ KeyType,
+) (KeyHash, error) {
 	if !typ.Valid() {
 		return KeyHash{}, fmt.Errorf("invalid key type %q", typ)
 	}
@@ -67,7 +70,10 @@ func (b *SoftwareBackend) AddKey(lk *bursa.LoadedKey, typ KeyType) (KeyHash, err
 		return KeyHash{}, fmt.Errorf("failed to derive public key: %w", err)
 	}
 	if len(pub) != 32 {
-		return KeyHash{}, fmt.Errorf("expected 32-byte public key, got %d", len(pub))
+		return KeyHash{}, fmt.Errorf(
+			"expected 32-byte public key, got %d",
+			len(pub),
+		)
 	}
 	hash := HashPublicKey(pub)
 	k := &softwareKey{
@@ -81,7 +87,11 @@ func (b *SoftwareBackend) AddKey(lk *bursa.LoadedKey, typ KeyType) (KeyHash, err
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, exists := b.keys[hash]; exists {
-		return KeyHash{}, fmt.Errorf("key hash %s already exists in backend %q", hash, b.name)
+		return KeyHash{}, fmt.Errorf(
+			"key hash %s already exists in backend %q",
+			hash,
+			b.name,
+		)
 	}
 	b.keys[hash] = k
 	return hash, nil
@@ -89,7 +99,10 @@ func (b *SoftwareBackend) AddKey(lk *bursa.LoadedKey, typ KeyType) (KeyHash, err
 
 func (b *SoftwareBackend) Name() string { return b.name }
 
-func (b *SoftwareBackend) GetKey(_ context.Context, hash KeyHash) (KeyRef, error) {
+func (b *SoftwareBackend) GetKey(
+	_ context.Context,
+	hash KeyHash,
+) (KeyRef, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	k, ok := b.keys[hash]

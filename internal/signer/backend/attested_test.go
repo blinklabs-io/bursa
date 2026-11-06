@@ -66,7 +66,13 @@ func newFakeEnclave(t *testing.T, roles ...KeyType) *fakeEnclave {
 func (e *fakeEnclave) infos() []AttestedKeyInfo {
 	var out []AttestedKeyInfo
 	for _, k := range e.keys {
-		out = append(out, AttestedKeyInfo{Role: k.role, PublicKey: k.priv.Public().(ed25519.PublicKey)})
+		out = append(
+			out,
+			AttestedKeyInfo{
+				Role:      k.role,
+				PublicKey: k.priv.Public().(ed25519.PublicKey),
+			},
+		)
 	}
 	return out
 }
@@ -75,7 +81,10 @@ func (e *fakeEnclave) hashOf(i int) KeyHash {
 	return HashPublicKey(e.keys[i].priv.Public().(ed25519.PublicKey))
 }
 
-func (e *fakeEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInventory, error) {
+func (e *fakeEnclave) Inventory(
+	ctx context.Context,
+	nonce []byte,
+) (AttestedInventory, error) {
 	if e.inventoryFn != nil {
 		return e.inventoryFn(ctx, nonce)
 	}
@@ -83,9 +92,11 @@ func (e *fakeEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 	defer e.mu.Unlock()
 	keys := e.infos()
 	inv := AttestedInventory{
-		Version:     AttestedProtocol,
-		Keys:        keys,
-		Attestation: []byte("evidence:" + hex.EncodeToString(InventoryBinding(nonce, keys))),
+		Version: AttestedProtocol,
+		Keys:    keys,
+		Attestation: []byte(
+			"evidence:" + hex.EncodeToString(InventoryBinding(nonce, keys)),
+		),
 	}
 	if e.tamperInv != nil {
 		e.tamperInv(nonce, &inv)
@@ -93,7 +104,10 @@ func (e *fakeEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 	return inv, nil
 }
 
-func (e *fakeEnclave) Sign(_ context.Context, req AttestedRequest) (AttestedResponse, error) {
+func (e *fakeEnclave) Sign(
+	_ context.Context,
+	req AttestedRequest,
+) (AttestedResponse, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.signCalls++
@@ -112,7 +126,10 @@ func (e *fakeEnclave) Sign(_ context.Context, req AttestedRequest) (AttestedResp
 	return resp, nil
 }
 
-func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) AttestedResponse {
+func (e *fakeEnclave) signLocked(
+	req AttestedRequest,
+	resp AttestedResponse,
+) AttestedResponse {
 	for _, k := range e.keys {
 		pub := k.priv.Public().(ed25519.PublicKey)
 		if HashPublicKey(pub).String() != req.KeyHash {
@@ -140,7 +157,10 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 			resp.Signature = ed25519.Sign(k.priv, signable)
 			resp.IssueCounter = &issue
 			if req.Profile != "" {
-				resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature, ""))
+				resp.BindingSignature = ed25519.Sign(
+					k.priv,
+					AttestedResponseBinding(req, resp.Signature, ""),
+				)
 			}
 			return resp
 		}
@@ -151,7 +171,10 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 		}
 		resp.Signature = ed25519.Sign(k.priv, signed)
 		if req.Profile != "" {
-			resp.BindingSignature = ed25519.Sign(k.priv, AttestedResponseBinding(req, resp.Signature, ""))
+			resp.BindingSignature = ed25519.Sign(
+				k.priv,
+				AttestedResponseBinding(req, resp.Signature, ""),
+			)
 		}
 		return resp
 	}
@@ -163,7 +186,10 @@ func (e *fakeEnclave) signLocked(req AttestedRequest, resp AttestedResponse) Att
 // the binding it is asked about.
 type stubVerifier struct{ reject error }
 
-func (v stubVerifier) Verify(_ context.Context, evidence, binding []byte) error {
+func (v stubVerifier) Verify(
+	_ context.Context,
+	evidence, binding []byte,
+) error {
 	if v.reject != nil {
 		return v.reject
 	}
@@ -202,14 +228,27 @@ func TestAttestedBackendResolvesByHashAndRole(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetKey %d: %v", i, err)
 		}
-		if ref.Type() != want || ref.Hash() != e.hashOf(i) || ref.Backend() != "enclave" || ref.Extended() {
-			t.Fatalf("key %d: type=%s hash=%s backend=%s", i, ref.Type(), ref.Hash(), ref.Backend())
+		if ref.Type() != want || ref.Hash() != e.hashOf(i) ||
+			ref.Backend() != "enclave" ||
+			ref.Extended() {
+			t.Fatalf(
+				"key %d: type=%s hash=%s backend=%s",
+				i,
+				ref.Type(),
+				ref.Hash(),
+				ref.Backend(),
+			)
 		}
 		if _, ok := ref.(LoadedKeyProvider); ok {
-			t.Fatalf("attested key must not expose private key material in process")
+			t.Fatalf(
+				"attested key must not expose private key material in process",
+			)
 		}
 	}
-	if _, err := b.GetKey(context.Background(), KeyHash{1}); !errors.Is(err, ErrKeyNotFound) {
+	if _, err := b.GetKey(context.Background(), KeyHash{1}); !errors.Is(
+		err,
+		ErrKeyNotFound,
+	) {
 		t.Fatalf("unknown hash: got %v, want ErrKeyNotFound", err)
 	}
 	refs, err := b.ListKeys(context.Background())
@@ -227,13 +266,25 @@ func TestAttestedBackendLoadFailsClosed(t *testing.T) {
 		verifier AttestationVerifier
 		wantErr  error
 	}{
-		{"verifier rejects", func(*fakeEnclave) {}, stubVerifier{reject: errors.New("debug enclave")}, ErrAttestation},
+		{
+			"verifier rejects",
+			func(*fakeEnclave) {},
+			stubVerifier{reject: errors.New("debug enclave")},
+			ErrAttestation,
+		},
 		{"missing evidence", func(e *fakeEnclave) {
 			e.tamperInv = func(_ []byte, inv *AttestedInventory) { inv.Attestation = nil }
 		}, stubVerifier{}, ErrAttestation},
 		{"evidence for another nonce", func(e *fakeEnclave) {
 			e.tamperInv = func(_ []byte, inv *AttestedInventory) {
-				inv.Attestation = []byte("evidence:" + hex.EncodeToString(InventoryBinding(make([]byte, attestedNonceSize), inv.Keys)))
+				inv.Attestation = []byte(
+					"evidence:" + hex.EncodeToString(
+						InventoryBinding(
+							make([]byte, attestedNonceSize),
+							inv.Keys,
+						),
+					),
+				)
 			}
 		}, stubVerifier{}, ErrAttestation},
 		{"key list swapped after attestation", func(e *fakeEnclave) {
@@ -245,18 +296,34 @@ func TestAttestedBackendLoadFailsClosed(t *testing.T) {
 		{"wrong protocol version", func(e *fakeEnclave) {
 			e.tamperInv = func(_ []byte, inv *AttestedInventory) { inv.Version = "bursa-attested-signer/0" }
 		}, stubVerifier{}, ErrAttestedProtocol},
-		{"unknown role", func(e *fakeEnclave) { e.keys[0].role = "root" }, stubVerifier{}, ErrAttestedProtocol},
+		{
+			"unknown role",
+			func(e *fakeEnclave) { e.keys[0].role = "root" },
+			stubVerifier{},
+			ErrAttestedProtocol,
+		},
 		{"short public key", func(e *fakeEnclave) {
 			e.inventoryFn = func(_ context.Context, nonce []byte) (AttestedInventory, error) {
-				keys := []AttestedKeyInfo{{Role: KeyTypePool, PublicKey: []byte{1, 2, 3}}}
+				keys := []AttestedKeyInfo{
+					{Role: KeyTypePool, PublicKey: []byte{1, 2, 3}},
+				}
 				return AttestedInventory{
-					Version:     AttestedProtocol,
-					Keys:        keys,
-					Attestation: []byte("evidence:" + hex.EncodeToString(InventoryBinding(nonce, keys))),
+					Version: AttestedProtocol,
+					Keys:    keys,
+					Attestation: []byte(
+						"evidence:" + hex.EncodeToString(
+							InventoryBinding(nonce, keys),
+						),
+					),
 				}, nil
 			}
 		}, stubVerifier{}, ErrAttestedProtocol},
-		{"duplicate key", func(e *fakeEnclave) { e.keys = append(e.keys, e.keys[0]) }, stubVerifier{}, ErrAttestedProtocol},
+		{
+			"duplicate key",
+			func(e *fakeEnclave) { e.keys = append(e.keys, e.keys[0]) },
+			stubVerifier{},
+			ErrAttestedProtocol,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -268,7 +335,10 @@ func TestAttestedBackendLoadFailsClosed(t *testing.T) {
 				t.Fatalf("Load: got %v, want %v", err, tc.wantErr)
 			}
 			if refs, _ := b.ListKeys(ctx); len(refs) != 0 {
-				t.Fatalf("failed attestation left %d keys in service", len(refs))
+				t.Fatalf(
+					"failed attestation left %d keys in service",
+					len(refs),
+				)
 			}
 		})
 	}
@@ -290,7 +360,10 @@ func TestAttestedBackendReloadReplacesKeys(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 	// A handle resolved before the reload no longer signs.
-	if _, err := SignFor(ctx, held, PurposeOpCert, make([]byte, opCertSignableSize)); !errors.Is(err, ErrKeyNotFound) {
+	if _, err := SignFor(ctx, held, PurposeOpCert, make([]byte, opCertSignableSize)); !errors.Is(
+		err,
+		ErrKeyNotFound,
+	) {
 		t.Fatalf("handle from before reload: got %v, want ErrKeyNotFound", err)
 	}
 	current := mustKey(t, b, e.hashOf(0))
@@ -309,8 +382,14 @@ func TestAttestedBackendReloadReplacesKeys(t *testing.T) {
 	if _, err := b.GetKey(ctx, e.hashOf(0)); !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("key still served after failed re-attestation: %v", err)
 	}
-	if _, err := SignFor(ctx, current, PurposeTxHash, make([]byte, txHashSize)); !errors.Is(err, ErrKeyNotFound) {
-		t.Fatalf("handle signed after failed re-attestation: got %v, want ErrKeyNotFound", err)
+	if _, err := SignFor(ctx, current, PurposeTxHash, make([]byte, txHashSize)); !errors.Is(
+		err,
+		ErrKeyNotFound,
+	) {
+		t.Fatalf(
+			"handle signed after failed re-attestation: got %v, want ErrKeyNotFound",
+			err,
+		)
 	}
 }
 
@@ -353,7 +432,12 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newFakeEnclave(t, KeyTypePayment)
-	b := NewProfiledAttestedBackend("enclave", "pool@mainnet", e, stubVerifier{})
+	b := NewProfiledAttestedBackend(
+		"enclave",
+		"pool@mainnet",
+		e,
+		stubVerifier{},
+	)
 	if err := b.Load(ctx); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -375,10 +459,16 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 	e.mu.Lock()
 	e.tamperResp = func(req AttestedRequest, resp *AttestedResponse) {
 		req.Profile = "substituted-profile"
-		resp.BindingSignature = ed25519.Sign(e.keys[0].priv, AttestedResponseBinding(req, resp.Signature, ""))
+		resp.BindingSignature = ed25519.Sign(
+			e.keys[0].priv,
+			AttestedResponseBinding(req, resp.Signature, ""),
+		)
 	}
 	e.mu.Unlock()
-	if _, _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
+	if _, _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(
+		err,
+		ErrInvalidSignature,
+	) {
 		t.Fatalf("substituted profile: got %v, want ErrInvalidSignature", err)
 	}
 
@@ -388,7 +478,10 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 		resp.Signature = ed25519.Sign(e.keys[0].priv, other[:])
 	}
 	e.mu.Unlock()
-	if _, _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(err, ErrInvalidSignature) {
+	if _, _, err := SignTxFor(ctx, ref, body, 6, hash[:]); !errors.Is(
+		err,
+		ErrInvalidSignature,
+	) {
 		t.Fatalf("substituted body: got %v, want ErrInvalidSignature", err)
 	}
 
@@ -402,7 +495,12 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 func TestAttestedKeySendsFixedProfileAndEra(t *testing.T) {
 	t.Parallel()
 	e := newFakeEnclave(t, KeyTypePayment)
-	b := NewProfiledAttestedBackend("enclave", "pool@preview", e, stubVerifier{})
+	b := NewProfiledAttestedBackend(
+		"enclave",
+		"pool@preview",
+		e,
+		stubVerifier{},
+	)
 	if err := b.Load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -447,18 +545,30 @@ func TestAttestedKeyRefusesBeforeContactingEnclave(t *testing.T) {
 		{"cip8 empty payload", pay, PurposeCIP8, nil},
 		{"unknown purpose", pay, "kes", make([]byte, 32)},
 	} {
-		if _, err := tc.key.(PurposeSigner).SignPurpose(ctx, tc.purpose, tc.payload); !errors.Is(err, ErrAttestedProtocol) {
+		if _, err := tc.key.(PurposeSigner).SignPurpose(ctx, tc.purpose, tc.payload); !errors.Is(
+			err,
+			ErrAttestedProtocol,
+		) {
 			t.Fatalf("%s: got %v, want ErrAttestedProtocol", tc.name, err)
 		}
 	}
 	if e.signCalls != 0 {
-		t.Fatalf("enclave was contacted %d times for refused requests", e.signCalls)
+		t.Fatalf(
+			"enclave was contacted %d times for refused requests",
+			e.signCalls,
+		)
 	}
-	if _, _, err := pay.(TxBodySigner).SignTxBody(ctx, nil, 6); !errors.Is(err, ErrAttestedProtocol) {
+	if _, _, err := pay.(TxBodySigner).SignTxBody(ctx, nil, 6); !errors.Is(
+		err,
+		ErrAttestedProtocol,
+	) {
 		t.Fatalf("empty tx body: got %v, want ErrAttestedProtocol", err)
 	}
 	if e.signCalls != 0 {
-		t.Fatalf("enclave was contacted %d times for an empty tx body", e.signCalls)
+		t.Fatalf(
+			"enclave was contacted %d times for an empty tx body",
+			e.signCalls,
+		)
 	}
 }
 
@@ -483,7 +593,11 @@ func TestAttestedKeyRejectsBadEnclaveResponses(t *testing.T) {
 			e := newFakeEnclave(t, KeyTypePayment)
 			e.tamperResp = tc.tamper
 			ref := mustKey(t, loadAttested(t, e), e.hashOf(0))
-			_, err := ref.(PurposeSigner).SignPurpose(ctx, PurposeTxHash, make([]byte, 32))
+			_, err := ref.(PurposeSigner).SignPurpose(
+				ctx,
+				PurposeTxHash,
+				make([]byte, 32),
+			)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -507,12 +621,21 @@ func TestProfiledAttestedKeyRequiresBindingSignature(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newFakeEnclave(t, KeyTypePayment)
 			e.tamperResp = func(_ AttestedRequest, resp *AttestedResponse) { tc.tamper(resp) }
-			b := NewProfiledAttestedBackend("enclave", "profile-a", e, stubVerifier{})
+			b := NewProfiledAttestedBackend(
+				"enclave",
+				"profile-a",
+				e,
+				stubVerifier{},
+			)
 			if err := b.Load(t.Context()); err != nil {
 				t.Fatalf("Load: %v", err)
 			}
 			ref := mustKey(t, b, e.hashOf(0))
-			_, err := ref.(PurposeSigner).SignPurpose(t.Context(), PurposeTxHash, make([]byte, txHashSize))
+			_, err := ref.(PurposeSigner).SignPurpose(
+				t.Context(),
+				PurposeTxHash,
+				make([]byte, txHashSize),
+			)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
@@ -545,7 +668,8 @@ func TestSignFor(t *testing.T) {
 	}
 
 	plain := &plainKey{}
-	if _, err := SignFor(ctx, plain, PurposeTxHash, []byte("x")); err != nil || !plain.signed {
+	if _, err := SignFor(ctx, plain, PurposeTxHash, []byte("x")); err != nil ||
+		!plain.signed {
 		t.Fatalf("SignFor plain key did not fall back to Sign: %v", err)
 	}
 	txHash := bytes.Repeat([]byte{7}, txHashSize)
@@ -553,7 +677,11 @@ func TestSignFor(t *testing.T) {
 		t.Fatalf("SignTxFor plain key: %v", err)
 	}
 	if !bytes.Equal(plain.payload, txHash) {
-		t.Fatalf("plain key payload = %x, want tx hash %x", plain.payload, txHash)
+		t.Fatalf(
+			"plain key payload = %x, want tx hash %x",
+			plain.payload,
+			txHash,
+		)
 	}
 }
 

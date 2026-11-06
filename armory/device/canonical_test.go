@@ -58,12 +58,21 @@ func TestCanonicalRequestBindsKeyByDigest(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 
-		if bytes.Contains(canonical, []byte(keyHex)) || bytes.Contains(canonical, raw) {
-			t.Errorf("%s: canonical request carries the key: %s", name, canonical)
+		if bytes.Contains(canonical, []byte(keyHex)) ||
+			bytes.Contains(canonical, raw) {
+			t.Errorf(
+				"%s: canonical request carries the key: %s",
+				name,
+				canonical,
+			)
 		}
 
 		if !bytes.Contains(canonical, []byte(digest)) {
-			t.Errorf("%s: canonical request lacks the key digest: %s", name, canonical)
+			t.Errorf(
+				"%s: canonical request lacks the key digest: %s",
+				name,
+				canonical,
+			)
 		}
 
 		var got secretHex
@@ -96,7 +105,10 @@ func TestAdminSignatureBindsKey(t *testing.T) {
 			return ColdRequest{ColdKeyID: testColdID + 1, SigningKey: hexKey(k)}
 		}},
 		"owner provision": {RouteProvisionProfile, func(k string) any {
-			return ProvisionRequest{Name: "otg@preview", OwnerSigningKey: hexKey(k)}
+			return ProvisionRequest{
+				Name:            "otg@preview",
+				OwnerSigningKey: hexKey(k),
+			}
 		}},
 	}
 
@@ -117,7 +129,12 @@ func TestAdminSignatureBindsKey(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			signed, err := SignAdminRequest(tc.route, jsonOf(t, tc.mk(keyA)), testHostKey, ch.Challenge)
+			signed, err := SignAdminRequest(
+				tc.route,
+				jsonOf(t, tc.mk(keyA)),
+				testHostKey,
+				ch.Challenge,
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

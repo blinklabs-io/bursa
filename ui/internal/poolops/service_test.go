@@ -64,7 +64,11 @@ func newSeedService(t *testing.T) (*Service, *wallet.Account) {
 	if err != nil {
 		t.Fatalf("derive account: %v", err)
 	}
-	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	ks := &fakeKeystore{
+		mnemonic: testMnemonic,
+		password: "spend-password",
+		exists:   true,
+	}
 	s := NewService(nil, ks, fakeGenesis{}, fakeTip{slot: 259200})
 	s.SetAccount("test-wallet-id", acct)
 	return s, acct
@@ -82,7 +86,11 @@ func (f fakeGenesis) Genesis(_ context.Context) (Genesis, error) {
 	if f.genesis != nil {
 		return *f.genesis, nil
 	}
-	return Genesis{SlotsPerKESPeriod: 129600, MaxKESEvolutions: 62, EpochLength: 432000}, nil
+	return Genesis{
+		SlotsPerKESPeriod: 129600,
+		MaxKESEvolutions:  62,
+		EpochLength:       432000,
+	}, nil
 }
 
 type fakeTip struct{ slot uint64 }
@@ -135,7 +143,9 @@ type retirementFakeChain struct {
 
 func newRetirementFakeChain(addr string, lovelace uint64) *retirementFakeChain {
 	var h lcommon.Blake2b256
-	b, _ := hex.DecodeString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	b, _ := hex.DecodeString(
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+	)
 	copy(h[:], b)
 
 	fc := &retirementFakeChain{
@@ -150,17 +160,30 @@ func newRetirementFakeChain(addr string, lovelace uint64) *retirementFakeChain {
 		},
 		submitHash: h,
 	}
-	fc.addUTxO(addr, lovelace, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", 0)
+	fc.addUTxO(
+		addr,
+		lovelace,
+		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		0,
+	)
 	return fc
 }
 
-func (fc *retirementFakeChain) addUTxO(addrStr string, lovelace uint64, txHashHex string, outIdx uint32) {
+func (fc *retirementFakeChain) addUTxO(
+	addrStr string,
+	lovelace uint64,
+	txHashHex string,
+	outIdx uint32,
+) {
 	var txID lcommon.Blake2b256
 	b, _ := hex.DecodeString(txHashHex)
 	copy(txID[:], b)
 	addr, _ := lcommon.NewAddress(addrStr)
 	fc.utxos[addrStr] = append(fc.utxos[addrStr], lcommon.Utxo{
-		Id:     shelley.ShelleyTransactionInput{TxId: txID, OutputIndex: outIdx},
+		Id: shelley.ShelleyTransactionInput{
+			TxId:        txID,
+			OutputIndex: outIdx,
+		},
 		Output: &retirementFakeOutput{address: addr, lovelace: lovelace},
 	})
 }
@@ -183,7 +206,9 @@ func (fc *retirementFakeChain) MaxTxFee() (uint64, error) {
 
 func (fc *retirementFakeChain) Tip() (uint64, error) { return 10_000_000, nil }
 
-func (fc *retirementFakeChain) Utxos(address lcommon.Address) ([]lcommon.Utxo, error) {
+func (fc *retirementFakeChain) Utxos(
+	address lcommon.Address,
+) ([]lcommon.Utxo, error) {
 	return fc.utxos[address.String()], nil
 }
 
@@ -192,11 +217,17 @@ func (fc *retirementFakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
 	return fc.submitHash, nil
 }
 
-func (fc *retirementFakeChain) EvaluateTx([]byte, []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+func (fc *retirementFakeChain) EvaluateTx(
+	[]byte,
+	[]lcommon.Utxo,
+) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
 
-func (fc *retirementFakeChain) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+func (fc *retirementFakeChain) UtxoByRef(
+	txHash lcommon.Blake2b256,
+	index uint32,
+) (*lcommon.Utxo, error) {
 	for _, utxos := range fc.utxos {
 		for _, u := range utxos {
 			if u.Id.Id() == txHash && u.Id.Index() == index {
@@ -218,17 +249,26 @@ type retirementFakeOutput struct {
 }
 
 func (o *retirementFakeOutput) Address() lcommon.Address { return o.address }
-func (o *retirementFakeOutput) Amount() *big.Int         { return new(big.Int).SetUint64(o.lovelace) }
+
+func (o *retirementFakeOutput) Amount() *big.Int { return new(big.Int).SetUint64(o.lovelace) }
+
 func (o *retirementFakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
 	return nil
 }
-func (o *retirementFakeOutput) Datum() *lcommon.Datum               { return nil }
-func (o *retirementFakeOutput) DatumHash() *lcommon.Blake2b256      { return nil }
-func (o *retirementFakeOutput) Cbor() []byte                        { return nil }
+
+func (o *retirementFakeOutput) Datum() *lcommon.Datum { return nil }
+
+func (o *retirementFakeOutput) DatumHash() *lcommon.Blake2b256 { return nil }
+
+func (o *retirementFakeOutput) Cbor() []byte { return nil }
+
 func (o *retirementFakeOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
-func (o *retirementFakeOutput) ScriptRef() lcommon.Script           { return nil }
-func (o *retirementFakeOutput) ToPlutusData() data.PlutusData       { return nil }
-func (o *retirementFakeOutput) String() string                      { return o.address.String() }
+
+func (o *retirementFakeOutput) ScriptRef() lcommon.Script { return nil }
+
+func (o *retirementFakeOutput) ToPlutusData() data.PlutusData { return nil }
+
+func (o *retirementFakeOutput) String() string { return o.address.String() }
 
 // TestServiceCredentials checks credential derivation through the keystore and
 // the wrong-password and no-wallet error paths.
@@ -262,7 +302,9 @@ func TestServiceWalletBoundUnlockRequiresUnlockFor(t *testing.T) {
 	s.SetAccount("wallet-a", acct)
 
 	if _, err := s.Credentials("pw"); err == nil {
-		t.Fatal("Credentials with wallet-bound generic keystore succeeded, want error")
+		t.Fatal(
+			"Credentials with wallet-bound generic keystore succeeded, want error",
+		)
 	} else if !strings.Contains(err.Error(), "UnlockFor") {
 		t.Fatalf("Credentials error = %v, want UnlockFor support error", err)
 	}
@@ -300,10 +342,16 @@ func TestServiceCredentialsUseWalletBoundSeed(t *testing.T) {
 		t.Fatalf("derive other credentials: %v", err)
 	}
 	if creds.PoolID != want.PoolID {
-		t.Fatalf("pool ID = %q, want wallet-bound %q", creds.PoolID, want.PoolID)
+		t.Fatalf(
+			"pool ID = %q, want wallet-bound %q",
+			creds.PoolID,
+			want.PoolID,
+		)
 	}
 	if creds.PoolID == other.PoolID {
-		t.Fatal("pool ID matched generic unlock mnemonic; wallet-bound seed was not used")
+		t.Fatal(
+			"pool ID matched generic unlock mnemonic; wallet-bound seed was not used",
+		)
 	}
 	if ks.unlockCalls != 0 {
 		t.Fatalf("generic Unlock calls = %d, want 0", ks.unlockCalls)
@@ -328,7 +376,12 @@ func TestServiceKESPeriod(t *testing.T) {
 		t.Fatalf("genesis passthrough wrong: %+v", info)
 	}
 
-	bad := NewService(nil, &fakeKeystore{}, fakeGenesis{err: errors.New("boom")}, fakeTip{})
+	bad := NewService(
+		nil,
+		&fakeKeystore{},
+		fakeGenesis{err: errors.New("boom")},
+		fakeTip{},
+	)
 	if _, err := bad.KESPeriod(context.Background()); err == nil {
 		t.Fatal("expected KESPeriod error when genesis fails")
 	}
@@ -340,7 +393,12 @@ func TestServiceKESPeriodRejectsNegativeGenesis(t *testing.T) {
 		{SlotsPerKESPeriod: 129600, MaxKESEvolutions: -1},
 	}
 	for _, g := range cases {
-		s := NewService(nil, &fakeKeystore{}, fakeGenesis{genesis: &g}, fakeTip{slot: 1})
+		s := NewService(
+			nil,
+			&fakeKeystore{},
+			fakeGenesis{genesis: &g},
+			fakeTip{slot: 1},
+		)
 		if _, err := s.KESPeriod(context.Background()); err == nil {
 			t.Fatalf("KESPeriod(%+v) expected error", g)
 		}
@@ -362,7 +420,11 @@ func TestServiceIssueOpCert(t *testing.T) {
 		t.Fatalf("IssueOpCert: %v", err)
 	}
 	if opcert.IssueNumber != 5 || opcert.KesPeriod != 2 {
-		t.Fatalf("issue/period = %d/%d, want 5/2", opcert.IssueNumber, opcert.KesPeriod)
+		t.Fatalf(
+			"issue/period = %d/%d, want 5/2",
+			opcert.IssueNumber,
+			opcert.KesPeriod,
+		)
 	}
 	// The opcert ColdSignature must verify against the cold vkey over the
 	// OCertSignable representation (kesVkey || issue || period, counters
@@ -374,7 +436,10 @@ func TestServiceIssueOpCert(t *testing.T) {
 		t.Fatal("issued opcert does not verify against the cold vkey")
 	}
 
-	if _, err := s.IssueOpCert("wrong", 0, 5, 2); !errors.Is(err, ErrWrongPassword) {
+	if _, err := s.IssueOpCert("wrong", 0, 5, 2); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("wrong password: got %v", err)
 	}
 }
@@ -387,7 +452,10 @@ func TestServiceRotateKES(t *testing.T) {
 		t.Fatalf("RotateKES: %v", err)
 	}
 	if rotated.IssueNumber != 4 {
-		t.Fatalf("rotated issue number = %d, want 4 (prev 3 + 1)", rotated.IssueNumber)
+		t.Fatalf(
+			"rotated issue number = %d, want 4 (prev 3 + 1)",
+			rotated.IssueNumber,
+		)
 	}
 	if rotated.KESIndex != 1 {
 		t.Fatalf("rotated KES index = %d, want 1", rotated.KESIndex)
@@ -398,7 +466,9 @@ func TestServiceRotateKES(t *testing.T) {
 		t.Fatalf("IssueOpCert: %v", err)
 	}
 	if rotated.KesVKeyHex == idx0.KesVKeyHex {
-		t.Fatal("rotated KES vkey equals index-0 vkey; rotation did not change keys")
+		t.Fatal(
+			"rotated KES vkey equals index-0 vkey; rotation did not change keys",
+		)
 	}
 }
 
@@ -425,7 +495,11 @@ func TestServiceRotateKESAcceptsMaxMinusOne(t *testing.T) {
 		t.Fatalf("RotateKES: %v", err)
 	}
 	if rotated.IssueNumber != math.MaxUint64 {
-		t.Fatalf("issue number = %d, want %d", rotated.IssueNumber, uint64(math.MaxUint64))
+		t.Fatalf(
+			"issue number = %d, want %d",
+			rotated.IssueNumber,
+			uint64(math.MaxUint64),
+		)
 	}
 }
 
@@ -453,7 +527,11 @@ func TestServiceRotateKESRejectionKeepsState(t *testing.T) {
 		t.Fatalf("IssueOpCert after rejection: %v", err)
 	}
 	if after != before {
-		t.Fatalf("certificate changed across a rejected rotation:\n before %+v\n after  %+v", before, after)
+		t.Fatalf(
+			"certificate changed across a rejected rotation:\n before %+v\n after  %+v",
+			before,
+			after,
+		)
 	}
 	walletIDAfter, acctAfter := s.currentBinding()
 	if walletIDAfter != walletID || acctAfter != acct {
@@ -470,7 +548,12 @@ func TestServiceBuildRegistrationFromSeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Credentials: %v", err)
 	}
-	p := RegistrationParams{Pledge: 1_000_000, Cost: 340_000_000, MarginNum: 1, MarginDenom: 50}
+	p := RegistrationParams{
+		Pledge:      1_000_000,
+		Cost:        340_000_000,
+		MarginNum:   1,
+		MarginDenom: 50,
+	}
 	res, err := s.BuildRegistrationFromSeed("spend-password", p)
 	if err != nil {
 		t.Fatalf("BuildRegistrationFromSeed: %v", err)
@@ -503,15 +586,25 @@ func TestServiceBuildRegistrationFromSeed(t *testing.T) {
 		t.Fatalf("stake address bytes: %v", err)
 	}
 	if !bytes.Equal(reward, wantBytes) {
-		t.Fatalf("reward account bytes mismatch: got %x, want %x", reward, wantBytes)
+		t.Fatalf(
+			"reward account bytes mismatch: got %x, want %x",
+			reward,
+			wantBytes,
+		)
 	}
 }
 
 func TestResolveRewardAccountRejectsNonRewardAddress(t *testing.T) {
 	s, acct := newSeedService(t)
-	_, err := s.resolveRewardAccount(RegistrationParams{RewardAddress: acct.ReceiveAddresses[0]}, acct)
+	_, err := s.resolveRewardAccount(
+		RegistrationParams{RewardAddress: acct.ReceiveAddresses[0]},
+		acct,
+	)
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("resolveRewardAccount base address error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"resolveRewardAccount base address error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 }
 
@@ -525,7 +618,10 @@ func TestBuildRegistrationRejectsMetadataHashWithoutURL(t *testing.T) {
 		MetadataHash: strings.Repeat("ab", 32),
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("BuildRegistrationFromSeed metadata hash without URL error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"BuildRegistrationFromSeed metadata hash without URL error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 }
 
@@ -564,7 +660,13 @@ func TestServicePoolIDFromColdVKey(t *testing.T) {
 		t.Fatalf("PoolIDFromColdVKey: %v", err)
 	}
 	if id != creds.PoolID || idHex != creds.PoolIDHex {
-		t.Fatalf("got id=%q hex=%q, want %q / %q", id, idHex, creds.PoolID, creds.PoolIDHex)
+		t.Fatalf(
+			"got id=%q hex=%q, want %q / %q",
+			id,
+			idHex,
+			creds.PoolID,
+			creds.PoolIDHex,
+		)
 	}
 }
 
@@ -574,7 +676,11 @@ func TestSubmitRetirementPadsFeeForFinalWitnesses(t *testing.T) {
 		t.Fatalf("derive account: %v", err)
 	}
 	chain := newRetirementFakeChain(acct.ReceiveAddresses[0], 5_000_000)
-	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	ks := &fakeKeystore{
+		mnemonic: testMnemonic,
+		password: "spend-password",
+		exists:   true,
+	}
 	s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
 	s.SetAccount("wallet-a", acct)
 
@@ -593,9 +699,18 @@ func TestSubmitRetirementPadsFeeForFinalWitnesses(t *testing.T) {
 	if _, err := cbor.Decode(chain.submitCbor, &tx); err != nil {
 		t.Fatalf("decode submitted tx: %v", err)
 	}
-	finalMinFee := uint64(int64(len(chain.submitCbor))*chain.pp.MinFeeCoefficient + chain.pp.MinFeeConstant) //nolint:gosec // test protocol params are non-negative and small
+	finalMinFee := uint64(
+		int64(
+			len(chain.submitCbor),
+		)*chain.pp.MinFeeCoefficient + chain.pp.MinFeeConstant,
+	) //nolint:gosec // test protocol params are non-negative and small
 	if tx.Body.TxFee < finalMinFee+retirementFeePaddingLovelace {
-		t.Fatalf("retirement fee = %d, want at least final min %d + padding %d", tx.Body.TxFee, finalMinFee, retirementFeePaddingLovelace)
+		t.Fatalf(
+			"retirement fee = %d, want at least final min %d + padding %d",
+			tx.Body.TxFee,
+			finalMinFee,
+			retirementFeePaddingLovelace,
+		)
 	}
 	if got := len(tx.WitnessSet.VkeyWitnesses.Items()); got != 2 {
 		t.Fatalf("vkey witness count = %d, want payment + cold witnesses", got)
@@ -613,7 +728,11 @@ func TestSubmitRetirementUsesDerivedChangeAddressUTxOs(t *testing.T) {
 	changeAddr := acct.ChangeAddresses[0]
 	acct.ChangeAddresses = nil // simulate older vault metadata without persisted change window
 	chain := newRetirementFakeChain(changeAddr, 5_000_000)
-	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	ks := &fakeKeystore{
+		mnemonic: testMnemonic,
+		password: "spend-password",
+		exists:   true,
+	}
 	s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
 	s.SetAccount("wallet-a", acct)
 

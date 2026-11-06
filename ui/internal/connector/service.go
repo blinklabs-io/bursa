@@ -26,7 +26,9 @@ var (
 	ErrInvalidParams       = errors.New("connector: invalid request params")
 	ErrInvalidOrigin       = errors.New("connector: invalid origin")
 	ErrTooManyPairings     = errors.New("connector: too many pending pairings")
-	ErrAddressUsageUnknown = errors.New("connector: address usage is unavailable")
+	ErrAddressUsageUnknown = errors.New(
+		"connector: address usage is unavailable",
+	)
 	// ErrInvalidExtensionID is defined in token.go.
 )
 
@@ -62,7 +64,11 @@ type Paginate struct {
 // Backend is the wallet capability interface that Phase 2 implements.
 type Backend interface {
 	NetworkID() int
-	Utxos(ctx context.Context, amount string, paginate *Paginate) ([]string, error)
+	Utxos(
+		ctx context.Context,
+		amount string,
+		paginate *Paginate,
+	) ([]string, error)
 	Balance(ctx context.Context) (string, error)
 	UsedAddresses(ctx context.Context, paginate *Paginate) ([]string, error)
 	UnusedAddresses(ctx context.Context) ([]string, error)
@@ -70,7 +76,12 @@ type Backend interface {
 	RewardAddresses(ctx context.Context) ([]string, error)
 	Collateral(ctx context.Context, amount string) ([]string, error)
 	InspectTx(ctx context.Context, txHex string) (spend.TxSummary, error)
-	SignTx(ctx context.Context, txHex string, partialSign bool, password string) (string, error)
+	SignTx(
+		ctx context.Context,
+		txHex string,
+		partialSign bool,
+		password string,
+	) (string, error)
 	SignData(addrHex, payloadHex, password string) (sig, key string, err error)
 	SubmitTx(ctx context.Context, txHex string) (string, error)
 	PubDRepKey(password string) (string, error)
@@ -111,7 +122,10 @@ func NewService(dir string, be Backend, networkPrompt func()) *Service {
 		return hex.EncodeToString(b), nil
 	}
 	return &Service{
-		tokens:    NewTokenStore(filepath.Join(dir, "connector-token.json"), nil),
+		tokens: NewTokenStore(
+			filepath.Join(dir, "connector-token.json"),
+			nil,
+		),
 		grants:    NewGrantStore(filepath.Join(dir, "connector-grants.json")),
 		queue:     NewQueue(time.Now, mkID, 120*time.Second),
 		be:        be,
@@ -140,7 +154,10 @@ func (s *Service) SetActiveAccount(walletID string, acct *wallet.Account) {
 
 	s.identity = accountIdentity{}
 	if walletID != "" && acct != nil {
-		s.identity = accountIdentity{WalletID: walletID, AccountIndex: acct.AccountIndex}
+		s.identity = accountIdentity{
+			WalletID:     walletID,
+			AccountIndex: acct.AccountIndex,
+		}
 	}
 	if rb, ok := s.be.(accountRebinder); ok {
 		rb.SetAccount(walletID, acct)
@@ -216,7 +233,9 @@ func (s *Service) BeginPair(extensionID string) (string, error) {
 	if err != nil {
 		// A CSPRNG failure is a fatal system condition; never fall back to a
 		// predictable code.
-		panic("connector: crypto/rand failure generating pair code: " + err.Error())
+		panic(
+			"connector: crypto/rand failure generating pair code: " + err.Error(),
+		)
 	}
 	code := fmt.Sprintf("%0*d", pairCodeDigits, n.Int64())
 	s.pairCodes[extensionID] = &pairEntry{code: code, created: s.now()}
@@ -338,7 +357,11 @@ func (s *Service) PendingPairings() []PendingPairing {
 // Handle is the primary dispatch method. It routes a CIP-30/CIP-95 method call
 // to either an immediate Backend read (for granted origins) or a queued approval
 // flow (for enable and signing methods).
-func (s *Service) Handle(ctx context.Context, origin, method string, params json.RawMessage) (json.RawMessage, error) {
+func (s *Service) Handle(
+	ctx context.Context,
+	origin, method string,
+	params json.RawMessage,
+) (json.RawMessage, error) {
 	if !validDAppOrigin(origin) {
 		return nil, ErrInvalidOrigin
 	}
@@ -357,17 +380,28 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, false, func() (json.RawMessage, error) {
-				if err := s.grants.Grant(origin, identity); err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.RawMessage(`true`), nil
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					false,
+					func() (json.RawMessage, error) {
+						if err := s.grants.Grant(origin, identity); err != nil {
+							return nil, err
+						}
+						return json.RawMessage(`true`), nil
+					},
+				)
+			},
+		)
 
 	// Read methods: require grant, call Backend immediately.
 	case "getNetworkId":
@@ -396,13 +430,18 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-			v, err := s.be.Utxos(ctx, p.Amount, p.Paginate)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
-		})
+		return s.withExpectedIdentity(
+			identity,
+			origin,
+			true,
+			func() (json.RawMessage, error) {
+				v, err := s.be.Utxos(ctx, p.Amount, p.Paginate)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			},
+		)
 
 	case "getCollateral":
 		identity, ok := s.grantedIdentity(origin)
@@ -415,13 +454,18 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-			v, err := s.be.Collateral(ctx, p.Amount)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
-		})
+		return s.withExpectedIdentity(
+			identity,
+			origin,
+			true,
+			func() (json.RawMessage, error) {
+				v, err := s.be.Collateral(ctx, p.Amount)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			},
+		)
 
 	case "getUsedAddresses":
 		identity, ok := s.grantedIdentity(origin)
@@ -434,13 +478,18 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-			v, err := s.be.UsedAddresses(ctx, p.Paginate)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
-		})
+		return s.withExpectedIdentity(
+			identity,
+			origin,
+			true,
+			func() (json.RawMessage, error) {
+				v, err := s.be.UsedAddresses(ctx, p.Paginate)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			},
+		)
 
 	case "getUnusedAddresses":
 		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
@@ -478,54 +527,87 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.PubDRepKey(d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.PubDRepKey(d.Password)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	case "cip95.getRegisteredPubStakeKeys", "getRegisteredPubStakeKeys":
 		identity, ok := s.grantedIdentity(origin)
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.RegisteredPubStakeKeys(d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.RegisteredPubStakeKeys(d.Password)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	case "cip95.getUnregisteredPubStakeKeys", "getUnregisteredPubStakeKeys":
 		identity, ok := s.grantedIdentity(origin)
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.UnregisteredPubStakeKeys(d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.UnregisteredPubStakeKeys(d.Password)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	// Sign/submit methods: always enqueue (password required).
 	case "signTx":
@@ -543,18 +625,35 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if p.Tx == "" {
 			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
 		}
-		return s.inspectEnqueueAndAwait(ctx, origin, method, params, p.Tx, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.SignTx(ctx, p.Tx, p.PartialSign, d.Password)
-				if err != nil {
-					return nil, err
+		return s.inspectEnqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			p.Tx,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.SignTx(
+							ctx,
+							p.Tx,
+							p.PartialSign,
+							d.Password,
+						)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	case "signData":
 		identity, ok := s.grantedIdentity(origin)
@@ -572,20 +671,40 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 			return nil, err
 		}
 		if p.Addr == "" || p.Payload == nil {
-			return nil, fmt.Errorf("%w: addr and payload are required", ErrInvalidParams)
+			return nil, fmt.Errorf(
+				"%w: addr and payload are required",
+				ErrInvalidParams,
+			)
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				sig, key, err := s.be.SignData(p.Addr, *p.Payload, d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(map[string]string{"signature": sig, "key": key})
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						sig, key, err := s.be.SignData(
+							p.Addr,
+							*p.Payload,
+							d.Password,
+						)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(
+							map[string]string{"signature": sig, "key": key},
+						)
+					},
+				)
+			},
+		)
 
 	case "submitTx":
 		identity, ok := s.grantedIdentity(origin)
@@ -601,18 +720,29 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if p.Tx == "" {
 			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.SubmitTx(ctx, p.Tx)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.SubmitTx(ctx, p.Tx)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	default:
 		return nil, ErrRefused
@@ -669,7 +799,11 @@ func (s *Service) inspectEnqueueAndAwait(
 	effects, err := s.be.InspectTx(ctx, txHex)
 	if err != nil {
 		s.queue.cancelReservation(req.ID)
-		return nil, fmt.Errorf("%w: transaction effects unavailable: %w", ErrInvalidParams, err)
+		return nil, fmt.Errorf(
+			"%w: transaction effects unavailable: %w",
+			ErrInvalidParams,
+			err,
+		)
 	}
 	reservedID := req.ID
 	req, err = s.queue.publish(reservedID, &effects)
@@ -708,16 +842,22 @@ func (s *Service) ApproveSubmission(
 	if submit == nil {
 		return "", ErrRefused
 	}
-	result, err := s.enqueueAndAwait(ctx, origin, "remoteSubmitTx", params, func(d Decision) (json.RawMessage, error) {
-		if !d.Approved {
-			return nil, ErrUserDeclined
-		}
-		hash, err := submit(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(hash)
-	})
+	result, err := s.enqueueAndAwait(
+		ctx,
+		origin,
+		"remoteSubmitTx",
+		params,
+		func(d Decision) (json.RawMessage, error) {
+			if !d.Approved {
+				return nil, ErrUserDeclined
+			}
+			hash, err := submit(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(hash)
+		},
+	)
 	if err != nil {
 		return "", err
 	}

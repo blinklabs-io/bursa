@@ -142,7 +142,9 @@ func poolParamsFromState(
 	}
 	if params.PoolMetadata != nil {
 		result.MetadataURL = params.PoolMetadata.Url
-		result.MetadataHash = hex.EncodeToString(params.PoolMetadata.MetadataHash)
+		result.MetadataHash = hex.EncodeToString(
+			params.PoolMetadata.MetadataHash,
+		)
 	}
 	return result, nil
 }
@@ -196,16 +198,24 @@ func formatMarginDecimal(rat *big.Rat) string {
 
 // calculateKESPeriod returns the KES period containing currentSlot. A
 // nonpositive slots-per-period is an error rather than a plausible period 0.
-func calculateKESPeriod(currentSlot uint64, slotsPerKESPeriod int) (uint64, error) {
+func calculateKESPeriod(
+	currentSlot uint64,
+	slotsPerKESPeriod int,
+) (uint64, error) {
 	if slotsPerKESPeriod <= 0 {
-		return 0, fmt.Errorf("invalid slots per KES period %d", slotsPerKESPeriod)
+		return 0, fmt.Errorf(
+			"invalid slots per KES period %d",
+			slotsPerKESPeriod,
+		)
 	}
 	return currentSlot / uint64(slotsPerKESPeriod), nil
 }
 
 // stakeCredentialFrom converts a ledger credential to the local-state-query
 // key: tag 0 for a key hash, 1 for a script hash, as the node encodes it.
-func stakeCredentialFrom(cred lcommon.Credential) localstatequery.StakeCredential {
+func stakeCredentialFrom(
+	cred lcommon.Credential,
+) localstatequery.StakeCredential {
 	return localstatequery.StakeCredential{
 		Tag:   uint64(cred.CredType),
 		Bytes: cred.Credential,
@@ -249,7 +259,9 @@ func stakeQueryFrom(
 
 // utxoQueryFrom converts the UTxO query result and sorts it by transaction
 // id, then output index.
-func utxoQueryFrom(res *localstatequery.UTxOsResult) ([]UTxOQueryResult, error) {
+func utxoQueryFrom(
+	res *localstatequery.UTxOsResult,
+) ([]UTxOQueryResult, error) {
 	results := []UTxOQueryResult{}
 	if res == nil {
 		return results, nil

@@ -55,7 +55,8 @@ func TestBursaCardano_Operations_RealTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Operations: %v", err)
 	}
-	if len(ops.Certificates) != 1 || ops.Certificates[0] != policy.CertPoolRegistration {
+	if len(ops.Certificates) != 1 ||
+		ops.Certificates[0] != policy.CertPoolRegistration {
 		t.Fatalf("expected [pool_registration], got %v", ops.Certificates)
 	}
 }
@@ -69,7 +70,9 @@ func TestBursaCardano_DecodesGivenEra(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Carries a Conway voting procedure, so it is not valid Babbage CBOR.
-	conwayOnly, err := hex.DecodeString("84a400800180020013a18202581c00000000000000000000000000000000000000000000000000000000a18258200000000000000000000000000000000000000000000000000000000000000000008201f6a0f5f6")
+	conwayOnly, err := hex.DecodeString(
+		"84a400800180020013a18202581c00000000000000000000000000000000000000000000000000000000a18258200000000000000000000000000000000000000000000000000000000000000000008201f6a0f5f6",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

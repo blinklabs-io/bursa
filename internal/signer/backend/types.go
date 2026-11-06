@@ -51,7 +51,10 @@ func ParseKeyHash(s string) (KeyHash, error) {
 		return h, fmt.Errorf("invalid key hash hex: %w", err)
 	}
 	if len(raw) != 28 {
-		return h, fmt.Errorf("key hash must be 28 bytes (56 hex chars), got %d", len(raw))
+		return h, fmt.Errorf(
+			"key hash must be 28 bytes (56 hex chars), got %d",
+			len(raw),
+		)
 	}
 	copy(h[:], raw)
 	return h, nil
@@ -60,7 +63,12 @@ func ParseKeyHash(s string) (KeyHash, error) {
 // HashPublicKey computes the blake2b-224 hash of a 32-byte Ed25519 public key.
 func HashPublicKey(pub []byte) KeyHash {
 	if len(pub) != ed25519.PublicKeySize {
-		panic(fmt.Sprintf("HashPublicKey: expected 32-byte Ed25519 public key, got %d bytes", len(pub)))
+		panic(
+			fmt.Sprintf(
+				"HashPublicKey: expected 32-byte Ed25519 public key, got %d bytes",
+				len(pub),
+			),
+		)
 	}
 	hasher, err := blake2b.New(28, nil)
 	if err != nil {
@@ -88,7 +96,13 @@ const (
 // Valid reports whether t is a recognized key type.
 func (t KeyType) Valid() bool {
 	switch t {
-	case KeyTypePayment, KeyTypeStake, KeyTypeDRep, KeyTypeCCHot, KeyTypeCCCold, KeyTypePool, KeyTypePolicy:
+	case KeyTypePayment,
+		KeyTypeStake,
+		KeyTypeDRep,
+		KeyTypeCCHot,
+		KeyTypeCCCold,
+		KeyTypePool,
+		KeyTypePolicy:
 		return true
 	default:
 		return false

@@ -25,9 +25,21 @@ import (
 const maxEnvelopeSize = 64 << 10
 
 type secretsAPI interface {
-	GetSecretValue(context.Context, *secretsmanager.GetSecretValueInput, ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error)
-	PutSecretValue(context.Context, *secretsmanager.PutSecretValueInput, ...func(*secretsmanager.Options)) (*secretsmanager.PutSecretValueOutput, error)
-	DescribeSecret(context.Context, *secretsmanager.DescribeSecretInput, ...func(*secretsmanager.Options)) (*secretsmanager.DescribeSecretOutput, error)
+	GetSecretValue(
+		context.Context,
+		*secretsmanager.GetSecretValueInput,
+		...func(*secretsmanager.Options),
+	) (*secretsmanager.GetSecretValueOutput, error)
+	PutSecretValue(
+		context.Context,
+		*secretsmanager.PutSecretValueInput,
+		...func(*secretsmanager.Options),
+	) (*secretsmanager.PutSecretValueOutput, error)
+	DescribeSecret(
+		context.Context,
+		*secretsmanager.DescribeSecretInput,
+		...func(*secretsmanager.Options),
+	) (*secretsmanager.DescribeSecretOutput, error)
 }
 
 // SecretStore persists exactly one wrapped envelope in an existing Secrets
@@ -40,14 +52,19 @@ type SecretStore struct {
 // NewSecretStore constructs a wrapped-envelope store.
 func NewSecretStore(client secretsAPI, secretID string) (*SecretStore, error) {
 	if client == nil || secretID == "" {
-		return nil, errors.New("secrets manager client and secret ID are required")
+		return nil, errors.New(
+			"secrets manager client and secret ID are required",
+		)
 	}
 	return &SecretStore{client: client, secretID: secretID}, nil
 }
 
 // Load reads and strictly validates the wrapped envelope.
 func (s *SecretStore) Load(ctx context.Context) (Envelope, error) {
-	result, err := s.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(s.secretID)})
+	result, err := s.client.GetSecretValue(
+		ctx,
+		&secretsmanager.GetSecretValueInput{SecretId: aws.String(s.secretID)},
+	)
 	if err != nil {
 		var missing *types.ResourceNotFoundException
 		if errors.As(err, &missing) {
@@ -68,7 +85,11 @@ func (s *SecretStore) Load(ctx context.Context) (Envelope, error) {
 		return Envelope{}, ErrNoEnvelope
 	}
 	if len(data) > maxEnvelopeSize {
-		return Envelope{}, fmt.Errorf("%w: secret exceeds %d bytes", ErrEnvelope, maxEnvelopeSize)
+		return Envelope{}, fmt.Errorf(
+			"%w: secret exceeds %d bytes",
+			ErrEnvelope,
+			maxEnvelopeSize,
+		)
 	}
 	var env Envelope
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -89,7 +110,10 @@ func (s *SecretStore) Load(ctx context.Context) (Envelope, error) {
 // which GetSecretValue also reports as ResourceNotFoundException, from a
 // secret that does not exist.
 func (s *SecretStore) classifyMissingValue(ctx context.Context) error {
-	described, err := s.client.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: aws.String(s.secretID)})
+	described, err := s.client.DescribeSecret(
+		ctx,
+		&secretsmanager.DescribeSecretInput{SecretId: aws.String(s.secretID)},
+	)
 	if err != nil {
 		var missing *types.ResourceNotFoundException
 		if errors.As(err, &missing) {
@@ -99,7 +123,10 @@ func (s *SecretStore) classifyMissingValue(ctx context.Context) error {
 	}
 	for _, stages := range described.VersionIdsToStages {
 		if slices.Contains(stages, "AWSCURRENT") {
-			return fmt.Errorf("%w: current secret value is unreadable", ErrEnvelope)
+			return fmt.Errorf(
+				"%w: current secret value is unreadable",
+				ErrEnvelope,
+			)
 		}
 	}
 	return ErrNoEnvelope
@@ -117,7 +144,11 @@ func (s *SecretStore) Save(ctx context.Context, env Envelope) error {
 		return err
 	}
 	if len(data) > maxEnvelopeSize {
-		return fmt.Errorf("%w: envelope exceeds %d bytes", ErrEnvelope, maxEnvelopeSize)
+		return fmt.Errorf(
+			"%w: envelope exceeds %d bytes",
+			ErrEnvelope,
+			maxEnvelopeSize,
+		)
 	}
 	_, err = s.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
 		SecretId:     aws.String(s.secretID),

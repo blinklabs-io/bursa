@@ -43,14 +43,19 @@ type summaryKey struct {
 
 func (k *summaryKey) Hash() backend.KeyHash        { return k.hash }
 func (k *summaryKey) PublicKey() ed25519.PublicKey { return k.pub }
-func (k *summaryKey) Type() backend.KeyType        { return backend.KeyTypePayment }
-func (k *summaryKey) Extended() bool               { return false }
-func (k *summaryKey) Backend() string              { return "summary" }
+
+func (k *summaryKey) Type() backend.KeyType { return backend.KeyTypePayment }
+func (k *summaryKey) Extended() bool        { return false }
+func (k *summaryKey) Backend() string       { return "summary" }
 func (k *summaryKey) Sign(context.Context, []byte) ([]byte, error) {
 	return ed25519.Sign(k.priv, make([]byte, 32)), nil
 }
 
-func (k *summaryKey) SignTxBody(ctx context.Context, _ []byte, _ uint) ([]byte, string, error) {
+func (k *summaryKey) SignTxBody(
+	ctx context.Context,
+	_ []byte,
+	_ uint,
+) ([]byte, string, error) {
 	sig, err := k.Sign(ctx, nil)
 	return sig, k.summary, err
 }
@@ -62,7 +67,10 @@ func (b summaryBackend) ListKeys(context.Context) ([]backend.KeyRef, error) {
 	return []backend.KeyRef{b.key}, nil
 }
 
-func (b summaryBackend) GetKey(context.Context, backend.KeyHash) (backend.KeyRef, error) {
+func (b summaryBackend) GetKey(
+	context.Context,
+	backend.KeyHash,
+) (backend.KeyRef, error) {
 	return b.key, nil
 }
 
@@ -89,22 +97,51 @@ func (l *lockedBuffer) String() string {
 func TestHandleSignTxAuditsCustodySummary(t *testing.T) {
 	t.Parallel()
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	k := &summaryKey{pub: pub, priv: priv, hash: backend.HashPublicKey(pub), summary: "pool retirement: epoch 500"}
+	k := &summaryKey{
+		pub:     pub,
+		priv:    priv,
+		hash:    backend.HashPublicKey(pub),
+		summary: "pool retirement: epoch 500",
+	}
 	b := summaryBackend{key: k}
-	eng, _ := policy.NewEngine([]policy.KeyPolicy{{Hash: k.hash.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}})
+	eng, _ := policy.NewEngine(
+		[]policy.KeyPolicy{
+			{
+				Hash:            k.hash.String(),
+				AllowedRequests: []string{"tx"},
+				Tx:              &policy.TxPolicy{},
+			},
+		},
+	)
 	coord := signer.New(signer.Deps{
 		Resolver:  backend.NewResolver(b),
 		Policy:    eng,
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	srv := NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil })
+	srv := NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		nil,
+		func(string) (string, error) { return "tester", nil },
+	)
 	logs := &lockedBuffer{}
 	srv.logger = slog.New(slog.NewJSONHandler(logs, nil))
 
-	body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{k.hash.String()}})
+	body, _ := json.Marshal(
+		SignRequest{
+			Type:    "tx",
+			Cbor:    ambiguousBabbageTxHex,
+			Era:     "babbage",
+			Signers: []string{k.hash.String()},
+		},
+	)
 	rr := httptest.NewRecorder()
-	srv.handleSign(rr, httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body)))
+	srv.handleSign(
+		rr,
+		httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body)),
+	)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}

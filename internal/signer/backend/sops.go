@@ -52,7 +52,11 @@ type SopsBackend struct {
 }
 
 // NewSopsBackend builds a SOPS-backed backend. decrypt may be sops.Decrypt.
-func NewSopsBackend(name string, source SecretSource, decrypt DecryptFunc) *SopsBackend {
+func NewSopsBackend(
+	name string,
+	source SecretSource,
+	decrypt DecryptFunc,
+) *SopsBackend {
 	return &SopsBackend{
 		name:    name,
 		source:  source,

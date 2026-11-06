@@ -60,14 +60,24 @@ type passwordProtector struct {
 
 // newPasswordProtector returns a passwordProtector using the given seal/open
 // primitives (production: keystore.Seal/Open; tests: keystore.CheapTestSealer).
-func newPasswordProtector(seal keystore.Sealer, open keystore.Opener) *passwordProtector {
+func newPasswordProtector(
+	seal keystore.Sealer,
+	open keystore.Opener,
+) *passwordProtector {
 	return &passwordProtector{seal: seal, open: open}
 }
 
 // Wrap seals the VEK under password into a Container.
-func (p *passwordProtector) Wrap(vek []byte, password string) (keystore.Container, error) {
+func (p *passwordProtector) Wrap(
+	vek []byte,
+	password string,
+) (keystore.Container, error) {
 	if len(vek) != vekLen {
-		return keystore.Container{}, fmt.Errorf("vault: VEK must be %d bytes, got %d", vekLen, len(vek))
+		return keystore.Container{}, fmt.Errorf(
+			"vault: VEK must be %d bytes, got %d",
+			vekLen,
+			len(vek),
+		)
 	}
 	blob, err := p.seal(vek, password)
 	if err != nil {
@@ -82,7 +92,10 @@ func (p *passwordProtector) Wrap(vek []byte, password string) (keystore.Containe
 
 // Unwrap recovers the VEK from blob, authenticating with password. A wrong
 // password (AES-GCM authentication failure) maps to ErrWrongPassword.
-func (p *passwordProtector) Unwrap(blob keystore.Container, password string) ([]byte, error) {
+func (p *passwordProtector) Unwrap(
+	blob keystore.Container,
+	password string,
+) ([]byte, error) {
 	raw, err := json.Marshal(blob)
 	if err != nil {
 		return nil, err
@@ -97,7 +110,11 @@ func (p *passwordProtector) Unwrap(blob keystore.Container, password string) ([]
 	// Fail closed on a corrupt/non-conforming blob: a wrong-length VEK would
 	// otherwise unlock here and only fail later when the vault is re-persisted.
 	if len(vek) != vekLen {
-		return nil, fmt.Errorf("vault: unwrapped VEK has length %d, want %d", len(vek), vekLen)
+		return nil, fmt.Errorf(
+			"vault: unwrapped VEK has length %d, want %d",
+			len(vek),
+			vekLen,
+		)
 	}
 	return vek, nil
 }

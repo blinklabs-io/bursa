@@ -26,7 +26,11 @@ import (
 )
 
 func TestRangeJSONPreservesInt64Values(t *testing.T) {
-	rangeValue := Range{Min: math.MinInt64, Max: math.MaxInt64, Step: math.MaxUint64}
+	rangeValue := Range{
+		Min:  math.MinInt64,
+		Max:  math.MaxInt64,
+		Step: math.MaxUint64,
+	}
 	raw, err := json.Marshal(rangeValue)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +92,11 @@ func TestAnswerJSONAcceptsExactDecimalStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Number != math.MinInt64 {
-		t.Fatalf("answer number = %d, want %d", got.Number, int64(math.MinInt64))
+		t.Fatalf(
+			"answer number = %d, want %d",
+			got.Number,
+			int64(math.MinInt64),
+		)
 	}
 	if err := json.Unmarshal([]byte(`{"kind":6,"question":0,"pairs":[{"option":0,"value":"9223372036854775807"}]}`), &got); err != nil {
 		t.Fatal(err)

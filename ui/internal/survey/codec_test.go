@@ -45,7 +45,12 @@ func cat(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
 func uintv(n int) []byte         { return head(0, n) }
 func tstr(s string) []byte       { return cat(head(3, len(s)), []byte(s)) }
 func bstr(b []byte) []byte       { return cat(head(2, len(b)), b) }
-func arr(items ...[]byte) []byte { return cat(head(4, len(items)), cat(items...)) }
+
+func arr(
+	items ...[]byte,
+) []byte {
+	return cat(head(4, len(items)), cat(items...))
+}
 func mapv(pairs ...[]byte) []byte {
 	return cat(head(5, len(pairs)/2), cat(pairs...))
 }
@@ -71,7 +76,12 @@ func ref(b byte, idx uint64) Ref {
 	return r
 }
 
-func refCBOR(b byte, idx int) []byte { return arr(bstr(rep(b, 32)), uintv(idx)) }
+func refCBOR(
+	b byte,
+	idx int,
+) []byte {
+	return arr(bstr(rep(b, 32)), uintv(idx))
+}
 
 func TestCancellationGolden(t *testing.T) {
 	t.Parallel()
@@ -185,9 +195,18 @@ func TestDefinitionChunkedGolden(t *testing.T) {
 		uintv(4), arr(uintv(0)),
 		uintv(5), uintv(504),
 		uintv(6), arr(uintv(0)),
-		uintv(7), arr(arr(uintv(2), tstr(prompt),
-			arr(tstr("CIP-0108"), tstr("CIP-0119"), tstr("CIP-0136"), tstr("CIP-0149")),
-			uintv(0), uintv(4))),
+		uintv(7), arr(arr(
+			uintv(2),
+			tstr(prompt),
+			arr(
+				tstr("CIP-0108"),
+				tstr("CIP-0119"),
+				tstr("CIP-0136"),
+				tstr("CIP-0149"),
+			),
+			uintv(0),
+			uintv(4),
+		)),
 	)))
 	p := Payload{Kind: KindDefinitions, Definitions: []Definition{{
 		Owner:       cred(false, 0xcd),
@@ -219,9 +238,25 @@ func allQuestions() []Question {
 		{Kind: KindCustom, Prompt: "custom", Anchor: anchor, Required: true},
 		{Kind: KindSingleChoice, Prompt: "single", Options: opts},
 		{Kind: KindMultiSelect, Prompt: "multi", Options: opts, Min: 1, Max: 2},
-		{Kind: KindRanking, Prompt: "rank", Options: opts, Min: 1, Max: 3, Required: true},
-		{Kind: KindNumericRange, Prompt: "num", Range: &Range{Min: -10, Max: 1000, Step: 5}},
-		{Kind: KindPointsAllocation, Prompt: "points", Options: opts, Budget: 100},
+		{
+			Kind:     KindRanking,
+			Prompt:   "rank",
+			Options:  opts,
+			Min:      1,
+			Max:      3,
+			Required: true,
+		},
+		{
+			Kind:   KindNumericRange,
+			Prompt: "num",
+			Range:  &Range{Min: -10, Max: 1000, Step: 5},
+		},
+		{
+			Kind:    KindPointsAllocation,
+			Prompt:  "points",
+			Options: opts,
+			Budget:  100,
+		},
 		{
 			Kind: KindRating, Prompt: "grid", Options: opts,
 			Scale: &RatingScale{Grid: &Range{Min: 1, Max: 5}}, RequireAll: true,
@@ -230,7 +265,12 @@ func allQuestions() []Question {
 			Kind: KindRating, Prompt: "labels", Options: opts,
 			Scale: &RatingScale{Labels: []string{"bad", "ok", "good"}},
 		},
-		{Kind: KindRating, Prompt: "levels", OptionCount: 3, Scale: &RatingScale{Levels: 4}},
+		{
+			Kind:        KindRating,
+			Prompt:      "levels",
+			OptionCount: 3,
+			Scale:       &RatingScale{Levels: 4},
+		},
 		{Kind: KindSingleChoice, Prompt: "counted", OptionCount: 4},
 	}
 }
@@ -243,11 +283,22 @@ func TestRoundTripAllQuestionTypes(t *testing.T) {
 		Owner:       cred(true, 0x01),
 		Title:       "all types",
 		Description: strings.Repeat("long description ", 20),
-		Roles:       []Role{RoleDRep, RoleSPO, RoleCC, RoleStakeholder, RoleKeyholder},
-		EndEpoch:    700,
-		Mode:        SubmissionMode{Sealed: true, ChainHash: [32]byte{1, 2, 3}, Round: 99, PaddingSize: 512},
-		Questions:   allQuestions(),
-		Anchor:      anchor,
+		Roles: []Role{
+			RoleDRep,
+			RoleSPO,
+			RoleCC,
+			RoleStakeholder,
+			RoleKeyholder,
+		},
+		EndEpoch: 700,
+		Mode: SubmissionMode{
+			Sealed:      true,
+			ChainHash:   [32]byte{1, 2, 3},
+			Round:       99,
+			PaddingSize: 512,
+		},
+		Questions: allQuestions(),
+		Anchor:    anchor,
 	}
 	p := Payload{Kind: KindDefinitions, Definitions: []Definition{def, def}}
 
@@ -277,7 +328,11 @@ func TestRoundTripAllAnswerTypes(t *testing.T) {
 			{Kind: KindMultiSelect, Question: 2, Indices: []uint64{0, 2}},
 			{Kind: KindRanking, Question: 3, Indices: []uint64{2, 0, 1}},
 			{Kind: KindNumericRange, Question: 4, Number: -325},
-			{Kind: KindPointsAllocation, Question: 5, Pairs: []Pair{{0, 60}, {2, 40}}},
+			{
+				Kind:     KindPointsAllocation,
+				Question: 5,
+				Pairs:    []Pair{{0, 60}, {2, 40}},
+			},
 			{Kind: KindRating, Question: 6, Pairs: []Pair{{0, 1}, {1, -2}}},
 		},
 	}}}
@@ -302,17 +357,27 @@ func TestSealedResponseRoundTrip(t *testing.T) {
 	t.Parallel()
 	cipher := rep(0x5a, 150)
 	p := Payload{Kind: KindResponses, Responses: []Response{{
-		Survey: ref(0x11, 0), Role: RoleDRep, Credential: cred(false, 0x44), Sealed: cipher,
+		Survey: ref(
+			0x11,
+			0,
+		), Role: RoleDRep, Credential: cred(false, 0x44), Sealed: cipher,
 	}}}
 	raw, err := Marshal(p)
 	noErr(t, err)
 	// 150 bytes are chunked into 64+64+22.
 	want := arr(uintv(1), arr(mapv(
-		uintv(0), uintv(5),
-		uintv(1), refCBOR(0x11, 0),
-		uintv(2), uintv(0),
-		uintv(3), credCBOR(false, 0x44),
-		uintv(4), arr(bstr(cipher[:64]), bstr(cipher[64:128]), bstr(cipher[128:])),
+		uintv(0),
+		uintv(5),
+		uintv(1),
+		refCBOR(0x11, 0),
+		uintv(2),
+		uintv(0),
+		uintv(3),
+		credCBOR(false, 0x44),
+		uintv(
+			4,
+		),
+		arr(bstr(cipher[:64]), bstr(cipher[64:128]), bstr(cipher[128:])),
 	)))
 	equal(t, want, raw)
 	back, err := Decode(raw)
@@ -324,8 +389,13 @@ func TestChunkingNeverSplitsARune(t *testing.T) {
 	t.Parallel()
 	title := strings.Repeat("a", 63) + "é" + "tail"
 	p := Payload{Kind: KindDefinitions, Definitions: []Definition{{
-		Owner: cred(false, 1), Title: title, Roles: []Role{RoleDRep}, EndEpoch: 1,
-		Questions: []Question{{Kind: KindSingleChoice, Prompt: "p", Options: []string{"a", "b"}}},
+		Owner: cred(
+			false,
+			1,
+		), Title: title, Roles: []Role{RoleDRep}, EndEpoch: 1,
+		Questions: []Question{
+			{Kind: KindSingleChoice, Prompt: "p", Options: []string{"a", "b"}},
+		},
 	}}}
 	raw, err := Marshal(p)
 	noErr(t, err)
@@ -351,16 +421,27 @@ func TestDecodeToleratesForwardCompatibleForms(t *testing.T) {
 	// An unknown map key, a chunked form where a single string fits, an
 	// explicit zero required flag, and an explicit zero "flag" all decode.
 	raw := arr(uintv(0), arr(mapv(
-		uintv(0), uintv(5),
-		uintv(1), credCBOR(false, 0xcd),
-		uintv(2), arr(tstr("ti"), tstr("tle")),
-		uintv(3), tstr("d"),
-		uintv(4), arr(uintv(3)),
-		uintv(5), uintv(10),
-		uintv(6), arr(uintv(0)),
-		uintv(7), arr(arr(uintv(1), tstr("q"), arr(tstr("a"), tstr("b")), uintv(0)),
+		uintv(0),
+		uintv(5),
+		uintv(1),
+		credCBOR(false, 0xcd),
+		uintv(2),
+		arr(tstr("ti"), tstr("tle")),
+		uintv(3),
+		tstr("d"),
+		uintv(4),
+		arr(uintv(3)),
+		uintv(5),
+		uintv(10),
+		uintv(6),
+		arr(uintv(0)),
+		uintv(
+			7,
+		),
+		arr(arr(uintv(1), tstr("q"), arr(tstr("a"), tstr("b")), uintv(0)),
 			arr(uintv(1), tstr("r"), arr(tstr("a"), tstr("b")), uintv(1))),
-		uintv(42), tstr("future"),
+		uintv(42),
+		tstr("future"),
 	)))
 	p, err := Decode(raw)
 	noErr(t, err)
@@ -403,8 +484,12 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 			kv[1] = uintv(4)
 			return kv
 		}),
-		"missing owner": def(func(kv [][]byte) [][]byte { return append(kv[:2], kv[4:]...) }),
-		"duplicate key": def(func(kv [][]byte) [][]byte { return append(kv, uintv(2), tstr("again")) }),
+		"missing owner": def(
+			func(kv [][]byte) [][]byte { return append(kv[:2], kv[4:]...) },
+		),
+		"duplicate key": def(
+			func(kv [][]byte) [][]byte { return append(kv, uintv(2), tstr("again")) },
+		),
 		"short owner hash": def(func(kv [][]byte) [][]byte {
 			kv[3] = arr(uintv(0), bstr(rep(1, 27)))
 			return kv
@@ -422,7 +507,15 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 			return kv
 		}),
 		"multi min above max": def(func(kv [][]byte) [][]byte {
-			kv[15] = arr(arr(uintv(2), tstr("q"), arr(tstr("a"), tstr("b")), uintv(2), uintv(1)))
+			kv[15] = arr(
+				arr(
+					uintv(2),
+					tstr("q"),
+					arr(tstr("a"), tstr("b")),
+					uintv(2),
+					uintv(1),
+				),
+			)
 			return kv
 		}),
 		"unknown question tag": def(func(kv [][]byte) [][]byte {
@@ -434,9 +527,15 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 			return kv
 		}),
 		"response role out of range": resp(sel, 7),
-		"answer tag unknown":         resp(arr(arr(uintv(9), uintv(0), uintv(0))), 0),
-		"empty answers":              resp(arr(), 0),
-		"cancellation short txid":    arr(uintv(2), arr(arr(bstr(rep(1, 31)), uintv(0)))),
+		"answer tag unknown": resp(
+			arr(arr(uintv(9), uintv(0), uintv(0))),
+			0,
+		),
+		"empty answers": resp(arr(), 0),
+		"cancellation short txid": arr(
+			uintv(2),
+			arr(arr(bstr(rep(1, 31)), uintv(0))),
+		),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -451,8 +550,17 @@ func TestEncodeRejectsInvalid(t *testing.T) {
 	t.Parallel()
 	base := func() Definition {
 		return Definition{
-			Owner: cred(false, 1), Title: "t", Roles: []Role{RoleDRep}, EndEpoch: 5,
-			Questions: []Question{{Kind: KindSingleChoice, Prompt: "p", Options: []string{"a", "b"}}},
+			Owner: cred(
+				false,
+				1,
+			), Title: "t", Roles: []Role{RoleDRep}, EndEpoch: 5,
+			Questions: []Question{
+				{
+					Kind:    KindSingleChoice,
+					Prompt:  "p",
+					Options: []string{"a", "b"},
+				},
+			},
 		}
 	}
 	for name, mut := range map[string]func(*Definition){
@@ -483,14 +591,18 @@ func TestEncodeRejectsInvalid(t *testing.T) {
 			t.Parallel()
 			d := base()
 			mut(&d)
-			_, err := Marshal(Payload{Kind: KindDefinitions, Definitions: []Definition{d}})
+			_, err := Marshal(
+				Payload{Kind: KindDefinitions, Definitions: []Definition{d}},
+			)
 			isErr(t, err)
 		})
 	}
 
 	t.Run("payload kind and batch disagree", func(t *testing.T) {
 		t.Parallel()
-		_, err := Marshal(Payload{Kind: KindResponses, Definitions: []Definition{base()}})
+		_, err := Marshal(
+			Payload{Kind: KindResponses, Definitions: []Definition{base()}},
+		)
 		isErr(t, err)
 	})
 }
@@ -546,7 +658,10 @@ func TestDecodeSkipsIntegerKeysOutsideTheUnsignedRange(t *testing.T) {
 	noErr(t, err)
 	equal(t, "t", p.Definitions[0].Title)
 
-	textKey := arr(uintv(0), arr(mapv(uintv(0), uintv(5), tstr("k"), tstr("v"))))
+	textKey := arr(
+		uintv(0),
+		arr(mapv(uintv(0), uintv(5), tstr("k"), tstr("v"))),
+	)
 	_, err = Decode(textKey)
 	isErr(t, err)
 }
@@ -562,19 +677,39 @@ func TestRatingLabelsAreBoundedLikeLevels(t *testing.T) {
 	}
 	def := func(n int) Definition {
 		return Definition{
-			Owner: cred(false, 1), Title: "t", Roles: []Role{RoleDRep}, EndEpoch: 5,
-			Questions: []Question{{Kind: KindRating, Prompt: "p", Options: []string{"a", "b"}, Scale: &RatingScale{Labels: labels(n)}}},
+			Owner: cred(
+				false,
+				1,
+			), Title: "t", Roles: []Role{RoleDRep}, EndEpoch: 5,
+			Questions: []Question{
+				{
+					Kind:    KindRating,
+					Prompt:  "p",
+					Options: []string{"a", "b"},
+					Scale:   &RatingScale{Labels: labels(n)},
+				},
+			},
 		}
 	}
 	noErr(t, def(MaxOptions).Validate())
 	isErr(t, def(MaxOptions+1).Validate())
 
 	// A definition read from chain is held to the same bound.
-	raw, err := Marshal(Payload{Kind: KindDefinitions, Definitions: []Definition{def(MaxOptions)}})
+	raw, err := Marshal(
+		Payload{
+			Kind:        KindDefinitions,
+			Definitions: []Definition{def(MaxOptions)},
+		},
+	)
 	noErr(t, err)
 	_, err = Decode(raw)
 	noErr(t, err)
-	over := bytes.Replace(raw, cat(head(4, MaxOptions), tstr("0")), cat(head(4, MaxOptions+1), tstr("x"), tstr("0")), 1)
+	over := bytes.Replace(
+		raw,
+		cat(head(4, MaxOptions), tstr("0")),
+		cat(head(4, MaxOptions+1), tstr("x"), tstr("0")),
+		1,
+	)
 	isTrue(t, !bytes.Equal(over, raw))
 	_, err = Decode(over)
 	isErr(t, err)
@@ -585,9 +720,17 @@ func TestPointsDecodeAcrossTheWholeInt64Range(t *testing.T) {
 	for _, v := range []int64{1<<62 + 1, math.MaxInt64} {
 		r := Response{
 			Survey: ref(0xa1, 0), Role: RoleDRep, Credential: cred(false, 2),
-			Answers: []Answer{{Kind: KindPointsAllocation, Question: 0, Pairs: []Pair{{0, v}}}},
+			Answers: []Answer{
+				{
+					Kind:     KindPointsAllocation,
+					Question: 0,
+					Pairs:    []Pair{{0, v}},
+				},
+			},
 		}
-		raw, err := Marshal(Payload{Kind: KindResponses, Responses: []Response{r}})
+		raw, err := Marshal(
+			Payload{Kind: KindResponses, Responses: []Response{r}},
+		)
 		noErr(t, err)
 		p, err := Decode(raw)
 		noErr(t, err)

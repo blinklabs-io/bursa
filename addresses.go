@@ -30,7 +30,10 @@ type EnumeratedAddress struct {
 // EnumerateAddresses derives `count` consecutive base addresses for a wallet,
 // starting at `start`, for the given account and network. password may be empty.
 // It reuses the existing single-address derivation; it does not reimplement it.
-func EnumerateAddresses(mnemonic, password, network string, account, start, count uint32) ([]EnumeratedAddress, error) {
+func EnumerateAddresses(
+	mnemonic, password, network string,
+	account, start, count uint32,
+) ([]EnumeratedAddress, error) {
 	if count == 0 {
 		return nil, errors.New("count must be greater than zero")
 	}
@@ -39,7 +42,12 @@ func EnumerateAddresses(mnemonic, password, network string, account, start, coun
 	}
 	if start > maxAddressDerivationIndex ||
 		count-1 > maxAddressDerivationIndex-start {
-		return nil, fmt.Errorf("address index range exceeds maximum derivation index %d: start=%d count=%d", maxAddressDerivationIndex, start, count)
+		return nil, fmt.Errorf(
+			"address index range exceeds maximum derivation index %d: start=%d count=%d",
+			maxAddressDerivationIndex,
+			start,
+			count,
+		)
 	}
 	rootKey, err := GetRootKeyFromMnemonic(mnemonic, password)
 	if err != nil {
@@ -54,7 +62,11 @@ func EnumerateAddresses(mnemonic, password, network string, account, start, coun
 		idx := start + i
 		addr, err := GetAddress(accountKey, network, idx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to derive address at index %d: %w", idx, err)
+			return nil, fmt.Errorf(
+				"failed to derive address at index %d: %w",
+				idx,
+				err,
+			)
 		}
 		out = append(out, EnumeratedAddress{Index: idx, Address: addr.String()})
 	}

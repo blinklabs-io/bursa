@@ -81,13 +81,17 @@ func TestParseVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if v.Major != 7 || v.Minor != 2 || v.Config != 0x3fff || !v.EdDSA() || v.SecureBoxMinor != 0x0a {
+	if v.Major != 7 || v.Minor != 2 || v.Config != 0x3fff || !v.EdDSA() ||
+		v.SecureBoxMinor != 0x0a {
 		t.Fatalf("unexpected version %+v", v)
 	}
 }
 
 func TestObjectIDEncoding(t *testing.T) {
-	if got := objectID(0x7fff0201); !bytes.Equal(got, []byte{0x41, 0x04, 0x7f, 0xff, 0x02, 0x01}) {
+	if got := objectID(0x7fff0201); !bytes.Equal(
+		got,
+		[]byte{0x41, 0x04, 0x7f, 0xff, 0x02, 0x01},
+	) {
 		t.Fatalf("objectID = % x", got)
 	}
 }

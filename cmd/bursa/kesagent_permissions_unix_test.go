@@ -41,7 +41,10 @@ func TestListenAttestedKESRejectsPermissiveKey(t *testing.T) {
 				_ = listener.Close()
 			}
 			if !errors.Is(err, bursa.ErrInsecureFileMode) {
-				t.Fatalf("listenAttestedKES error = %v, want ErrInsecureFileMode", err)
+				t.Fatalf(
+					"listenAttestedKES error = %v, want ErrInsecureFileMode",
+					err,
+				)
 			}
 		})
 	}

@@ -40,8 +40,17 @@ func TestWorkloadRefusesUnsupportedSignScope(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			w := newTestWorkload(t, &memoryStore{}, &testWrapper{}, &testTokens{})
-			payload := lcommon.OpCertSignableBytes(bytes.Repeat([]byte{0x23}, 32), 0, 11)
+			w := newTestWorkload(
+				t,
+				&memoryStore{},
+				&testWrapper{},
+				&testTokens{},
+			)
+			payload := lcommon.OpCertSignableBytes(
+				bytes.Repeat([]byte{0x23}, 32),
+				0,
+				11,
+			)
 			req := backend.AttestedRequest{
 				Version: backend.AttestedProtocol,
 				Purpose: backend.PurposeOpCert,

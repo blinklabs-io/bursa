@@ -30,7 +30,11 @@ func TestCheckRVT(t *testing.T) {
 	}{
 		{"HAB 4.0 table", []byte{0xdd, 0x00, 0x30, 0x40}, true},
 		{"HAB 4.1 table", []byte{0xdd, 0x00, 0x30, 0x41}, true},
-		{"length exactly covers report_status", []byte{0xdd, 0x00, 0x28, 0x40}, true},
+		{
+			"length exactly covers report_status",
+			[]byte{0xdd, 0x00, 0x28, 0x40},
+			true,
+		},
 		{"erased", []byte{0xff, 0xff, 0xff, 0xff}, false},
 		{"zero", []byte{0, 0, 0, 0}, false},
 		{"event tag", []byte{0xdb, 0x00, 0x30, 0x40}, false},
@@ -132,11 +136,23 @@ func TestCheckStatus(t *testing.T) {
 			err := CheckStatus(tc.status, tc.config, tc.state)
 
 			if tc.ok && err != nil {
-				t.Fatalf("CheckStatus(%#x, %#x, %#x) = %v, want nil", tc.status, tc.config, tc.state, err)
+				t.Fatalf(
+					"CheckStatus(%#x, %#x, %#x) = %v, want nil",
+					tc.status,
+					tc.config,
+					tc.state,
+					err,
+				)
 			}
 
 			if !tc.ok && !errors.Is(err, ErrStatus) {
-				t.Fatalf("CheckStatus(%#x, %#x, %#x) = %v, want ErrStatus", tc.status, tc.config, tc.state, err)
+				t.Fatalf(
+					"CheckStatus(%#x, %#x, %#x) = %v, want ErrStatus",
+					tc.status,
+					tc.config,
+					tc.state,
+					err,
+				)
 			}
 		})
 	}
@@ -148,7 +164,20 @@ func TestReport(t *testing.T) {
 	// header (tag 0xdb, length 8, version 0x42), status, reason, context,
 	// engine
 	ev1 := []byte{0xdb, 0x00, 0x08, 0x42, 0x33, 0x0c, 0xa0, 0x00}
-	ev2 := []byte{0xdb, 0x00, 0x0c, 0x42, 0x33, 0x1e, 0xc0, 0x1b, 0xde, 0xad, 0xbe, 0xef}
+	ev2 := []byte{
+		0xdb,
+		0x00,
+		0x0c,
+		0x42,
+		0x33,
+		0x1e,
+		0xc0,
+		0x1b,
+		0xde,
+		0xad,
+		0xbe,
+		0xef,
+	}
 
 	tests := []struct {
 		name   string
@@ -162,12 +191,16 @@ func TestReport(t *testing.T) {
 		{
 			name:   "open unfused, no events",
 			status: 0xf0, config: 0xf0, state: 0x66,
-			want: []string{"hab: status success, config open, state non-secure, no events"},
+			want: []string{
+				"hab: status success, config open, state non-secure, no events",
+			},
 		},
 		{
 			name:   "closed and trusted",
 			status: 0xf0, config: 0xcc, state: 0x99,
-			want: []string{"hab: status success, config closed, state trusted, no events"},
+			want: []string{
+				"hab: status success, config closed, state trusted, no events",
+			},
 		},
 		{
 			name:   "one event",
@@ -210,7 +243,9 @@ func TestReport(t *testing.T) {
 		{
 			name:   "unknown status, config and state",
 			status: 0x01, config: 0x00, state: 0x01,
-			want: []string{"hab: status unknown 0x01, config unknown 0x00, state unknown 0x01, no events"},
+			want: []string{
+				"hab: status unknown 0x01, config unknown 0x00, state unknown 0x01, no events",
+			},
 		},
 	}
 
@@ -305,10 +340,34 @@ func TestReadEvents(t *testing.T) {
 	}{
 		{"empty log", nil, nil, false, 1},
 		{"two records", records(2), records(2), false, 3},
-		{"exactly the cap", records(MaxEvents), records(MaxEvents), false, MaxEvents + 1},
-		{"one past the cap", records(MaxEvents + 1), records(MaxEvents), true, MaxEvents + 1},
-		{"far past the cap", records(3 * MaxEvents), records(MaxEvents), true, MaxEvents + 1},
-		{"record longer than the cap", [][]byte{long}, [][]byte{long[:MaxEventLen]}, false, 2},
+		{
+			"exactly the cap",
+			records(MaxEvents),
+			records(MaxEvents),
+			false,
+			MaxEvents + 1,
+		},
+		{
+			"one past the cap",
+			records(MaxEvents + 1),
+			records(MaxEvents),
+			true,
+			MaxEvents + 1,
+		},
+		{
+			"far past the cap",
+			records(3 * MaxEvents),
+			records(MaxEvents),
+			true,
+			MaxEvents + 1,
+		},
+		{
+			"record longer than the cap",
+			[][]byte{long},
+			[][]byte{long[:MaxEventLen]},
+			false,
+			2,
+		},
 	}
 
 	for _, tc := range tests {
@@ -320,16 +379,29 @@ func TestReadEvents(t *testing.T) {
 			got, more := ReadEvents(l.read)
 
 			if !reflect.DeepEqual(got, tc.want) || more != tc.more {
-				t.Fatalf("ReadEvents() = %x, %v, want %x, %v", got, more, tc.want, tc.more)
+				t.Fatalf(
+					"ReadEvents() = %x, %v, want %x, %v",
+					got,
+					more,
+					tc.want,
+					tc.more,
+				)
 			}
 
 			if len(l.calls) != tc.calls {
-				t.Fatalf("report_event called for %v, want %d calls", l.calls, tc.calls)
+				t.Fatalf(
+					"report_event called for %v, want %d calls",
+					l.calls,
+					tc.calls,
+				)
 			}
 
 			for i, idx := range l.calls {
 				if idx != uint32(i) {
-					t.Fatalf("report_event called for %v, want indexes from 0", l.calls)
+					t.Fatalf(
+						"report_event called for %v, want indexes from 0",
+						l.calls,
+					)
 				}
 			}
 		})

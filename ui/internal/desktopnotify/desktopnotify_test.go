@@ -68,7 +68,11 @@ func TestSanitizeLeadingWhitespaceDoesNotConsumeCap(t *testing.T) {
 	// own must not crowd out the meaningful text that follows it.
 	in := strings.Repeat(" ", maxFieldLen) + "hello"
 	if got := Sanitize(in); got != "hello" {
-		t.Fatalf("Sanitize(huge leading whitespace + text) = %q, want %q", got, "hello")
+		t.Fatalf(
+			"Sanitize(huge leading whitespace + text) = %q, want %q",
+			got,
+			"hello",
+		)
 	}
 }
 
@@ -80,7 +84,10 @@ func TestSanitizeBoundsScanOfDroppedChars(t *testing.T) {
 	// it must not.
 	huge := strings.Repeat(`"`, maxRawScanLen*10) + "trailing"
 	if got := Sanitize(huge); got != "" {
-		t.Fatalf("Sanitize(huge all-dropped-char input) = %q, want empty (scan must be bounded, not reach trailing text)", got)
+		t.Fatalf(
+			"Sanitize(huge all-dropped-char input) = %q, want empty (scan must be bounded, not reach trailing text)",
+			got,
+		)
 	}
 }
 
@@ -126,7 +133,10 @@ func TestStartReportsFailureThenSuccessOnRetry(t *testing.T) {
 
 	succeeding := exec.Command("go", "version")
 	if got := start(logger, succeeding); !got {
-		t.Fatalf("start() with a valid binary = %v, want true (retry after failure must succeed)", got)
+		t.Fatalf(
+			"start() with a valid binary = %v, want true (retry after failure must succeed)",
+			got,
+		)
 	}
 }
 
@@ -142,7 +152,10 @@ func TestStartReportsFalseOnImmediateExitFailure(t *testing.T) {
 	// package supports, unlike a shell-only failing command.
 	failingFast := exec.Command("go", "bursa-desktopnotify-unknown-subcommand")
 	if got := start(logger, failingFast); got {
-		t.Fatalf("start() with a command that exits with an error = %v, want false", got)
+		t.Fatalf(
+			"start() with a command that exits with an error = %v, want false",
+			got,
+		)
 	}
 }
 
@@ -164,7 +177,10 @@ func TestStartTerminatesAndReapsLongRunningProcess(t *testing.T) {
 		t.Fatal("start() for a running notifier = false, want true")
 	}
 	if cmd.ProcessState == nil {
-		t.Fatalf("start() returned before reaping the notifier process: state=%v", cmd.ProcessState)
+		t.Fatalf(
+			"start() returned before reaping the notifier process: state=%v",
+			cmd.ProcessState,
+		)
 	}
 }
 
@@ -186,7 +202,8 @@ func TestNotifyReturnsFalseForEmptyInput(t *testing.T) {
 
 func TestWindowsToastScriptEmbedsSanitizedText(t *testing.T) {
 	script := windowsToastScript("Title", "Body")
-	if !strings.Contains(script, "'Title'") || !strings.Contains(script, "'Body'") {
+	if !strings.Contains(script, "'Title'") ||
+		!strings.Contains(script, "'Body'") {
 		t.Fatalf("windows script missing embedded fields: %q", script)
 	}
 }
@@ -229,7 +246,11 @@ func TestStartWithLifetimeReapsANotifierThatNeverExits(t *testing.T) {
 	}
 	cmd := exec.Command("sleep", "300")
 
-	if !startWithLifetime(discardLogger(), cmd, notifyStartGrace+300*time.Millisecond) {
+	if !startWithLifetime(
+		discardLogger(),
+		cmd,
+		notifyStartGrace+300*time.Millisecond,
+	) {
 		t.Fatal("a notifier that is still running should report success")
 	}
 

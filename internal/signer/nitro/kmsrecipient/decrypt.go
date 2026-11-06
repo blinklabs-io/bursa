@@ -110,36 +110,53 @@ func parse(content []byte) (*encryptedKey, error) {
 	if err != nil || len(rest) != 0 {
 		return nil, errors.New("invalid CMS content info")
 	}
-	if hasExtra(ci.Extra) || hasExtra(ci.Content.Extra) || !ci.ContentType.Equal(oidEnvelopedData) || ci.Content.Version != envelopedDataVersion {
+	if hasExtra(ci.Extra) || hasExtra(ci.Content.Extra) ||
+		!ci.ContentType.Equal(oidEnvelopedData) ||
+		ci.Content.Version != envelopedDataVersion {
 		return nil, errors.New("invalid CMS envelope")
 	}
 	if len(ci.Content.RecipientInfos) != 1 {
 		return nil, errors.New("invalid CMS recipient count")
 	}
 	recipient := ci.Content.RecipientInfos[0]
-	if hasExtra(recipient.Extra) || recipient.Version != recipientInfoVersion || len(recipient.RecipientIdentifier) == 0 || len(recipient.EncryptedKey) == 0 {
+	if hasExtra(recipient.Extra) || recipient.Version != recipientInfoVersion ||
+		len(recipient.RecipientIdentifier) == 0 ||
+		len(recipient.EncryptedKey) == 0 {
 		return nil, errors.New("invalid CMS recipient")
 	}
 	if err := validateOAEP(recipient.KeyEncryptionAlgorithm); err != nil {
 		return nil, err
 	}
 	encryptedContent := ci.Content.EncryptedContentInfo
-	if hasExtra(encryptedContent.Extra) || hasExtra(encryptedContent.ContentEncryptionAlgorithm.Extra) || !encryptedContent.ContentType.Equal(oidData) || !encryptedContent.ContentEncryptionAlgorithm.Algorithm.Equal(oidAES256CBC) {
+	if hasExtra(encryptedContent.Extra) ||
+		hasExtra(encryptedContent.ContentEncryptionAlgorithm.Extra) ||
+		!encryptedContent.ContentType.Equal(oidData) ||
+		!encryptedContent.ContentEncryptionAlgorithm.Algorithm.Equal(
+			oidAES256CBC,
+		) {
 		return nil, errors.New("invalid CMS content encryption algorithm")
 	}
-	iv, err := decodeOctetString(encryptedContent.ContentEncryptionAlgorithm.Parameters)
+	iv, err := decodeOctetString(
+		encryptedContent.ContentEncryptionAlgorithm.Parameters,
+	)
 	if err != nil || len(iv) != aes.BlockSize {
 		return nil, errors.New("invalid CMS initialization vector")
 	}
 	ciphertext, err := decodeEncryptedContent(encryptedContent.EncryptedContent)
-	if err != nil || len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
+	if err != nil || len(ciphertext) == 0 ||
+		len(ciphertext)%aes.BlockSize != 0 {
 		return nil, errors.New("invalid CMS ciphertext")
 	}
-	return &encryptedKey{rsaCiphertext: recipient.EncryptedKey, ciphertext: ciphertext, iv: iv}, nil
+	return &encryptedKey{
+		rsaCiphertext: recipient.EncryptedKey,
+		ciphertext:    ciphertext,
+		iv:            iv,
+	}, nil
 }
 
 func validateOAEP(algorithm algorithmIdentifier) error {
-	if hasExtra(algorithm.Extra) || !algorithm.Algorithm.Equal(oidRSAESOAEP) || len(algorithm.Parameters.FullBytes) == 0 {
+	if hasExtra(algorithm.Extra) || !algorithm.Algorithm.Equal(oidRSAESOAEP) ||
+		len(algorithm.Parameters.FullBytes) == 0 {
 		return errors.New("invalid CMS key encryption algorithm")
 	}
 	var params rsaOAEPParameters
@@ -147,20 +164,24 @@ func validateOAEP(algorithm algorithmIdentifier) error {
 	if err != nil || len(rest) != 0 || hasExtra(params.Extra) {
 		return errors.New("invalid RSA-OAEP parameters")
 	}
-	if !isSHA256(params.HashAlgorithm) || hasExtra(params.MaskGenAlgorithm.Extra) || !params.MaskGenAlgorithm.Algorithm.Equal(oidMGF1) {
+	if !isSHA256(params.HashAlgorithm) ||
+		hasExtra(params.MaskGenAlgorithm.Extra) ||
+		!params.MaskGenAlgorithm.Algorithm.Equal(oidMGF1) {
 		return errors.New("unsupported RSA-OAEP parameters")
 	}
 	if !containsSHA256Algorithm(params.MaskGenAlgorithm.Parameters.FullBytes) {
 		return errors.New("unsupported RSA-OAEP mask generation function")
 	}
-	if len(params.PSourceAlgorithm.Algorithm) != 0 && !isEmptyPSpecified(params.PSourceAlgorithm) {
+	if len(params.PSourceAlgorithm.Algorithm) != 0 &&
+		!isEmptyPSpecified(params.PSourceAlgorithm) {
 		return errors.New("unsupported RSA-OAEP label")
 	}
 	return nil
 }
 
 func isSHA256(algorithm algorithmIdentifier) bool {
-	return !hasExtra(algorithm.Extra) && algorithm.Algorithm.Equal(oidSHA256) && isNullOrAbsent(algorithm.Parameters)
+	return !hasExtra(algorithm.Extra) && algorithm.Algorithm.Equal(oidSHA256) &&
+		isNullOrAbsent(algorithm.Parameters)
 }
 
 func containsSHA256Algorithm(data []byte) bool {
@@ -178,11 +199,13 @@ func isEmptyPSpecified(algorithm algorithmIdentifier) bool {
 }
 func hasExtra(value asn1.RawValue) bool { return len(value.FullBytes) != 0 }
 func isNullOrAbsent(value asn1.RawValue) bool {
-	return len(value.FullBytes) == 0 || (value.Class == asn1.ClassUniversal && value.Tag == asn1.TagNull && !value.IsCompound && len(value.Bytes) == 0)
+	return len(value.FullBytes) == 0 ||
+		(value.Class == asn1.ClassUniversal && value.Tag == asn1.TagNull && !value.IsCompound && len(value.Bytes) == 0)
 }
 
 func decodeOctetString(value asn1.RawValue) ([]byte, error) {
-	if value.Class != asn1.ClassUniversal || value.Tag != asn1.TagOctetString || value.IsCompound {
+	if value.Class != asn1.ClassUniversal || value.Tag != asn1.TagOctetString ||
+		value.IsCompound {
 		return nil, errors.New("expected OCTET STRING")
 	}
 	return bytes.Clone(value.Bytes), nil
@@ -210,7 +233,13 @@ func decodeEncryptedContent(value asn1.RawValue) ([]byte, error) {
 }
 
 func (e *encryptedKey) decrypt(privateKey *rsa.PrivateKey) ([]byte, error) {
-	contentKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, privateKey, e.rsaCiphertext, nil)
+	contentKey, err := rsa.DecryptOAEP(
+		sha256.New(),
+		rand.Reader,
+		privateKey,
+		e.rsaCiphertext,
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +251,8 @@ func (e *encryptedKey) decrypt(privateKey *rsa.PrivateKey) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(e.iv) != block.BlockSize() || len(e.ciphertext) == 0 || len(e.ciphertext)%block.BlockSize() != 0 {
+	if len(e.iv) != block.BlockSize() || len(e.ciphertext) == 0 ||
+		len(e.ciphertext)%block.BlockSize() != 0 {
 		return nil, errors.New("invalid AES-CBC parameters")
 	}
 	plaintext := make([]byte, len(e.ciphertext))
@@ -240,11 +270,20 @@ func unpadPKCS7(data []byte, blockSize int) ([]byte, error) {
 		return nil, errors.New("invalid PKCS#7 input")
 	}
 	paddingLength := int(data[len(data)-1])
-	valid := subtle.ConstantTimeLessOrEq(1, paddingLength) & subtle.ConstantTimeLessOrEq(paddingLength, blockSize)
+	valid := subtle.ConstantTimeLessOrEq(
+		1,
+		paddingLength,
+	) & subtle.ConstantTimeLessOrEq(
+		paddingLength,
+		blockSize,
+	)
 	for i := 0; i < blockSize; i++ {
 		inPadding := subtle.ConstantTimeLessOrEq(i+1, paddingLength)
 		// paddingLength is already constrained to the AES block size.
-		matches := subtle.ConstantTimeByteEq(data[len(data)-1-i], byte(paddingLength)) // #nosec G115
+		matches := subtle.ConstantTimeByteEq(
+			data[len(data)-1-i],
+			byte(paddingLength),
+		) // #nosec G115
 		valid &= subtle.ConstantTimeSelect(inPadding, matches, 1)
 	}
 	if valid != 1 {

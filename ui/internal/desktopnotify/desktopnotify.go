@@ -84,19 +84,38 @@ func Notify(logger *slog.Logger, title, body string) bool {
 		// so the sanitized text is passed verbatim with no quoting concerns. The
 		// leading "--" stops option parsing so a title/body starting with "-"
 		// (Sanitize does not forbid a leading dash) is never read as a flag.
-		cmd = exec.Command("notify-send", "--", title, body) //nolint:gosec // title/body are sanitized (Sanitize) to a safe printable subset
+		cmd = exec.Command(
+			"notify-send",
+			"--",
+			title,
+			body,
+		) //nolint:gosec // title/body are sanitized (Sanitize) to a safe printable subset
 	case "darwin":
 		// osascript embeds the text inside an AppleScript string literal. Sanitize
 		// has removed every double-quote and backslash, so wrapping in plain
 		// double-quotes cannot terminate the literal early.
-		script := fmt.Sprintf("display notification %q with title %q", body, title)
-		cmd = exec.Command("osascript", "-e", script) //nolint:gosec // title/body are sanitized (Sanitize); no quotes/backslashes remain
+		script := fmt.Sprintf(
+			"display notification %q with title %q",
+			body,
+			title,
+		)
+		cmd = exec.Command(
+			"osascript",
+			"-e",
+			script,
+		) //nolint:gosec // title/body are sanitized (Sanitize); no quotes/backslashes remain
 	case "windows":
 		// A standard balloon tip via System.Windows.Forms.NotifyIcon. The text is
 		// embedded in single-quoted PowerShell strings; Sanitize has removed every
 		// single-quote, so the literals cannot be broken out of.
 		script := windowsToastScript(title, body)
-		cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script) //nolint:gosec // title/body are sanitized (Sanitize); no single-quotes remain
+		cmd = exec.Command(
+			"powershell",
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			script,
+		) //nolint:gosec // title/body are sanitized (Sanitize); no single-quotes remain
 		return startWithLifetime(logger, cmd, windowsNotifyLifetime)
 	default:
 		logger.Warn("no desktop notifier for this OS", "os", runtime.GOOS)
@@ -128,7 +147,11 @@ func start(logger *slog.Logger, cmd *exec.Cmd) bool {
 // started, so the grace period doubles as its lifetime; one that has to stay
 // alive to keep the notification on screen needs longer, and gets it here
 // without giving up the guarantee that the process is eventually reaped.
-func startWithLifetime(logger *slog.Logger, cmd *exec.Cmd, lifetime time.Duration) bool {
+func startWithLifetime(
+	logger *slog.Logger,
+	cmd *exec.Cmd,
+	lifetime time.Duration,
+) bool {
 	if err := cmd.Start(); err != nil {
 		logger.Warn("failed to raise desktop notification", "error", err)
 		return false
@@ -140,7 +163,11 @@ func startWithLifetime(logger *slog.Logger, cmd *exec.Cmd, lifetime time.Duratio
 	select {
 	case err := <-done:
 		if err != nil {
-			logger.Warn("desktop notifier process exited with error", "error", err)
+			logger.Warn(
+				"desktop notifier process exited with error",
+				"error",
+				err,
+			)
 			return false
 		}
 		return true
@@ -152,7 +179,11 @@ func startWithLifetime(logger *slog.Logger, cmd *exec.Cmd, lifetime time.Duratio
 		// error is needed for the intentional shutdown.
 		reap := func() {
 			if err := cmd.Process.Kill(); err != nil {
-				logger.Debug("desktop notifier ended before shutdown", "error", err)
+				logger.Debug(
+					"desktop notifier ended before shutdown",
+					"error",
+					err,
+				)
 			}
 			if err := <-done; err != nil {
 				logger.Debug("desktop notifier reaped", "error", err)

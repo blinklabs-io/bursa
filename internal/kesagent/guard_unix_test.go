@@ -54,7 +54,9 @@ func TestPeriodGuardKeepsFloorWhenPersistFailsAfterCommit(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
 	if err := g.Authorize("vkey-new", 20); err == nil {
-		t.Fatal("Authorize: want the post-rename sync failure to surface, got nil")
+		t.Fatal(
+			"Authorize: want the post-rename sync failure to surface, got nil",
+		)
 	}
 
 	// The advanced floor must survive in memory: the guard file already says 20.
@@ -63,7 +65,10 @@ func TestPeriodGuardKeepsFloorWhenPersistFailsAfterCommit(t *testing.T) {
 	}
 	// The whole point: a period below the committed floor stays refused.
 	if err := g.Authorize("vkey-mid", 15); !errors.Is(err, ErrPeriodRollback) {
-		t.Fatalf("Authorize(15) after committed floor 20: want ErrPeriodRollback, got %v", err)
+		t.Fatalf(
+			"Authorize(15) after committed floor 20: want ErrPeriodRollback, got %v",
+			err,
+		)
 	}
 
 	// And the durable state really did advance to 20.
@@ -111,7 +116,11 @@ func TestPeriodGuardRollsBackFloorWhenPersistFailsBeforeCommit(t *testing.T) {
 		t.Fatal("Authorize: want a persist failure, got nil")
 	}
 	if floor, set := g.Floor(); !set || floor != 10 {
-		t.Fatalf("in-memory floor = (%d, %v), want (10, true) after an uncommitted persist", floor, set)
+		t.Fatalf(
+			"in-memory floor = (%d, %v), want (10, true) after an uncommitted persist",
+			floor,
+			set,
+		)
 	}
 }
 
@@ -140,7 +149,9 @@ func TestPeriodGuardRetriesPersistAfterUnsyncedCommit(t *testing.T) {
 		t.Fatalf("chmod dir: %v", err)
 	}
 	if err := g.Authorize("vkey-new", 20); err == nil {
-		t.Fatal("Authorize: want the post-rename sync failure to surface, got nil")
+		t.Fatal(
+			"Authorize: want the post-rename sync failure to surface, got nil",
+		)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("restore dir mode: %v", err)
@@ -156,7 +167,10 @@ func TestPeriodGuardRetriesPersistAfterUnsyncedCommit(t *testing.T) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("guard file was not rewritten, so the fast path skipped a non-durable floor: %v", err)
+		t.Fatalf(
+			"guard file was not rewritten, so the fast path skipped a non-durable floor: %v",
+			err,
+		)
 	}
 	var st guardState
 	if err := json.Unmarshal(data, &st); err != nil {
@@ -179,7 +193,10 @@ func TestPeriodGuardRetriesPersistAfterUnsyncedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat guard file: %v", err)
 	}
-	if !before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() {
-		t.Fatal("equal-period fast path rewrote a floor that was already durable")
+	if !before.ModTime().Equal(after.ModTime()) ||
+		before.Size() != after.Size() {
+		t.Fatal(
+			"equal-period fast path rewrote a floor that was already durable",
+		)
 	}
 }

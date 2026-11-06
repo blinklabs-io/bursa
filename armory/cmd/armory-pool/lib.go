@@ -75,13 +75,25 @@ func readEnvelope(data []byte) (envelope, []byte, error) {
 // marshalEnvelope matches bursa.WriteCborEnvelope: four-space indent and a
 // trailing newline.
 func marshalEnvelope(typ, desc string, raw []byte) []byte {
-	return fmt.Appendf(nil, "{\n    \"type\": %q,\n    \"description\": %q,\n    \"cborHex\": \"%x\"\n}\n", typ, desc, raw)
+	return fmt.Appendf(
+		nil,
+		"{\n    \"type\": %q,\n    \"description\": %q,\n    \"cborHex\": \"%x\"\n}\n",
+		typ,
+		desc,
+		raw,
+	)
 }
 
 // marshalOpCertEnvelope matches the fixed template `bursa cert op-cert --out`
 // writes, which has no trailing newline.
 func marshalOpCertEnvelope(raw []byte) []byte {
-	return fmt.Appendf(nil, "{\n    \"type\": %q,\n    \"description\": %q,\n    \"cborHex\": \"%x\"\n}", opCertType, opCertDesc, raw)
+	return fmt.Appendf(
+		nil,
+		"{\n    \"type\": %q,\n    \"description\": %q,\n    \"cborHex\": \"%x\"\n}",
+		opCertType,
+		opCertDesc,
+		raw,
+	)
 }
 
 // vkeyCBOR is a verification key as a CBOR byte string: 5820 + key.
@@ -147,7 +159,10 @@ func networkID(name string) (byte, error) {
 		return 0, nil
 	}
 
-	return 0, fmt.Errorf("unknown network %q (mainnet, preview, preprod, testnet)", name)
+	return 0, fmt.Errorf(
+		"unknown network %q (mainnet, preview, preprod, testnet)",
+		name,
+	)
 }
 
 // rewardAddress is header 0xe0|network followed by the stake key hash.
@@ -216,7 +231,10 @@ func readTx(data []byte) ([]byte, error) {
 	}
 
 	if env.Type != "Unwitnessed Tx ConwayEra" && env.Type != "Tx ConwayEra" {
-		return nil, fmt.Errorf("envelope type %q is not a Conway transaction", env.Type)
+		return nil, fmt.Errorf(
+			"envelope type %q is not a Conway transaction",
+			env.Type,
+		)
 	}
 
 	return raw, nil
@@ -228,7 +246,11 @@ func witnessCBOR(vkey, sig []byte) ([]byte, error) {
 }
 
 // opCertCBOR is [[kes_vkey, issue, period, cold_sig], cold_vkey].
-func opCertCBOR(kes []byte, issue, period uint64, sig, cold []byte) ([]byte, error) {
+func opCertCBOR(
+	kes []byte,
+	issue, period uint64,
+	sig, cold []byte,
+) ([]byte, error) {
 	return cbor.Marshal([]any{[]any{kes, issue, period, sig}, cold})
 }
 
@@ -242,13 +264,27 @@ func opCertPayload(kes []byte, chain, period uint64) []byte {
 
 // verifyInventory checks the inventory's version and the identity key's
 // attestation over the nonce and keys, and returns the keys by role.
-func verifyInventory(identity ed25519.PublicKey, nonce []byte, inv device.Inventory) (map[string]ed25519.PublicKey, error) {
+func verifyInventory(
+	identity ed25519.PublicKey,
+	nonce []byte,
+	inv device.Inventory,
+) (map[string]ed25519.PublicKey, error) {
 	if inv.Version != device.Protocol {
-		return nil, fmt.Errorf("inventory version %q, want %q", inv.Version, device.Protocol)
+		return nil, fmt.Errorf(
+			"inventory version %q, want %q",
+			inv.Version,
+			device.Protocol,
+		)
 	}
 
-	if !ed25519.Verify(identity, device.InventoryBinding(nonce, inv.Keys), inv.Attestation) {
-		return nil, errors.New("inventory attestation does not verify under the pinned identity key")
+	if !ed25519.Verify(
+		identity,
+		device.InventoryBinding(nonce, inv.Keys),
+		inv.Attestation,
+	) {
+		return nil, errors.New(
+			"inventory attestation does not verify under the pinned identity key",
+		)
 	}
 
 	keys := map[string]ed25519.PublicKey{}
@@ -277,9 +313,17 @@ func verifyInventory(identity ed25519.PublicKey, nonce []byte, inv device.Invent
 // verifySignResponse checks the protocol version echo, nonce echo, refusal and
 // the key's binding signature over the request. The caller verifies the
 // signature over the message it expects.
-func verifySignResponse(req device.SignRequest, resp device.SignResponse, pub ed25519.PublicKey) error {
+func verifySignResponse(
+	req device.SignRequest,
+	resp device.SignResponse,
+	pub ed25519.PublicKey,
+) error {
 	if resp.Version != req.Version {
-		return fmt.Errorf("response version %q, want %q", resp.Version, req.Version)
+		return fmt.Errorf(
+			"response version %q, want %q",
+			resp.Version,
+			req.Version,
+		)
 	}
 
 	if !bytes.Equal(resp.Nonce, req.Nonce) {
@@ -294,8 +338,14 @@ func verifySignResponse(req device.SignRequest, resp device.SignResponse, pub ed
 		return errors.New("response has no signature")
 	}
 
-	if !ed25519.Verify(pub, device.ResponseBinding(req, resp.Signature, resp.Summary), resp.BindingSignature) {
-		return errors.New("binding signature does not verify under the device key")
+	if !ed25519.Verify(
+		pub,
+		device.ResponseBinding(req, resp.Signature, resp.Summary),
+		resp.BindingSignature,
+	) {
+		return errors.New(
+			"binding signature does not verify under the device key",
+		)
 	}
 
 	return nil
@@ -309,7 +359,11 @@ func hexHash(pub []byte) string {
 // txBodyRequest builds the tx-body request for body signed by role's key. It
 // asks for the device's summary, which needs firmware that answers
 // device.ProtocolSummary.
-func txBodyRequest(profile, role string, pub ed25519.PublicKey, nonce, body []byte) device.SignRequest {
+func txBodyRequest(
+	profile, role string,
+	pub ed25519.PublicKey,
+	nonce, body []byte,
+) device.SignRequest {
 	era := conwayEra
 
 	return device.SignRequest{
@@ -319,7 +373,11 @@ func txBodyRequest(profile, role string, pub ed25519.PublicKey, nonce, body []by
 }
 
 // checkTxBody verifies a tx-body response and returns the witness CBOR.
-func checkTxBody(req device.SignRequest, resp device.SignResponse, pub ed25519.PublicKey) ([]byte, error) {
+func checkTxBody(
+	req device.SignRequest,
+	resp device.SignResponse,
+	pub ed25519.PublicKey,
+) ([]byte, error) {
 	if err := verifySignResponse(req, resp, pub); err != nil {
 		return nil, err
 	}
@@ -327,14 +385,21 @@ func checkTxBody(req device.SignRequest, resp device.SignResponse, pub ed25519.P
 	hash := blake2b.Sum256(req.Payload)
 
 	if !ed25519.Verify(pub, hash[:], resp.Signature) {
-		return nil, errors.New("signature does not verify over blake2b-256 of the body")
+		return nil, errors.New(
+			"signature does not verify over blake2b-256 of the body",
+		)
 	}
 
 	return witnessCBOR(pub, resp.Signature)
 }
 
 // opCertRequest builds the opcert-next request for the pool key.
-func opCertRequest(profile string, pub ed25519.PublicKey, nonce, kes []byte, chain, period uint64) device.SignRequest {
+func opCertRequest(
+	profile string,
+	pub ed25519.PublicKey,
+	nonce, kes []byte,
+	chain, period uint64,
+) device.SignRequest {
 	return device.SignRequest{
 		Version: device.Protocol, Purpose: "opcert-next", KeyHash: hexHash(pub), Role: "pool",
 		Nonce: nonce, Payload: opCertPayload(kes, chain, period), Profile: profile,
@@ -343,7 +408,12 @@ func opCertRequest(profile string, pub ed25519.PublicKey, nonce, kes []byte, cha
 
 // checkOpCert verifies an opcert-next response and returns the certificate
 // CBOR and issue counter.
-func checkOpCert(req device.SignRequest, resp device.SignResponse, pub ed25519.PublicKey, chain, period uint64) ([]byte, uint64, error) {
+func checkOpCert(
+	req device.SignRequest,
+	resp device.SignResponse,
+	pub ed25519.PublicKey,
+	chain, period uint64,
+) ([]byte, uint64, error) {
 	if err := verifySignResponse(req, resp, pub); err != nil {
 		return nil, 0, err
 	}
@@ -359,13 +429,19 @@ func checkOpCert(req device.SignRequest, resp device.SignResponse, pub ed25519.P
 	issue := *resp.IssueCounter
 
 	if issue != chain+1 {
-		return nil, 0, fmt.Errorf("device issued counter %d, want %d", issue, chain+1)
+		return nil, 0, fmt.Errorf(
+			"device issued counter %d, want %d",
+			issue,
+			chain+1,
+		)
 	}
 
 	kes := req.Payload[:32]
 
 	if !ed25519.Verify(pub, opCertPayload(kes, issue, period), resp.Signature) {
-		return nil, 0, errors.New("signature does not verify over kes vkey, issue counter and period")
+		return nil, 0, errors.New(
+			"signature does not verify over kes vkey, issue counter and period",
+		)
 	}
 
 	raw, err := opCertCBOR(kes, issue, period, resp.Signature, pub)

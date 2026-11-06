@@ -36,13 +36,22 @@ func TestIsLoopbackListenAddress(t *testing.T) {
 	}
 	for addr, want := range cases {
 		if got := IsLoopbackListenAddress(addr); got != want {
-			t.Errorf("IsLoopbackListenAddress(%q) = %v, want %v", addr, got, want)
+			t.Errorf(
+				"IsLoopbackListenAddress(%q) = %v, want %v",
+				addr,
+				got,
+				want,
+			)
 		}
 	}
 }
 
 func softwareBackend() config.SignerBackendConfig {
-	return config.SignerBackendConfig{Name: "local", Type: "software", Path: "/keys"}
+	return config.SignerBackendConfig{
+		Name: "local",
+		Type: "software",
+		Path: "/keys",
+	}
 }
 
 func vaultBackend() config.SignerBackendConfig {
@@ -56,7 +65,9 @@ func TestCheckFileBackendGuard_NonLoopbackNoOptIn_Errors(t *testing.T) {
 		false,
 	)
 	if err == nil {
-		t.Fatal("expected boot error for software backend on non-loopback address without opt-in")
+		t.Fatal(
+			"expected boot error for software backend on non-loopback address without opt-in",
+		)
 	}
 	if warn == "" {
 		t.Error("expected a non-empty warning alongside the error")

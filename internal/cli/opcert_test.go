@@ -128,7 +128,11 @@ func TestOpCertEncodeDecodeRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	loaded, err := bursa.LoadKeyFromBytes(data)
-	require.NoError(t, err, "bursa must be able to decode its own op-cert output")
+	require.NoError(
+		t,
+		err,
+		"bursa must be able to decode its own op-cert output",
+	)
 
 	assert.Equal(t, testKESVkey, loaded.VKey)
 	assert.Equal(t, counter, loaded.OpCertIssueNumber)

@@ -39,7 +39,10 @@ func TestLoadKeyFromFileAllowsReadablePublicKey(t *testing.T) {
 
 func TestLoadKeyFromFileRejectsOversizedInput(t *testing.T) {
 	envelope := `{"type":"PaymentVerificationKeyShelley_ed25519","description":"` +
-		strings.Repeat("x", maxSecretKeyFileSize) +
+		strings.Repeat(
+			"x",
+			maxSecretKeyFileSize,
+		) +
 		`","cborHex":"5820aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
 	path := filepath.Join(t.TempDir(), "payment.vkey")
 	require.NoError(t, os.WriteFile(path, []byte(envelope), 0o644))

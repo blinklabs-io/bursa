@@ -36,7 +36,11 @@ func NewMemMedium(blocks uint64) *MemMedium {
 // length must be a multiple of BlockSize.
 func NewMemMediumFromImage(img []byte) (*MemMedium, error) {
 	if len(img)%BlockSize != 0 {
-		return nil, fmt.Errorf("%w: image of %d bytes is not whole blocks", ErrMedium, len(img))
+		return nil, fmt.Errorf(
+			"%w: image of %d bytes is not whole blocks",
+			ErrMedium,
+			len(img),
+		)
 	}
 
 	return &MemMedium{img: append([]byte(nil), img...)}, nil
@@ -61,11 +65,15 @@ func (m *MemMedium) NumBlocks() uint64 {
 func (m *MemMedium) span(lba uint64, n int) (int, error) {
 	size := uint64(len(m.img)) //nolint:gosec // slice length is non-negative
 
-	if n%BlockSize != 0 || lba > size/BlockSize || uint64(n) > size-lba*BlockSize { //nolint:gosec // n is a slice length
+	if n%BlockSize != 0 || lba > size/BlockSize ||
+		uint64(n) > size-lba*BlockSize { //nolint:gosec // n is a slice length
 		return 0, fmt.Errorf("%w: %d bytes at block %d", ErrMedium, n, lba)
 	}
 
-	return int(lba * BlockSize), nil //nolint:gosec // bounded by the image length checked above
+	//nolint:gosec // bounded by the image length checked above
+	return int(
+		lba * BlockSize,
+	), nil
 }
 
 // ReadBlocks implements Medium.
@@ -108,7 +116,11 @@ type MemHeadStore struct {
 }
 
 // NewMemHeadStore returns a store holding head.
-func NewMemHeadStore(head Head) *MemHeadStore { return &MemHeadStore{head: head} }
+func NewMemHeadStore(
+	head Head,
+) *MemHeadStore {
+	return &MemHeadStore{head: head}
+}
 
 // Load implements HeadStore.
 func (s *MemHeadStore) Load() (Head, error) {
@@ -145,11 +157,16 @@ func (m *ReaderMedium) NumBlocks() uint64 { return m.blocks }
 
 // ReadBlocks implements Medium.
 func (m *ReaderMedium) ReadBlocks(lba uint64, p []byte) error {
-	if len(p)%BlockSize != 0 || lba > m.blocks || uint64(len(p)) > (m.blocks-lba)*BlockSize {
+	if len(p)%BlockSize != 0 || lba > m.blocks ||
+		uint64(len(p)) > (m.blocks-lba)*BlockSize {
 		return fmt.Errorf("%w: %d bytes at block %d", ErrMedium, len(p), lba)
 	}
 
-	_, err := m.r.ReadAt(p, int64(lba*BlockSize)) //nolint:gosec // bounded by the size checked above
+	//nolint:gosec // bounded by the size checked above
+	_, err := m.r.ReadAt(
+		p,
+		int64(lba*BlockSize),
+	)
 
 	return err
 }

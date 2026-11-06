@@ -69,7 +69,8 @@ Examples:
 		Run: func(cmd *cobra.Command, args []string) {
 			// Validate that a file argument is provided
 			if len(args) == 0 {
-				logging.GetLogger().Error("no metadata file specified", "usage", "bursa hash metadata <file>")
+				logging.GetLogger().
+					Error("no metadata file specified", "usage", "bursa hash metadata <file>")
 				os.Exit(1)
 			}
 
@@ -83,7 +84,8 @@ Examples:
 
 			// Validate metadata type
 			if metadataType != "pool" && metadataType != "drep" {
-				logging.GetLogger().Error("invalid metadata type", "type", metadataType, "valid_types", "pool, drep")
+				logging.GetLogger().
+					Error("invalid metadata type", "type", metadataType, "valid_types", "pool, drep")
 				os.Exit(1)
 			}
 
@@ -123,7 +125,14 @@ Supported input types:
 			expectedHash, _ := cmd.Flags().GetString("expected-hash")
 			outFile, _ := cmd.Flags().GetString("out-file")
 
-			return cli.RunHashAnchorData(text, fileText, fileBinary, url, expectedHash, outFile)
+			return cli.RunHashAnchorData(
+				text,
+				fileText,
+				fileBinary,
+				url,
+				expectedHash,
+				outFile,
+			)
 		},
 	}
 

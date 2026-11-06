@@ -71,8 +71,14 @@ func (c *fakeCard) log(op string, lba int, buf []byte) error {
 	tr := transfer{op: op, lba: lba, blocks: len(buf) / signlog.BlockSize}
 	c.calls = append(c.calls, tr)
 
-	if lba < 0 || len(buf)%signlog.BlockSize != 0 || lba*signlog.BlockSize+len(buf) > len(c.img) {
-		return fmt.Errorf("%s of %d bytes at block %d is off the card", op, len(buf), lba)
+	if lba < 0 || len(buf)%signlog.BlockSize != 0 ||
+		lba*signlog.BlockSize+len(buf) > len(c.img) {
+		return fmt.Errorf(
+			"%s of %d bytes at block %d is off the card",
+			op,
+			len(buf),
+			lba,
+		)
 	}
 
 	if c.fail != nil && c.fail(tr) {
@@ -83,7 +89,10 @@ func (c *fakeCard) log(op string, lba int, buf []byte) error {
 }
 
 func newFakeCard(blocks int) *fakeCard {
-	return &fakeCard{img: make([]byte, blocks*signlog.BlockSize), blockSize: signlog.BlockSize}
+	return &fakeCard{
+		img:       make([]byte, blocks*signlog.BlockSize),
+		blockSize: signlog.BlockSize,
+	}
 }
 
 func (c *fakeCard) Detect() error {
@@ -257,11 +266,30 @@ func TestTransfersAreSplit(t *testing.T) {
 		sizes  []int
 	}{
 		{"one block", 1, []int{1}},
-		{"one under the limit", MaxTransferBlocks - 1, []int{MaxTransferBlocks - 1}},
+		{
+			"one under the limit",
+			MaxTransferBlocks - 1,
+			[]int{MaxTransferBlocks - 1},
+		},
 		{"at the limit", MaxTransferBlocks, []int{MaxTransferBlocks}},
-		{"one over the limit", MaxTransferBlocks + 1, []int{MaxTransferBlocks, 1}},
-		{"twice the limit", 2 * MaxTransferBlocks, []int{MaxTransferBlocks, MaxTransferBlocks}},
-		{"many pieces", 300, append(slices.Repeat([]int{MaxTransferBlocks}, 300/MaxTransferBlocks), 300%MaxTransferBlocks)},
+		{
+			"one over the limit",
+			MaxTransferBlocks + 1,
+			[]int{MaxTransferBlocks, 1},
+		},
+		{
+			"twice the limit",
+			2 * MaxTransferBlocks,
+			[]int{MaxTransferBlocks, MaxTransferBlocks},
+		},
+		{
+			"many pieces",
+			300,
+			append(
+				slices.Repeat([]int{MaxTransferBlocks}, 300/MaxTransferBlocks),
+				300%MaxTransferBlocks,
+			),
+		},
 	}
 
 	for _, tc := range tests {
@@ -277,7 +305,10 @@ func TestTransfersAreSplit(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if want := chunks("write", lba, tc.sizes...); !slices.Equal(c.calls, want) {
+			if want := chunks("write", lba, tc.sizes...); !slices.Equal(
+				c.calls,
+				want,
+			) {
 				t.Fatalf("write calls %v, want %v", c.calls, want)
 			}
 
@@ -291,18 +322,25 @@ func TestTransfersAreSplit(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if want := chunks("read", lba, tc.sizes...); !slices.Equal(c.calls, want) {
+			if want := chunks("read", lba, tc.sizes...); !slices.Equal(
+				c.calls,
+				want,
+			) {
 				t.Fatalf("sync calls %v, want %v", c.calls, want)
 			}
 
 			c.calls = nil
 			got := make([]byte, len(data))
 
-			if err := m.ReadBlocks(lba, got); err != nil || !bytes.Equal(got, data) {
+			if err := m.ReadBlocks(lba, got); err != nil ||
+				!bytes.Equal(got, data) {
 				t.Fatalf("read back: %v", err)
 			}
 
-			if want := chunks("read", lba, tc.sizes...); !slices.Equal(c.calls, want) {
+			if want := chunks("read", lba, tc.sizes...); !slices.Equal(
+				c.calls,
+				want,
+			) {
 				t.Fatalf("read calls %v, want %v", c.calls, want)
 			}
 		})
@@ -371,7 +409,10 @@ func TestSplitWritePersistentFailure(t *testing.T) {
 		t.Fatal("a persistent write failure was not reported")
 	}
 
-	want := slices.Repeat(chunks("write", lba, MaxTransferBlocks, MaxTransferBlocks), 2)
+	want := slices.Repeat(
+		chunks("write", lba, MaxTransferBlocks, MaxTransferBlocks),
+		2,
+	)
 	if !slices.Equal(c.calls, want) {
 		t.Fatalf("write calls %v, want %v", c.calls, want)
 	}
@@ -448,7 +489,10 @@ func TestSplitReadPersistentFailure(t *testing.T) {
 		t.Fatal("a persistent read failure was not reported")
 	}
 
-	want := slices.Repeat(chunks("read", lba, MaxTransferBlocks, MaxTransferBlocks), 2)
+	want := slices.Repeat(
+		chunks("read", lba, MaxTransferBlocks, MaxTransferBlocks),
+		2,
+	)
 	if !slices.Equal(c.calls, want) {
 		t.Fatalf("read calls %v, want %v", c.calls, want)
 	}
@@ -583,7 +627,10 @@ func TestSignlogOverSDMedium(t *testing.T) {
 		}
 	}
 
-	log, err := signlog.Verify(signlog.NewReaderMedium(bytes.NewReader(c.img), int64(len(c.img))), id.Public())
+	log, err := signlog.Verify(
+		signlog.NewReaderMedium(bytes.NewReader(c.img), int64(len(c.img))),
+		id.Public(),
+	)
 	if err != nil || len(log.Entries) != 3 {
 		t.Fatalf("verify: %v", err)
 	}

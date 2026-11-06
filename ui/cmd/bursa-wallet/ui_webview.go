@@ -40,7 +40,12 @@ func init() { runtime.LockOSThread() }
 // awaitUI (webview build) opens a native window onto the loopback UI and runs the
 // GUI loop until the window closes. A shutdown signal or a failed control surface
 // terminates the window, which unblocks the loop.
-func awaitUI(ctx context.Context, url string, logger *slog.Logger, srvErr <-chan error) error {
+func awaitUI(
+	ctx context.Context,
+	url string,
+	logger *slog.Logger,
+	srvErr <-chan error,
+) error {
 	// Don't paint a connection error before the control surface is listening.
 	if err := waitReachable(ctx, url, 15*time.Second, srvErr); err != nil {
 		return err

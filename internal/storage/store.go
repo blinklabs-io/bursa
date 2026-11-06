@@ -34,7 +34,8 @@ func NewStore(cfg *config.Config) (Store, error) {
 	switch cfg.Storage.Backend {
 	case "file":
 		store := newFileStore(cfg.Storage.Dir, cfg)
-		if !cfg.Storage.AllowUnencryptedWalletStorage && !store.encryptionConfigured() {
+		if !cfg.Storage.AllowUnencryptedWalletStorage &&
+			!store.encryptionConfigured() {
 			return nil, errors.New(
 				"file backend requires a SOPS master key or storage.allow_unencrypted_wallet_storage=true; refusing unencrypted wallet storage",
 			)
@@ -64,12 +65,17 @@ func NewStore(cfg *config.Config) (Store, error) {
 		return NewGCPStore(), nil
 	case "aws":
 		if strings.TrimSpace(cfg.Aws.Prefix) == "" {
-			return nil, errors.New("aws secret prefix is required for aws backend")
+			return nil, errors.New(
+				"aws secret prefix is required for aws backend",
+			)
 		}
 		return NewAWSStore(context.Background(), cfg.Aws.Prefix)
 	default:
 		if cfg.Storage.Backend != "" {
-			return nil, fmt.Errorf("unsupported storage backend %q", cfg.Storage.Backend)
+			return nil, fmt.Errorf(
+				"unsupported storage backend %q",
+				cfg.Storage.Backend,
+			)
 		}
 		if cfg.Google.Project != "" && cfg.Google.ResourceId != "" {
 			if err := gcp.ValidateWalletSecretPrefix(cfg.Google.Prefix); err != nil {

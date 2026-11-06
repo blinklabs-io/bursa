@@ -59,7 +59,11 @@ func TestDeriveCredentials(t *testing.T) {
 	// Pool ID hex must equal blake2b-224 of the cold vkey.
 	wantHash := lcommon.Blake2b224Hash(coldVkey)
 	if creds.PoolIDHex != hex.EncodeToString(wantHash.Bytes()) {
-		t.Fatalf("pool ID hex = %q, want %q", creds.PoolIDHex, hex.EncodeToString(wantHash.Bytes()))
+		t.Fatalf(
+			"pool ID hex = %q, want %q",
+			creds.PoolIDHex,
+			hex.EncodeToString(wantHash.Bytes()),
+		)
 	}
 	vrf, _ := hex.DecodeString(creds.VRF.VKeyHex)
 	if len(vrf) != 32 {
@@ -72,7 +76,11 @@ func TestDeriveCredentials(t *testing.T) {
 	// Deterministic: re-derive yields the same pool ID.
 	creds2, _ := deriveCredentials(mustRoot(t), "preview", 0, 0, 0)
 	if creds.PoolID != creds2.PoolID {
-		t.Fatalf("non-deterministic pool ID: %q vs %q", creds.PoolID, creds2.PoolID)
+		t.Fatalf(
+			"non-deterministic pool ID: %q vs %q",
+			creds.PoolID,
+			creds2.PoolID,
+		)
 	}
 }
 
@@ -85,7 +93,11 @@ func TestPoolIDFromColdVKeyHex(t *testing.T) {
 		t.Fatalf("poolIDFromColdVKeyHex: %v", err)
 	}
 	if id.Bech32("pool") != creds.PoolID {
-		t.Fatalf("air-gap pool ID %q != seed pool ID %q", id.Bech32("pool"), creds.PoolID)
+		t.Fatalf(
+			"air-gap pool ID %q != seed pool ID %q",
+			id.Bech32("pool"),
+			creds.PoolID,
+		)
 	}
 	if _, err := poolIDFromColdVKeyHex("zz"); err == nil {
 		t.Fatal("expected error for non-hex cold vkey")
@@ -113,7 +125,13 @@ func TestKESPeriodMath(t *testing.T) {
 			t.Fatalf("kesPeriod(%d,%d): %v", c.tip, c.spkp, err)
 		}
 		if got != c.want {
-			t.Fatalf("kesPeriod(%d,%d) = %d, want %d", c.tip, c.spkp, got, c.want)
+			t.Fatalf(
+				"kesPeriod(%d,%d) = %d, want %d",
+				c.tip,
+				c.spkp,
+				got,
+				c.want,
+			)
 		}
 	}
 	if _, err := kesPeriod(100, 0); err == nil {
@@ -125,7 +143,12 @@ func TestKESPeriodMath(t *testing.T) {
 // hashed with Blake2b-256, that the hash is reproducible regardless of input
 // key ordering/whitespace, and that required fields are enforced.
 func TestBuildMetadataCanonicalHash(t *testing.T) {
-	in := MetadataInput{Name: "My Pool", Ticker: "POOL", Homepage: "https://pool.example", Description: "A pool."}
+	in := MetadataInput{
+		Name:        "My Pool",
+		Ticker:      "POOL",
+		Homepage:    "https://pool.example",
+		Description: "A pool.",
+	}
 	res, err := buildMetadata(in)
 	if err != nil {
 		t.Fatalf("buildMetadata: %v", err)
@@ -133,7 +156,10 @@ func TestBuildMetadataCanonicalHash(t *testing.T) {
 	// The hash must equal Blake2b-256 of the canonical JSON.
 	sum := blake2b.Sum256([]byte(res.JSON))
 	if res.HashHex != hex.EncodeToString(sum[:]) {
-		t.Fatalf("hash %q does not match blake2b-256 of canonical JSON", res.HashHex)
+		t.Fatalf(
+			"hash %q does not match blake2b-256 of canonical JSON",
+			res.HashHex,
+		)
 	}
 	// Canonical JSON must be valid and key-sorted (JCS): "description" < "homepage" < "name" < "ticker".
 	if !json.Valid([]byte(res.JSON)) {
@@ -149,9 +175,20 @@ func TestBuildMetadataCanonicalHash(t *testing.T) {
 		last = idx
 	}
 	// Whitespace differences in inputs must not change the hash (canonicalization).
-	res2, _ := buildMetadata(MetadataInput{Name: "  My Pool  ", Ticker: " POOL ", Homepage: "https://pool.example", Description: "A pool."})
+	res2, _ := buildMetadata(
+		MetadataInput{
+			Name:        "  My Pool  ",
+			Ticker:      " POOL ",
+			Homepage:    "https://pool.example",
+			Description: "A pool.",
+		},
+	)
 	if res2.HashHex != res.HashHex {
-		t.Fatalf("hash changed under whitespace: %q vs %q", res2.HashHex, res.HashHex)
+		t.Fatalf(
+			"hash changed under whitespace: %q vs %q",
+			res2.HashHex,
+			res.HashHex,
+		)
 	}
 	// Missing required fields are rejected.
 	if _, err := buildMetadata(MetadataInput{Ticker: "X"}); err == nil {
@@ -170,12 +207,25 @@ func TestBuildMetadataMatchesCanonicalVector(t *testing.T) {
 		wantJSON = `{"description":"A pool.","homepage":"https://pool.example","name":"My Pool","ticker":"POOL"}`
 		wantHash = "1687692d9e04a2e58c63ca972c9594cbdea9bae5007455b996dc0a72748abfa5"
 	)
-	res, err := buildMetadata(MetadataInput{Name: "My Pool", Ticker: "POOL", Homepage: "https://pool.example", Description: "A pool."})
+	res, err := buildMetadata(
+		MetadataInput{
+			Name:        "My Pool",
+			Ticker:      "POOL",
+			Homepage:    "https://pool.example",
+			Description: "A pool.",
+		},
+	)
 	if err != nil {
 		t.Fatalf("buildMetadata: %v", err)
 	}
 	if res.JSON != wantJSON || res.HashHex != wantHash {
-		t.Fatalf("got (%s, %s), want (%s, %s)", res.JSON, res.HashHex, wantJSON, wantHash)
+		t.Fatalf(
+			"got (%s, %s), want (%s, %s)",
+			res.JSON,
+			res.HashHex,
+			wantJSON,
+			wantHash,
+		)
 	}
 }
 
@@ -189,33 +239,64 @@ func TestBuildMetadataValidation(t *testing.T) {
 	}{
 		{
 			name: "name too long",
-			in:   MetadataInput{Name: longName, Ticker: "POOL", Homepage: "https://pool.example"},
+			in: MetadataInput{
+				Name:     longName,
+				Ticker:   "POOL",
+				Homepage: "https://pool.example",
+			},
 		},
 		{
 			name: "ticker too short",
-			in:   MetadataInput{Name: "Pool", Ticker: "PO", Homepage: "https://pool.example"},
+			in: MetadataInput{
+				Name:     "Pool",
+				Ticker:   "PO",
+				Homepage: "https://pool.example",
+			},
 		},
 		{
 			name: "ticker too long",
-			in:   MetadataInput{Name: "Pool", Ticker: "POOLS1", Homepage: "https://pool.example"},
+			in: MetadataInput{
+				Name:     "Pool",
+				Ticker:   "POOLS1",
+				Homepage: "https://pool.example",
+			},
 		},
 		{
 			name: "homepage too long",
-			in:   MetadataInput{Name: "Pool", Ticker: "POOL", Homepage: longHomepage},
+			in: MetadataInput{
+				Name:     "Pool",
+				Ticker:   "POOL",
+				Homepage: longHomepage,
+			},
 		},
 		{
 			name: "description too long",
-			in:   MetadataInput{Name: "Pool", Ticker: "POOL", Homepage: "https://pool.example", Description: longDescription},
+			in: MetadataInput{
+				Name:        "Pool",
+				Ticker:      "POOL",
+				Homepage:    "https://pool.example",
+				Description: longDescription,
+			},
 		},
 		{
 			name: "invalid homepage",
-			in:   MetadataInput{Name: "Pool", Ticker: "POOL", Homepage: "pool.example"},
+			in: MetadataInput{
+				Name:     "Pool",
+				Ticker:   "POOL",
+				Homepage: "pool.example",
+			},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := buildMetadata(tc.in); !errors.Is(err, ErrInvalidRequest) {
-				t.Fatalf("buildMetadata error = %v, want ErrInvalidRequest", err)
+			if _, err := buildMetadata(tc.in); !errors.Is(
+				err,
+				ErrInvalidRequest,
+			) {
+				t.Fatalf(
+					"buildMetadata error = %v, want ErrInvalidRequest",
+					err,
+				)
 			}
 		})
 	}
@@ -223,10 +304,16 @@ func TestBuildMetadataValidation(t *testing.T) {
 
 func TestRelayValidation(t *testing.T) {
 	port := uint32(65536)
-	if _, err := (Relay{Type: "single_host_address", IPv4: "1.2.3.4", Port: &port}).toPoolRelay(); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := (Relay{Type: "single_host_address", IPv4: "1.2.3.4", Port: &port}).toPoolRelay(); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Fatalf("oversized port error = %v, want ErrInvalidRequest", err)
 	}
-	if _, err := (Relay{Type: "single_host_address", IPv6: "1.2.3.4"}).toPoolRelay(); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := (Relay{Type: "single_host_address", IPv6: "1.2.3.4"}).toPoolRelay(); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Fatalf("ipv4-as-ipv6 error = %v, want ErrInvalidRequest", err)
 	}
 }
@@ -245,7 +332,12 @@ func TestBuildRegistrationCert(t *testing.T) {
 	acctKey, _ := bursa.GetAccountKey(root, 0)
 	stakeKey, _ := bursa.GetStakeKey(acctKey, 0)
 	stakeHash := stakeKey.Public().PublicKey().Hash()
-	stakeAddr, _ := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, 0, nil, stakeHash)
+	stakeAddr, _ := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		0,
+		nil,
+		stakeHash,
+	)
 
 	metaHash := strings.Repeat("ab", 32) // 32-byte hex
 	port := uint32(3001)
@@ -258,7 +350,11 @@ func TestBuildRegistrationCert(t *testing.T) {
 		Owners:        []string{stakeAddr.String()},
 		Relays: []Relay{
 			{Type: "single_host_address", IPv4: "1.2.3.4", Port: &port},
-			{Type: "single_host_name", Hostname: "relay.example.com", Port: &port},
+			{
+				Type:     "single_host_name",
+				Hostname: "relay.example.com",
+				Port:     &port,
+			},
 		},
 		MetadataURL:  "https://pool.example/meta.json",
 		MetadataHash: metaHash,
@@ -287,9 +383,14 @@ func TestBuildRegistrationCert(t *testing.T) {
 		t.Fatalf("decode reward account: %v", err)
 	}
 	if len(reward) != 29 {
-		t.Fatalf("reward account len = %d, want 29 (full stake address)", len(reward))
+		t.Fatalf(
+			"reward account len = %d, want 29 (full stake address)",
+			len(reward),
+		)
 	}
-	wantHeader := byte(lcommon.AddressTypeNoneKey<<4 | lcommon.AddressNetworkTestnet)
+	wantHeader := byte(
+		lcommon.AddressTypeNoneKey<<4 | lcommon.AddressNetworkTestnet,
+	)
 	if reward[0] != wantHeader {
 		t.Fatalf("reward account header = %x, want %x", reward[0], wantHeader)
 	}
@@ -305,9 +406,17 @@ func TestBuildRegistrationMarginValidation(t *testing.T) {
 	acctKey, _ := bursa.GetAccountKey(root, 0)
 	stakeKey, _ := bursa.GetStakeKey(acctKey, 0)
 	stakeHash := stakeKey.Public().PublicKey().Hash()
-	stakeAddr, _ := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, 0, nil, stakeHash)
+	stakeAddr, _ := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		0,
+		nil,
+		stakeHash,
+	)
 
-	base := RegistrationParams{RewardAddress: stakeAddr.String(), Owners: []string{stakeAddr.String()}}
+	base := RegistrationParams{
+		RewardAddress: stakeAddr.String(),
+		Owners:        []string{stakeAddr.String()},
+	}
 	// zero denominator
 	bad := base
 	bad.MarginNum, bad.MarginDenom = 1, 0
@@ -336,9 +445,15 @@ func TestRetirementCertEncoding(t *testing.T) {
 	}
 	coldVkey, _ := hex.DecodeString(creds.Cold.VKeyHex)
 	op := lcommon.Blake2b224Hash(coldVkey)
-	want, _ := bursa.CreatePoolRetirementCertificate(&bursa.PoolRetirementCertificateParams{PoolKeyHash: op, Epoch: 500})
+	want, _ := bursa.CreatePoolRetirementCertificate(
+		&bursa.PoolRetirementCertificateParams{PoolKeyHash: op, Epoch: 500},
+	)
 	if res.CBORHex != hex.EncodeToString(want) {
-		t.Fatalf("retirement cbor %q != %q", res.CBORHex, hex.EncodeToString(want))
+		t.Fatalf(
+			"retirement cbor %q != %q",
+			res.CBORHex,
+			hex.EncodeToString(want),
+		)
 	}
 }
 
@@ -360,7 +475,11 @@ func TestOpCertPayloadAndAssemble(t *testing.T) {
 	kesVkey, _ := hex.DecodeString(kesVKeyHex)
 	wantPayload := lcommon.OpCertSignableBytes(kesVkey, uint64(7), uint64(3))
 	if payload.PayloadHex != hex.EncodeToString(wantPayload) {
-		t.Fatalf("payload %q != %q", payload.PayloadHex, hex.EncodeToString(wantPayload))
+		t.Fatalf(
+			"payload %q != %q",
+			payload.PayloadHex,
+			hex.EncodeToString(wantPayload),
+		)
 	}
 
 	// Produce a real cold-key signature using the seed (simulating the air-gap
@@ -370,12 +489,22 @@ func TestOpCertPayloadAndAssemble(t *testing.T) {
 	defer cold.zero()
 	payloadBytes, _ := hex.DecodeString(payload.PayloadHex)
 	sig := ed25519.Sign(ed25519.NewKeyFromSeed(cold.seed), payloadBytes)
-	opcert, err := s.AssembleOpCert(coldVKeyHex, kesVKeyHex, hex.EncodeToString(sig), 7, 3)
+	opcert, err := s.AssembleOpCert(
+		coldVKeyHex,
+		kesVKeyHex,
+		hex.EncodeToString(sig),
+		7,
+		3,
+	)
 	if err != nil {
 		t.Fatalf("AssembleOpCert: %v", err)
 	}
 	if opcert.IssueNumber != 7 || opcert.KesPeriod != 3 {
-		t.Fatalf("opcert issue/period = %d/%d, want 7/3", opcert.IssueNumber, opcert.KesPeriod)
+		t.Fatalf(
+			"opcert issue/period = %d/%d, want 7/3",
+			opcert.IssueNumber,
+			opcert.KesPeriod,
+		)
 	}
 	if opcert.ColdSignatureHex != hex.EncodeToString(sig) {
 		t.Fatal("assembled opcert signature mismatch")
@@ -397,15 +526,55 @@ func TestRelayConversion(t *testing.T) {
 		relay   Relay
 		wantErr bool
 	}{
-		{"ipv4", Relay{Type: "single_host_address", IPv4: "10.0.0.1", Port: &port}, false},
-		{"ipv6", Relay{Type: "single_host_address", IPv6: "2001:db8::1"}, false},
-		{"hostname", Relay{Type: "single_host_name", Hostname: "relay.example", Port: &port}, false},
-		{"hostname-max-port", Relay{Type: "single_host_name", Hostname: "relay.example", Port: &maxPort}, false},
-		{"multihost", Relay{Type: "multi_host_name", Hostname: "_relays.example"}, false},
-		{"bad-ipv4", Relay{Type: "single_host_address", IPv4: "999.1.1.1"}, true},
+		{
+			"ipv4",
+			Relay{Type: "single_host_address", IPv4: "10.0.0.1", Port: &port},
+			false,
+		},
+		{
+			"ipv6",
+			Relay{Type: "single_host_address", IPv6: "2001:db8::1"},
+			false,
+		},
+		{
+			"hostname",
+			Relay{
+				Type:     "single_host_name",
+				Hostname: "relay.example",
+				Port:     &port,
+			},
+			false,
+		},
+		{
+			"hostname-max-port",
+			Relay{
+				Type:     "single_host_name",
+				Hostname: "relay.example",
+				Port:     &maxPort,
+			},
+			false,
+		},
+		{
+			"multihost",
+			Relay{Type: "multi_host_name", Hostname: "_relays.example"},
+			false,
+		},
+		{
+			"bad-ipv4",
+			Relay{Type: "single_host_address", IPv4: "999.1.1.1"},
+			true,
+		},
 		{"addr-no-ip", Relay{Type: "single_host_address"}, true},
 		{"name-no-host", Relay{Type: "single_host_name"}, true},
-		{"name-bad-port", Relay{Type: "single_host_name", Hostname: "relay.example", Port: &badPort}, true},
+		{
+			"name-bad-port",
+			Relay{
+				Type:     "single_host_name",
+				Hostname: "relay.example",
+				Port:     &badPort,
+			},
+			true,
+		},
 		{"unknown", Relay{Type: "carrier_pigeon"}, true},
 	}
 	for _, c := range cases {

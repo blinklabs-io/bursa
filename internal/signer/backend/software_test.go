@@ -44,7 +44,8 @@ func TestSoftwareBackend_AddSignVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetKey: %v", err)
 	}
-	if ref.Backend() != "software" || ref.Type() != KeyTypePayment || ref.Extended() {
+	if ref.Backend() != "software" || ref.Type() != KeyTypePayment ||
+		ref.Extended() {
 		t.Fatalf("unexpected key metadata: %+v", ref)
 	}
 
@@ -61,7 +62,10 @@ func TestSoftwareBackend_AddSignVerify(t *testing.T) {
 func TestSoftwareBackend_GetKey_NotFound(t *testing.T) {
 	b := NewSoftwareBackend("software")
 	var missing KeyHash
-	if _, err := b.GetKey(context.Background(), missing); !errors.Is(err, ErrKeyNotFound) {
+	if _, err := b.GetKey(context.Background(), missing); !errors.Is(
+		err,
+		ErrKeyNotFound,
+	) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
 	}
 }

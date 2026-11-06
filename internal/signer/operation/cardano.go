@@ -39,13 +39,20 @@ type Cardano interface {
 	TxID(txCbor []byte, txType uint) ([]byte, error)
 	// Assemble merges vkey witnesses into a transaction of the given era,
 	// preserving the body.
-	Assemble(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error)
+	Assemble(
+		txCbor []byte,
+		txType uint,
+		wits []lcommon.VkeyWitness,
+	) ([]byte, error)
 }
 
 // BursaCardano is the production adapter backed by the bursa toolkit.
 type BursaCardano struct{}
 
-func (BursaCardano) Inspect(txCbor []byte, txType uint) (*bursa.TxInspection, error) {
+func (BursaCardano) Inspect(
+	txCbor []byte,
+	txType uint,
+) (*bursa.TxInspection, error) {
 	return bursa.InspectTransactionForEra(txCbor, txType)
 }
 
@@ -53,14 +60,23 @@ func (BursaCardano) Inspect(txCbor []byte, txType uint) (*bursa.TxInspection, er
 // a transaction. Certificate kinds are returned in transaction order; voters
 // are sorted (by kind then id) for deterministic output. Voter DRep credential
 // ids are hex-encoded.
-func (BursaCardano) Operations(txCbor []byte, txType uint) (policy.TxOps, error) {
+func (BursaCardano) Operations(
+	txCbor []byte,
+	txType uint,
+) (policy.TxOps, error) {
 	tx, err := ledger.NewTransactionFromCbor(txType, txCbor)
 	if err != nil {
-		return policy.TxOps{}, fmt.Errorf("failed to decode transaction: %w", err)
+		return policy.TxOps{}, fmt.Errorf(
+			"failed to decode transaction: %w",
+			err,
+		)
 	}
 	var ops policy.TxOps
 	for _, cert := range tx.Certificates() {
-		ops.Certificates = append(ops.Certificates, policy.CertificateKindName(cert.Type()))
+		ops.Certificates = append(
+			ops.Certificates,
+			policy.CertificateKindName(cert.Type()),
+		)
 	}
 	for voter := range tx.VotingProcedures() {
 		if voter == nil {
@@ -92,11 +108,18 @@ func (BursaCardano) TxID(txCbor []byte, txType uint) ([]byte, error) {
 		return nil, fmt.Errorf("decode tx id: %w", err)
 	}
 	if len(raw) != 32 {
-		return nil, fmt.Errorf("transaction id must be 32 bytes, got %d", len(raw))
+		return nil, fmt.Errorf(
+			"transaction id must be 32 bytes, got %d",
+			len(raw),
+		)
 	}
 	return raw, nil
 }
 
-func (BursaCardano) Assemble(txCbor []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+func (BursaCardano) Assemble(
+	txCbor []byte,
+	txType uint,
+	wits []lcommon.VkeyWitness,
+) ([]byte, error) {
 	return bursa.AssembleTransactionForEra(txCbor, txType, wits)
 }

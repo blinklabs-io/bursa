@@ -99,7 +99,11 @@ func checkSQLiteFileOwner(f *os.File) error {
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
-		return fmt.Errorf("%q has no readable owner: %w", f.Name(), bursa.ErrInsecureFileMode)
+		return fmt.Errorf(
+			"%q has no readable owner: %w",
+			f.Name(),
+			bursa.ErrInsecureFileMode,
+		)
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {

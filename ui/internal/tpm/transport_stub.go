@@ -31,7 +31,10 @@ import (
 // openDevice always fails on unsupported platforms: there is no user-accessible
 // TPM on macOS, and FreeBSD/mobile targets are explicitly fallback-only.
 func openDevice() (transport.TPMCloser, error) {
-	return nil, fmt.Errorf("%w: TPM not supported on this platform", ErrUnavailable)
+	return nil, fmt.Errorf(
+		"%w: TPM not supported on this platform",
+		ErrUnavailable,
+	)
 }
 
 // reasonFor reports the reason wrapped by openDevice without duplicating it.

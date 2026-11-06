@@ -31,12 +31,18 @@ type eraRecordingCardano struct {
 	eras map[string]uint
 }
 
-func (c *eraRecordingCardano) Inspect(tx []byte, txType uint) (*bursa.TxInspection, error) {
+func (c *eraRecordingCardano) Inspect(
+	tx []byte,
+	txType uint,
+) (*bursa.TxInspection, error) {
 	c.eras["Inspect"] = txType
 	return c.fakeCardano.Inspect(tx, txType)
 }
 
-func (c *eraRecordingCardano) Operations(tx []byte, txType uint) (policy.TxOps, error) {
+func (c *eraRecordingCardano) Operations(
+	tx []byte,
+	txType uint,
+) (policy.TxOps, error) {
 	c.eras["Operations"] = txType
 	return c.fakeCardano.Operations(tx, txType)
 }
@@ -46,7 +52,11 @@ func (c *eraRecordingCardano) TxID(tx []byte, txType uint) ([]byte, error) {
 	return c.fakeCardano.TxID(tx, txType)
 }
 
-func (c *eraRecordingCardano) Assemble(tx []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+func (c *eraRecordingCardano) Assemble(
+	tx []byte,
+	txType uint,
+	wits []lcommon.VkeyWitness,
+) ([]byte, error) {
 	c.eras["Assemble"] = txType
 	return c.fakeCardano.Assemble(tx, txType, wits)
 }
@@ -60,8 +70,18 @@ func TestSignTx_DecodesResolvedEra(t *testing.T) {
 		era  string
 		want uint
 	}{
-		{name: "explicit babbage", cbor: testTxCbor, era: "babbage", want: ledger.TxTypeBabbage},
-		{name: "explicit alonzo", cbor: testTxCbor, era: "alonzo", want: ledger.TxTypeAlonzo},
+		{
+			name: "explicit babbage",
+			cbor: testTxCbor,
+			era:  "babbage",
+			want: ledger.TxTypeBabbage,
+		},
+		{
+			name: "explicit alonzo",
+			cbor: testTxCbor,
+			era:  "alonzo",
+			want: ledger.TxTypeAlonzo,
+		},
 		{
 			name: "conway envelope",
 			cbor: `{"type":"Tx ConwayEra","description":"","cborHex":"` + testTxCbor + `"}`,
@@ -92,12 +112,21 @@ func TestSignTx_DecodesResolvedEra(t *testing.T) {
 				Policy:   eng,
 				Cardano:  card,
 			})
-			res, perr, err := c.SignTx(context.Background(), []byte(tt.cbor), tt.era, []string{k.hash.String()})
+			res, perr, err := c.SignTx(
+				context.Background(),
+				[]byte(tt.cbor),
+				tt.era,
+				[]string{k.hash.String()},
+			)
 			if err != nil {
 				t.Fatalf("SignTx: %v", err)
 			}
 			if len(perr) != 0 || len(res.Witnesses) != 1 {
-				t.Fatalf("expected 1 witness, no errors; got perr=%+v wits=%d", perr, len(res.Witnesses))
+				t.Fatalf(
+					"expected 1 witness, no errors; got perr=%+v wits=%d",
+					perr,
+					len(res.Witnesses),
+				)
 			}
 			for _, call := range []string{"Inspect", "Operations", "TxID", "Assemble"} {
 				got, ok := card.eras[call]

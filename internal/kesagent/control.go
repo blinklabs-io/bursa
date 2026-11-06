@@ -129,6 +129,9 @@ func (a *Agent) dispatch(cmd Command) Reply {
 	case CmdInfo:
 		return Reply{Ok: true, Info: a.Info()}
 	default:
-		return Reply{Ok: false, Error: fmt.Sprintf("unknown command %q", cmd.Command)}
+		return Reply{
+			Ok:    false,
+			Error: fmt.Sprintf("unknown command %q", cmd.Command),
+		}
 	}
 }

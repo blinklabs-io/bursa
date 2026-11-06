@@ -24,7 +24,10 @@ import (
 )
 
 func TestSyncConfigForMapsFields(t *testing.T) {
-	sc := syncConfigFor(BootstrapParams{Network: "preview", DataDir: "/data/db"}, nil)
+	sc := syncConfigFor(
+		BootstrapParams{Network: "preview", DataDir: "/data/db"},
+		nil,
+	)
 	if sc.Network != "preview" || sc.DataDir != "/data/db" {
 		t.Fatalf("network/datadir: %+v", sc)
 	}
@@ -38,15 +41,32 @@ func TestSyncConfigForMapsFields(t *testing.T) {
 	}
 	// dingo's API-mode backfill rejects a zero batch size, so we must set one.
 	if sc.BackfillBatchSize <= 0 {
-		t.Fatalf("BackfillBatchSize must be positive, got %d", sc.BackfillBatchSize)
+		t.Fatalf(
+			"BackfillBatchSize must be positive, got %d",
+			sc.BackfillBatchSize,
+		)
 	}
 }
 
 func TestSyncConfigForWiresProgress(t *testing.T) {
 	var got BootstrapProgress
-	sc := syncConfigFor(BootstrapParams{OnProgress: func(b BootstrapProgress) { got = b }}, nil)
-	sc.OnProgress(mithril.SyncProgress{Phase: mithril.PhaseLedgerImport, Percent: 50, BytesDownloaded: 3, TotalBytes: 6, BytesPerSecond: 1.5})
-	if got.Phase != "ledger_import" || got.Percent != 50 || got.BytesDownloaded != 3 || got.TotalBytes != 6 || got.BytesPerSecond != 1.5 {
+	sc := syncConfigFor(
+		BootstrapParams{OnProgress: func(b BootstrapProgress) { got = b }},
+		nil,
+	)
+	sc.OnProgress(
+		mithril.SyncProgress{
+			Phase:           mithril.PhaseLedgerImport,
+			Percent:         50,
+			BytesDownloaded: 3,
+			TotalBytes:      6,
+			BytesPerSecond:  1.5,
+		},
+	)
+	if got.Phase != "ledger_import" || got.Percent != 50 ||
+		got.BytesDownloaded != 3 ||
+		got.TotalBytes != 6 ||
+		got.BytesPerSecond != 1.5 {
 		t.Fatalf("progress not mapped: %+v", got)
 	}
 
@@ -61,7 +81,10 @@ func TestSyncConfigForWiresProgress(t *testing.T) {
 		Total:       25900,
 		Description: "Conway",
 	})
-	if got.CurrentSlot != 97740 || got.TipSlot != 132000 || got.Count != 18432 || got.Total != 25900 || got.Description != "Conway" {
+	if got.CurrentSlot != 97740 || got.TipSlot != 132000 ||
+		got.Count != 18432 ||
+		got.Total != 25900 ||
+		got.Description != "Conway" {
 		t.Fatalf("positional progress not mapped: %+v", got)
 	}
 
@@ -125,7 +148,10 @@ type fakeBootstrapper struct {
 	called   bool
 }
 
-func (f *fakeBootstrapper) Bootstrap(_ context.Context, p BootstrapParams) error {
+func (f *fakeBootstrapper) Bootstrap(
+	_ context.Context,
+	p BootstrapParams,
+) error {
 	f.called = true
 	for _, bp := range f.progress {
 		if p.OnProgress != nil {
@@ -165,11 +191,18 @@ func TestSetStateClearsBootstrap(t *testing.T) {
 }
 
 func TestBootstrapThenLaunchSuccess(t *testing.T) {
-	fb := &fakeBootstrapper{progress: []BootstrapProgress{{Phase: "bootstrap", Percent: 100}}}
+	fb := &fakeBootstrapper{
+		progress: []BootstrapProgress{{Phase: "bootstrap", Percent: 100}},
+	}
 	s := newTestSupervisor(t, fb)
 	launched := false
 	s.setState(StateBootstrapping)
-	s.bootstrapThenLaunch(context.Background(), s.runID, func() error { launched = true; return nil }, func() {})
+	s.bootstrapThenLaunch(
+		context.Background(),
+		s.runID,
+		func() error { launched = true; return nil },
+		func() {},
+	)
 
 	if !fb.called {
 		t.Fatal("bootstrapper not invoked")
@@ -193,7 +226,12 @@ func TestBootstrapThenLaunchFailureSetsError(t *testing.T) {
 	s := newTestSupervisor(t, fb)
 	launched := false
 	s.setState(StateBootstrapping)
-	s.bootstrapThenLaunch(context.Background(), s.runID, func() error { launched = true; return nil }, func() {})
+	s.bootstrapThenLaunch(
+		context.Background(),
+		s.runID,
+		func() error { launched = true; return nil },
+		func() {},
+	)
 
 	if launched {
 		t.Fatal("launch must NOT be called when bootstrap fails")
@@ -204,7 +242,10 @@ func TestBootstrapThenLaunchFailureSetsError(t *testing.T) {
 	}
 	// Progress is intentionally retained on error for diagnostics.
 	if st.Bootstrap == nil || st.Bootstrap.Phase != "ledger_import" {
-		t.Fatalf("bootstrap progress should be retained on error, got %+v", st.Bootstrap)
+		t.Fatalf(
+			"bootstrap progress should be retained on error, got %+v",
+			st.Bootstrap,
+		)
 	}
 	if bootstrapDone(s.cfg.DataDir) {
 		t.Fatal("marker must not be written on failure")
@@ -221,7 +262,12 @@ func TestBootstrapCancellationIsNotError(t *testing.T) {
 	s := newTestSupervisor(t, fb)
 	s.setState(StateBootstrapping)
 	launched := false
-	s.bootstrapThenLaunch(ctx, s.runID, func() error { launched = true; return nil }, func() {})
+	s.bootstrapThenLaunch(
+		ctx,
+		s.runID,
+		func() error { launched = true; return nil },
+		func() {},
+	)
 
 	if launched {
 		t.Fatal("launch must NOT be called when bootstrap is cancelled")
@@ -252,7 +298,10 @@ func TestBootstrapPostSuccessCancellationStopsBeforeLaunch(t *testing.T) {
 		t.Fatal("launch must NOT be called after cancellation")
 	}
 	if got := s.Status().State; got == StateError {
-		t.Fatalf("post-bootstrap cancellation flipped state to error: %s", s.Status().Err)
+		t.Fatalf(
+			"post-bootstrap cancellation flipped state to error: %s",
+			s.Status().Err,
+		)
 	}
 	if bootstrapDone(s.cfg.DataDir) {
 		t.Fatal("marker must not be written after cancellation")
@@ -306,7 +355,10 @@ func TestSetStateIgnoredAfterStop(t *testing.T) {
 	s.Stop() // → StateStopped, clears cancel
 	s.setState(StateStarting)
 	if got := s.Status().State; got != StateStopped {
-		t.Fatalf("setState after Stop must be a no-op; state = %q, want stopped", got)
+		t.Fatalf(
+			"setState after Stop must be a no-op; state = %q, want stopped",
+			got,
+		)
 	}
 }
 
@@ -317,7 +369,10 @@ func TestSetErrorIgnoredAfterStop(t *testing.T) {
 	s.Stop()
 	s.setError(errors.New("late failure"))
 	if got := s.Status().State; got != StateStopped {
-		t.Fatalf("setError after Stop must be a no-op; state = %q, want stopped", got)
+		t.Fatalf(
+			"setError after Stop must be a no-op; state = %q, want stopped",
+			got,
+		)
 	}
 }
 
@@ -341,10 +396,16 @@ func TestOnProgressRetainsConcurrentPhases(t *testing.T) {
 	}
 	// First-seen order, so a phase does not move under the reader.
 	if phases[0].Phase != "immutable_copy" || phases[0].Percent != 79 {
-		t.Errorf("immutable_copy should hold its own latest percent: %+v", phases[0])
+		t.Errorf(
+			"immutable_copy should hold its own latest percent: %+v",
+			phases[0],
+		)
 	}
 	if phases[1].Phase != "ledger_import" || phases[1].Percent != 52.3 {
-		t.Errorf("ledger_import should hold its own latest percent: %+v", phases[1])
+		t.Errorf(
+			"ledger_import should hold its own latest percent: %+v",
+			phases[1],
+		)
 	}
 }
 
@@ -354,7 +415,13 @@ func TestOnProgressRetainsConcurrentPhases(t *testing.T) {
 func TestOnProgressEndEdgeCompletesRatherThanBlanks(t *testing.T) {
 	s := newTestSupervisor(t, &fakeBootstrapper{})
 	s.setState(StateBootstrapping)
-	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 99.8, Count: 3634100})
+	s.onProgress(
+		BootstrapProgress{
+			Phase:   "immutable_copy",
+			Percent: 99.8,
+			Count:   3634100,
+		},
+	)
 	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Done: true})
 
 	phases := s.Status().BootstrapPhases
@@ -365,10 +432,16 @@ func TestOnProgressEndEdgeCompletesRatherThanBlanks(t *testing.T) {
 		t.Error("the end edge should mark the phase done")
 	}
 	if phases[0].Percent != 99.8 {
-		t.Errorf("the end edge must not overwrite the measured percent: %v", phases[0].Percent)
+		t.Errorf(
+			"the end edge must not overwrite the measured percent: %v",
+			phases[0].Percent,
+		)
 	}
 	if phases[0].Count != 3634100 {
-		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
+		t.Errorf(
+			"the end edge must not discard what the phase measured: %+v",
+			phases[0],
+		)
 	}
 	// The headline stays on real progress rather than the empty edge report.
 	if got := s.Status().Bootstrap; got == nil || got.Percent != 99.8 {
@@ -387,7 +460,9 @@ func TestStatusCopiesPhases(t *testing.T) {
 	s.onProgress(BootstrapProgress{Phase: "immutable_copy", Percent: 20})
 
 	if snapshot.BootstrapPhases[0].Percent != 10 {
-		t.Fatal("Status() handed out the live slice: an earlier snapshot changed under the caller")
+		t.Fatal(
+			"Status() handed out the live slice: an earlier snapshot changed under the caller",
+		)
 	}
 }
 
@@ -449,10 +524,16 @@ func TestOnProgressSeparatesConcurrentDownloads(t *testing.T) {
 		t.Fatalf("want one row per download, got %+v", phases)
 	}
 	if phases[0].TotalBytes != 14779773204 || phases[0].Percent != 78 {
-		t.Errorf("the immutable download should keep its own progress: %+v", phases[0])
+		t.Errorf(
+			"the immutable download should keep its own progress: %+v",
+			phases[0],
+		)
 	}
 	if phases[1].TotalBytes != 250000000 || phases[1].Percent != 12 {
-		t.Errorf("the ancillary download should keep its own progress: %+v", phases[1])
+		t.Errorf(
+			"the ancillary download should keep its own progress: %+v",
+			phases[1],
+		)
 	}
 }
 
@@ -461,8 +542,20 @@ func TestOnProgressSeparatesConcurrentDownloads(t *testing.T) {
 func TestPhaseEndCompletesEveryDownload(t *testing.T) {
 	s := newTestSupervisor(t, &fakeBootstrapper{})
 	s.setState(StateBootstrapping)
-	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 14779773204})
-	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 250000000})
+	s.onProgress(
+		BootstrapProgress{
+			Phase:      "bootstrap",
+			Percent:    99.8,
+			TotalBytes: 14779773204,
+		},
+	)
+	s.onProgress(
+		BootstrapProgress{
+			Phase:      "bootstrap",
+			Percent:    100,
+			TotalBytes: 250000000,
+		},
+	)
 	s.onProgress(BootstrapProgress{Phase: "bootstrap", Done: true})
 
 	phases := s.Status().BootstrapPhases
@@ -471,11 +564,17 @@ func TestPhaseEndCompletesEveryDownload(t *testing.T) {
 	}
 	for _, p := range phases {
 		if !p.Done {
-			t.Errorf("the phase ended, so this download is not still running: %+v", p)
+			t.Errorf(
+				"the phase ended, so this download is not still running: %+v",
+				p,
+			)
 		}
 	}
 	if phases[0].Percent != 99.8 || phases[1].Percent != 100 {
-		t.Errorf("each download should keep the progress it measured: %+v", phases)
+		t.Errorf(
+			"each download should keep the progress it measured: %+v",
+			phases,
+		)
 	}
 	// Each row keeps the size it was measuring, so neither is mistaken for the
 	// other after the fact.
@@ -509,7 +608,10 @@ func TestPhaseOpenerIsReplacedByRealProgress(t *testing.T) {
 
 	phases := s.Status().BootstrapPhases
 	if len(phases) != 3 {
-		t.Fatalf("want one row per download and no empty opener, got %+v", phases)
+		t.Fatalf(
+			"want one row per download and no empty opener, got %+v",
+			phases,
+		)
 	}
 	for _, p := range phases {
 		if p.TotalBytes == 0 {
@@ -538,11 +640,20 @@ func TestNonByteProgressReplacesOpener(t *testing.T) {
 	s := newTestSupervisor(t, &fakeBootstrapper{})
 	s.setState(StateBootstrapping)
 	s.onProgress(BootstrapProgress{Phase: "ledger_import"})
-	s.onProgress(BootstrapProgress{Phase: "ledger_import", Percent: 47.1, Count: 1490000})
+	s.onProgress(
+		BootstrapProgress{
+			Phase:   "ledger_import",
+			Percent: 47.1,
+			Count:   1490000,
+		},
+	)
 
 	phases := s.Status().BootstrapPhases
 	if len(phases) != 1 || phases[0].Percent != 47.1 {
-		t.Fatalf("want the opener replaced by the measured report, got %+v", phases)
+		t.Fatalf(
+			"want the opener replaced by the measured report, got %+v",
+			phases,
+		)
 	}
 }
 
@@ -572,7 +683,10 @@ func TestPhaseEndKeepsTheProgressItActuallyMade(t *testing.T) {
 		t.Errorf("an aborted phase must not claim completion: %+v", phases[0])
 	}
 	if phases[0].Count != 50 {
-		t.Errorf("the end edge must not discard what the phase measured: %+v", phases[0])
+		t.Errorf(
+			"the end edge must not discard what the phase measured: %+v",
+			phases[0],
+		)
 	}
 }
 
@@ -585,9 +699,15 @@ func TestPhaseEndKeepsTheProgressItActuallyMade(t *testing.T) {
 func TestPhaseEndRefreshesTheHeadlineForEveryDownload(t *testing.T) {
 	s := newTestSupervisor(t, &fakeBootstrapper{})
 	s.setState(StateBootstrapping)
-	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 100})
-	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 200})
-	s.onProgress(BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 300})
+	s.onProgress(
+		BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 100},
+	)
+	s.onProgress(
+		BootstrapProgress{Phase: "bootstrap", Percent: 100, TotalBytes: 200},
+	)
+	s.onProgress(
+		BootstrapProgress{Phase: "bootstrap", Percent: 99.8, TotalBytes: 300},
+	)
 	s.onProgress(BootstrapProgress{Phase: "bootstrap", Done: true})
 
 	got := s.Status().Bootstrap
@@ -595,7 +715,10 @@ func TestPhaseEndRefreshesTheHeadlineForEveryDownload(t *testing.T) {
 		t.Fatal("no headline progress")
 	}
 	if !got.Done {
-		t.Errorf("the phase ended, so the headline is not still running: %+v", got)
+		t.Errorf(
+			"the phase ended, so the headline is not still running: %+v",
+			got,
+		)
 	}
 	if got.Phase != "bootstrap" {
 		t.Errorf("headline should stay on the phase that just ended: %+v", got)

@@ -44,12 +44,23 @@ func (b *trackingBody) Close() error {
 
 // signReq builds a request with authorized-keys signature headers for the given
 // signing key, body, timestamp, and nonce.
-func signReq(t *testing.T, caller string, priv ed25519.PrivateKey, method, path string, body []byte, ts time.Time, nonce string) *http.Request {
+func signReq(
+	t *testing.T,
+	caller string,
+	priv ed25519.PrivateKey,
+	method, path string,
+	body []byte,
+	ts time.Time,
+	nonce string,
+) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(string(body)))
 	bodyHash := sha256.Sum256(body)
 	tsStr := strconv.FormatInt(ts.Unix(), 10)
-	canonical := strings.Join([]string{method, path, hex.EncodeToString(bodyHash[:]), tsStr, nonce}, "|")
+	canonical := strings.Join(
+		[]string{method, path, hex.EncodeToString(bodyHash[:]), tsStr, nonce},
+		"|",
+	)
 	sig := ed25519.Sign(priv, []byte(canonical))
 	req.Header.Set(HeaderKey, caller)
 	req.Header.Set(HeaderTimestamp, tsStr)
@@ -58,19 +69,33 @@ func signReq(t *testing.T, caller string, priv ed25519.PrivateKey, method, path 
 	return req
 }
 
-func newAuth(t *testing.T) (*RequestSigningAuthenticator, string, ed25519.PrivateKey) {
+func newAuth(
+	t *testing.T,
+) (*RequestSigningAuthenticator, string, ed25519.PrivateKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := NewRequestSigningAuthenticator(map[string]ed25519.PublicKey{"alice": pub}, 60*time.Second)
+	a := NewRequestSigningAuthenticator(
+		map[string]ed25519.PublicKey{"alice": pub},
+		60*time.Second,
+	)
 	return a, "alice", priv
 }
 
 func TestRequestSigning_Valid(t *testing.T) {
 	a, caller, priv := newAuth(t)
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte(`{"type":"tx"}`), time.Now(), "n1")
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte(`{"type":"tx"}`),
+		time.Now(),
+		"n1",
+	)
 	got, ok, err := a.Authenticate(req)
 	if !ok || err != nil {
 		t.Fatalf("valid request: ok=%v err=%v", ok, err)
@@ -91,7 +116,12 @@ func TestRequestSigning_NoHeaders_FallsThrough(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
 	caller, ok, err := a.Authenticate(req)
 	if ok || err != nil || caller != "" {
-		t.Fatalf("expected fall-through, got caller=%q ok=%v err=%v", caller, ok, err)
+		t.Fatalf(
+			"expected fall-through, got caller=%q ok=%v err=%v",
+			caller,
+			ok,
+			err,
+		)
 	}
 }
 
@@ -99,8 +129,26 @@ func TestRequestSigning_BadSignature(t *testing.T) {
 	a, caller, priv := newAuth(t)
 	// Valid signature over nonce "n1", then submit it with nonce "n2": the
 	// server rebuilds the canonical string with "n2", so verification fails.
-	valid := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), "n1")
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), "n2")
+	valid := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("body"),
+		time.Now(),
+		"n1",
+	)
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("body"),
+		time.Now(),
+		"n2",
+	)
 	req.Header.Set(HeaderSignature, valid.Header.Get(HeaderSignature))
 	if _, ok, err := a.Authenticate(req); !ok || err == nil {
 		t.Fatalf("bad signature should reject: ok=%v err=%v", ok, err)
@@ -112,7 +160,16 @@ func TestRequestSigning_BadSignature(t *testing.T) {
 // old ordering blocked on the body reader before it checked signature length.
 func TestRequestSigning_InvalidSignatureDoesNotReadBody(t *testing.T) {
 	a, caller, priv := newAuth(t)
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), "blocked")
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("body"),
+		time.Now(),
+		"blocked",
+	)
 	req.Header.Set(HeaderSignature, "not-a-signature")
 	body := &trackingBody{}
 	req.Body = body
@@ -128,7 +185,16 @@ func TestRequestSigning_InvalidSignatureDoesNotReadBody(t *testing.T) {
 
 func TestRequestSigning_StaleTimestamp(t *testing.T) {
 	a, caller, priv := newAuth(t)
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("x"), time.Now().Add(-5*time.Minute), "n1")
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("x"),
+		time.Now().Add(-5*time.Minute),
+		"n1",
+	)
 	_, ok, err := a.Authenticate(req)
 	if !ok || err == nil {
 		t.Fatalf("stale timestamp should reject: ok=%v err=%v", ok, err)
@@ -139,12 +205,30 @@ func TestRequestSigning_ReplayNonce(t *testing.T) {
 	a, caller, priv := newAuth(t)
 	body := []byte("replay-body")
 	ts := time.Now()
-	req1 := signReq(t, caller, priv, http.MethodPost, "/v1/sign", body, ts, "dup")
+	req1 := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		body,
+		ts,
+		"dup",
+	)
 	if _, ok, err := a.Authenticate(req1); !ok || err != nil {
 		t.Fatalf("first use should pass: ok=%v err=%v", ok, err)
 	}
 	// Replay the identical signed request (fresh reader, same headers).
-	req2 := signReq(t, caller, priv, http.MethodPost, "/v1/sign", body, ts, "dup")
+	req2 := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		body,
+		ts,
+		"dup",
+	)
 	if _, ok, err := a.Authenticate(req2); !ok || err == nil {
 		t.Fatalf("replayed nonce should reject: ok=%v err=%v", ok, err)
 	}
@@ -153,18 +237,44 @@ func TestRequestSigning_ReplayNonce(t *testing.T) {
 func TestRequestSigning_LargeNonceUsesBoundedReplayStorage(t *testing.T) {
 	a, caller, priv := newAuth(t)
 	nonce := strings.Repeat("n", 64*1024)
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("body"), time.Now(), nonce)
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("body"),
+		time.Now(),
+		nonce,
+	)
 	if _, ok, err := a.Authenticate(req); !ok || err != nil {
-		t.Fatalf("large nonce should remain protocol-compatible: ok=%v err=%v", ok, err)
+		t.Fatalf(
+			"large nonce should remain protocol-compatible: ok=%v err=%v",
+			ok,
+			err,
+		)
 	}
 	if a.cache.bytes != nonceCacheKeyBytes {
-		t.Fatalf("retained key bytes = %d, want %d", a.cache.bytes, nonceCacheKeyBytes)
+		t.Fatalf(
+			"retained key bytes = %d, want %d",
+			a.cache.bytes,
+			nonceCacheKeyBytes,
+		)
 	}
 }
 
 func TestRequestSigning_UnknownKey(t *testing.T) {
 	a, _, priv := newAuth(t)
-	req := signReq(t, "mallory", priv, http.MethodPost, "/v1/sign", []byte("x"), time.Now(), "n1")
+	req := signReq(
+		t,
+		"mallory",
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("x"),
+		time.Now(),
+		"n1",
+	)
 	_, ok, err := a.Authenticate(req)
 	if !ok || err == nil {
 		t.Fatalf("unknown key should reject: ok=%v err=%v", ok, err)
@@ -173,7 +283,16 @@ func TestRequestSigning_UnknownKey(t *testing.T) {
 
 func TestRequestSigning_MissingHeaders(t *testing.T) {
 	a, caller, priv := newAuth(t)
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte("x"), time.Now(), "n1")
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte("x"),
+		time.Now(),
+		"n1",
+	)
 	req.Header.Del(HeaderNonce) // signature present, nonce missing
 	if _, ok, err := a.Authenticate(req); !ok || err == nil {
 		t.Fatalf("missing nonce should reject: ok=%v err=%v", ok, err)
@@ -185,11 +304,23 @@ func TestRequestSigning_MissingHeaders(t *testing.T) {
 func TestRequestSigning_ThroughMiddleware(t *testing.T) {
 	a, caller, priv := newAuth(t)
 	var got string
-	h := AuthMiddleware([]Authenticator{a}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = CallerFromContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-	}))
-	req := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte(`{}`), time.Now(), "mw1")
+	h := AuthMiddleware(
+		[]Authenticator{a},
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = CallerFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	req := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte(`{}`),
+		time.Now(),
+		"mw1",
+	)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -200,8 +331,20 @@ func TestRequestSigning_ThroughMiddleware(t *testing.T) {
 	}
 
 	// Bad signature -> 401 through the middleware.
-	bad := signReq(t, caller, priv, http.MethodPost, "/v1/sign", []byte(`{}`), time.Now(), "mw2")
-	bad.Header.Set(HeaderSignature, hex.EncodeToString(make([]byte, ed25519.SignatureSize)))
+	bad := signReq(
+		t,
+		caller,
+		priv,
+		http.MethodPost,
+		"/v1/sign",
+		[]byte(`{}`),
+		time.Now(),
+		"mw2",
+	)
+	bad.Header.Set(
+		HeaderSignature,
+		hex.EncodeToString(make([]byte, ed25519.SignatureSize)),
+	)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, bad)
 	if rr.Code != http.StatusUnauthorized {
@@ -212,7 +355,11 @@ func TestRequestSigning_ThroughMiddleware(t *testing.T) {
 // TestNonceCache_Concurrent exercises the cache under concurrent access: for a
 // single (key,nonce) exactly one caller must win, the rest must see errReplay.
 func TestNonceCache_Concurrent(t *testing.T) {
-	c := newNonceCacheWithByteLimit(time.Minute, 1024, int64(1024)*nonceCacheKeyBytes)
+	c := newNonceCacheWithByteLimit(
+		time.Minute,
+		1024,
+		int64(1024)*nonceCacheKeyBytes,
+	)
 	const n = 50
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -236,7 +383,11 @@ func TestNonceCache_Concurrent(t *testing.T) {
 
 // TestNonceCache_Expiry confirms an expired nonce is purged and reusable.
 func TestNonceCache_Expiry(t *testing.T) {
-	c := newNonceCacheWithByteLimit(time.Minute, 1024, int64(1024)*nonceCacheKeyBytes)
+	c := newNonceCacheWithByteLimit(
+		time.Minute,
+		1024,
+		int64(1024)*nonceCacheKeyBytes,
+	)
 	base := time.Now()
 	c.now = func() time.Time { return base }
 	if err := c.checkAndStore("", "id"); err != nil {
@@ -273,16 +424,27 @@ func TestNonceCache_BoundsRetainedNonceBytes(t *testing.T) {
 	c := newNonceCacheWithByteLimit(time.Minute, 100, 2*nonceCacheKeyBytes)
 	largeNonce := strings.Repeat("n", 1024)
 	if err := c.checkAndStore("caller", largeNonce); err != nil {
-		t.Fatalf("large nonce should be admitted without retaining its bytes: %v", err)
+		t.Fatalf(
+			"large nonce should be admitted without retaining its bytes: %v",
+			err,
+		)
 	}
 	if c.bytes != nonceCacheKeyBytes {
-		t.Fatalf("retained key bytes = %d, want %d", c.bytes, nonceCacheKeyBytes)
+		t.Fatalf(
+			"retained key bytes = %d, want %d",
+			c.bytes,
+			nonceCacheKeyBytes,
+		)
 	}
 	if err := c.checkAndStore("caller", largeNonce+"2"); err != nil {
 		t.Fatalf("second large nonce should fit the byte budget: %v", err)
 	}
 	if c.bytes > 2*nonceCacheKeyBytes {
-		t.Fatalf("retained key bytes = %d, exceeds budget %d", c.bytes, 2*nonceCacheKeyBytes)
+		t.Fatalf(
+			"retained key bytes = %d, exceeds budget %d",
+			c.bytes,
+			2*nonceCacheKeyBytes,
+		)
 	}
 	if err := c.checkAndStore("caller", largeNonce+"3"); err != errNonceCacheFull {
 		t.Fatalf("third large nonce should hit the byte budget, got %v", err)
@@ -292,7 +454,12 @@ func TestNonceCache_BoundsRetainedNonceBytes(t *testing.T) {
 	// accounting — the retained size must stay exactly the entry count times
 	// that width, however large the nonces that produced those entries were.
 	if want := int64(len(c.entries)) * nonceCacheKeyBytes; c.bytes != want {
-		t.Fatalf("retained bytes = %d, want %d for %d entries", c.bytes, want, len(c.entries))
+		t.Fatalf(
+			"retained bytes = %d, want %d for %d entries",
+			c.bytes,
+			want,
+			len(c.entries),
+		)
 	}
 }
 

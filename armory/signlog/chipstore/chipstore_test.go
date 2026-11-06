@@ -40,7 +40,10 @@ type fakeChip struct {
 }
 
 func newFakeChip() *fakeChip {
-	return &fakeChip{bins: map[uint32][]byte{}, keys: map[uint32]ed25519.PrivateKey{}}
+	return &fakeChip{
+		bins: map[uint32][]byte{},
+		keys: map[uint32]ed25519.PrivateKey{},
+	}
 }
 
 func (c *fakeChip) Exists(id uint32) (bool, error) {
@@ -126,7 +129,11 @@ func TestHeadStoreRoundTrip(t *testing.T) {
 
 	// the record is written to the object ID the firmware reserves for it
 	if len(c.bins[profile.SignLogHeadID]) != headLen {
-		t.Fatalf("object holds %d bytes, want %d", len(c.bins[profile.SignLogHeadID]), headLen)
+		t.Fatalf(
+			"object holds %d bytes, want %d",
+			len(c.bins[profile.SignLogHeadID]),
+			headLen,
+		)
 	}
 
 	// a second store replaces it in place
@@ -275,7 +282,8 @@ func TestLogThroughAdapters(t *testing.T) {
 		t.Fatalf("verify: %v", err)
 	}
 
-	if stored, err := heads.Load(); err != nil || stored != log.Head() || stored != w.Head() {
+	if stored, err := heads.Load(); err != nil || stored != log.Head() ||
+		stored != w.Head() {
 		t.Fatalf("stored head %+v, %v; log head %+v", stored, err, log.Head())
 	}
 
@@ -290,7 +298,10 @@ func TestLogThroughAdapters(t *testing.T) {
 func TestIdentityRefusals(t *testing.T) {
 	t.Parallel()
 
-	if _, err := NewIdentity(newFakeChip(), profile.IdentityKeyID); !errors.Is(err, ErrNoIdentity) {
+	if _, err := NewIdentity(newFakeChip(), profile.IdentityKeyID); !errors.Is(
+		err,
+		ErrNoIdentity,
+	) {
 		t.Errorf("no key: %v, want ErrNoIdentity", err)
 	}
 

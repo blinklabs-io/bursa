@@ -40,5 +40,10 @@ func configureScope(svc *device.Service, report *Report) {
 	}
 
 	svc.SetNetwork(network, chain)
-	report.Logf("network: %s (id %d), chain %s; other chains' profiles are refused", networkName, network, chain)
+	report.Logf(
+		"network: %s (id %d), chain %s; other chains' profiles are refused",
+		networkName,
+		network,
+		chain,
+	)
 }

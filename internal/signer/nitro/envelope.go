@@ -26,21 +26,41 @@ const dataKeySize = 32
 func validateEnvelope(env Envelope) error {
 	switch {
 	case env.Version != EnvelopeVersion:
-		return fmt.Errorf("%w: unsupported version %d", ErrEnvelope, env.Version)
+		return fmt.Errorf(
+			"%w: unsupported version %d",
+			ErrEnvelope,
+			env.Version,
+		)
 	case env.Role != backend.KeyTypePool:
-		return fmt.Errorf("%w: role must be %q", ErrEnvelope, backend.KeyTypePool)
+		return fmt.Errorf(
+			"%w: role must be %q",
+			ErrEnvelope,
+			backend.KeyTypePool,
+		)
 	case env.KMSKeyID == "":
 		return fmt.Errorf("%w: missing KMS key ID", ErrEnvelope)
 	case len(env.PublicKey) != ed25519.PublicKeySize:
-		return fmt.Errorf("%w: public key must be %d bytes", ErrEnvelope, ed25519.PublicKeySize)
+		return fmt.Errorf(
+			"%w: public key must be %d bytes",
+			ErrEnvelope,
+			ed25519.PublicKeySize,
+		)
 	case len(env.EncryptedDataKey) == 0:
 		return fmt.Errorf("%w: missing encrypted data key", ErrEnvelope)
 	case len(env.EncryptedDataKey) > maxEnvelopeSize:
-		return fmt.Errorf("%w: encrypted data key exceeds %d bytes", ErrEnvelope, maxEnvelopeSize)
+		return fmt.Errorf(
+			"%w: encrypted data key exceeds %d bytes",
+			ErrEnvelope,
+			maxEnvelopeSize,
+		)
 	case len(env.Ciphertext) == 0:
 		return fmt.Errorf("%w: missing private-key ciphertext", ErrEnvelope)
 	case len(env.Ciphertext) > maxEnvelopeSize:
-		return fmt.Errorf("%w: private-key ciphertext exceeds %d bytes", ErrEnvelope, maxEnvelopeSize)
+		return fmt.Errorf(
+			"%w: private-key ciphertext exceeds %d bytes",
+			ErrEnvelope,
+			maxEnvelopeSize,
+		)
 	case len(env.Nonce) != 12:
 		return fmt.Errorf("%w: nonce must be 12 bytes", ErrEnvelope)
 	}
@@ -51,7 +71,10 @@ func envelopeAAD(env Envelope) []byte {
 	h := sha256.New()
 	writeField := func(value []byte) {
 		var size [4]byte
-		binary.BigEndian.PutUint32(size[:], uint32(len(value))) // #nosec G115 -- envelope fields are memory-bounded
+		binary.BigEndian.PutUint32(
+			size[:],
+			uint32(len(value)),
+		) // #nosec G115 -- envelope fields are memory-bounded
 		h.Write(size[:])
 		h.Write(value)
 	}
@@ -64,7 +87,10 @@ func envelopeAAD(env Envelope) []byte {
 	return h.Sum(nil)
 }
 
-func sealSeed(dataKey, seed []byte, env Envelope) (ciphertext, nonce []byte, err error) {
+func sealSeed(
+	dataKey, seed []byte,
+	env Envelope,
+) (ciphertext, nonce []byte, err error) {
 	if len(dataKey) != dataKeySize || len(seed) != ed25519.SeedSize {
 		return nil, nil, ErrEnvelope
 	}

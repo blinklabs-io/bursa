@@ -80,10 +80,16 @@ func Encode(p Payload) (metadatum, error) {
 	if len(batch) == 0 {
 		return nil, invalidf("empty payload")
 	}
-	return metaList{Items: []metadatum{mUint(uint64(p.Kind)), metaList{Items: batch}}}, nil
+	return metaList{
+		Items: []metadatum{mUint(uint64(p.Kind)), metaList{Items: batch}},
+	}, nil
 }
 
-func mUint(n uint64) metadatum { return lcommon.MetaInt{Value: new(big.Int).SetUint64(n)} }
+func mUint(
+	n uint64,
+) metadatum {
+	return lcommon.MetaInt{Value: new(big.Int).SetUint64(n)}
+}
 func mInt(n int64) metadatum   { return lcommon.MetaInt{Value: big.NewInt(n)} }
 func mText(s string) metadatum { return lcommon.MetaText{Value: s} }
 func mList(items ...metadatum) metadatum {
@@ -246,7 +252,12 @@ func encodeQuestion(q Question) metadatum {
 	case KindPointsAllocation:
 		items = append(items, encodeOptions(q), mUint(q.Budget))
 	case KindRating:
-		items = append(items, encodeOptions(q), encodeScale(*q.Scale), encodeFlag(q.RequireAll))
+		items = append(
+			items,
+			encodeOptions(q),
+			encodeScale(*q.Scale),
+			encodeFlag(q.RequireAll),
+		)
 	}
 	if q.Required {
 		items = append(items, mUint(1))
@@ -261,7 +272,9 @@ func encodeResponse(r Response) (metadatum, error) {
 	var answers metadatum
 	switch {
 	case len(r.Sealed) > 0 && len(r.Answers) > 0:
-		return nil, invalidf("response carries both answers and a sealed ciphertext")
+		return nil, invalidf(
+			"response carries both answers and a sealed ciphertext",
+		)
 	case len(r.Sealed) > 0:
 		answers = chunkedBytes(r.Sealed)
 	case len(r.Answers) > 0:

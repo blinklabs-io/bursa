@@ -49,7 +49,11 @@ func allowed(w http.ResponseWriter, r *http.Request, host string) bool {
 	}
 
 	if r.Method == http.MethodPost && !isJSON(r.Header.Get("Content-Type")) {
-		http.Error(w, "content type must be application/json", http.StatusUnsupportedMediaType)
+		http.Error(
+			w,
+			"content type must be application/json",
+			http.StatusUnsupportedMediaType,
+		)
 		return false
 	}
 

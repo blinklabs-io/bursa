@@ -29,9 +29,16 @@ func TestWalletQueriesLivePreview(t *testing.T) {
 			t.Fatal(err)
 		}
 		lastErr = err
-		t.Logf("Blockfrost port raced on attempt %d; retrying with a new port: %v", attempt, err)
+		t.Logf(
+			"Blockfrost port raced on attempt %d; retrying with a new port: %v",
+			attempt,
+			err,
+		)
 	}
-	t.Fatalf("preview node Blockfrost port still unavailable after retries: %v", lastErr)
+	t.Fatalf(
+		"preview node Blockfrost port still unavailable after retries: %v",
+		lastErr,
+	)
 }
 
 func runWalletQueriesLivePreview(t *testing.T, dir string, attempt int) error {
@@ -41,9 +48,12 @@ func runWalletQueriesLivePreview(t *testing.T, dir string, attempt int) error {
 		return err
 	}
 	sup := supervisor.New(supervisor.Config{
-		Network:        "preview",
-		DataDir:        filepath.Join(dir, fmt.Sprintf("db-%d", attempt)),
-		SocketPath:     filepath.Join(dir, fmt.Sprintf("node-%d.socket", attempt)),
+		Network: "preview",
+		DataDir: filepath.Join(dir, fmt.Sprintf("db-%d", attempt)),
+		SocketPath: filepath.Join(
+			dir,
+			fmt.Sprintf("node-%d.socket", attempt),
+		),
 		UtxorpcPort:    0,
 		BlockfrostPort: bfPort,
 	})
@@ -57,14 +67,18 @@ func runWalletQueriesLivePreview(t *testing.T, dir string, attempt int) error {
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		st := sup.Status()
-		if st.State == supervisor.StateSyncing || st.State == supervisor.StateReady {
+		if st.State == supervisor.StateSyncing ||
+			st.State == supervisor.StateReady {
 			break
 		}
 		if st.State == supervisor.StateError {
 			return fmt.Errorf("node errored: %s", st.Err)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("node not syncing within 90s; last state: %s", st.State)
+			return fmt.Errorf(
+				"node not syncing within 90s; last state: %s",
+				st.State,
+			)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -72,7 +86,8 @@ func runWalletQueriesLivePreview(t *testing.T, dir string, attempt int) error {
 	svc := wallet.NewService(chain.NewClient(bfPort))
 	acct, err := svc.SetWallet(
 		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-		"preview", 5,
+		"preview",
+		5,
 	)
 	if err != nil {
 		return fmt.Errorf("SetWallet: %w", err)

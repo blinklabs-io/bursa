@@ -118,7 +118,10 @@ func NewProfiledMTLSHTTPEnclave(
 // NewHostKeyHTTPEnclave is a profiled enclave that authenticates every
 // signing request with hostKey: it fetches a one-time challenge from
 // /v1/challenge and signs AttestedRequestBinding over the request and it.
-func NewHostKeyHTTPEnclave(address, profile string, hostKey ed25519.PrivateKey) (*HTTPEnclave, error) {
+func NewHostKeyHTTPEnclave(
+	address, profile string,
+	hostKey ed25519.PrivateKey,
+) (*HTTPEnclave, error) {
 	if len(hostKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("host key must be an Ed25519 private key")
 	}
@@ -151,14 +154,24 @@ func newHTTPEnclave(
 		}
 		if tlsConfig != nil {
 			if u.Scheme != "https" {
-				return nil, errors.New("authenticated enclave address must use https")
+				return nil, errors.New(
+					"authenticated enclave address must use https",
+				)
 			}
-			client.Transport = &http.Transport{TLSClientConfig: tlsConfig.Clone()}
+			client.Transport = &http.Transport{
+				TLSClientConfig: tlsConfig.Clone(),
+			}
 		}
-		return &HTTPEnclave{client: client, base: u.Scheme + "://" + u.Host, profile: profile}, nil
+		return &HTTPEnclave{
+			client:  client,
+			base:    u.Scheme + "://" + u.Host,
+			profile: profile,
+		}, nil
 	case "unix":
 		if tlsConfig != nil {
-			return nil, errors.New("authenticated enclave address must use https")
+			return nil, errors.New(
+				"authenticated enclave address must use https",
+			)
 		}
 		if u.Path == "" {
 			return nil, errors.New("enclave unix address has no socket path")
@@ -170,18 +183,34 @@ func newHTTPEnclave(
 				return d.DialContext(ctx, "unix", path)
 			},
 		}
-		return &HTTPEnclave{client: client, base: "http://enclave", profile: profile}, nil
+		return &HTTPEnclave{
+			client:  client,
+			base:    "http://enclave",
+			profile: profile,
+		}, nil
 	default:
-		return nil, fmt.Errorf("enclave address scheme %q is not http, https, or unix", u.Scheme)
+		return nil, fmt.Errorf(
+			"enclave address scheme %q is not http, https, or unix",
+			u.Scheme,
+		)
 	}
 }
 
-func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error {
+func (e *HTTPEnclave) post(
+	ctx context.Context,
+	path string,
+	in, out any,
+) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.base+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		e.base+path,
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return err
 	}
@@ -196,7 +225,11 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 		return err
 	}
 	if len(data) > attestedMaxResponse {
-		return fmt.Errorf("%w: response exceeds %d bytes", ErrAttestedProtocol, attestedMaxResponse)
+		return fmt.Errorf(
+			"%w: response exceeds %d bytes",
+			ErrAttestedProtocol,
+			attestedMaxResponse,
+		)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("enclave returned HTTP %d", resp.StatusCode)
@@ -209,7 +242,10 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 	// Decoder.More does not see a stray closing bracket or brace at the top
 	// level, so require the stream to end.
 	if err := dec.Decode(&json.RawMessage{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: trailing data after response", ErrAttestedProtocol)
+		return fmt.Errorf(
+			"%w: trailing data after response",
+			ErrAttestedProtocol,
+		)
 	}
 	return nil
 }
@@ -218,7 +254,10 @@ func (e *HTTPEnclave) post(ctx context.Context, path string, in, out any) error 
 // unauthenticated request asks again signed with its host key, as a multi
 // scope armory image requires; an image that answers the first request is
 // not asked twice.
-func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInventory, error) {
+func (e *HTTPEnclave) Inventory(
+	ctx context.Context,
+	nonce []byte,
+) (AttestedInventory, error) {
 	type inventoryRequest struct {
 		Nonce         []byte `json:"nonce"`
 		Profile       string `json:"profile,omitempty"`
@@ -239,12 +278,22 @@ func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 	if cerr := e.post(ctx, "/v1/challenge", struct{}{}, &ch); cerr != nil {
 		return AttestedInventory{}, fmt.Errorf("%w; challenge: %w", err, cerr)
 	}
-	if ch.Version != AttestedProtocol || len(ch.Challenge) != attestedChallengeSize {
-		return AttestedInventory{}, fmt.Errorf("%w; %w: challenge response version %q with %d bytes", err, ErrAttestedProtocol, ch.Version, len(ch.Challenge))
+	if ch.Version != AttestedProtocol ||
+		len(ch.Challenge) != attestedChallengeSize {
+		return AttestedInventory{}, fmt.Errorf(
+			"%w; %w: challenge response version %q with %d bytes",
+			err,
+			ErrAttestedProtocol,
+			ch.Version,
+			len(ch.Challenge),
+		)
 	}
 	req.Challenge = ch.Challenge
 	req.HostKey = e.hostKey.Public().(ed25519.PublicKey)
-	req.HostSignature = ed25519.Sign(e.hostKey, AttestedInventoryRequestBinding(nonce, e.profile, ch.Challenge))
+	req.HostSignature = ed25519.Sign(
+		e.hostKey,
+		AttestedInventoryRequestBinding(nonce, e.profile, ch.Challenge),
+	)
 	inv = AttestedInventory{}
 	err = e.post(ctx, "/v1/inventory", req, &inv)
 	return inv, err
@@ -254,7 +303,10 @@ func (e *HTTPEnclave) Inventory(ctx context.Context, nonce []byte) (AttestedInve
 const attestedChallengeSize = 32
 
 // Sign implements Enclave.
-func (e *HTTPEnclave) Sign(ctx context.Context, req AttestedRequest) (AttestedResponse, error) {
+func (e *HTTPEnclave) Sign(
+	ctx context.Context,
+	req AttestedRequest,
+) (AttestedResponse, error) {
 	if e.hostKey != nil {
 		var ch struct {
 			Version   string `json:"version"`
@@ -263,8 +315,14 @@ func (e *HTTPEnclave) Sign(ctx context.Context, req AttestedRequest) (AttestedRe
 		if err := e.post(ctx, "/v1/challenge", struct{}{}, &ch); err != nil {
 			return AttestedResponse{}, fmt.Errorf("challenge: %w", err)
 		}
-		if ch.Version != AttestedProtocol || len(ch.Challenge) != attestedChallengeSize {
-			return AttestedResponse{}, fmt.Errorf("%w: challenge response version %q with %d bytes", ErrAttestedProtocol, ch.Version, len(ch.Challenge))
+		if ch.Version != AttestedProtocol ||
+			len(ch.Challenge) != attestedChallengeSize {
+			return AttestedResponse{}, fmt.Errorf(
+				"%w: challenge response version %q with %d bytes",
+				ErrAttestedProtocol,
+				ch.Version,
+				len(ch.Challenge),
+			)
 		}
 		req.Challenge = ch.Challenge
 		req.HostKey = e.hostKey.Public().(ed25519.PublicKey)

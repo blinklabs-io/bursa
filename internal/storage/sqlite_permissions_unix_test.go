@@ -79,7 +79,11 @@ func TestSQLiteStoreSecuresTheDatabaseForANewConnection(t *testing.T) {
 
 	conn, err := store.db.Conn(context.Background())
 	require.NoError(t, err)
-	require.ErrorIs(t, conn.Raw(func(any) error { return driver.ErrBadConn }), driver.ErrBadConn)
+	require.ErrorIs(
+		t,
+		conn.Raw(func(any) error { return driver.ErrBadConn }),
+		driver.ErrBadConn,
+	)
 	_ = conn.Close()
 	require.NoError(t, os.Chmod(dbPath, 0o644))
 

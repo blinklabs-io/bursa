@@ -88,7 +88,9 @@ func (p Pins) validate() error {
 	case p.MarginMaxNum > p.MarginMaxDen:
 		return errors.New("pins: margin maximum above 1")
 	case !p.PinRelays && (p.MetadataHash != nil || p.RelaysDigest != [RelaysDigestSize]byte{}):
-		return errors.New("pins: metadata or relays digest without pinned relays")
+		return errors.New(
+			"pins: metadata or relays digest without pinned relays",
+		)
 	}
 
 	return nil
@@ -132,7 +134,11 @@ func EncodePins(p Pins) ([]byte, error) {
 // relays, non-zero padding and a wrong size.
 func DecodePins(b []byte) (p Pins, err error) {
 	if len(b) != PinsSize {
-		return Pins{}, fmt.Errorf("pins: object is %d bytes, want %d", len(b), PinsSize)
+		return Pins{}, fmt.Errorf(
+			"pins: object is %d bytes, want %d",
+			len(b),
+			PinsSize,
+		)
 	}
 
 	if b[0] != pinsVersion {

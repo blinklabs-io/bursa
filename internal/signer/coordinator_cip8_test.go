@@ -33,7 +33,11 @@ func (b loadedBackend) Name() string { return "loaded-fake" }
 func (b loadedBackend) ListKeys(context.Context) ([]backend.KeyRef, error) {
 	return []backend.KeyRef{b.key}, nil
 }
-func (b loadedBackend) GetKey(_ context.Context, h backend.KeyHash) (backend.KeyRef, error) {
+
+func (b loadedBackend) GetKey(
+	_ context.Context,
+	h backend.KeyHash,
+) (backend.KeyRef, error) {
 	if h == b.key.Hash() {
 		return b.key, nil
 	}
@@ -72,25 +76,60 @@ func (k *loadedFakeKey) LoadedKey() *bursa.LoadedKey {
 // (Vault) key: CIP-8 must be rejected as unsupported.
 func TestSignCIP8_UnsupportedOnRemoteKey(t *testing.T) {
 	k := newFakeKey(t)
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"cip8"}, CIP8: &policy.CIP8Policy{}},
-		watermark.NewMemWatermark(), fakeCardano{})
-	_, code, err := c.SignCIP8(context.Background(), []byte("hi"), "addr1xyz", k.hash.String())
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"cip8"},
+			CIP8:            &policy.CIP8Policy{},
+		},
+		watermark.NewMemWatermark(),
+		fakeCardano{},
+	)
+	_, code, err := c.SignCIP8(
+		context.Background(),
+		[]byte("hi"),
+		"addr1xyz",
+		k.hash.String(),
+	)
 	if err == nil || code != CodeUnsupported {
-		t.Fatalf("expected unsupported for remote key, got code=%s err=%v", code, err)
+		t.Fatalf(
+			"expected unsupported for remote key, got code=%s err=%v",
+			code,
+			err,
+		)
 	}
 }
 
 func TestSignCIP8_HappyPath(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	base := &fakeKey{pub: pub, priv: priv, hash: backend.HashPublicKey(pub)}
-	k := &loadedFakeKey{fakeKey: base, lk: &bursa.LoadedKey{SKey: []byte(priv), VKey: pub}}
+	k := &loadedFakeKey{
+		fakeKey: base,
+		lk:      &bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+	}
 
-	pol := policy.KeyPolicy{Hash: base.hash.String(), AllowedRequests: []string{"cip8"}, CIP8: &policy.CIP8Policy{MaxPayloadBytes: 64}}
+	pol := policy.KeyPolicy{
+		Hash:            base.hash.String(),
+		AllowedRequests: []string{"cip8"},
+		CIP8:            &policy.CIP8Policy{MaxPayloadBytes: 64},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	// Use a resolver that returns the loaded key.
-	c := New(Deps{Resolver: backend.NewResolver(loadedBackend{k}), Policy: eng, Watermark: watermark.NewMemWatermark(), Cardano: fakeCardano{}})
-	res, code, err := c.SignCIP8(context.Background(), []byte("hello"), addrForKey(t, pub), base.hash.String())
+	c := New(
+		Deps{
+			Resolver:  backend.NewResolver(loadedBackend{k}),
+			Policy:    eng,
+			Watermark: watermark.NewMemWatermark(),
+			Cardano:   fakeCardano{},
+		},
+	)
+	res, code, err := c.SignCIP8(
+		context.Background(),
+		[]byte("hello"),
+		addrForKey(t, pub),
+		base.hash.String(),
+	)
 	if err != nil {
 		t.Fatalf("SignCIP8: code=%s err=%v", code, err)
 	}

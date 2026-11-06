@@ -42,7 +42,11 @@ func (f *fakeReader) Rewards(context.Context) (wallet.RewardHistory, error) {
 }
 
 func received(hash, net string) wallet.Tx {
-	return wallet.Tx{TxHash: hash, Direction: wallet.TxDirectionReceived, NetLovelace: net}
+	return wallet.Tx{
+		TxHash:      hash,
+		Direction:   wallet.TxDirectionReceived,
+		NetLovelace: net,
+	}
 }
 
 func TestPollNoWalletBoundReturnsNil(t *testing.T) {
@@ -59,8 +63,10 @@ func TestPollNoWalletBoundReturnsNil(t *testing.T) {
 
 func TestFirstPollPrimesBaselineNoEvents(t *testing.T) {
 	r := &fakeReader{
-		txs:     []wallet.Tx{received("abc", "1000000")},
-		rewards: wallet.RewardHistory{Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}}},
+		txs: []wallet.Tx{received("abc", "1000000")},
+		rewards: wallet.RewardHistory{
+			Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}},
+		},
 	}
 	svc := New(r)
 	svc.SetActive("w1")
@@ -90,7 +96,8 @@ func TestNewIncomingTxEmitsOneEventThenDedups(t *testing.T) {
 		t.Fatalf("want 1 event, got %d (%v)", len(events), events)
 	}
 	e := events[0]
-	if e.Kind != KindReceived || e.TxHash != "tx1" || e.Lovelace != "2500000" || e.ID != "tx:tx1" {
+	if e.Kind != KindReceived || e.TxHash != "tx1" || e.Lovelace != "2500000" ||
+		e.ID != "tx:tx1" {
 		t.Fatalf("unexpected event: %+v", e)
 	}
 
@@ -118,7 +125,11 @@ func TestPollBoundsTransactionRetentionToRecentHistory(t *testing.T) {
 		t.Fatalf("prime: %v", err)
 	}
 	if got := len(svc.seenTx); got != maxTrackedTransactions {
-		t.Fatalf("seen transaction count = %d, want %d", got, maxTrackedTransactions)
+		t.Fatalf(
+			"seen transaction count = %d, want %d",
+			got,
+			maxTrackedTransactions,
+		)
 	}
 
 	// A new receipt at the head remains observable, while the oldest history is
@@ -133,7 +144,11 @@ func TestPollBoundsTransactionRetentionToRecentHistory(t *testing.T) {
 		t.Fatalf("new receipt events = %v, want only new receipt", events)
 	}
 	if got := len(svc.seenTx); got != maxTrackedTransactions {
-		t.Fatalf("seen transaction count after eviction = %d, want %d", got, maxTrackedTransactions)
+		t.Fatalf(
+			"seen transaction count after eviction = %d, want %d",
+			got,
+			maxTrackedTransactions,
+		)
 	}
 
 	events, err = svc.Poll(context.Background())
@@ -164,7 +179,9 @@ func TestPendingIncomingTxIsNotEmitted(t *testing.T) {
 	}
 }
 
-func TestPrimingBaselinesPendingReceiptToAvoidFalseNotifyOnTipRecovery(t *testing.T) {
+func TestPrimingBaselinesPendingReceiptToAvoidFalseNotifyOnTipRecovery(
+	t *testing.T,
+) {
 	// A transient tip-lookup failure degrades every tx to Pending=true (see
 	// wallet.Service.Transactions), including ones that are actually already
 	// confirmed. If the very first (priming) poll for a wallet lands during such
@@ -191,7 +208,10 @@ func TestPrimingBaselinesPendingReceiptToAvoidFalseNotifyOnTipRecovery(t *testin
 		t.Fatalf("Poll: %v", err)
 	}
 	if len(events) != 0 {
-		t.Fatalf("already-baselined tx must not re-emit once confirmed, got %v", events)
+		t.Fatalf(
+			"already-baselined tx must not re-emit once confirmed, got %v",
+			events,
+		)
 	}
 }
 
@@ -203,7 +223,11 @@ func TestSentAndSelfTxAreNotEmitted(t *testing.T) {
 		t.Fatalf("prime: %v", err)
 	}
 	r.txs = []wallet.Tx{
-		{TxHash: "sent", Direction: wallet.TxDirectionSent, NetLovelace: "-1000000"},
+		{
+			TxHash:      "sent",
+			Direction:   wallet.TxDirectionSent,
+			NetLovelace: "-1000000",
+		},
 		{TxHash: "self", Direction: wallet.TxDirectionSelf, NetLovelace: "0"},
 	}
 	events, err := svc.Poll(context.Background())
@@ -217,7 +241,9 @@ func TestSentAndSelfTxAreNotEmitted(t *testing.T) {
 
 func TestNewRewardEpochEmitsEventThenDedups(t *testing.T) {
 	r := &fakeReader{
-		rewards: wallet.RewardHistory{Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}}},
+		rewards: wallet.RewardHistory{
+			Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}},
+		},
 	}
 	svc := New(r)
 	svc.SetActive("w1")
@@ -237,7 +263,8 @@ func TestNewRewardEpochEmitsEventThenDedups(t *testing.T) {
 		t.Fatalf("want 1 reward event, got %d (%v)", len(events), events)
 	}
 	e := events[0]
-	if e.Kind != KindReward || e.Epoch != 101 || e.Lovelace != "7000000" || e.ID != "reward:101" {
+	if e.Kind != KindReward || e.Epoch != 101 || e.Lovelace != "7000000" ||
+		e.ID != "reward:101" {
 		t.Fatalf("unexpected reward event: %+v", e)
 	}
 
@@ -256,7 +283,9 @@ func TestUnorderedRewardHistoryPreservesLowerEpoch(t *testing.T) {
 	// advance the watermark before a genuinely lower (but still new) epoch is
 	// checked, silently dropping the lower epoch instead of reporting it.
 	r := &fakeReader{
-		rewards: wallet.RewardHistory{Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}}},
+		rewards: wallet.RewardHistory{
+			Rewards: []wallet.RewardEntry{{Epoch: 100, Amount: "5"}},
+		},
 	}
 	svc := New(r)
 	svc.SetActive("w1")
@@ -276,10 +305,17 @@ func TestUnorderedRewardHistoryPreservesLowerEpoch(t *testing.T) {
 		t.Fatalf("Poll: %v", err)
 	}
 	if len(events) != 2 {
-		t.Fatalf("want 2 reward events (101 and 102), got %d (%v)", len(events), events)
+		t.Fatalf(
+			"want 2 reward events (101 and 102), got %d (%v)",
+			len(events),
+			events,
+		)
 	}
 	if events[0].Epoch != 101 || events[0].ID != "reward:101" {
-		t.Fatalf("want epoch 101 reported first (ascending), got %+v", events[0])
+		t.Fatalf(
+			"want epoch 101 reported first (ascending), got %+v",
+			events[0],
+		)
 	}
 	if events[1].Epoch != 102 || events[1].ID != "reward:102" {
 		t.Fatalf("want epoch 102 reported second, got %+v", events[1])
@@ -354,7 +390,9 @@ func TestRememberTxsKeepsTheNewestOfABatch(t *testing.T) {
 	}
 	// The newest must survive; the oldest two are what fall off the end.
 	if !s.seenTx[hashes[0]] || !s.seenTx[hashes[1]] {
-		t.Fatal("the newest hashes were evicted, so their receipts notify again")
+		t.Fatal(
+			"the newest hashes were evicted, so their receipts notify again",
+		)
 	}
 	for _, dropped := range hashes[maxTrackedTransactions:] {
 		if s.seenTx[dropped] {
@@ -386,10 +424,15 @@ func TestRecentReceivedSortsOnlyWhenTheReaderDidNot(t *testing.T) {
 	}
 	input := slices.Clone(unordered)
 	got := recentReceived(input)
-	if len(got) != 3 || got[0].TxHash != "a" || got[1].TxHash != "c" || got[2].TxHash != "b" {
+	if len(got) != 3 || got[0].TxHash != "a" || got[1].TxHash != "c" ||
+		got[2].TxHash != "b" {
 		t.Fatalf("unordered input not sorted: %+v", got)
 	}
-	if !slices.EqualFunc(input, unordered, func(x, y wallet.Tx) bool { return x.TxHash == y.TxHash }) {
+	if !slices.EqualFunc(
+		input,
+		unordered,
+		func(x, y wallet.Tx) bool { return x.TxHash == y.TxHash },
+	) {
 		t.Fatal("recentReceived must not reorder the caller's slice")
 	}
 

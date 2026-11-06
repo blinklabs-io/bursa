@@ -142,7 +142,12 @@ func TestRunHashMetadataPreservesFileBytes(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	assert.NotEqual(t, hash1, hash2, "Metadata hashing must include the file's exact bytes")
+	assert.NotEqual(
+		t,
+		hash1,
+		hash2,
+		"Metadata hashing must include the file's exact bytes",
+	)
 }
 
 func TestRunHashMetadataErrors(t *testing.T) {
@@ -188,7 +193,12 @@ func TestRunHashMetadataKnownHash(t *testing.T) {
 
 	// Verify the hash matches the expected value
 	expectedHash := "8daf56b8e2174d97fbf3928f89b69195194e6b592b01d176bfb3a048211f5e2d"
-	assert.Equal(t, expectedHash, hash, "Hash should match expected Blake2b-256 value")
+	assert.Equal(
+		t,
+		expectedHash,
+		hash,
+		"Hash should match expected Blake2b-256 value",
+	)
 }
 
 // canonicalMetadataVector is a pool-metadata document in RFC 8785 form and its
@@ -203,7 +213,10 @@ func TestHashCommandsAgreeOnCanonicalVector(t *testing.T) {
 	// Keep log lines off the captured stdout, whatever ran before.
 	logging.ConfigureText()
 	file := filepath.Join(t.TempDir(), "metadata.json")
-	require.NoError(t, os.WriteFile(file, []byte(canonicalMetadataVector), 0o600))
+	require.NoError(
+		t,
+		os.WriteFile(file, []byte(canonicalMetadataVector), 0o600),
+	)
 
 	hashes := map[string]string{
 		"hash metadata": captureStdout(t, func() {
@@ -216,7 +229,10 @@ func TestHashCommandsAgreeOnCanonicalVector(t *testing.T) {
 			require.NoError(t, RunHashAnchorData("", "", file, "", "", ""))
 		}),
 		"hash anchor-data --text": captureStdout(t, func() {
-			require.NoError(t, RunHashAnchorData(canonicalMetadataVector, "", "", "", "", ""))
+			require.NoError(
+				t,
+				RunHashAnchorData(canonicalMetadataVector, "", "", "", "", ""),
+			)
 		}),
 	}
 	for name, got := range hashes {

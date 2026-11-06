@@ -496,7 +496,10 @@ func (x XPub) Derive(index uint32) (XPub, error) {
 	// parentPoint = decode A from compressed Edwards25519 encoding
 	parentPoint, err := edwards25519.NewIdentityPoint().SetBytes(pubKey)
 	if err != nil {
-		return XPub{}, fmt.Errorf("bip32: XPub.Derive: invalid parent public key: %w", err)
+		return XPub{}, fmt.Errorf(
+			"bip32: XPub.Derive: invalid parent public key: %w",
+			err,
+		)
 	}
 
 	// childPoint = parentPoint + tweakPoint

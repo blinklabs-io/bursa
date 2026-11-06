@@ -99,7 +99,10 @@ func cip68AssetUnit(network, name string) (unit string, ok bool) {
 // addresses for an on-chain asset unit. *chain.Client satisfies it via
 // AssetAddresses (GET /api/v0/assets/{asset}/addresses on the embedded node).
 type AssetLookup interface {
-	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
+	AssetAddresses(
+		ctx context.Context,
+		asset string,
+	) ([]chain.AssetAddress, error)
 }
 
 // Resolve resolves an ADA Handle (input may or may not carry a leading '$',
@@ -110,7 +113,11 @@ type AssetLookup interface {
 // the classic asset and CIP-68 label-222 user token are checked. A result is
 // accepted only when every present form identifies the same single holder.
 // Missing assets return chain.ErrNotFound; node failures remain hard errors.
-func Resolve(ctx context.Context, lookup AssetLookup, network, input string) (name, address string, err error) {
+func Resolve(
+	ctx context.Context,
+	lookup AssetLookup,
+	network, input string,
+) (name, address string, err error) {
 	name, err = Normalize(input)
 	if err != nil {
 		return "", "", chain.ErrNotFound
@@ -134,7 +141,8 @@ func Resolve(ctx context.Context, lookup AssetLookup, network, input string) (na
 		if len(addrs) == 0 {
 			continue
 		}
-		if len(addrs) != 1 || addrs[0].Address == "" || addrs[0].Quantity != "1" {
+		if len(addrs) != 1 || addrs[0].Address == "" ||
+			addrs[0].Quantity != "1" {
 			return name, "", ErrAmbiguousHolder
 		}
 		if address != "" && address != addrs[0].Address {

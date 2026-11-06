@@ -171,7 +171,7 @@ format: mod-tidy
 	gofmt -s -w $(GO_FILES)
 
 golines:
-	golines -w --ignore-generated --chain-split-dots --max-len=80 --reformat-tags .
+	golines -w --ignore-generated --ignored-dirs=openapi --ignored-dirs=vendor --ignored-dirs=node_modules --chain-split-dots --max-len=80 --reformat-tags .
 
 swagger:
 	swag f -g api.go -d internal/api,.

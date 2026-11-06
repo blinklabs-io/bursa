@@ -24,11 +24,17 @@ type fakeSubmitter struct {
 	submitEntered chan struct{}
 }
 
-func (f *fakeSubmitter) DecodeTx(context.Context, string) (spend.TxSummary, error) {
+func (f *fakeSubmitter) DecodeTx(
+	context.Context,
+	string,
+) (spend.TxSummary, error) {
 	return f.decode, f.err
 }
 
-func (f *fakeSubmitter) SubmitTxCbor(ctx context.Context, _ string) (spend.TxResult, error) {
+func (f *fakeSubmitter) SubmitTxCbor(
+	ctx context.Context,
+	_ string,
+) (spend.TxResult, error) {
 	if f.submitEntered != nil {
 		close(f.submitEntered)
 		<-ctx.Done()
@@ -52,7 +58,12 @@ type fakeApprover struct {
 	release chan struct{}
 }
 
-func (a *fakeApprover) ApproveSubmission(ctx context.Context, _ string, _ json.RawMessage, submit func(context.Context) (string, error)) (string, error) {
+func (a *fakeApprover) ApproveSubmission(
+	ctx context.Context,
+	_ string,
+	_ json.RawMessage,
+	submit func(context.Context) (string, error),
+) (string, error) {
 	if a.entered != nil {
 		close(a.entered)
 	}
@@ -69,10 +80,18 @@ func (a *fakeApprover) ApproveSubmission(ctx context.Context, _ string, _ json.R
 	return submit(ctx)
 }
 
-func newTestService(t *testing.T, approver Approver) (*Service, *fakeSubmitter) {
+func newTestService(
+	t *testing.T,
+	approver Approver,
+) (*Service, *fakeSubmitter) {
 	t.Helper()
 	submitter := &fakeSubmitter{decode: spend.TxSummary{IsComplete: true}}
-	svc, err := New(t.TempDir()+"/state.json", "https://wallet.example:8443", submitter, approver)
+	svc, err := New(
+		t.TempDir()+"/state.json",
+		"https://wallet.example:8443",
+		submitter,
+		approver,
+	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -95,7 +114,9 @@ func submitRequest(path string, body string) *http.Request {
 	return req
 }
 
-func TestDisabledAndUnauthorizedRequestsFailBeforeReadingOrSubmitting(t *testing.T) {
+func TestDisabledAndUnauthorizedRequestsFailBeforeReadingOrSubmitting(
+	t *testing.T,
+) {
 	svc, submitter := newTestService(t, &fakeApprover{})
 	validToken := strings.Repeat("a", 64)
 
@@ -153,7 +174,10 @@ func TestSubmissionRequiresTLSAndBoundedCBOR(t *testing.T) {
 }
 
 func TestIncompleteAndUnapprovedTransactionsNeverSubmit(t *testing.T) {
-	svc, submitter := newTestService(t, &fakeApprover{err: connector.ErrUserDeclined})
+	svc, submitter := newTestService(
+		t,
+		&fakeApprover{err: connector.ErrUserDeclined},
+	)
 	if _, err := svc.Enable(); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
@@ -196,7 +220,10 @@ func TestDuplicateTransactionIsRejected(t *testing.T) {
 }
 
 func TestDisableRevokesRequestAwaitingApproval(t *testing.T) {
-	approver := &fakeApprover{entered: make(chan struct{}), release: make(chan struct{})}
+	approver := &fakeApprover{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
 	svc, submitter := newTestService(t, approver)
 	if _, err := svc.Enable(); err != nil {
 		t.Fatalf("Enable: %v", err)
@@ -266,7 +293,12 @@ func TestEnableAndRotatePersistOnlyCurrentCapability(t *testing.T) {
 	if first.Endpoint == second.Endpoint {
 		t.Fatal("Rotate retained the old capability")
 	}
-	reloaded, err := New(path, "https://wallet.example", submitter, &fakeApprover{})
+	reloaded, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}

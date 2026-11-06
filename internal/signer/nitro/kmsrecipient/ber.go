@@ -102,7 +102,11 @@ func readBERHighTagEnd(input []byte, tagStart, offset int) (int, error) {
 	}
 }
 
-func readBERConstructed(input, tag []byte, offset, depth, length int, indefinite bool) ([]byte, int, bool, error) {
+func readBERConstructed(
+	input, tag []byte,
+	offset, depth, length int,
+	indefinite bool,
+) ([]byte, int, bool, error) {
 	contentEnd := len(input)
 	if !indefinite {
 		if length > len(input)-offset {
@@ -112,7 +116,13 @@ func readBERConstructed(input, tag []byte, offset, depth, length int, indefinite
 	}
 	var content bytes.Buffer
 	for {
-		child, childEnd, done, err := readBERConstructedChild(input, offset, depth, contentEnd, indefinite)
+		child, childEnd, done, err := readBERConstructedChild(
+			input,
+			offset,
+			depth,
+			contentEnd,
+			indefinite,
+		)
 		if err != nil {
 			return nil, 0, false, err
 		}
@@ -129,7 +139,11 @@ func readBERConstructed(input, tag []byte, offset, depth, length int, indefinite
 	return encodeDERObject(tag, content.Bytes()), offset, false, nil
 }
 
-func readBERConstructedChild(input []byte, offset, depth, contentEnd int, indefinite bool) ([]byte, int, bool, error) {
+func readBERConstructedChild(
+	input []byte,
+	offset, depth, contentEnd int,
+	indefinite bool,
+) ([]byte, int, bool, error) {
 	if indefinite {
 		if offset >= len(input) {
 			return nil, 0, false, errors.New("unterminated BER object")
@@ -155,7 +169,10 @@ func readBERConstructedChild(input []byte, offset, depth, contentEnd int, indefi
 	return child, next, false, nil
 }
 
-func readBERLength(input []byte, offset int) (length int, indefinite bool, next int, err error) {
+func readBERLength(
+	input []byte,
+	offset int,
+) (length int, indefinite bool, next int, err error) {
 	if offset >= len(input) {
 		return 0, false, 0, errors.New("truncated BER length")
 	}
@@ -168,7 +185,8 @@ func readBERLength(input []byte, offset int) (length int, indefinite bool, next 
 		return int(first), false, offset, nil
 	}
 	count := int(first & 0x7f)
-	if count == 0 || count > 4 || count > len(input)-offset || input[offset] == 0 {
+	if count == 0 || count > 4 || count > len(input)-offset ||
+		input[offset] == 0 {
 		return 0, false, 0, errors.New("invalid BER long length")
 	}
 	for i := 0; i < count; i++ {

@@ -44,7 +44,14 @@ func writeBursaSecretKey(t *testing.T) string {
 func bursaCurrentUserSID(t *testing.T) string {
 	t.Helper()
 	var token windows.Token
-	require.NoError(t, windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token))
+	require.NoError(
+		t,
+		windows.OpenProcessToken(
+			windows.CurrentProcess(),
+			windows.TOKEN_QUERY,
+			&token,
+		),
+	)
 	defer token.Close()
 	user, err := token.GetTokenUser()
 	require.NoError(t, err)
@@ -76,7 +83,11 @@ func TestLoadSecretKeyFromFileWindowsChecksOpenHandle(t *testing.T) {
 
 func TestLoadSecretKeyFromFileWindowsAllowsOwner(t *testing.T) {
 	path := writeBursaSecretKey(t)
-	setBursaDACL(t, path, fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)))
+	setBursaDACL(
+		t,
+		path,
+		fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)),
+	)
 	// An elevated process's default owner is BUILTIN\Administrators, which
 	// the policy rejects, so make the current user the owner explicitly.
 	owner, err := windows.StringToSid(bursaCurrentUserSID(t))
@@ -150,7 +161,11 @@ func TestAccessAllowedACEFormsWindows(t *testing.T) {
 			sddl := fmt.Sprintf("O:SYD:(%s;;GR;;;WD)", aceType)
 			sd, err := windows.SecurityDescriptorFromString(sddl)
 			require.NoError(t, err)
-			assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", sd), ErrInsecureFileMode)
+			assert.ErrorIs(
+				t,
+				checkOpenSecurityDescriptor("test.skey", sd),
+				ErrInsecureFileMode,
+			)
 		})
 	}
 }
@@ -167,17 +182,26 @@ func TestWindowsRejectsDifferentOwner(t *testing.T) {
 	sddl := fmt.Sprintf("O:SYD:P(A;;GA;;;%s)", bursaCurrentUserSID(t))
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	require.NoError(t, err)
-	assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", descriptor), ErrInsecureFileMode)
+	assert.ErrorIs(
+		t,
+		checkOpenSecurityDescriptor("test.skey", descriptor),
+		ErrInsecureFileMode,
+	)
 }
 
 // SDDL writes the built-in local Administrator as "LA" rather than its SID, so
 // that account's own owner-only DACL must pass without depending on which
 // account runs the test.
 func TestCheckSecurityDescriptorAcceptsTheUserSDDLAlias(t *testing.T) {
-	descriptor, err := windows.SecurityDescriptorFromString("O:LAD:P(A;;GA;;;LA)")
+	descriptor, err := windows.SecurityDescriptorFromString(
+		"O:LAD:P(A;;GA;;;LA)",
+	)
 	require.NoError(t, err)
 	require.Contains(t, descriptor.String(), ";;;LA)")
 	owner, _, err := descriptor.Owner()
 	require.NoError(t, err)
-	assert.NoError(t, checkSecurityDescriptorForUser("alias", descriptor, owner.String()))
+	assert.NoError(
+		t,
+		checkSecurityDescriptorForUser("alias", descriptor, owner.String()),
+	)
 }

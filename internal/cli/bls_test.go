@@ -25,7 +25,10 @@ func TestRunKeyBLSWritesCardanoCLIEnvelopes(t *testing.T) {
 	verificationPath := filepath.Join(dir, "bls.vkey")
 	registrationPath := filepath.Join(dir, "bls.json")
 
-	require.NoError(t, RunKeyBLS(signingPath, verificationPath, registrationPath))
+	require.NoError(
+		t,
+		RunKeyBLS(signingPath, verificationPath, registrationPath),
+	)
 
 	var registration struct {
 		PublicKey       string `json:"publicKey"`
@@ -149,7 +152,13 @@ func TestRunKeyBLSRejectsCollidingOutputPaths(t *testing.T) {
 			args := append([]string(nil), paths...)
 			args[j] = args[i]
 			err := RunKeyBLS(args[0], args[1], args[2])
-			require.Error(t, err, "paths %q and %q should be rejected", args[i], args[j])
+			require.Error(
+				t,
+				err,
+				"paths %q and %q should be rejected",
+				args[i],
+				args[j],
+			)
 			require.ErrorContains(t, err, "resolve to the same file")
 		}
 	}
@@ -175,7 +184,9 @@ func TestRunKeyBLSRejectsSymlinkedOutputPaths(t *testing.T) {
 }
 
 func TestRunKeyBLSRegistrationPopulatesDijkstraLeiosKey(t *testing.T) {
-	key, err := bursa.NewBLSKeyFromIKM(bytes.Repeat([]byte{0x42}, bursa.BLSSecretKeySize))
+	key, err := bursa.NewBLSKeyFromIKM(
+		bytes.Repeat([]byte{0x42}, bursa.BLSSecretKeySize),
+	)
 	require.NoError(t, err)
 
 	field, err := cbor.Encode([][]byte{key.PublicKey, key.PossessionProof})

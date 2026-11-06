@@ -35,7 +35,9 @@ func TestReadCborInput_Hex(t *testing.T) {
 
 func TestReadCborInput_Envelope(t *testing.T) {
 	raw := []byte{0x83, 0x01, 0x02, 0x03}
-	env := []byte(`{"type":"Tx ConwayEra","description":"","cborHex":"83010203"}`)
+	env := []byte(
+		`{"type":"Tx ConwayEra","description":"","cborHex":"83010203"}`,
+	)
 	got, err := ReadCborInput(env)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -52,13 +54,33 @@ func TestEnvelopeTypeForEra(t *testing.T) {
 		txType          uint
 		wantTx, wantWit string
 	}{
-		{"shelley", ledger.TxTypeShelley, "TxSignedShelley", "TxWitness ShelleyEra"},
-		{"allegra", ledger.TxTypeAllegra, "Tx AllegraEra", "TxWitness AllegraEra"},
+		{
+			"shelley",
+			ledger.TxTypeShelley,
+			"TxSignedShelley",
+			"TxWitness ShelleyEra",
+		},
+		{
+			"allegra",
+			ledger.TxTypeAllegra,
+			"Tx AllegraEra",
+			"TxWitness AllegraEra",
+		},
 		{"mary", ledger.TxTypeMary, "Tx MaryEra", "TxWitness MaryEra"},
 		{"alonzo", ledger.TxTypeAlonzo, "Tx AlonzoEra", "TxWitness AlonzoEra"},
-		{"babbage", ledger.TxTypeBabbage, "Tx BabbageEra", "TxWitness BabbageEra"},
+		{
+			"babbage",
+			ledger.TxTypeBabbage,
+			"Tx BabbageEra",
+			"TxWitness BabbageEra",
+		},
 		{"conway", ledger.TxTypeConway, "Tx ConwayEra", "TxWitness ConwayEra"},
-		{"dijkstra", ledger.TxTypeDijkstra, "Tx DijkstraEra", "TxWitness DijkstraEra"},
+		{
+			"dijkstra",
+			ledger.TxTypeDijkstra,
+			"Tx DijkstraEra",
+			"TxWitness DijkstraEra",
+		},
 		{"byron", ledger.TxTypeByron, "Tx", "TxWitness"},
 		{"unknown", 999, "Tx", "TxWitness"},
 	}
@@ -102,7 +124,13 @@ func TestEnvelopeTxType(t *testing.T) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
 			if got != tc.wantType || declared != tc.wantDeclared {
-				t.Errorf("got (%d, %v), want (%d, %v)", got, declared, tc.wantType, tc.wantDeclared)
+				t.Errorf(
+					"got (%d, %v), want (%d, %v)",
+					got,
+					declared,
+					tc.wantType,
+					tc.wantDeclared,
+				)
 			}
 		})
 	}
@@ -123,14 +151,56 @@ func TestReadTxInput(t *testing.T) {
 		ambiguous bool
 		wantErr   bool
 	}{
-		{"babbage envelope", envelope("Tx BabbageEra", babbageHex), "", ledger.TxTypeBabbage, false, false},
+		{
+			"babbage envelope",
+			envelope("Tx BabbageEra", babbageHex),
+			"",
+			ledger.TxTypeBabbage,
+			false,
+			false,
+		},
 		{"babbage raw hex", babbageHex, "", 0, true, true},
-		{"babbage legacy Tx envelope", envelope("Tx", babbageHex), "", 0, true, true},
-		{"babbage raw hex with era", babbageHex, "babbage", ledger.TxTypeBabbage, false, false},
-		{"era conflicts with envelope", envelope("Tx BabbageEra", babbageHex), "conway", 0, false, true},
+		{
+			"babbage legacy Tx envelope",
+			envelope("Tx", babbageHex),
+			"",
+			0,
+			true,
+			true,
+		},
+		{
+			"babbage raw hex with era",
+			babbageHex,
+			"babbage",
+			ledger.TxTypeBabbage,
+			false,
+			false,
+		},
+		{
+			"era conflicts with envelope",
+			envelope("Tx BabbageEra", babbageHex),
+			"conway",
+			0,
+			false,
+			true,
+		},
 		{"conway raw hex", conwayHex, "", ledger.TxTypeConway, false, false},
-		{"conway legacy Tx envelope", envelope("Tx", conwayHex), "", ledger.TxTypeConway, false, false},
-		{"conway CBOR in babbage envelope", envelope("Tx BabbageEra", conwayHex), "", 0, false, true},
+		{
+			"conway legacy Tx envelope",
+			envelope("Tx", conwayHex),
+			"",
+			ledger.TxTypeConway,
+			false,
+			false,
+		},
+		{
+			"conway CBOR in babbage envelope",
+			envelope("Tx BabbageEra", conwayHex),
+			"",
+			0,
+			false,
+			true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,7 +210,11 @@ func TestReadTxInput(t *testing.T) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
 			if errors.Is(err, ErrAmbiguousTxEra) != tc.ambiguous {
-				t.Fatalf("err = %v, want ErrAmbiguousTxEra: %v", err, tc.ambiguous)
+				t.Fatalf(
+					"err = %v, want ErrAmbiguousTxEra: %v",
+					err,
+					tc.ambiguous,
+				)
 			}
 			if err != nil {
 				return

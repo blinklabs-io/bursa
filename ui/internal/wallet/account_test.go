@@ -60,9 +60,14 @@ func TestAccountOwnershipUsesPaymentCredential(t *testing.T) {
 	)
 	foreign := foreignPaymentAddress(t, acct)
 
-	got := acct.OwnedAddresses([]string{ownedWithAnotherStake, foreign, acct.StakeAddress})
+	got := acct.OwnedAddresses(
+		[]string{ownedWithAnotherStake, foreign, acct.StakeAddress},
+	)
 	if len(got) == 0 || got[0] != ownedWithAnotherStake {
-		t.Fatalf("OwnedAddresses = %v, want payment-credential alias first", got)
+		t.Fatalf(
+			"OwnedAddresses = %v, want payment-credential alias first",
+			got,
+		)
 	}
 	for _, addr := range got {
 		if addr == foreign || addr == acct.StakeAddress {
@@ -77,7 +82,10 @@ func TestDerivePreview(t *testing.T) {
 		t.Fatalf("Derive: %v", err)
 	}
 	if !strings.HasPrefix(acct.StakeAddress, "stake_test1") {
-		t.Fatalf("stake address = %q, want stake_test1… prefix", acct.StakeAddress)
+		t.Fatalf(
+			"stake address = %q, want stake_test1… prefix",
+			acct.StakeAddress,
+		)
 	}
 	if len(acct.ReceiveAddresses) != 5 {
 		t.Fatalf("got %d receive addresses, want 5", len(acct.ReceiveAddresses))
@@ -109,10 +117,18 @@ func TestDerivePreview(t *testing.T) {
 		t.Fatalf("NewWallet: %v", err)
 	}
 	if acct.ReceiveAddresses[0] != w.PaymentAddress {
-		t.Fatalf("address[0] = %q, want %q (bursa.NewWallet)", acct.ReceiveAddresses[0], w.PaymentAddress)
+		t.Fatalf(
+			"address[0] = %q, want %q (bursa.NewWallet)",
+			acct.ReceiveAddresses[0],
+			w.PaymentAddress,
+		)
 	}
 	if acct.StakeAddress != w.StakeAddress {
-		t.Fatalf("stake = %q, want %q (bursa.NewWallet)", acct.StakeAddress, w.StakeAddress)
+		t.Fatalf(
+			"stake = %q, want %q (bursa.NewWallet)",
+			acct.StakeAddress,
+			w.StakeAddress,
+		)
 	}
 }
 
@@ -126,7 +142,11 @@ func TestDeriveDeterministic(t *testing.T) {
 		t.Fatalf("Derive #2: %v", err)
 	}
 	if a1.StakeAddress != a2.StakeAddress {
-		t.Fatalf("stake not deterministic: %q vs %q", a1.StakeAddress, a2.StakeAddress)
+		t.Fatalf(
+			"stake not deterministic: %q vs %q",
+			a1.StakeAddress,
+			a2.StakeAddress,
+		)
 	}
 	for i := range a1.ReceiveAddresses {
 		if a1.ReceiveAddresses[i] != a2.ReceiveAddresses[i] {
@@ -145,27 +165,53 @@ func TestDeriveFromMnemonicBytesMatchesStringDerive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Derive: %v", err)
 	}
-	fromBytes, err := DeriveFromMnemonicBytes([]byte(testMnemonic), "preview", 3)
+	fromBytes, err := DeriveFromMnemonicBytes(
+		[]byte(testMnemonic),
+		"preview",
+		3,
+	)
 	if err != nil {
 		t.Fatalf("DeriveFromMnemonicBytes: %v", err)
 	}
 	if fromBytes.StakeAddress != fromString.StakeAddress {
-		t.Fatalf("stake = %q, want %q", fromBytes.StakeAddress, fromString.StakeAddress)
+		t.Fatalf(
+			"stake = %q, want %q",
+			fromBytes.StakeAddress,
+			fromString.StakeAddress,
+		)
 	}
 	if len(fromBytes.ReceiveAddresses) != len(fromString.ReceiveAddresses) {
-		t.Fatalf("got %d receive addresses, want %d", len(fromBytes.ReceiveAddresses), len(fromString.ReceiveAddresses))
+		t.Fatalf(
+			"got %d receive addresses, want %d",
+			len(fromBytes.ReceiveAddresses),
+			len(fromString.ReceiveAddresses),
+		)
 	}
 	if len(fromBytes.ChangeAddresses) != len(fromString.ChangeAddresses) {
-		t.Fatalf("got %d change addresses, want %d", len(fromBytes.ChangeAddresses), len(fromString.ChangeAddresses))
+		t.Fatalf(
+			"got %d change addresses, want %d",
+			len(fromBytes.ChangeAddresses),
+			len(fromString.ChangeAddresses),
+		)
 	}
 	for i := range fromString.ReceiveAddresses {
 		if fromBytes.ReceiveAddresses[i] != fromString.ReceiveAddresses[i] {
-			t.Fatalf("receive[%d] = %q, want %q", i, fromBytes.ReceiveAddresses[i], fromString.ReceiveAddresses[i])
+			t.Fatalf(
+				"receive[%d] = %q, want %q",
+				i,
+				fromBytes.ReceiveAddresses[i],
+				fromString.ReceiveAddresses[i],
+			)
 		}
 	}
 	for i := range fromString.ChangeAddresses {
 		if fromBytes.ChangeAddresses[i] != fromString.ChangeAddresses[i] {
-			t.Fatalf("change[%d] = %q, want %q", i, fromBytes.ChangeAddresses[i], fromString.ChangeAddresses[i])
+			t.Fatalf(
+				"change[%d] = %q, want %q",
+				i,
+				fromBytes.ChangeAddresses[i],
+				fromString.ChangeAddresses[i],
+			)
 		}
 	}
 
@@ -196,14 +242,26 @@ func TestDeriveInvalidNetwork(t *testing.T) {
 }
 
 func TestDeriveValidatesInputsBeforeMnemonic(t *testing.T) {
-	if _, err := Derive("not a valid mnemonic", "preview", 0); err == nil || !strings.Contains(err.Error(), "windowN") {
-		t.Fatalf("Derive invalid window + mnemonic = %v, want window validation error", err)
+	if _, err := Derive("not a valid mnemonic", "preview", 0); err == nil ||
+		!strings.Contains(err.Error(), "windowN") {
+		t.Fatalf(
+			"Derive invalid window + mnemonic = %v, want window validation error",
+			err,
+		)
 	}
-	if _, err := Derive("not a valid mnemonic", "mainnte", 1); err == nil || !strings.Contains(err.Error(), "unknown network") {
-		t.Fatalf("Derive invalid network + mnemonic = %v, want network validation error", err)
+	if _, err := Derive("not a valid mnemonic", "mainnte", 1); err == nil ||
+		!strings.Contains(err.Error(), "unknown network") {
+		t.Fatalf(
+			"Derive invalid network + mnemonic = %v, want network validation error",
+			err,
+		)
 	}
-	if _, err := DeriveFromMnemonicBytes([]byte("not a valid mnemonic"), "preview", 0); err == nil || !strings.Contains(err.Error(), "windowN") {
-		t.Fatalf("DeriveFromMnemonicBytes invalid window + mnemonic = %v, want window validation error", err)
+	if _, err := DeriveFromMnemonicBytes([]byte("not a valid mnemonic"), "preview", 0); err == nil ||
+		!strings.Contains(err.Error(), "windowN") {
+		t.Fatalf(
+			"DeriveFromMnemonicBytes invalid window + mnemonic = %v, want window validation error",
+			err,
+		)
 	}
 }
 
@@ -230,25 +288,44 @@ func TestDeriveAccountIndexDiffersAndMatchesVectors(t *testing.T) {
 		t.Fatalf("DeriveAccount(1): %v", err)
 	}
 	if acct0.AccountIndex != 0 || acct1.AccountIndex != 1 {
-		t.Fatalf("AccountIndex = %d,%d, want 0,1", acct0.AccountIndex, acct1.AccountIndex)
+		t.Fatalf(
+			"AccountIndex = %d,%d, want 0,1",
+			acct0.AccountIndex,
+			acct1.AccountIndex,
+		)
 	}
 	if acct0.StakeAddress == acct1.StakeAddress {
 		t.Fatalf("account 0 and 1 share stake address %q", acct0.StakeAddress)
 	}
 	if acct0.ReceiveAddresses[0] == acct1.ReceiveAddresses[0] {
-		t.Fatalf("account 0 and 1 share receive[0] %q", acct0.ReceiveAddresses[0])
+		t.Fatalf(
+			"account 0 and 1 share receive[0] %q",
+			acct0.ReceiveAddresses[0],
+		)
 	}
 
 	// Standard vector: account 1 must match bursa's own account-1 derivation.
-	w1, err := bursa.NewWallet(testMnemonic, bursa.WithNetwork("preview"), bursa.WithAccountID(1))
+	w1, err := bursa.NewWallet(
+		testMnemonic,
+		bursa.WithNetwork("preview"),
+		bursa.WithAccountID(1),
+	)
 	if err != nil {
 		t.Fatalf("NewWallet(account 1): %v", err)
 	}
 	if acct1.ReceiveAddresses[0] != w1.PaymentAddress {
-		t.Fatalf("account1 receive[0] = %q, want %q", acct1.ReceiveAddresses[0], w1.PaymentAddress)
+		t.Fatalf(
+			"account1 receive[0] = %q, want %q",
+			acct1.ReceiveAddresses[0],
+			w1.PaymentAddress,
+		)
 	}
 	if acct1.StakeAddress != w1.StakeAddress {
-		t.Fatalf("account1 stake = %q, want %q", acct1.StakeAddress, w1.StakeAddress)
+		t.Fatalf(
+			"account1 stake = %q, want %q",
+			acct1.StakeAddress,
+			w1.StakeAddress,
+		)
 	}
 
 	// Derive is the account-0 shorthand and must equal DeriveAccount(…, 0, …).
@@ -257,7 +334,11 @@ func TestDeriveAccountIndexDiffersAndMatchesVectors(t *testing.T) {
 		t.Fatalf("Derive: %v", err)
 	}
 	if acctDefault.StakeAddress != acct0.StakeAddress {
-		t.Fatalf("Derive != DeriveAccount(0): %q vs %q", acctDefault.StakeAddress, acct0.StakeAddress)
+		t.Fatalf(
+			"Derive != DeriveAccount(0): %q vs %q",
+			acctDefault.StakeAddress,
+			acct0.StakeAddress,
+		)
 	}
 }
 
@@ -267,7 +348,9 @@ func TestDeriveAccountRejectsHardenedIndex(t *testing.T) {
 		t.Fatal("DeriveAccount with hardened index = nil error, want rejection")
 	}
 	if _, err := AccountXpubForIndexFromMnemonicBytes([]byte(testMnemonic), 1<<31); err == nil {
-		t.Fatal("AccountXpubForIndexFromMnemonicBytes hardened index = nil error, want rejection")
+		t.Fatal(
+			"AccountXpubForIndexFromMnemonicBytes hardened index = nil error, want rejection",
+		)
 	}
 }
 
@@ -299,7 +382,12 @@ func TestDeriveFromAccountXpubMatchesMnemonic(t *testing.T) {
 			t.Fatalf("DeriveFromAccountXpub(%q): %v", encoded[:8], err)
 		}
 		if !reflect.DeepEqual(fromXpub, fromMnem) {
-			t.Fatalf("account mismatch for %q HRP:\n xpub: %+v\n mnem: %+v", encoded[:8], fromXpub, fromMnem)
+			t.Fatalf(
+				"account mismatch for %q HRP:\n xpub: %+v\n mnem: %+v",
+				encoded[:8],
+				fromXpub,
+				fromMnem,
+			)
 		}
 	}
 }

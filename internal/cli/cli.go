@@ -103,10 +103,12 @@ func writeWalletDir(output string, fileMap []map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat output directory: %w", err)
 	}
-	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode&0o022 != 0 {
+	if mode := info.Mode().Perm(); runtime.GOOS != "windows" &&
+		mode&0o022 != 0 {
 		return fmt.Errorf(
 			"output directory %q has mode %04o; group/other write access is not permitted",
-			output, mode,
+			output,
+			mode,
 		)
 	}
 	if err := writeWalletOutputs(output, fileMap); err != nil {
@@ -333,7 +335,10 @@ func RunKeyAccount(
 		// Create KeyFile for account signing key
 		accountSKey, err := bursa.GetAccountSKey(accountKey)
 		if err != nil {
-			return fmt.Errorf("failed to create account signing key file: %w", err)
+			return fmt.Errorf(
+				"failed to create account signing key file: %w",
+				err,
+			)
 		}
 
 		if err := writeKeyFile(accountSKey, signingKeyFile); err != nil {
@@ -386,7 +391,10 @@ func RunKeyPayment(
 		if signingKeyFile != "" {
 			paymentSKey, err := bursa.GetPaymentSKey(paymentKey)
 			if err != nil {
-				return fmt.Errorf("failed to create payment signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create payment signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(paymentSKey, signingKeyFile); err != nil {
 				return err
@@ -396,7 +404,10 @@ func RunKeyPayment(
 		if verificationKeyFile != "" {
 			paymentVKey, err := bursa.GetPaymentVKey(paymentKey)
 			if err != nil {
-				return fmt.Errorf("failed to create payment verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create payment verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(paymentVKey, verificationKeyFile); err != nil {
 				return err
@@ -449,7 +460,10 @@ func RunKeyStake(
 		if signingKeyFile != "" {
 			stakeSKey, err := bursa.GetStakeSKey(stakeKey)
 			if err != nil {
-				return fmt.Errorf("failed to create stake signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create stake signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(stakeSKey, signingKeyFile); err != nil {
 				return err
@@ -459,7 +473,10 @@ func RunKeyStake(
 		if verificationKeyFile != "" {
 			stakeVKey, err := bursa.GetStakeVKey(stakeKey)
 			if err != nil {
-				return fmt.Errorf("failed to create stake verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create stake verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(stakeVKey, verificationKeyFile); err != nil {
 				return err
@@ -507,7 +524,10 @@ func RunKeyPolicy(
 		if signingKeyFile != "" {
 			policySKey, err := bursa.GetPolicySKey(policyKey)
 			if err != nil {
-				return fmt.Errorf("failed to create policy signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create policy signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(policySKey, signingKeyFile); err != nil {
 				return err
@@ -517,7 +537,10 @@ func RunKeyPolicy(
 		if verificationKeyFile != "" {
 			policyVKey, err := bursa.GetPolicyVKey(policyKey)
 			if err != nil {
-				return fmt.Errorf("failed to create policy verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create policy verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(policyVKey, verificationKeyFile); err != nil {
 				return err
@@ -600,7 +623,10 @@ func RunKeyPoolCold(
 		if signingKeyFile != "" {
 			poolColdSKey, err := bursa.GetPoolColdSKey(poolColdKey)
 			if err != nil {
-				return fmt.Errorf("failed to create pool cold signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create pool cold signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(poolColdSKey, signingKeyFile); err != nil {
 				return err
@@ -610,7 +636,10 @@ func RunKeyPoolCold(
 		if verificationKeyFile != "" {
 			poolColdVKey, err := bursa.GetPoolColdVKey(poolColdKey)
 			if err != nil {
-				return fmt.Errorf("failed to create pool cold verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create pool cold verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(poolColdVKey, verificationKeyFile); err != nil {
 				return err
@@ -668,7 +697,9 @@ func RunKeyPoolOwner(
 	// the verification key would overwrite the signing key
 	if signingKeyFile != "" && verificationKeyFile != "" &&
 		sameDestination(signingKeyFile, verificationKeyFile) {
-		return errors.New("signing and verification key files are the same file")
+		return errors.New(
+			"signing and verification key files are the same file",
+		)
 	}
 
 	resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
@@ -693,7 +724,10 @@ func RunKeyPoolOwner(
 
 	skey, err := bursa.GetStakePlainSKey(stakeKey)
 	if err != nil {
-		return fmt.Errorf("failed to create pool owner signing key file: %w", err)
+		return fmt.Errorf(
+			"failed to create pool owner signing key file: %w",
+			err,
+		)
 	}
 
 	if toStdout {
@@ -715,7 +749,10 @@ func RunKeyPoolOwner(
 	if verificationKeyFile != "" {
 		vkey, err := bursa.GetStakePlainVKey(stakeKey)
 		if err != nil {
-			return fmt.Errorf("failed to create pool owner verification key file: %w", err)
+			return fmt.Errorf(
+				"failed to create pool owner verification key file: %w",
+				err,
+			)
 		}
 		if err := writeKeyFile(vkey, verificationKeyFile); err != nil {
 			return err
@@ -798,8 +835,13 @@ func validateDistinctPaths(paths ...string) error {
 		}
 		candidate := outputPath{input: path, path: resolved, info: info}
 		for key, previous := range seen {
-			if key == resolved || (info != nil && previous.info != nil && os.SameFile(info, previous.info)) {
-				return fmt.Errorf("output paths %q and %q resolve to the same file", previous.input, path)
+			if key == resolved ||
+				(info != nil && previous.info != nil && os.SameFile(info, previous.info)) {
+				return fmt.Errorf(
+					"output paths %q and %q resolve to the same file",
+					previous.input,
+					path,
+				)
 			}
 		}
 		seen[resolved] = candidate
@@ -980,7 +1022,10 @@ func RunKeyDRep(
 		if signingKeyFile != "" {
 			drepSKey, err := bursa.GetDRepSKey(drepKey)
 			if err != nil {
-				return fmt.Errorf("failed to create DRep signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create DRep signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(drepSKey, signingKeyFile); err != nil {
 				return err
@@ -990,7 +1035,10 @@ func RunKeyDRep(
 		if verificationKeyFile != "" {
 			drepVKey, err := bursa.GetDRepVKey(drepKey)
 			if err != nil {
-				return fmt.Errorf("failed to create DRep verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create DRep verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(drepVKey, verificationKeyFile); err != nil {
 				return err
@@ -1042,9 +1090,14 @@ func RunKeyCommitteeCold(
 	// If key files are specified, write to files
 	if !toStdout {
 		if signingKeyFile != "" {
-			committeeColdSKey, err := bursa.GetCommitteeColdSKey(committeeColdKey)
+			committeeColdSKey, err := bursa.GetCommitteeColdSKey(
+				committeeColdKey,
+			)
 			if err != nil {
-				return fmt.Errorf("failed to create committee cold signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create committee cold signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(committeeColdSKey, signingKeyFile); err != nil {
 				return err
@@ -1052,9 +1105,14 @@ func RunKeyCommitteeCold(
 		}
 
 		if verificationKeyFile != "" {
-			committeeColdVKey, err := bursa.GetCommitteeColdVKey(committeeColdKey)
+			committeeColdVKey, err := bursa.GetCommitteeColdVKey(
+				committeeColdKey,
+			)
 			if err != nil {
-				return fmt.Errorf("failed to create committee cold verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create committee cold verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(committeeColdVKey, verificationKeyFile); err != nil {
 				return err
@@ -1108,7 +1166,10 @@ func RunKeyCommitteeHot(
 		if signingKeyFile != "" {
 			committeeHotSKey, err := bursa.GetCommitteeHotSKey(committeeHotKey)
 			if err != nil {
-				return fmt.Errorf("failed to create committee hot signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create committee hot signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(committeeHotSKey, signingKeyFile); err != nil {
 				return err
@@ -1118,7 +1179,10 @@ func RunKeyCommitteeHot(
 		if verificationKeyFile != "" {
 			committeeHotVKey, err := bursa.GetCommitteeHotVKey(committeeHotKey)
 			if err != nil {
-				return fmt.Errorf("failed to create committee hot verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create committee hot verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(committeeHotVKey, verificationKeyFile); err != nil {
 				return err
@@ -1173,7 +1237,10 @@ func RunKeyVRF(
 		if signingKeyFile != "" {
 			vrfSKey, err := bursa.GetVRFSKey(vrfSecKey)
 			if err != nil {
-				return fmt.Errorf("failed to create VRF signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create VRF signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(vrfSKey, signingKeyFile); err != nil {
 				return err
@@ -1183,7 +1250,10 @@ func RunKeyVRF(
 		if verificationKeyFile != "" {
 			vrfVKey, err := bursa.GetVRFVKey(vrfPubKey)
 			if err != nil {
-				return fmt.Errorf("failed to create VRF verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create VRF verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(vrfVKey, verificationKeyFile); err != nil {
 				return err
@@ -1276,7 +1346,10 @@ func RunKeyKES(
 		if signingKeyFile != "" {
 			kesSKey, err := bursa.GetKESSKey(kesSecKey)
 			if err != nil {
-				return fmt.Errorf("failed to create KES signing key file: %w", err)
+				return fmt.Errorf(
+					"failed to create KES signing key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(kesSKey, signingKeyFile); err != nil {
 				return err
@@ -1286,7 +1359,10 @@ func RunKeyKES(
 		if verificationKeyFile != "" {
 			kesVKey, err := bursa.GetKESVKey(kesPubKey)
 			if err != nil {
-				return fmt.Errorf("failed to create KES verification key file: %w", err)
+				return fmt.Errorf(
+					"failed to create KES verification key file: %w",
+					err,
+				)
 			}
 			if err := writeKeyFile(kesVKey, verificationKeyFile); err != nil {
 				return err
@@ -2962,7 +3038,10 @@ func fetchURLContent(url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP request failed with status: %s", resp.Status)
+		return nil, fmt.Errorf(
+			"HTTP request failed with status: %s",
+			resp.Status,
+		)
 	}
 
 	// Limit the response body size to prevent OOM
@@ -2978,7 +3057,10 @@ func fetchURLContent(url string) ([]byte, error) {
 		extra := make([]byte, 1)
 		n, _ := resp.Body.Read(extra)
 		if n > 0 {
-			return nil, fmt.Errorf("response body too large (maximum allowed: %d bytes)", maxURLBody)
+			return nil, fmt.Errorf(
+				"response body too large (maximum allowed: %d bytes)",
+				maxURLBody,
+			)
 		}
 	}
 
@@ -2986,7 +3068,9 @@ func fetchURLContent(url string) ([]byte, error) {
 }
 
 // RunHashAnchorData generates a Blake2b-256 hash of anchor data
-func RunHashAnchorData(text, fileText, fileBinary, url, expectedHash, outFile string) error {
+func RunHashAnchorData(
+	text, fileText, fileBinary, url, expectedHash, outFile string,
+) error {
 	logger := logging.GetLogger()
 
 	var data []byte
@@ -3019,7 +3103,9 @@ func RunHashAnchorData(text, fileText, fileBinary, url, expectedHash, outFile st
 		}
 		source = "URL: " + url
 	default:
-		return errors.New("no input source specified (use --text, --file-text, --file-binary, or --url)")
+		return errors.New(
+			"no input source specified (use --text, --file-text, --file-binary, or --url)",
+		)
 	}
 
 	// Generate Blake2b-256 hash
@@ -3039,9 +3125,19 @@ func RunHashAnchorData(text, fileText, fileBinary, url, expectedHash, outFile st
 	// Verify expected hash if provided
 	if expectedHash != "" {
 		if !strings.EqualFold(hashHex, expectedHash) {
-			return fmt.Errorf("hash verification failed: expected %s, got %s", expectedHash, hashHex)
+			return fmt.Errorf(
+				"hash verification failed: expected %s, got %s",
+				expectedHash,
+				hashHex,
+			)
 		}
-		logger.Info("Hash verification successful", "expected", expectedHash, "actual", hashHex)
+		logger.Info(
+			"Hash verification successful",
+			"expected",
+			expectedHash,
+			"actual",
+			hashHex,
+		)
 	}
 
 	// Output the hash

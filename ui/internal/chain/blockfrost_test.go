@@ -42,13 +42,21 @@ func TestAccount(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"stake_address":"stake_test1xyz","active":true,"registered":true,"active_epoch":42,"controlled_amount":"1500000","rewards_sum":"2000","withdrawals_sum":"0","reserves_sum":"0","treasury_sum":"0","withdrawable_amount":"2000","pool_id":"pool1abc"}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"stake_address":"stake_test1xyz","active":true,"registered":true,"active_epoch":42,"controlled_amount":"1500000","rewards_sum":"2000","withdrawals_sum":"0","reserves_sum":"0","treasury_sum":"0","withdrawable_amount":"2000","pool_id":"pool1abc"}`,
+			),
+		)
 	})
 	got, err := c.Account(context.Background(), "stake_test1xyz")
 	if err != nil {
 		t.Fatalf("Account: %v", err)
 	}
-	if got.ControlledAmount != "1500000" || got.PoolID == nil || *got.PoolID != "pool1abc" || got.DRepID != nil || !got.Active || !got.Registered {
+	if got.ControlledAmount != "1500000" || got.PoolID == nil ||
+		*got.PoolID != "pool1abc" ||
+		got.DRepID != nil ||
+		!got.Active ||
+		!got.Registered {
 		t.Fatalf("unexpected account: %+v", got)
 	}
 }
@@ -74,7 +82,12 @@ func TestAccountDRepIDFromDingoMetadata(t *testing.T) {
 	for i := range stakingKey {
 		stakingKey[i] = byte(i + 1)
 	}
-	stakeAddr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, stakingKey)
+	stakeAddr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		lcommon.AddressNetworkTestnet,
+		nil,
+		stakingKey,
+	)
 	if err != nil {
 		t.Fatalf("stake address: %v", err)
 	}
@@ -153,7 +166,9 @@ func TestAccountAddresses(t *testing.T) {
 		if r.URL.Path != "/api/v0/accounts/stake_test1xyz/addresses" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`[{"address":"addr_test1a"},{"address":"addr_test1b"}]`))
+		_, _ = w.Write(
+			[]byte(`[{"address":"addr_test1a"},{"address":"addr_test1b"}]`),
+		)
 	})
 	got, err := c.AccountAddresses(context.Background(), "stake_test1xyz")
 	if err != nil {
@@ -180,11 +195,17 @@ func TestAccountAddressesPaginated(t *testing.T) {
 		switch q.Get("page") {
 		case "1":
 			for i := range 100 {
-				rows = append(rows, fmt.Sprintf(`{"address":"addr_test1_%03d"}`, i))
+				rows = append(
+					rows,
+					fmt.Sprintf(`{"address":"addr_test1_%03d"}`, i),
+				)
 			}
 		case "2":
 			for i := 100; i < 103; i++ {
-				rows = append(rows, fmt.Sprintf(`{"address":"addr_test1_%03d"}`, i))
+				rows = append(
+					rows,
+					fmt.Sprintf(`{"address":"addr_test1_%03d"}`, i),
+				)
 			}
 		default:
 			t.Errorf("page = %q", q.Get("page"))
@@ -223,7 +244,12 @@ func TestGetAllPagesLimitExceeded(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("[" + strings.Join(rows, ",") + "]"))
 	})
-	_, err := getAllPagesLimit[accountAddress](context.Background(), c, "/api/v0/accounts/stake_test1xyz/addresses", 2)
+	_, err := getAllPagesLimit[accountAddress](
+		context.Background(),
+		c,
+		"/api/v0/accounts/stake_test1xyz/addresses",
+		2,
+	)
 	if !errors.Is(err, errPageLimitExceeded) {
 		t.Fatalf("getAllPagesLimit err = %v, want errPageLimitExceeded", err)
 	}
@@ -240,13 +266,19 @@ func TestAddressUTxOs(t *testing.T) {
 		if r.URL.Path != "/api/v0/addresses/addr_test1a/utxos" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`[{"address":"addr_test1a","tx_hash":"aa","output_index":0,"amount":[{"unit":"lovelace","quantity":"1000000"},{"unit":"policytoken","quantity":"7"}],"block":"b1"}]`))
+		_, _ = w.Write(
+			[]byte(
+				`[{"address":"addr_test1a","tx_hash":"aa","output_index":0,"amount":[{"unit":"lovelace","quantity":"1000000"},{"unit":"policytoken","quantity":"7"}],"block":"b1"}]`,
+			),
+		)
 	})
 	got, err := c.AddressUTxOs(context.Background(), "addr_test1a")
 	if err != nil {
 		t.Fatalf("AddressUTxOs: %v", err)
 	}
-	if len(got) != 1 || len(got[0].Amount) != 2 || got[0].Amount[1].Unit != "policytoken" || got[0].Amount[1].Quantity != "7" {
+	if len(got) != 1 || len(got[0].Amount) != 2 ||
+		got[0].Amount[1].Unit != "policytoken" ||
+		got[0].Amount[1].Quantity != "7" {
 		t.Fatalf("unexpected utxos: %+v", got)
 	}
 }
@@ -259,13 +291,18 @@ func TestAddressTransactions(t *testing.T) {
 		if r.URL.Path != "/api/v0/addresses/addr_test1a/transactions" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`[{"tx_hash":"aa","tx_index":0,"block_height":100,"block_time":1700000000}]`))
+		_, _ = w.Write(
+			[]byte(
+				`[{"tx_hash":"aa","tx_index":0,"block_height":100,"block_time":1700000000}]`,
+			),
+		)
 	})
 	got, err := c.AddressTransactions(context.Background(), "addr_test1a")
 	if err != nil {
 		t.Fatalf("AddressTransactions: %v", err)
 	}
-	if len(got) != 1 || got[0].TxHash != "aa" || got[0].BlockHeight != 100 || got[0].BlockTime != 1700000000 {
+	if len(got) != 1 || got[0].TxHash != "aa" || got[0].BlockHeight != 100 ||
+		got[0].BlockTime != 1700000000 {
 		t.Fatalf("unexpected txs: %+v", got)
 	}
 }
@@ -279,13 +316,19 @@ func TestAccountDelegations(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"active_epoch":42,"tx_hash":"aa","amount":"5000000","pool_id":"pool1abc"}]`))
+		_, _ = w.Write(
+			[]byte(
+				`[{"active_epoch":42,"tx_hash":"aa","amount":"5000000","pool_id":"pool1abc"}]`,
+			),
+		)
 	})
 	got, err := c.AccountDelegations(context.Background(), "stake_test1xyz")
 	if err != nil {
 		t.Fatalf("AccountDelegations: %v", err)
 	}
-	if len(got) != 1 || got[0].ActiveEpoch != 42 || got[0].TxHash != "aa" || got[0].Amount != "5000000" || got[0].PoolID != "pool1abc" {
+	if len(got) != 1 || got[0].ActiveEpoch != 42 || got[0].TxHash != "aa" ||
+		got[0].Amount != "5000000" ||
+		got[0].PoolID != "pool1abc" {
 		t.Fatalf("unexpected delegations: %+v", got)
 	}
 }
@@ -317,13 +360,16 @@ func TestAccountRewards(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"epoch":42,"amount":"2000","pool_id":"pool1abc"}]`))
+		_, _ = w.Write(
+			[]byte(`[{"epoch":42,"amount":"2000","pool_id":"pool1abc"}]`),
+		)
 	})
 	got, err := c.AccountRewards(context.Background(), "stake_test1xyz")
 	if err != nil {
 		t.Fatalf("AccountRewards: %v", err)
 	}
-	if len(got) != 1 || got[0].Epoch != 42 || got[0].Amount != "2000" || got[0].PoolID != "pool1abc" {
+	if len(got) != 1 || got[0].Epoch != 42 || got[0].Amount != "2000" ||
+		got[0].PoolID != "pool1abc" {
 		t.Fatalf("unexpected rewards: %+v", got)
 	}
 }
@@ -383,7 +429,11 @@ func TestProtocolParams(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":"500000000"}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":"500000000"}`,
+			),
+		)
 	})
 	got, err := c.ProtocolParams(context.Background())
 	if err != nil {
@@ -399,7 +449,11 @@ func TestProtocolParams(t *testing.T) {
 
 func TestProtocolParamsPreConwayDRepDepositNull(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":null}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"key_deposit":"2000000","pool_deposit":"500000000","drep_deposit":null}`,
+			),
+		)
 	})
 	got, err := c.ProtocolParams(context.Background())
 	if err != nil {
@@ -428,7 +482,9 @@ func TestPoolFiltersExtendedList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pool: %v", err)
 	}
-	if got.PoolID != "pool1bbb" || got.MarginCost != 0.02 || got.FixedCost != "170000000" || got.DeclaredPledge != "200000000" {
+	if got.PoolID != "pool1bbb" || got.MarginCost != 0.02 ||
+		got.FixedCost != "170000000" ||
+		got.DeclaredPledge != "200000000" {
 		t.Fatalf("unexpected pool: %+v", got)
 	}
 }
@@ -496,7 +552,10 @@ func TestPoolNotInList(t *testing.T) {
 	})
 	_, err := c.Pool(context.Background(), "pool1missing")
 	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("a pool not in the list should map to ErrNotFound, got %v", err)
+		t.Fatalf(
+			"a pool not in the list should map to ErrNotFound, got %v",
+			err,
+		)
 	}
 }
 
@@ -518,8 +577,12 @@ func TestPoolsReturnsFullList(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("Pools returned %d pools, want 2", len(got))
 	}
-	if got[1].PoolID != "pool1bbb" || got[1].LiveSaturation != 0.90 || got[1].LiveStake != "9000000000" {
-		t.Fatalf("pool[1] = %+v, want pool1bbb / saturation 0.90 / live 9000000000", got[1])
+	if got[1].PoolID != "pool1bbb" || got[1].LiveSaturation != 0.90 ||
+		got[1].LiveStake != "9000000000" {
+		t.Fatalf(
+			"pool[1] = %+v, want pool1bbb / saturation 0.90 / live 9000000000",
+			got[1],
+		)
 	}
 }
 
@@ -603,7 +666,10 @@ func TestDRepsFromNodeList(t *testing.T) {
 		if r.URL.Path != "/api/v0/governance/dreps" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("count"); got != fmt.Sprintf("%d", pageSize) {
+		if got := r.URL.Query().Get("count"); got != fmt.Sprintf(
+			"%d",
+			pageSize,
+		) {
 			t.Errorf("count = %q, want %d", got, pageSize)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -653,7 +719,10 @@ func TestDRepsFromNodeList(t *testing.T) {
 		t.Fatalf("drep[1] last active epoch = %v, want nil", b.LastActiveEpoch)
 	}
 	if b.Metadata != nil {
-		t.Fatalf("drep[1] metadata = %+v, want nil for a drep with no anchor", b.Metadata)
+		t.Fatalf(
+			"drep[1] metadata = %+v, want nil for a drep with no anchor",
+			b.Metadata,
+		)
 	}
 
 	// The predefined targets are part of the node's list (interleaved at the
@@ -661,8 +730,12 @@ func TestDRepsFromNodeList(t *testing.T) {
 	// client passes them through; the directory screen decides how to render
 	// them.
 	p := got[2]
-	if p.DRepID != "drep_always_abstain" || p.Hex != "" || p.Amount != "7000000" {
-		t.Fatalf("drep[2] = %+v, want the predefined abstain entry with its voting power", p)
+	if p.DRepID != "drep_always_abstain" || p.Hex != "" ||
+		p.Amount != "7000000" {
+		t.Fatalf(
+			"drep[2] = %+v, want the predefined abstain entry with its voting power",
+			p,
+		)
 	}
 }
 
@@ -690,7 +763,11 @@ func TestDRepsPagesThroughNodeList(t *testing.T) {
 		t.Fatalf("DReps: %v", err)
 	}
 	if len(got) != pageSize+1 {
-		t.Fatalf("DReps returned %d dreps, want %d across both pages", len(got), pageSize+1)
+		t.Fatalf(
+			"DReps returned %d dreps, want %d across both pages",
+			len(got),
+			pageSize+1,
+		)
 	}
 	if got[pageSize].DRepID != "drep1last" {
 		t.Fatalf("last drep = %q, want the page-2 entry", got[pageSize].DRepID)
@@ -705,14 +782,21 @@ func TestDRepsPagesThroughNodeList(t *testing.T) {
 func TestDRepsWithoutDingoDataDir(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"drep_id":"drep1aaa","hex":"22aaaa","amount":"1","metadata":null}]`))
+		_, _ = w.Write(
+			[]byte(
+				`[{"drep_id":"drep1aaa","hex":"22aaaa","amount":"1","metadata":null}]`,
+			),
+		)
 	})
 	got, err := c.DReps(context.Background())
 	if err != nil {
 		t.Fatalf("DReps: %v", err)
 	}
 	if len(got) != 1 || got[0].DRepID != "drep1aaa" {
-		t.Fatalf("DReps = %+v, want the node's single entry without a data dir", got)
+		t.Fatalf(
+			"DReps = %+v, want the node's single entry without a data dir",
+			got,
+		)
 	}
 }
 
@@ -725,16 +809,22 @@ func TestAsset(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","initial_mint_tx_hash":"aa","mint_or_burn_count":1,"onchain_metadata":{"name":"Token","ticker":"TOK","decimals":6}}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","initial_mint_tx_hash":"aa","mint_or_burn_count":1,"onchain_metadata":{"name":"Token","ticker":"TOK","decimals":6}}`,
+			),
+		)
 	})
 	got, err := c.Asset(context.Background(), "policy123746f6b656e")
 	if err != nil {
 		t.Fatalf("Asset: %v", err)
 	}
-	if got.Asset != "policy123746f6b656e" || got.PolicyID != "policy123" || got.AssetName != "746f6b656e" {
+	if got.Asset != "policy123746f6b656e" || got.PolicyID != "policy123" ||
+		got.AssetName != "746f6b656e" {
 		t.Fatalf("unexpected asset: %+v", got)
 	}
-	if got.AssetNameASCII != "token" || got.Fingerprint != "asset1xyz" || got.Quantity != "1000000" {
+	if got.AssetNameASCII != "token" || got.Fingerprint != "asset1xyz" ||
+		got.Quantity != "1000000" {
 		t.Fatalf("unexpected asset: %+v", got)
 	}
 	if got.OnchainMetadata == nil {
@@ -756,7 +846,11 @@ func TestAsset(t *testing.T) {
 func TestAssetNilMetadata(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","initial_mint_tx_hash":"","mint_or_burn_count":0,"onchain_metadata":null}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","initial_mint_tx_hash":"","mint_or_burn_count":0,"onchain_metadata":null}`,
+			),
+		)
 	})
 	got, err := c.Asset(context.Background(), "policy123746f6b656e")
 	if err != nil {
@@ -766,7 +860,10 @@ func TestAssetNilMetadata(t *testing.T) {
 	// decode cleanly (as the raw JSON literal "null", which the frontend reads
 	// as a falsy value) rather than erroring, since it is the common case today.
 	if string(got.OnchainMetadata) != "null" {
-		t.Fatalf("OnchainMetadata = %s, want the raw JSON null literal", got.OnchainMetadata)
+		t.Fatalf(
+			"OnchainMetadata = %s, want the raw JSON null literal",
+			got.OnchainMetadata,
+		)
 	}
 }
 
@@ -847,16 +944,21 @@ func TestAssetEnrichesNilMetadataFromInitialMint(t *testing.T) {
 		t.Fatalf("insert metadata: %v", err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v0/assets/"+unit {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w,
-			`{"asset":%q,"policy_id":%q,"asset_name":%q,"asset_name_ascii":"token","onchain_metadata":null}`,
-			unit, policyID, nameHex,
-		)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v0/assets/"+unit {
+				t.Errorf("path = %q", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(
+				w,
+				`{"asset":%q,"policy_id":%q,"asset_name":%q,"asset_name_ascii":"token","onchain_metadata":null}`,
+				unit,
+				policyID,
+				nameHex,
+			)
+		}),
+	)
 	defer srv.Close()
 
 	c := NewClientURL(srv.URL, WithDingoDataDir(dir))
@@ -872,7 +974,10 @@ func TestAssetEnrichesNilMetadataFromInitialMint(t *testing.T) {
 		t.Fatalf("unmarshal enriched metadata: %v", err)
 	}
 	if metadata.Name != "Initial" || metadata.Image != "ipfs://initial" {
-		t.Fatalf("OnchainMetadata = %+v, want initial-mint CIP-25 entry", metadata)
+		t.Fatalf(
+			"OnchainMetadata = %+v, want initial-mint CIP-25 entry",
+			metadata,
+		)
 	}
 }
 
@@ -986,13 +1091,18 @@ func TestGenesis(t *testing.T) {
 		if r.URL.Path != "/api/v0/genesis" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"epoch_length":432000,"slots_per_kes_period":129600,"slot_length":1,"max_kes_evolutions":62,"network_magic":2}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"epoch_length":432000,"slots_per_kes_period":129600,"slot_length":1,"max_kes_evolutions":62,"network_magic":2}`,
+			),
+		)
 	})
 	got, err := c.Genesis(context.Background())
 	if err != nil {
 		t.Fatalf("Genesis: %v", err)
 	}
-	if got.SlotsPerKESPeriod != 129600 || got.EpochLength != 432000 || got.MaxKESEvolutions != 62 {
+	if got.SlotsPerKESPeriod != 129600 || got.EpochLength != 432000 ||
+		got.MaxKESEvolutions != 62 {
 		t.Fatalf("unexpected genesis: %+v", got)
 	}
 	if got.SlotLength != 1 || got.NetworkMagic != 2 {
@@ -1008,7 +1118,11 @@ func TestLatestEpoch(t *testing.T) {
 		if r.URL.Path != "/api/v0/epochs/latest" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"epoch":512,"start_time":1700000000,"end_time":1700432000}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"epoch":512,"start_time":1700000000,"end_time":1700432000}`,
+			),
+		)
 	})
 	got, err := c.LatestEpoch(context.Background())
 	if err != nil {
@@ -1018,7 +1132,11 @@ func TestLatestEpoch(t *testing.T) {
 		t.Fatalf("epoch = %d, want 512", got.Epoch)
 	}
 	if got.StartTime != 1700000000 || got.EndTime != 1700432000 {
-		t.Fatalf("epoch times: got StartTime=%d EndTime=%d, want 1700000000/1700432000", got.StartTime, got.EndTime)
+		t.Fatalf(
+			"epoch times: got StartTime=%d EndTime=%d, want 1700000000/1700432000",
+			got.StartTime,
+			got.EndTime,
+		)
 	}
 }
 
@@ -1075,7 +1193,10 @@ func TestAssetAddressesPaginated(t *testing.T) {
 		switch q.Get("page") {
 		case "1":
 			for i := range pageSize {
-				rows = append(rows, fmt.Sprintf(`{"address":"addr1_%03d","quantity":"1"}`, i))
+				rows = append(
+					rows,
+					fmt.Sprintf(`{"address":"addr1_%03d","quantity":"1"}`, i),
+				)
 			}
 		case "2":
 			rows = append(rows, `{"address":"addr1_100","quantity":"1"}`)
@@ -1196,10 +1317,18 @@ func TestGovernanceActionsFromDingoMetadata(t *testing.T) {
 		t.Fatalf("action[0] = %+v, want info/active/epoch100", a)
 	}
 	if a.YesVotes != 2 || a.NoVotes != 1 || a.AbstainVotes != 1 {
-		t.Fatalf("action[0] tallies = %d/%d/%d, want 2/1/1", a.YesVotes, a.NoVotes, a.AbstainVotes)
+		t.Fatalf(
+			"action[0] tallies = %d/%d/%d, want 2/1/1",
+			a.YesVotes,
+			a.NoVotes,
+			a.AbstainVotes,
+		)
 	}
 	if !strings.HasPrefix(a.ActionID, "gov_action1") {
-		t.Fatalf("action[0] id = %q, want CIP-129 gov_action1… bech32", a.ActionID)
+		t.Fatalf(
+			"action[0] id = %q, want CIP-129 gov_action1… bech32",
+			a.ActionID,
+		)
 	}
 	if a.TxHash != hex.EncodeToString(txHash) {
 		t.Fatalf("action[0] tx_hash = %q", a.TxHash)
@@ -1222,7 +1351,11 @@ func TestGovernanceActionJSONOmitsUnrenderedFields(t *testing.T) {
 		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
 		switch name {
 		case "anchor_url", "expires_epoch", "deposit":
-			t.Errorf("GovernanceAction field %s carries JSON key %q", typ.Field(i).Name, name)
+			t.Errorf(
+				"GovernanceAction field %s carries JSON key %q",
+				typ.Field(i).Name,
+				name,
+			)
 		}
 	}
 }
@@ -1265,7 +1398,11 @@ func TestGovernanceActionsCoalescesConcurrentMisses(t *testing.T) {
 		}
 	}
 	if n := reads.Load(); n != 1 {
-		t.Fatalf("%d concurrent cache misses ran %d metadata reads, want 1", callers, n)
+		t.Fatalf(
+			"%d concurrent cache misses ran %d metadata reads, want 1",
+			callers,
+			n,
+		)
 	}
 }
 
@@ -1280,7 +1417,9 @@ func TestGovernanceActionsWaiterHonorsCancellation(t *testing.T) {
 	c := NewClientURL("http://127.0.0.1:1")
 	c.govRead = func(ctx context.Context) ([]GovernanceAction, error) {
 		if reads.Add(1) > 1 {
-			return nil, errors.New("second metadata read while the first is in flight")
+			return nil, errors.New(
+				"second metadata read while the first is in flight",
+			)
 		}
 		entered <- struct{}{}
 		<-release
@@ -1289,9 +1428,15 @@ func TestGovernanceActionsWaiterHonorsCancellation(t *testing.T) {
 	go func() { _, _ = c.GovernanceActions(context.Background()) }()
 	<-entered
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		50*time.Millisecond,
+	)
 	defer cancel()
-	if _, err := c.GovernanceActions(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.GovernanceActions(ctx); !errors.Is(
+		err,
+		context.DeadlineExceeded,
+	) {
 		t.Fatalf("queued read error = %v, want context.DeadlineExceeded", err)
 	}
 }
@@ -1344,7 +1489,10 @@ func TestGovernanceActionsCachesWithinTTL(t *testing.T) {
 		t.Fatalf("second read: %v", err)
 	}
 	if len(second) != 1 {
-		t.Fatalf("read inside the cache window returned %d rows, want the cached 1", len(second))
+		t.Fatalf(
+			"read inside the cache window returned %d rows, want the cached 1",
+			len(second),
+		)
 	}
 
 	c.govMu.Lock()
@@ -1399,7 +1547,11 @@ func TestGovernanceActionsCanceledReadIsNotCached(t *testing.T) {
 	}
 	got, err := c.GovernanceActions(context.Background())
 	if err != nil || len(got) != 1 {
-		t.Fatalf("read after cancellation = %d rows, %v; want 1 row", len(got), err)
+		t.Fatalf(
+			"read after cancellation = %d rows, %v; want 1 row",
+			len(got),
+			err,
+		)
 	}
 }
 
@@ -1451,17 +1603,36 @@ func TestGovActionStatus(t *testing.T) {
 		{"ratified only", unset, valid(10), unset, "ratified"},
 		{"expired only", unset, unset, valid(10), "expired"},
 		{"enacted only", valid(10), unset, unset, "enacted"},
-		{"enacted takes priority over ratified and expired", valid(12), valid(11), valid(10), "enacted"},
+		{
+			"enacted takes priority over ratified and expired",
+			valid(12),
+			valid(11),
+			valid(10),
+			"enacted",
+		},
 		// A ratified action can still lapse into expired (e.g. it ratified but
 		// never got enacted before its expiration epoch); expired must win so
 		// the browser doesn't show a stale "ratified" status.
-		{"expired takes priority over ratified", unset, valid(10), valid(11), "expired"},
+		{
+			"expired takes priority over ratified",
+			unset,
+			valid(10),
+			valid(11),
+			"expired",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := govActionStatus(tc.enacted, tc.ratified, tc.expired)
 			if got != tc.want {
-				t.Fatalf("govActionStatus(%v, %v, %v) = %q, want %q", tc.enacted, tc.ratified, tc.expired, got, tc.want)
+				t.Fatalf(
+					"govActionStatus(%v, %v, %v) = %q, want %q",
+					tc.enacted,
+					tc.ratified,
+					tc.expired,
+					got,
+					tc.want,
+				)
 			}
 		})
 	}
@@ -1517,8 +1688,12 @@ func TestGovernanceActionsSkipsUnknownVoteKind(t *testing.T) {
 		t.Fatalf("actions = %d, want 1", len(got))
 	}
 	if got[0].YesVotes != 1 || got[0].NoVotes != 1 || got[0].AbstainVotes != 0 {
-		t.Fatalf("tallies = yes %d no %d abstain %d, want 1/1/0 with the unknown kind skipped",
-			got[0].YesVotes, got[0].NoVotes, got[0].AbstainVotes)
+		t.Fatalf(
+			"tallies = yes %d no %d abstain %d, want 1/1/0 with the unknown kind skipped",
+			got[0].YesVotes,
+			got[0].NoVotes,
+			got[0].AbstainVotes,
+		)
 	}
 }
 
@@ -1564,10 +1739,17 @@ func TestGovernanceActionsAggregatesUnknownVoteWarnings(t *testing.T) {
 		t.Fatalf("GovernanceActions: %v", err)
 	}
 	if got := strings.Count(logs.String(), "msg=\"skipping governance votes of unknown kinds\""); got != 1 {
-		t.Fatalf("unknown vote warning count = %d, want 1; logs: %s", got, logs.String())
+		t.Fatalf(
+			"unknown vote warning count = %d, want 1; logs: %s",
+			got,
+			logs.String(),
+		)
 	}
 	if !strings.Contains(logs.String(), "unknown_vote_total=3") {
-		t.Fatalf("logs do not include the aggregate unknown vote count: %s", logs.String())
+		t.Fatalf(
+			"logs do not include the aggregate unknown vote count: %s",
+			logs.String(),
+		)
 	}
 }
 
@@ -1579,7 +1761,11 @@ func TestAssetRegistryMetadata(t *testing.T) {
 	// enrichment path) alongside a populated registry entry that must survive it.
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","onchain_metadata":null,"metadata":{"name":"Curated Token","ticker":"CTK","decimals":6}}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","onchain_metadata":null,"metadata":{"name":"Curated Token","ticker":"CTK","decimals":6}}`,
+			),
+		)
 	})
 	got, err := c.Asset(context.Background(), "policy123746f6b656e")
 	if err != nil {
@@ -1607,7 +1793,11 @@ func TestAssetNilRegistryMetadata(t *testing.T) {
 	// cleanly rather than erroring.
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","onchain_metadata":{"name":"Token"},"metadata":null}`))
+		_, _ = w.Write(
+			[]byte(
+				`{"asset":"policy123746f6b656e","policy_id":"policy123","asset_name":"746f6b656e","asset_name_ascii":"token","fingerprint":"asset1xyz","quantity":"1000000","onchain_metadata":{"name":"Token"},"metadata":null}`,
+			),
+		)
 	})
 	got, err := c.Asset(context.Background(), "policy123746f6b656e")
 	if err != nil {
@@ -1624,7 +1814,9 @@ func TestMetadataByLabelPageReadsOnePageAndNormalisesCBOR(t *testing.T) {
 		if r.URL.Path != "/api/v0/metadata/txs/labels/17/cbor" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		if got := r.URL.Query().Get("count"); got != strconv.Itoa(LabelPageSize) {
+		if got := r.URL.Query().Get("count"); got != strconv.Itoa(
+			LabelPageSize,
+		) {
 			t.Errorf("count = %q", got)
 		}
 		var rows []string
@@ -1634,9 +1826,14 @@ func TestMetadataByLabelPageReadsOnePageAndNormalisesCBOR(t *testing.T) {
 			// tied to what the node really sends.
 			for i := range LabelPageSize {
 				cbor := "820281"
-				b, err := json.Marshal(dingoblockfrost.MetadataTransactionCBORResponse{
-					TxHash: fmt.Sprintf("%064x", i), CborMetadata: &cbor, Metadata: cbor,
-				})
+				b, err := json.Marshal(
+					dingoblockfrost.MetadataTransactionCBORResponse{
+						TxHash: fmt.Sprintf(
+							"%064x",
+							i,
+						), CborMetadata: &cbor, Metadata: cbor,
+					},
+				)
 				if err != nil {
 					t.Errorf("marshal row: %v", err)
 				}
@@ -1644,7 +1841,13 @@ func TestMetadataByLabelPageReadsOnePageAndNormalisesCBOR(t *testing.T) {
 			}
 		case "2":
 			// Blockfrost proper prefixes its hex with \x; dingo does not.
-			rows = append(rows, `{"tx_hash":"`+strings.Repeat("ab", 32)+`","cbor_metadata":"\\x8200","metadata":""}`)
+			rows = append(
+				rows,
+				`{"tx_hash":"`+strings.Repeat(
+					"ab",
+					32,
+				)+`","cbor_metadata":"\\x8200","metadata":""}`,
+			)
 		default:
 			t.Errorf("page = %q", r.URL.Query().Get("page"))
 		}
@@ -1658,14 +1861,16 @@ func TestMetadataByLabelPageReadsOnePageAndNormalisesCBOR(t *testing.T) {
 	if len(first) != LabelPageSize {
 		t.Fatalf("page 1 len = %d, want %d", len(first), LabelPageSize)
 	}
-	if first[0].TxHash != fmt.Sprintf("%064x", 0) || hex.EncodeToString(first[0].CBOR) != "820281" {
+	if first[0].TxHash != fmt.Sprintf("%064x", 0) ||
+		hex.EncodeToString(first[0].CBOR) != "820281" {
 		t.Fatalf("first[0] = %+v", first[0])
 	}
 	second, err := c.MetadataByLabelPage(context.Background(), 17, 2)
 	if err != nil {
 		t.Fatalf("page 2: %v", err)
 	}
-	if len(second) != 1 || second[0].TxHash != strings.Repeat("ab", 32) || hex.EncodeToString(second[0].CBOR) != "8200" {
+	if len(second) != 1 || second[0].TxHash != strings.Repeat("ab", 32) ||
+		hex.EncodeToString(second[0].CBOR) != "8200" {
 		t.Fatalf("page 2 = %+v", second)
 	}
 	if _, err := c.MetadataByLabelPage(context.Background(), 17, 0); err == nil {
@@ -1689,9 +1894,13 @@ func TestRequiredSigners(t *testing.T) {
 		if r.URL.Path != "/api/v0/txs/abcd/required_signers" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		b, err := json.Marshal([]dingoblockfrost.TransactionRequiredSignerResponse{
-			{WitnessHash: strings.Repeat("11", 28)}, {WitnessHash: strings.Repeat("22", 28)},
-		})
+		b, err := json.Marshal(
+			[]dingoblockfrost.TransactionRequiredSignerResponse{
+				{
+					WitnessHash: strings.Repeat("11", 28),
+				}, {WitnessHash: strings.Repeat("22", 28)},
+			},
+		)
 		if err != nil {
 			t.Errorf("marshal signers: %v", err)
 		}
@@ -1701,7 +1910,8 @@ func TestRequiredSigners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequiredSigners: %v", err)
 	}
-	if len(got) != 2 || got[0] != strings.Repeat("11", 28) || got[1] != strings.Repeat("22", 28) {
+	if len(got) != 2 || got[0] != strings.Repeat("11", 28) ||
+		got[1] != strings.Repeat("22", 28) {
 		t.Fatalf("got = %v", got)
 	}
 }
@@ -1782,17 +1992,27 @@ func TestGovernanceAnchorDocuments(t *testing.T) {
 		t.Fatalf("GovernanceAnchorDocuments: %v", err)
 	}
 	if len(got) != 1 {
-		t.Fatalf("got %+v, want only the fetched, live, governance-proposal document under its own anchor hash", got)
+		t.Fatalf(
+			"got %+v, want only the fetched, live, governance-proposal document under its own anchor hash",
+			got,
+		)
 	}
-	want := AnchorDocument{ActionID: govActionID(tx, 0), ExpiresEpoch: 130, Content: []byte(`{"body":{}}`)}
-	if got[0].ActionID != want.ActionID || got[0].ExpiresEpoch != 130 || string(got[0].Content) != string(want.Content) {
+	want := AnchorDocument{
+		ActionID:     govActionID(tx, 0),
+		ExpiresEpoch: 130,
+		Content:      []byte(`{"body":{}}`),
+	}
+	if got[0].ActionID != want.ActionID || got[0].ExpiresEpoch != 130 ||
+		string(got[0].Content) != string(want.Content) {
 		t.Fatalf("got[0] = %+v, want %+v", got[0], want)
 	}
 }
 
 func TestGovernanceAnchorDocumentsAbsentStores(t *testing.T) {
 	t.Parallel()
-	got, err := NewClientURL("http://127.0.0.1:1").GovernanceAnchorDocuments(context.Background())
+	got, err := NewClientURL(
+		"http://127.0.0.1:1",
+	).GovernanceAnchorDocuments(context.Background())
 	if err != nil || len(got) != 0 {
 		t.Fatalf("no data dir: got %v, %v", got, err)
 	}
@@ -1806,7 +2026,10 @@ func TestGovernanceAnchorDocumentsAbsentStores(t *testing.T) {
 		t.Fatalf("create table: %v", err)
 	}
 	db.Close()
-	got, err = NewClientURL("http://127.0.0.1:1", WithDingoDataDir(dir)).GovernanceAnchorDocuments(context.Background())
+	got, err = NewClientURL(
+		"http://127.0.0.1:1",
+		WithDingoDataDir(dir),
+	).GovernanceAnchorDocuments(context.Background())
 	if err != nil || len(got) != 0 {
 		t.Fatalf("no offchain table: got %v, %v", got, err)
 	}

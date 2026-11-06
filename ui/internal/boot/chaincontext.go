@@ -39,7 +39,10 @@ var (
 	_ backend.CapabilityReporter  = boundedChainContext{}
 )
 
-func newBoundedChainContext(inner backend.ChainContext, timeout time.Duration) boundedChainContext {
+func newBoundedChainContext(
+	inner backend.ChainContext,
+	timeout time.Duration,
+) boundedChainContext {
 	return boundedChainContext{inner: inner, timeout: timeout}
 }
 
@@ -66,25 +69,33 @@ func (b boundedChainContext) Capabilities() backend.CapabilitySet {
 
 func (b boundedChainContext) NetworkId() uint8 { return b.inner.NetworkId() }
 
-func (b boundedChainContext) ProtocolParamsContext(ctx context.Context) (backend.ProtocolParameters, error) {
+func (b boundedChainContext) ProtocolParamsContext(
+	ctx context.Context,
+) (backend.ProtocolParameters, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	return backend.ProtocolParamsContext(ctx, b.inner)
 }
 
-func (b boundedChainContext) GenesisParamsContext(ctx context.Context) (backend.GenesisParameters, error) {
+func (b boundedChainContext) GenesisParamsContext(
+	ctx context.Context,
+) (backend.GenesisParameters, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	return backend.GenesisParamsContext(ctx, b.inner)
 }
 
-func (b boundedChainContext) CurrentEpochContext(ctx context.Context) (uint64, error) {
+func (b boundedChainContext) CurrentEpochContext(
+	ctx context.Context,
+) (uint64, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	return backend.CurrentEpochContext(ctx, b.inner)
 }
 
-func (b boundedChainContext) MaxTxFeeContext(ctx context.Context) (uint64, error) {
+func (b boundedChainContext) MaxTxFeeContext(
+	ctx context.Context,
+) (uint64, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	return backend.MaxTxFeeContext(ctx, b.inner)
@@ -96,13 +107,19 @@ func (b boundedChainContext) TipContext(ctx context.Context) (uint64, error) {
 	return backend.TipContext(ctx, b.inner)
 }
 
-func (b boundedChainContext) UtxosContext(ctx context.Context, address lcommon.Address) ([]lcommon.Utxo, error) {
+func (b boundedChainContext) UtxosContext(
+	ctx context.Context,
+	address lcommon.Address,
+) ([]lcommon.Utxo, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	return backend.UtxosContext(ctx, b.inner, address)
 }
 
-func (b boundedChainContext) SubmitTxContext(ctx context.Context, txCbor []byte) (lcommon.Blake2b256, error) {
+func (b boundedChainContext) SubmitTxContext(
+	ctx context.Context,
+	txCbor []byte,
+) (lcommon.Blake2b256, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	if b.submitter != nil {
@@ -116,7 +133,9 @@ func (s *boundedUTxORPCSubmitter) SubmitTxContext(
 	txCbor []byte,
 ) (lcommon.Blake2b256, error) {
 	if s == nil || s.client == nil {
-		return lcommon.Blake2b256{}, errors.New("UTxO-RPC submit client is unavailable")
+		return lcommon.Blake2b256{}, errors.New(
+			"UTxO-RPC submit client is unavailable",
+		)
 	}
 	req := connect.NewRequest(&cardanosubmit.SubmitTxRequest{
 		Tx: &cardanosubmit.AnyChainTx{
@@ -160,7 +179,10 @@ func (b boundedChainContext) UtxoByRefContext(
 	return backend.UtxoByRefContext(ctx, b.inner, txHash, index)
 }
 
-func (b boundedChainContext) ScriptCborContext(ctx context.Context, scriptHash lcommon.Blake2b224) ([]byte, error) {
+func (b boundedChainContext) ScriptCborContext(
+	ctx context.Context,
+	scriptHash lcommon.Blake2b224,
+) ([]byte, error) {
 	ctx, cancel := b.bound(ctx)
 	defer cancel()
 	return backend.ScriptCborContext(ctx, b.inner, scriptHash)
@@ -186,11 +208,15 @@ func (b boundedChainContext) Tip() (uint64, error) {
 	return b.TipContext(context.Background())
 }
 
-func (b boundedChainContext) Utxos(address lcommon.Address) ([]lcommon.Utxo, error) {
+func (b boundedChainContext) Utxos(
+	address lcommon.Address,
+) ([]lcommon.Utxo, error) {
 	return b.UtxosContext(context.Background(), address)
 }
 
-func (b boundedChainContext) SubmitTx(txCbor []byte) (lcommon.Blake2b256, error) {
+func (b boundedChainContext) SubmitTx(
+	txCbor []byte,
+) (lcommon.Blake2b256, error) {
 	return b.SubmitTxContext(context.Background(), txCbor)
 }
 
@@ -201,15 +227,22 @@ func (b boundedChainContext) EvaluateTx(
 	return b.EvaluateTxContext(context.Background(), txCbor, additionalUtxos)
 }
 
-func (b boundedChainContext) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+func (b boundedChainContext) UtxoByRef(
+	txHash lcommon.Blake2b256,
+	index uint32,
+) (*lcommon.Utxo, error) {
 	return b.UtxoByRefContext(context.Background(), txHash, index)
 }
 
-func (b boundedChainContext) ScriptCbor(scriptHash lcommon.Blake2b224) ([]byte, error) {
+func (b boundedChainContext) ScriptCbor(
+	scriptHash lcommon.Blake2b224,
+) ([]byte, error) {
 	return b.ScriptCborContext(context.Background(), scriptHash)
 }
 
-func (b boundedChainContext) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+func (b boundedChainContext) bound(
+	ctx context.Context,
+) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

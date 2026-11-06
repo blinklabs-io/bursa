@@ -42,7 +42,10 @@ func newEraTestServer(t *testing.T) (*Server, backend.KeyHash) {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
@@ -63,13 +66,21 @@ func newEraTestServer(t *testing.T) (*Server, backend.KeyHash) {
 	return NewServer(coord, backend.NewResolver(b), eng, nil, nil), h
 }
 
-func postEraSignRequest(t *testing.T, srv *Server, body map[string]any) *httptest.ResponseRecorder {
+func postEraSignRequest(
+	t *testing.T,
+	srv *Server,
+	body map[string]any,
+) *httptest.ResponseRecorder {
 	t.Helper()
 	raw, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(raw))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(raw),
+	)
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
 	return rr
@@ -126,7 +137,11 @@ func TestHandleSignTxUsesRequestedEra(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode unsigned tx: %v", err)
 			}
-			want, err := bursa.AssembleTransactionForEra(unsigned, ledger.TxTypeBabbage, wits)
+			want, err := bursa.AssembleTransactionForEra(
+				unsigned,
+				ledger.TxTypeBabbage,
+				wits,
+			)
 			if err != nil {
 				t.Fatalf("AssembleTransactionForEra: %v", err)
 			}
@@ -135,7 +150,11 @@ func TestHandleSignTxUsesRequestedEra(t *testing.T) {
 				t.Fatalf("decode signed tx: %v", err)
 			}
 			if !bytes.Equal(got, want) {
-				t.Fatalf("signed tx uses the wrong era encoding:\n got %x\nwant %x", got, want)
+				t.Fatalf(
+					"signed tx uses the wrong era encoding:\n got %x\nwant %x",
+					got,
+					want,
+				)
 			}
 		})
 	}
@@ -151,7 +170,10 @@ func TestHandleSignTxRejectsAmbiguousEra(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rr.Code, rr.Body.String())
 	}
-	if !bytes.Contains(rr.Body.Bytes(), []byte("transaction era is ambiguous")) {
+	if !bytes.Contains(
+		rr.Body.Bytes(),
+		[]byte("transaction era is ambiguous"),
+	) {
 		t.Fatalf("error = %s, want ambiguous-era rejection", rr.Body.String())
 	}
 }

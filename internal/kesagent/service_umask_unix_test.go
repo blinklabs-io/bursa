@@ -46,7 +46,10 @@ func TestListenUnixMode0600UnderPermissiveUmask(t *testing.T) {
 		t.Fatalf("stat socket: %v", err)
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("socket mode = %04o under umask 0, want 0600 (no group/other access)", perm)
+		t.Fatalf(
+			"socket mode = %04o under umask 0, want 0600 (no group/other access)",
+			perm,
+		)
 	}
 	// The published path must be a working listener (kernel accepts into the
 	// backlog without an Accept call).
@@ -76,7 +79,11 @@ func TestListenUnixNearPathnameLimit(t *testing.T) {
 	// Pad the directory so the final path still fits but the staged one cannot.
 	target := maxSunPath - len(base) - 1
 	if len(dir) > target {
-		t.Skipf("temp dir %q (%d bytes) is already too long for this case", dir, len(dir))
+		t.Skipf(
+			"temp dir %q (%d bytes) is already too long for this case",
+			dir,
+			len(dir),
+		)
 	}
 	for len(dir)+stagingOverhead <= maxSunPath {
 		next := dir + "/p"
@@ -93,7 +100,10 @@ func TestListenUnixNearPathnameLimit(t *testing.T) {
 		t.Fatalf("constructed path %d bytes, want <= %d", len(sock), maxSunPath)
 	}
 	if len(dir)+stagingOverhead <= maxSunPath {
-		t.Skipf("could not build a directory long enough to overflow staging (dir %d bytes)", len(dir))
+		t.Skipf(
+			"could not build a directory long enough to overflow staging (dir %d bytes)",
+			len(dir),
+		)
 	}
 
 	// Permissive umask: the fallback must still publish a 0600 socket.
@@ -111,7 +121,10 @@ func TestListenUnixNearPathnameLimit(t *testing.T) {
 		t.Fatalf("stat socket: %v", err)
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("socket mode = %04o, want 0600 even on the fallback path", perm)
+		t.Fatalf(
+			"socket mode = %04o, want 0600 even on the fallback path",
+			perm,
+		)
 	}
 	conn, err := net.DialTimeout("unix", sock, 2*time.Second)
 	if err != nil {

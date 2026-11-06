@@ -119,8 +119,11 @@ func (p Profile) validate() error {
 		b, err := hex.DecodeString(p.RewardAccount)
 
 		// reward address header: 0b111s nnnn, s = script credential
-		if err != nil || len(b) != 29 || b[0]&0xe0 != 0xe0 || b[0]&0x0f != p.NetworkID {
-			return errors.New("profile: reward account must be a reward address on the profile network")
+		if err != nil || len(b) != 29 || b[0]&0xe0 != 0xe0 ||
+			b[0]&0x0f != p.NetworkID {
+			return errors.New(
+				"profile: reward account must be a reward address on the profile network",
+			)
 		}
 	}
 
@@ -128,8 +131,12 @@ func (p Profile) validate() error {
 }
 
 func nameRune(r rune) bool {
-	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
-		r == '@' || r == '.' || r == '_' || r == '-'
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' ||
+		r >= '0' && r <= '9' ||
+		r == '@' ||
+		r == '.' ||
+		r == '_' ||
+		r == '-'
 }
 
 // Encode serializes a profile record to exactly RecordSize bytes.
@@ -144,7 +151,11 @@ func Encode(p Profile) ([]byte, error) {
 	}
 
 	if len(b) > RecordSize {
-		return nil, fmt.Errorf("profile: record is %d bytes, over %d", len(b), RecordSize)
+		return nil, fmt.Errorf(
+			"profile: record is %d bytes, over %d",
+			len(b),
+			RecordSize,
+		)
 	}
 
 	return append(b, bytes.Repeat([]byte{' '}, RecordSize-len(b))...), nil

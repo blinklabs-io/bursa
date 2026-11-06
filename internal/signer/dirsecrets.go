@@ -101,7 +101,10 @@ func (s *DirSecretSource) List(ctx context.Context) ([]string, error) {
 
 // Get returns the contents of the named secret file, unless ctx is already
 // cancelled.
-func (s *DirSecretSource) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *DirSecretSource) Get(
+	ctx context.Context,
+	name string,
+) ([]byte, error) {
 	if !validName(name) {
 		return nil, fmt.Errorf("invalid secret name %q", name)
 	}
@@ -125,10 +128,16 @@ func (s *DirSecretSource) Get(ctx context.Context, name string) ([]byte, error) 
 		return nil, fmt.Errorf("read secret %q: %w", name, err)
 	}
 	if len(data) > maxDirSecretSize {
-		return nil, fmt.Errorf("secret %q exceeds %d bytes", name, maxDirSecretSize)
+		return nil, fmt.Errorf(
+			"secret %q exceeds %d bytes",
+			name,
+			maxDirSecretSize,
+		)
 	}
 	return data, nil
 }
 
 // errSopsSourceConflict is returned when a sops backend names both sources.
-var errSopsSourceConflict = errors.New("set either path or secret_prefix, not both")
+var errSopsSourceConflict = errors.New(
+	"set either path or secret_prefix, not both",
+)

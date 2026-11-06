@@ -67,7 +67,9 @@ func requireNotOwnerOnly(t *testing.T, path string) {
 	require.Error(t, bursa.CheckSecretFilePermissions(f), path)
 }
 
-func TestSQLiteStoreRestrictsFilesToOwnerUnderPermissiveDirectory(t *testing.T) {
+func TestSQLiteStoreRestrictsFilesToOwnerUnderPermissiveDirectory(
+	t *testing.T,
+) {
 	t.Parallel()
 	dbPath := filepath.Join(permissiveDir(t), "wallets.db")
 
@@ -106,7 +108,10 @@ func grantEveryone(t *testing.T, path string) {
 		path,
 		windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
+		nil,
+		nil,
+		dacl,
+		nil,
 	))
 	requireNotOwnerOnly(t, path)
 }
@@ -145,7 +150,11 @@ func TestSQLiteFilesAreOwnerOnlyBeforeSQLiteOpensThem(t *testing.T) {
 // A path longer than MAX_PATH has to reach CreateFile in extended-length form.
 func TestSQLiteFilePermissionsAcceptLongPaths(t *testing.T) {
 	t.Parallel()
-	dir := filepath.Join(permissiveDir(t), strings.Repeat("d", 200), strings.Repeat("e", 60))
+	dir := filepath.Join(
+		permissiveDir(t),
+		strings.Repeat("d", 200),
+		strings.Repeat("e", 60),
+	)
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	dbPath := filepath.Join(dir, "wallets.db")
 	require.Greater(t, len(dbPath), windows.MAX_PATH)
@@ -167,11 +176,21 @@ func TestSQLiteStoreSecuresSidecarsRecreatedForANewConnection(t *testing.T) {
 
 	conn, err := store.db.Conn(context.Background())
 	require.NoError(t, err)
-	require.ErrorIs(t, conn.Raw(func(any) error { return driver.ErrBadConn }), driver.ErrBadConn)
+	require.ErrorIs(
+		t,
+		conn.Raw(func(any) error { return driver.ErrBadConn }),
+		driver.ErrBadConn,
+	)
 	_ = conn.Close()
 	for _, suffix := range []string{"-wal", "-shm"} {
 		_, err := os.Stat(dbPath + suffix)
-		require.ErrorIs(t, err, fs.ErrNotExist, "closing the connection should delete %s", suffix)
+		require.ErrorIs(
+			t,
+			err,
+			fs.ErrNotExist,
+			"closing the connection should delete %s",
+			suffix,
+		)
 	}
 
 	wallet, err := store.CreateWallet("after-reconnect")
@@ -184,7 +203,9 @@ func TestSQLiteStoreSecuresSidecarsRecreatedForANewConnection(t *testing.T) {
 
 // An open WAL database needs no new file, so a directory that refuses file
 // creation must not stop it opening. Here only -journal is missing.
-func TestSQLiteStoreOpensExistingWALDatabaseWhereCreationIsDenied(t *testing.T) {
+func TestSQLiteStoreOpensExistingWALDatabaseWhereCreationIsDenied(
+	t *testing.T,
+) {
 	t.Parallel()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "wallets.db")
@@ -209,7 +230,10 @@ func TestSQLiteStoreOpensExistingWALDatabaseWhereCreationIsDenied(t *testing.T) 
 		dir,
 		windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
+		nil,
+		nil,
+		dacl,
+		nil,
 	))
 	require.Error(t, os.WriteFile(filepath.Join(dir, "probe"), nil, 0o600))
 
@@ -242,10 +266,20 @@ func setOwnerToLocalSystem(t *testing.T, path string) {
 		Luid:       luid,
 		Attributes: windows.SE_PRIVILEGE_ENABLED,
 	}
-	require.NoError(t, windows.AdjustTokenPrivileges(token, false, &privileges, 0, nil, nil))
+	require.NoError(
+		t,
+		windows.AdjustTokenPrivileges(token, false, &privileges, 0, nil, nil),
+	)
 	defer func() {
 		privileges.Privileges[0].Attributes = 0
-		_ = windows.AdjustTokenPrivileges(token, false, &privileges, 0, nil, nil)
+		_ = windows.AdjustTokenPrivileges(
+			token,
+			false,
+			&privileges,
+			0,
+			nil,
+			nil,
+		)
 	}()
 	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	require.NoError(t, err)
