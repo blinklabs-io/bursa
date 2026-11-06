@@ -566,8 +566,8 @@ func (w *Workload) Sign(
 
 // opCertNextRefusal is the refusal text for an opcert-next error. The counter
 // rules' own texts are the ones the signer host recognises (and, for
-// below-floor and above-issued, maps to a counter conflict); anything else,
-// such as a storage failure, is not disclosed.
+// below-floor, above-issued and a backdated reissue, maps to a counter
+// conflict); anything else, such as a storage failure, is not disclosed.
 func opCertNextRefusal(err error) string {
 	for _, rule := range []error{
 		opcertrule.ErrBelowFloor,

@@ -29,8 +29,7 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
-// Refusal texts the signer host maps to ErrCustodyCounterConflict (the first
-// two) or will map for a backdated reissue.
+// Refusal texts the signer host maps to ErrCustodyCounterConflict.
 const (
 	refusalBelowFloor  = "chain counter below the recorded on-chain counter"
 	refusalAboveIssued = "chain counter above the last counter the device issued"
@@ -384,10 +383,18 @@ func TestHostOpCertNextAgainstWorkload(t *testing.T) {
 	) {
 		t.Fatal("signature does not verify")
 	}
-	for name, chain := range map[string]uint64{"below floor": 3, "above issued": 6} {
-		_, _, err := next.SignOpCertNext(t.Context(), kes, chain, 100)
+	for _, tc := range []struct {
+		name   string
+		chain  uint64
+		period uint64
+	}{
+		{"below floor", 3, 100},
+		{"above issued", 6, 100},
+		{"backdated reissue", 4, 99},
+	} {
+		_, _, err := next.SignOpCertNext(t.Context(), kes, tc.chain, tc.period)
 		if !errors.Is(err, backend.ErrCustodyCounterConflict) {
-			t.Fatalf("%s: err = %v, want ErrCustodyCounterConflict", name, err)
+			t.Fatalf("%s: err = %v, want ErrCustodyCounterConflict", tc.name, err)
 		}
 	}
 }
