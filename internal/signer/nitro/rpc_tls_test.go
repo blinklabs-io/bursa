@@ -370,9 +370,9 @@ func TestRPCRejectsUnauthorizedCallsBeforeStateMutation(t *testing.T) {
 	require.NoError(t, err, "unauthorized reload changed loaded state")
 
 	request := testSignRequest(provisioned.Envelope.PublicKey)
+	authorizeRPCRequest(t, authorized, &request)
 	_, err = unauthorized.Sign(ctx, request)
 	requireRPCDenied(t, "sign", err)
-	authorizeRPCRequest(t, authorized, &request)
 	signed, err := authorized.Sign(ctx, request)
 	require.NoError(t, err, "unauthorized sign consumed nonce or counter state")
 	require.True(

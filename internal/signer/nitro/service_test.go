@@ -468,6 +468,32 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	require.ErrorContains(t, err, "issue counter is not increasing")
 }
 
+func TestSameKeyReloadPreservesAuthorizedChallenge(t *testing.T) {
+	service, _, _ := newTestService(t, testEvidence(t, 12))
+	env := provisionTestKey(t, service)
+	request := &backend.AttestedRequest{
+		Version: backend.AttestedProtocol,
+		Purpose: backend.PurposeOpCert,
+		KeyHash: backend.HashPublicKey(env.PublicKey).String(),
+		Role:    backend.KeyTypePool,
+		Nonce:   bytes.Repeat([]byte{0x42}, requestNonceSize),
+		Payload: make([]byte, 48),
+	}
+	binary.BigEndian.PutUint64(request.Payload[32:40], 1)
+	authorizeTestRequest(t, service, request)
+
+	_, err := service.Reload(context.Background(), &ReloadRequest{
+		Version:     Protocol,
+		Region:      "us-east-1",
+		Credentials: testCredentials,
+		Envelope:    env,
+	})
+	require.NoError(t, err)
+
+	_, err = service.Sign(context.Background(), request)
+	require.NoError(t, err)
+}
+
 func TestReloadRejectsOversizedEnvelopeBeforeKMS(t *testing.T) {
 	for name, mutate := range map[string]func(*Envelope){
 		"encrypted data key": func(env *Envelope) {

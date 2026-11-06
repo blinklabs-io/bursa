@@ -100,12 +100,6 @@ func TestServiceRequiresSignerAuthorization(t *testing.T) {
 	_, err = service.Sign(context.Background(), &request)
 	require.ErrorContains(t, err, "signer authorization invalid")
 
-	challenge, err = service.Challenge(
-		context.Background(),
-		&ChallengeRequest{Version: Protocol},
-	)
-	require.NoError(t, err)
-	request.Challenge = challenge.Challenge
 	request.HostKey = testSignerAuthority.Public().(ed25519.PublicKey)
 	request.HostSignature = ed25519.Sign(
 		other,
@@ -114,7 +108,10 @@ func TestServiceRequiresSignerAuthorization(t *testing.T) {
 	_, err = service.Sign(context.Background(), &request)
 	require.ErrorContains(t, err, "signer authorization invalid")
 
-	authorizeTestRequest(t, service, &request)
+	request.HostSignature = ed25519.Sign(
+		testSignerAuthority,
+		backend.AttestedRequestBinding(request),
+	)
 	response, err := service.Sign(context.Background(), &request)
 	require.NoError(t, err)
 	require.True(
@@ -139,6 +136,7 @@ func TestServiceExpiresUnusedChallenges(t *testing.T) {
 		&ChallengeRequest{Version: Protocol},
 	)
 	require.ErrorContains(t, err, "challenge cache is full")
+	require.Equal(t, current.Add(challengeTTL), service.challengeNextExpiry)
 
 	current = current.Add(challengeTTL)
 	_, err = service.Challenge(
@@ -147,6 +145,7 @@ func TestServiceExpiresUnusedChallenges(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, service.challenges, 1)
+	require.Equal(t, current.Add(challengeTTL), service.challengeNextExpiry)
 }
 
 func TestProxyRefusesProfiledInventory(t *testing.T) {

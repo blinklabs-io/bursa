@@ -36,20 +36,21 @@ const (
 // Service owns the active plaintext key and performs every cryptographic
 // operation. It is intended to run only in the measured enclave image.
 type Service struct {
-	initMu             sync.Mutex
-	mu                 sync.Mutex
-	recipient          Recipient
-	kms                KMSFactory
-	provisionAuthority ed25519.PublicKey
-	signerAuthority    ed25519.PublicKey
-	key                ed25519.PrivateKey
-	pub                ed25519.PublicKey
-	envelope           Envelope
-	challenges         map[[requestNonceSize]byte]time.Time
-	now                func() time.Time
-	seen               map[[requestNonceSize]byte]struct{}
-	counter            uint64
-	hasCounter         bool
+	initMu              sync.Mutex
+	mu                  sync.Mutex
+	recipient           Recipient
+	kms                 KMSFactory
+	provisionAuthority  ed25519.PublicKey
+	signerAuthority     ed25519.PublicKey
+	key                 ed25519.PrivateKey
+	pub                 ed25519.PublicKey
+	envelope            Envelope
+	challenges          map[[requestNonceSize]byte]time.Time
+	challengeNextExpiry time.Time
+	now                 func() time.Time
+	seen                map[[requestNonceSize]byte]struct{}
+	counter             uint64
+	hasCounter          bool
 }
 
 // NewService constructs an enclave service from the NSM recipient, an
@@ -327,16 +328,20 @@ func (s *Service) Challenge(
 	defer s.mu.Unlock()
 	now := s.now()
 	if len(s.challenges) >= maxSeenNonces {
-		for k, expires := range s.challenges {
-			if !now.Before(expires) {
-				delete(s.challenges, k)
-			}
+		if s.challengeNextExpiry.IsZero() ||
+			!now.Before(s.challengeNextExpiry) {
+			s.purgeExpiredChallenges(now)
 		}
 	}
 	if len(s.challenges) >= maxSeenNonces {
 		return nil, fmt.Errorf("%w: challenge cache is full", ErrProtocol)
 	}
-	s.challenges[challenge] = now.Add(challengeTTL)
+	expires := now.Add(challengeTTL)
+	s.challenges[challenge] = expires
+	if s.challengeNextExpiry.IsZero() ||
+		expires.Before(s.challengeNextExpiry) {
+		s.challengeNextExpiry = expires
+	}
 	return &ChallengeResponse{
 		Version:   backend.AttestedProtocol,
 		Challenge: bytes.Clone(challenge[:]),
@@ -383,8 +388,8 @@ func (s *Service) Sign(
 			ErrProtocol,
 		)
 	}
-	delete(s.challenges, challenge)
 	if !s.now().Before(expires) {
+		s.deleteChallenge(challenge, expires)
 		return nil, fmt.Errorf("%w: signer challenge expired", ErrProtocol)
 	}
 	if !bytes.Equal(req.HostKey, s.signerAuthority) ||
@@ -392,6 +397,7 @@ func (s *Service) Sign(
 		!ed25519.Verify(s.signerAuthority, backend.AttestedRequestBinding(*req), req.HostSignature) {
 		return nil, fmt.Errorf("%w: signer authorization invalid", ErrProtocol)
 	}
+	s.deleteChallenge(challenge, expires)
 	if _, exists := s.seen[nonce]; exists {
 		return nil, fmt.Errorf("%w: request nonce replay", ErrProtocol)
 	}
@@ -427,10 +433,45 @@ func (s *Service) install(
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
 	s.envelope = cloneEnvelope(env)
-	s.challenges = make(map[[requestNonceSize]byte]time.Time)
 	if !sameKey {
+		s.challenges = make(map[[requestNonceSize]byte]time.Time)
+		s.challengeNextExpiry = time.Time{}
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0
 		s.hasCounter = false
 	}
+}
+
+func (s *Service) deleteChallenge(
+	challenge [requestNonceSize]byte,
+	expires time.Time,
+) {
+	delete(s.challenges, challenge)
+	if expires.Equal(s.challengeNextExpiry) {
+		s.recalculateChallengeNextExpiry()
+	}
+}
+
+func (s *Service) recalculateChallengeNextExpiry() {
+	nextExpiry := time.Time{}
+	for _, expires := range s.challenges {
+		if nextExpiry.IsZero() || expires.Before(nextExpiry) {
+			nextExpiry = expires
+		}
+	}
+	s.challengeNextExpiry = nextExpiry
+}
+
+func (s *Service) purgeExpiredChallenges(now time.Time) {
+	nextExpiry := time.Time{}
+	for challenge, expires := range s.challenges {
+		if !now.Before(expires) {
+			delete(s.challenges, challenge)
+			continue
+		}
+		if nextExpiry.IsZero() || expires.Before(nextExpiry) {
+			nextExpiry = expires
+		}
+	}
+	s.challengeNextExpiry = nextExpiry
 }
