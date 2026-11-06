@@ -1004,3 +1004,94 @@ func TestOpCertNextBackdatedFloorIsPerColdKey(t *testing.T) {
 		})
 	}
 }
+
+// Through a real signing log: a profile wiped and reprovisioned under the same
+// name with another cold key may issue the logged counter at a lower KES
+// period, while the original cold key reprovisioned there may not.
+func TestOpCertNextReprovisionedColdKeyThroughWriter(t *testing.T) {
+	t.Parallel()
+
+	const (
+		name   = "w@preview"
+		coldID = uint32(0x20e50602)
+	)
+
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+
+	w, err := signlog.Open(
+		m,
+		signlog.NewMemHeadStore(signlog.Head{}),
+		signlog.NewKeySigner(priv),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	provision := func(seed byte) []byte {
+		t.Helper()
+
+		code, body := post(t, s, "/provision/cold", coldReq(coldID, seed))
+		mustOK(t, "import", code, body)
+
+		chain := uint64(3)
+		code, body = post(t, s, "/provision/profile", ProvisionRequest{
+			Name: name, Slot: 2, ColdKeyID: coldID, ChainCounter: &chain,
+			RewardAccount: testReward,
+		})
+		mustOK(t, "profile", code, body)
+
+		cold, _ := chip.PublicKeyEd25519(coldID)
+
+		return cold
+	}
+
+	issue := func(cold []byte, n byte, period uint64) SignResponse {
+		t.Helper()
+
+		return sign(t, s, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+			Nonce: nonce(n), Profile: name,
+			Payload: opCertPayload(bytes.Repeat([]byte{n}, 32), 3, period),
+		})
+	}
+
+	wipe := func() {
+		t.Helper()
+
+		code, body := wipePost(t, s, "/wipe/profile",
+			WipeProfileRequest{IdentityPublicKey: id, Profile: name})
+		mustOK(t, "wipe profile", code, body)
+	}
+
+	coldA := provision(0x6a)
+	if r := issue(coldA, 1, 1100); r.Error != "" {
+		t.Fatalf("first opcert: %s", r.Error)
+	}
+
+	wipe()
+
+	coldB := provision(0x6b)
+	if r := issue(coldB, 2, 1000); r.Error != "" || len(r.Signature) == 0 {
+		t.Fatalf("another cold key under the reused name: %+v", r)
+	}
+
+	hashB := keyHash(coldB)
+	if e, ok := w.Last(); !ok || !bytes.Equal(e.ColdKeyHash, hashB[:]) {
+		t.Fatalf("logged cold hash %x, want %x", e.ColdKeyHash, hashB)
+	}
+
+	wipe()
+
+	coldA = provision(0x6a)
+	if r := issue(coldA, 3, 1099); r.Error != errKESBackdated.Error() ||
+		len(r.Signature) != 0 {
+		t.Fatalf("the original cold key reprovisioned: %+v", r)
+	}
+}
