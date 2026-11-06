@@ -66,7 +66,8 @@ func TestListenPrivateUnixNeverPublishesPermissiveMode(t *testing.T) {
 			t.Fatalf("Nitro proxy socket was published with mode %04o", mode)
 		default:
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(path); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("remove socket: %v", err)
 		}
 	}

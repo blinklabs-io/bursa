@@ -262,7 +262,9 @@ func TestProvisionReplayReturnsOriginalEnvelopeBeforeKMS(t *testing.T) {
 	second, err := service.Provision(context.Background(), &request)
 	require.NoError(t, err)
 	if !bytes.Equal(second.Envelope.PublicKey, first.Envelope.PublicKey) {
-		t.Fatal("replayed provisioning authorization replaced the active pool key")
+		t.Fatal(
+			"replayed provisioning authorization replaced the active pool key",
+		)
 	}
 	require.Equal(t, first.Envelope, second.Envelope)
 	require.Zero(t, kms.calls)

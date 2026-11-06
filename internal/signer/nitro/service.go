@@ -130,7 +130,10 @@ func (s *Service) Provision(
 		matches := env.KMSKeyID == req.KMSKeyID && env.Role == req.Role
 		s.mu.Unlock()
 		if !matches {
-			return nil, fmt.Errorf("%w: pool cold key is already loaded", ErrProtocol)
+			return nil, fmt.Errorf(
+				"%w: pool cold key is already loaded",
+				ErrProtocol,
+			)
 		}
 		return &ProvisionResponse{Version: Protocol, Envelope: env}, nil
 	}
@@ -201,8 +204,12 @@ func (s *Service) Reload(
 	s.mu.Lock()
 	activePublicKey := bytes.Clone(s.pub)
 	s.mu.Unlock()
-	if len(activePublicKey) != 0 && !bytes.Equal(activePublicKey, req.Envelope.PublicKey) {
-		return nil, fmt.Errorf("%w: a different pool cold key is already loaded", ErrProtocol)
+	if len(activePublicKey) != 0 &&
+		!bytes.Equal(activePublicKey, req.Envelope.PublicKey) {
+		return nil, fmt.Errorf(
+			"%w: a different pool cold key is already loaded",
+			ErrProtocol,
+		)
 	}
 	if err := validateKMSRequest(req.Region, req.Envelope.KMSKeyID, req.Credentials); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrProtocol, err)
@@ -335,7 +342,11 @@ func (s *Service) Sign(
 	}, nil
 }
 
-func (s *Service) install(key ed25519.PrivateKey, pub ed25519.PublicKey, env Envelope) {
+func (s *Service) install(
+	key ed25519.PrivateKey,
+	pub ed25519.PublicKey,
+	env Envelope,
+) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sameKey := bytes.Equal(s.pub, pub)
