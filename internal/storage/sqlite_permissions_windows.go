@@ -223,6 +223,9 @@ func ensureSQLiteFilePermissions(path, mode string) error {
 	if err := checkSQLiteDirectories(path); err != nil {
 		return err
 	}
+	if sqliteAfterDirectoryCheck != nil {
+		sqliteAfterDirectoryCheck()
+	}
 	if err := secureSQLiteFile(path, createDB); err != nil {
 		return err
 	}
@@ -237,6 +240,10 @@ func ensureSQLiteFilePermissions(path, mode string) error {
 	}
 	return nil
 }
+
+// sqliteAfterDirectoryCheck lets a test change the directory between the
+// directory check and the first file open. It is nil outside tests.
+var sqliteAfterDirectoryCheck func()
 
 // fileDeleteChild is FILE_DELETE_CHILD, which x/sys/windows does not export.
 const fileDeleteChild = 0x40

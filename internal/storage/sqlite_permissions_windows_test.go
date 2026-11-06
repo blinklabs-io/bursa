@@ -22,8 +22,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -463,4 +465,117 @@ func TestSQLiteStoreRejectsDirectoryOwnedByAnotherIdentity(t *testing.T) {
 		filepath.Join(dir, "wallets.db"),
 		"directory",
 	)
+}
+
+func makeJunction(t *testing.T, link, target string) {
+	t.Helper()
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).
+		CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
+// addReparsePointACE adds sddlACE to the DACL of the junction at link itself,
+// which SetNamedSecurityInfo would apply to the target instead.
+func addReparsePointACE(t *testing.T, link, sddlACE string) {
+	t.Helper()
+	sd, err := windows.SecurityDescriptorFromString("D:" + sddlACE)
+	require.NoError(t, err)
+	dacl, _, err := sd.DACL()
+	require.NoError(t, err)
+	name, err := windows.UTF16PtrFromString(link)
+	require.NoError(t, err)
+	handle, err := windows.CreateFile(
+		name,
+		windows.READ_CONTROL|windows.WRITE_DAC,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|
+			windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|
+			windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	require.NoError(t, err)
+	defer func() { _ = windows.CloseHandle(handle) }()
+	require.NoError(t, windows.SetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|
+			windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	))
+}
+
+// Windows lets FSCTL_SET_REPARSE_POINT through a handle with either write
+// right, so whoever holds one on a junction can retarget it, and with it
+// the database path, after the directories are checked.
+func TestSQLiteStoreRejectsReparsePointOthersCanRetarget(t *testing.T) {
+	t.Parallel()
+	rights := map[string]string{
+		// Read and list, plus FILE_WRITE_DATA.
+		"write data": "0x12008b",
+		// Read and list, plus FILE_WRITE_ATTRIBUTES.
+		"write attributes": "0x120189",
+		"generic write":    "GW",
+	}
+	for name, right := range rights {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			base := t.TempDir()
+			target := filepath.Join(base, "target")
+			require.NoError(t, os.Mkdir(target, 0o700))
+			link := filepath.Join(base, "link")
+			makeJunction(t, link, target)
+			addReparsePointACE(t, link, "(A;;"+right+";;;WD)")
+			requireDirectoryRejected(
+				t,
+				filepath.Join(link, "wallets.db"),
+				"reparse point",
+			)
+		})
+	}
+}
+
+func TestSQLiteStoreOpensThroughJunctionOthersCannotRetarget(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	require.NoError(t, os.Mkdir(target, 0o700))
+	link := filepath.Join(base, "link")
+	makeJunction(t, link, target)
+
+	store, err := NewSQLiteStore(filepath.Join(link, "wallets.db"))
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	requireOwnerOnly(t, filepath.Join(target, "wallets.db"))
+}
+
+// An empty directory can be turned into a junction by anyone allowed to add
+// a file to it, so the database's directory can change after it is checked
+// and before the database is first created in it. Not parallel: the hook is
+// package state.
+func TestSQLiteStoreRejectsDirectoryRetargetedAfterCheck(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "store")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	elsewhere := filepath.Join(base, "elsewhere")
+	require.NoError(t, os.Mkdir(elsewhere, 0o700))
+	var once sync.Once
+	sqliteAfterDirectoryCheck = func() {
+		once.Do(func() {
+			require.NoError(t, os.Remove(dir))
+			makeJunction(t, dir, elsewhere)
+		})
+	}
+	t.Cleanup(func() { sqliteAfterDirectoryCheck = nil })
+
+	store, err := NewSQLiteStore(filepath.Join(dir, "wallets.db"))
+	if store != nil {
+		_ = store.Close()
+	}
+	require.ErrorIs(t, err, bursa.ErrInsecureFileMode)
+	require.ErrorContains(t, err, "outside the checked directory")
+	if info, err := os.Stat(filepath.Join(elsewhere, "wallets.db")); err == nil {
+		assert.Zero(t, info.Size(), "SQLite wrote to the retargeted path")
+	}
 }
