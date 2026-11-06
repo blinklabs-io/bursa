@@ -311,12 +311,14 @@ workload can serve a pool on several networks to signer backends that each set
 - First boot, and a restart that finishes a pending bootstrap, create every
   profile's counter object, as they create the unprofiled one. With an active
   envelope a missing profile counter stops startup, so a deleted object is not
-  silently reset, unless `--create-profile-counters` is set. Grant the new
-  profile's object (see the permissions below), start the workload once with
-  the flag to add the profile, then remove the flag: while it is set the
-  workload creates any missing profile counter, including one that was
-  deleted, which resets that profile's issue counter. A counter object that
-  carries a `profile` cannot be read by an earlier workload release.
+  silently reset. To add a profile, grant its object (see the permissions
+  below) and start the workload once with `--create-profile-counter NAME`
+  (repeatable) naming only the profiles being added, then remove the flag.
+  The flag creates the missing counter of the named profiles only; a missing
+  counter of any other profile still stops startup, and a named profile's
+  object deleted while the flag is set would be recreated empty. A counter
+  object that carries a `profile` cannot be read by an earlier workload
+  release.
 
 The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
 key inside the workload. Cloud KMS wraps the data-encryption key. The workload
@@ -327,7 +329,7 @@ object, and atomically replaces the envelope with an authenticated `active`
 form before serving. A restart can finish an interrupted pending bootstrap with
 the same pool identity. An active envelope never recreates a missing
 unprofiled counter, and creates a missing profile counter only under
-`--create-profile-counters`.
+`--create-profile-counter` naming that profile.
 Cloud KMS must unwrap the same data-encryption key before the public key is
 served. A denial, corrupt envelope, mismatched KMS resource, or changed public
 metadata stops startup.

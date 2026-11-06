@@ -45,7 +45,7 @@ func profiledWorkload(
 	t *testing.T,
 	envelopes *memoryStore,
 	objs map[string]*memoryCounterObject,
-	create bool,
+	create []string,
 ) (*Workload, *testTokens, error) {
 	t.Helper()
 	profiles := make(map[string]CounterStore, len(objs))
@@ -74,7 +74,7 @@ func twoProfiles(t *testing.T) (*Workload, map[string]*memoryCounterObject) {
 		profileMainnet: {},
 		profilePreview: {},
 	}
-	w, _, err := profiledWorkload(t, &memoryStore{}, objs, false)
+	w, _, err := profiledWorkload(t, &memoryStore{}, objs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestProfiledStateIsBoundToItsProfile(t *testing.T) {
 		profileMainnet: {},
 		profilePreview: {},
 	}
-	w, _, err := profiledWorkload(t, envelopes, objs, false)
+	w, _, err := profiledWorkload(t, envelopes, objs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,11 +357,11 @@ func TestProfiledStateIsBoundToItsProfile(t *testing.T) {
 		profileMainnet: objs[profilePreview],
 		profilePreview: objs[profileMainnet],
 	}
-	if _, _, err := profiledWorkload(t, envelopes, swapped, false); err == nil {
+	if _, _, err := profiledWorkload(t, envelopes, swapped, nil); err == nil {
 		t.Fatal("workload started with swapped profile counters")
 	}
 	// the same objects restart and keep their counters
-	w, _, err = profiledWorkload(t, envelopes, objs, false)
+	w, _, err = profiledWorkload(t, envelopes, objs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestProfiledWorkloadRefusesLegacyCounterObject(t *testing.T) {
 		t,
 		envelopes,
 		map[string]*memoryCounterObject{profileMainnet: legacy},
-		true,
+		[]string{profileMainnet},
 	)
 	if err == nil {
 		t.Fatal("profile adopted an unprofiled counter object")
@@ -466,7 +466,11 @@ func TestProfiledConfigValidation(t *testing.T) {
 		},
 		"profile counter creation without profiles": func(c *Config) {
 			c.Counter = &memoryStore{}
-			c.CreateProfileCounters = true
+			c.CreateProfileCounters = []string{"p"}
+		},
+		"profile counter creation for an unserved profile": func(c *Config) {
+			c.Profiles = map[string]CounterStore{"p": bound("p")}
+			c.CreateProfileCounters = []string{"q"}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -504,18 +508,20 @@ func TestProfileCounterCreationNeedsOptIn(t *testing.T) {
 	t.Parallel()
 	envelopes := &memoryStore{}
 	objs := map[string]*memoryCounterObject{profileMainnet: {}}
-	if _, _, err := profiledWorkload(t, envelopes, objs, false); err != nil {
+	if _, _, err := profiledWorkload(t, envelopes, objs, nil); err != nil {
 		t.Fatal(err)
 	}
 	// adding a profile to an active key needs the explicit opt-in
 	objs[profilePreview] = &memoryCounterObject{}
-	if _, _, err := profiledWorkload(t, envelopes, objs, false); err == nil {
+	if _, _, err := profiledWorkload(t, envelopes, objs, nil); err == nil {
 		t.Fatal("a new profile counter was created without the opt-in")
 	}
 	if profileObject(t, objs, profilePreview).data != nil {
 		t.Fatal("refused start wrote the counter")
 	}
-	if _, _, err := profiledWorkload(t, envelopes, objs, true); err != nil {
+	if _, _, err := profiledWorkload(
+		t, envelopes, objs, []string{profilePreview},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if profileObject(t, objs, profilePreview).data == nil {
@@ -543,7 +549,7 @@ func TestProfiledInventory(t *testing.T) {
 		profileMainnet: {},
 		profilePreview: {},
 	}
-	w, tokens, err := profiledWorkload(t, &memoryStore{}, objs, false)
+	w, tokens, err := profiledWorkload(t, &memoryStore{}, objs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -784,5 +790,32 @@ func TestProfiledCounterStoreNeedsBaseObject(t *testing.T) {
 		"pool-cold/counter.json", profileMainnet,
 	), "pool-cold/counter.json/profiles/pool@mainnet"; got != want {
 		t.Fatalf("profile counter object = %q, want %q", got, want)
+	}
+}
+
+// Creating the counter of a profile being added must not recreate the
+// missing counter of another profile, which would reset its issue history.
+func TestProfileCounterCreationIsScopedToNamedProfiles(t *testing.T) {
+	t.Parallel()
+	envelopes := &memoryStore{}
+	objs := map[string]*memoryCounterObject{profileMainnet: {}}
+	w, _, err := profiledWorkload(t, envelopes, objs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireProfiledIssue(t, w, profiledRequest(
+		w, profileMainnet, backend.PurposeOpCert, 1, 0, 100,
+	), 0)
+	_ = w.Close()
+	// the mainnet counter object is lost while preview is being added
+	objs[profileMainnet] = &memoryCounterObject{}
+	objs[profilePreview] = &memoryCounterObject{}
+	if _, _, err := profiledWorkload(
+		t, envelopes, objs, []string{profilePreview},
+	); err == nil {
+		t.Fatal("start recreated a missing counter of a profile not named")
+	}
+	if profileObject(t, objs, profileMainnet).data != nil {
+		t.Fatal("start recreated the missing counter of a profile not named")
 	}
 }

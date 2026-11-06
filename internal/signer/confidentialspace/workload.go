@@ -97,9 +97,9 @@ type Config struct {
 	// own counter store bound to that profile, as NewProfiledCloudCounterStore
 	// returns. Exclusive with Counter.
 	Profiles map[string]CounterStore
-	// CreateProfileCounters lets a start create the counter state of a
-	// profile that has none yet. It requires Profiles.
-	CreateProfileCounters bool
+	// CreateProfileCounters names the profiles whose missing counter state
+	// a start may create. Each must be in Profiles.
+	CreateProfileCounters []string
 }
 
 type envelope struct {
@@ -162,6 +162,10 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	if err != nil {
 		return nil, err
 	}
+	create := make(map[string]bool, len(cfg.CreateProfileCounters))
+	for _, profile := range cfg.CreateProfileCounters {
+		create[profile] = true
+	}
 	key, err := loadOrCreateKey(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -176,8 +180,7 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 			wipe(key.priv)
 			return nil, fmt.Errorf("profile %q has no counter store", profile)
 		}
-		allowCreate := key.pending ||
-			(profile != "" && cfg.CreateProfileCounters)
+		allowCreate := key.pending || (profile != "" && create[profile])
 		if err := counter.Prepare(ctx, hash, allowCreate); err != nil {
 			wipe(key.priv)
 			if profile != "" {
@@ -222,7 +225,7 @@ func serviceCounters(cfg Config) (map[string]CounterStore, error) {
 				"confidential space workload requires token, KMS, envelope, and counter providers",
 			)
 		}
-		if cfg.CreateProfileCounters {
+		if len(cfg.CreateProfileCounters) > 0 {
 			return nil, errors.New(
 				"profile counter creation requires profiles",
 			)
@@ -256,6 +259,13 @@ func serviceCounters(cfg Config) (map[string]CounterStore, error) {
 			)
 		}
 		counters[name] = store
+	}
+	for _, name := range cfg.CreateProfileCounters {
+		if _, ok := counters[name]; !ok {
+			return nil, fmt.Errorf(
+				"profile counter creation names unserved profile %q", name,
+			)
+		}
 	}
 	return counters, nil
 }

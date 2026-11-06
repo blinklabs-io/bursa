@@ -45,7 +45,7 @@ func confidentialSpaceCommand() *cobra.Command {
 		tlsKeyFile     string
 		clientCAFile   string
 		profiles       []string
-		createProfiles bool
+		createProfiles []string
 	)
 	cmd := &cobra.Command{
 		Use:   "confidential-space-workload",
@@ -90,9 +90,9 @@ func confidentialSpaceCommand() *cobra.Command {
 				Wrapper:               wrapper,
 				CreateProfileCounters: createProfiles,
 			}
-			if createProfiles && len(profiles) == 0 {
+			if len(createProfiles) > 0 && len(profiles) == 0 {
 				return errors.New(
-					"--create-profile-counters requires --profile",
+					"--create-profile-counter requires --profile",
 				)
 			}
 			if len(profiles) == 0 {
@@ -192,7 +192,7 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringArrayVar(&profiles, "profile", nil, "serve the key under this profile, repeatable; each profile has its own counter object <counter-object>/profiles/<profile>, which does not take over the --counter-object state, and requests without a profile are refused")
 	cmd.Flags().
-		BoolVar(&createProfiles, "create-profile-counters", false, "create the missing counter object of a --profile, for the one start that adds a profile; a deleted counter object is recreated empty too")
+		StringArrayVar(&createProfiles, "create-profile-counter", nil, "create the missing counter object of this --profile, repeatable, for the one start that adds it; a missing counter object of any other profile still stops startup")
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().
