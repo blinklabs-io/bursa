@@ -248,17 +248,39 @@ protocol for one pool cold key. It runs from the signer container image, obtains
 custom tokens from the Confidential Space launcher socket, and exposes only
 `/v1/inventory` and `/v1/sign` over TLS 1.3. Both endpoints require a client
 certificate signed by `--client-ca-file`. The sign endpoint accepts only a
-`pool` key with the `opcert` purpose and the canonical 48-byte
+`pool` key with the `opcert` or `opcert-next` purpose and the 48-byte
 operational-certificate payload. It rejects reused request nonces and verifies
 each signature before returning it.
 
-Two signer features are refused by design:
+The workload serves both opcert forms, and keeps all counter state in the
+Cloud Storage counter object:
 
-- `chain_counter` requests. The signer sends these as `opcert-next`, which
-  accepts the same chain counter again so a KES rotation can reuse an issue
-  number. The workload's durable counter only advances, so it never signs a
-  second certificate at an issue number it has already used. Send
-  `issue_counter` instead.
+- `issue_counter` requests (`opcert`) must carry the next number in the
+  object's sequence. The workload records that number and the certificate's
+  KES period.
+- `chain_counter` requests (`opcert-next`) follow the armory device's rules.
+  The workload issues the chain counter plus one and returns it as
+  `issue_counter`. It records the highest chain counter reported, the last
+  number issued and that certificate's KES period. It refuses a chain counter
+  below the recorded one ("chain counter below the recorded on-chain counter")
+  or above the last issued number ("chain counter above the last counter the
+  device issued"); the signer maps both to HTTP 409. It also refuses
+  reissuing the last number at a lower KES period ("KES period below the
+  logged opcert at this counter"), and with the same text a chain counter
+  that would issue a number below the last issued one, whose KES period is
+  not recorded, so the last issued number never decreases. Repeating the
+  recorded request signs again without a write.
+
+The counter object keeps its version. It gains `opcert_floor`, `last_issued`
+and `last_issued_period`, omitted while zero, so an object written earlier
+loads unchanged. For such an object the last issued number is taken to be the
+one before `next_issue_number`, and the unknown KES period is 0 and refuses
+nothing. Both request forms write the new fields, and an earlier workload
+release cannot read an object that has them; roll the workload forward, not
+back, once this release has signed a certificate.
+
+One signer feature is still refused:
+
 - A backend `profile`. The workload signs no profile binding, so leave
   `profile` unset on its `confidential-space` backend; with it set, the
   inventory request is refused and the backend does not load.
@@ -309,10 +331,13 @@ workload requests it for the configured signer audience with
 Use direct resource access for the Cloud KMS key and counter object. Before a
 signature is made, the workload commits the operational-certificate issue
 counter to the configured Cloud Storage object with a generation precondition.
-The first counter must be `0`, and every later counter must be exactly one
-greater than the committed value. The maximum `uint64` value is refused. This
-keeps the counter sequential across restarts and concurrent workload replicas
-without allowing one request to exhaust the counter range. Give the workload
+For `issue_counter` requests the first counter must be `0`, and every later
+counter must be exactly one greater than the committed value. A
+`chain_counter` request instead issues the chain counter plus one, which can
+skip numbers or repeat the last one, and a repeat of the recorded request
+signs without a write. The maximum `uint64` value is refused. This keeps the
+counter consistent across restarts and concurrent workload replicas without
+allowing one request to exhaust the counter range. Give the workload
 identity only `storage.objects.get`,
 `storage.objects.create`, and `storage.objects.delete` on the configured object
 name. Cloud Storage requires delete permission when a new generation replaces

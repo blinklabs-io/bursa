@@ -32,6 +32,7 @@ import (
 	"sync"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/opcertrule"
 )
 
 const (
@@ -66,7 +67,20 @@ type EnvelopeStore interface {
 // sequential operational-certificate issue counters.
 type CounterStore interface {
 	Prepare(context.Context, backend.KeyHash, bool) error
-	CheckAndAdvance(context.Context, backend.KeyHash, uint64) error
+	// CheckAndAdvance commits the next issue number of the explicit path and
+	// records the KES period it is signed for.
+	CheckAndAdvance(
+		ctx context.Context,
+		key backend.KeyHash,
+		issueNumber, period uint64,
+	) error
+	// NextOpCert chooses and records the issue number for an opcert-next
+	// request from the chain counter and KES period.
+	NextOpCert(
+		ctx context.Context,
+		key backend.KeyHash,
+		chain, period uint64,
+	) (uint64, error)
 }
 
 // Config contains the workload's immutable security inputs.
@@ -471,10 +485,11 @@ func (w *Workload) Inventory(
 	}, nil
 }
 
-// Sign permits only canonical pool operational-certificate signable bytes with
-// an explicit issue counter. It refuses opcert-next, which would let the host
-// re-issue an existing number for a new KES key, and profiled requests, whose
-// binding signature this workload does not produce.
+// Sign serves pool operational-certificate requests: opcert with an explicit
+// issue counter, and opcert-next, where the workload chooses the issue number
+// from the chain counter with the armory device's rules and its durable
+// counter. It refuses profiled requests, whose binding signature this
+// workload does not produce.
 func (w *Workload) Sign(
 	ctx context.Context,
 	req backend.AttestedRequest,
@@ -484,7 +499,8 @@ func (w *Workload) Sign(
 		Nonce:   append([]byte(nil), req.Nonce...),
 	}
 	if req.Version != backend.AttestedProtocol ||
-		req.Purpose != backend.PurposeOpCert ||
+		(req.Purpose != backend.PurposeOpCert &&
+			req.Purpose != backend.PurposeOpCertNext) ||
 		req.Profile != "" ||
 		req.Role != backend.KeyTypePool ||
 		req.KeyHash != w.hash.String() ||
@@ -505,8 +521,25 @@ func (w *Workload) Sign(
 		resp.Error = "request refused"
 		return resp, nil
 	}
-	issueNumber := binary.BigEndian.Uint64(req.Payload[32:40])
-	if err := w.counter.CheckAndAdvance(ctx, w.hash, issueNumber); err != nil {
+	signable := req.Payload
+	var issued *uint64
+	counter := binary.BigEndian.Uint64(req.Payload[32:40])
+	period := binary.BigEndian.Uint64(req.Payload[40:])
+	if req.Purpose == backend.PurposeOpCertNext {
+		issue, err := w.counter.NextOpCert(ctx, w.hash, counter, period)
+		if err != nil {
+			resp.Error = opCertNextRefusal(err)
+			return resp, nil
+		}
+		signable = bytes.Clone(req.Payload)
+		binary.BigEndian.PutUint64(signable[32:40], issue)
+		issued = &issue
+	} else if err := w.counter.CheckAndAdvance(
+		ctx,
+		w.hash,
+		counter,
+		period,
+	); err != nil {
 		resp.Error = "request refused"
 		return resp, nil
 	}
@@ -518,16 +551,35 @@ func (w *Workload) Sign(
 		w.nonceFIFO = append(w.nonceFIFO, nonce)
 	}
 	w.nonces[nonce] = struct{}{}
-	sig := w.signFunc(w.priv, req.Payload)
+	sig := w.signFunc(w.priv, signable)
 	if len(sig) != ed25519.SignatureSize ||
-		!ed25519.Verify(w.pub, req.Payload, sig) {
+		!ed25519.Verify(w.pub, signable, sig) {
 		wipe(sig)
 		return backend.AttestedResponse{}, errors.New(
 			"pool key signature verification failed",
 		)
 	}
 	resp.Signature = sig
+	resp.IssueCounter = issued
 	return resp, nil
+}
+
+// opCertNextRefusal is the refusal text for an opcert-next error. The counter
+// rules' own texts are the ones the signer host recognises (and, for
+// below-floor, above-issued and a backdated reissue, maps to a counter
+// conflict); anything else, such as a storage failure, is not disclosed.
+func opCertNextRefusal(err error) string {
+	for _, rule := range []error{
+		opcertrule.ErrBelowFloor,
+		opcertrule.ErrAboveIssued,
+		opcertrule.ErrKESBackdated,
+		opcertrule.ErrOutOfRange,
+	} {
+		if errors.Is(err, rule) {
+			return rule.Error()
+		}
+	}
+	return "request refused"
 }
 
 // Handler serves the existing attested signer protocol with strict body
