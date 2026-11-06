@@ -49,9 +49,12 @@ watermark store, the counterpart of the armory device's floor reset.
 Sets the opcert-chain-floor record to --chain-counter, lower or higher than the
 stored value, and deletes the opcert-chain-issued record. The reported counter
 is trusted. The opcert-counter record (explicit issue counters) and the tx and
-cip8 payload watermarks are not changed. The write is one transaction, but it
-does not serialize with in-flight opcert requests: stop or drain opcert
-requests for the key first, or one can recreate opcert-chain-issued.
+cip8 payload watermarks are not changed. The write is one transaction that also
+bumps the key's opcert-chain-reset-gen record. The reset is fenced against
+in-flight opcert requests: one that read the records before the reset and
+commits after it is refused with a conflict and returns no signature. Pausing
+opcert requests for the key avoids those refusals but is not required for
+safety.
 
 This is a local administrative command: it reads the signer config and writes
 the store directly, and no API route exposes it. It refuses a mem store and

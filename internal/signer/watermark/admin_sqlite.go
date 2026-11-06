@@ -16,7 +16,9 @@ package watermark
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"math"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 )
@@ -28,8 +30,9 @@ func (s *SqliteWatermark) AdminResetCounters(
 	key backend.KeyHash,
 	set []CounterSet,
 	clear []string,
+	bump ...string,
 ) error {
-	if err := validateAdminReset(set, clear); err != nil {
+	if err := validateAdminReset(set, clear, bump); err != nil {
 		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -37,6 +40,11 @@ func (s *SqliteWatermark) AdminResetCounters(
 		return fmt.Errorf("counter watermark admin reset: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	for _, b := range bump {
+		if err := sqliteBumpCounter(ctx, tx, key, b); err != nil {
+			return err
+		}
+	}
 	for _, c := range set {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO counter_watermark (record_key, counter) VALUES (?, ?)
@@ -54,6 +62,41 @@ func (s *SqliteWatermark) AdminResetCounters(
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("counter watermark admin reset: commit: %w", err)
+	}
+	return nil
+}
+
+// sqliteBumpCounter adds one to the scope's counter, from 0 if absent. The
+// insert comes first so the transaction holds the write lock before it reads.
+func sqliteBumpCounter(
+	ctx context.Context,
+	tx *sql.Tx,
+	key backend.KeyHash,
+	scope string,
+) error {
+	rk := recordKey(key, scope)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO counter_watermark (record_key, counter) VALUES (?, ?)`,
+		rk, counterEncode(0)); err != nil {
+		return fmt.Errorf("counter watermark admin reset: bump: %w", err)
+	}
+	var have string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT counter FROM counter_watermark WHERE record_key = ?`,
+		rk).Scan(&have); err != nil {
+		return fmt.Errorf("counter watermark admin reset: bump: %w", err)
+	}
+	v, err := counterDecode(have)
+	if err != nil || v == math.MaxUint64 {
+		return fmt.Errorf(
+			"counter watermark admin reset: bump %q: bad value",
+			scope,
+		)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE counter_watermark SET counter = ?, updated_at = strftime('%s','now') WHERE record_key = ?`,
+		counterEncode(v+1), rk); err != nil {
+		return fmt.Errorf("counter watermark admin reset: bump: %w", err)
 	}
 	return nil
 }

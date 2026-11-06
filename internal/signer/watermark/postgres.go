@@ -373,6 +373,9 @@ func postgresCounterUpsert(op CounterOp) (string, []any) {
 		extra = []any{counterEncode(op.Min)}
 	case CounterStrict:
 		guard = `(EXCLUDED.counter COLLATE "C") > (signer_counter_watermark.counter COLLATE "C")`
+	case CounterEqual:
+		// checked by its own read, never upserted
+		guard = `false`
 	default:
 		guard = `false`
 	}
@@ -408,6 +411,12 @@ func (s *PostgresWatermark) CheckAndCommitCounters(
 		_ = tx.Rollback(rollbackCtx)
 	}(context.WithoutCancel(ctx))
 	for _, op := range ops {
+		if op.Kind == CounterEqual {
+			if err := postgresRequireCounter(ctx, tx, key, op); err != nil {
+				return err
+			}
+			continue
+		}
 		q, extra := postgresCounterUpsert(op)
 		want := counterEncode(op.Value)
 		var have string
@@ -424,5 +433,34 @@ func (s *PostgresWatermark) CheckAndCommitCounters(
 		return fmt.Errorf("counter watermark commit: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+// postgresRequireCounter checks a CounterEqual op inside tx. A missing record
+// is created at 0 first, so there is always a row to lock, and the read takes
+// FOR SHARE: concurrent commits do not block one another, while the reset's
+// FOR UPDATE on the same row waits for them and they wait for it.
+func postgresRequireCounter(
+	ctx context.Context,
+	tx pgx.Tx,
+	key backend.KeyHash,
+	op CounterOp,
+) error {
+	rk := recordKey(key, op.Scope)
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
+		 ON CONFLICT (record_key) DO NOTHING`,
+		rk, counterEncode(0)); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	var have string
+	if err := tx.QueryRow(ctx,
+		`SELECT counter FROM signer_counter_watermark WHERE record_key = $1 FOR SHARE`,
+		rk).Scan(&have); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	if have != counterEncode(op.Value) {
+		return &CounterRegressionError{Scope: op.Scope}
+	}
 	return nil
 }

@@ -34,12 +34,17 @@ type CounterSet struct {
 type CounterAdmin interface {
 	// AdminResetCounters unconditionally records each set value, lower or
 	// higher than the stored one, and deletes every clear scope, for key in
-	// one atomic transaction. It performs none of the monotonic checks.
+	// one atomic transaction. It performs none of the monotonic checks. Each
+	// bump scope is first locked and incremented by one (from 0 if absent),
+	// before any set or clear, so a CounterEqual op of
+	// CheckAndCommitCounters on that scope fences against the reset: a
+	// commit holds the record until it ends, or sees the new value.
 	AdminResetCounters(
 		ctx context.Context,
 		key backend.KeyHash,
 		set []CounterSet,
 		clear []string,
+		bump ...string,
 	) error
 }
 
@@ -50,8 +55,12 @@ var (
 
 // validateAdminReset rejects an empty reset and a scope that is both set and
 // cleared.
-func validateAdminReset(set []CounterSet, clear []string) error {
-	if len(set) == 0 && len(clear) == 0 {
+func validateAdminReset(
+	set []CounterSet,
+	clear []string,
+	bump []string,
+) error {
+	if len(set) == 0 && len(clear) == 0 && len(bump) == 0 {
 		return errors.New("counter watermark: empty admin reset")
 	}
 	seen := make(map[string]struct{}, len(set))
@@ -63,6 +72,20 @@ func validateAdminReset(set []CounterSet, clear []string) error {
 			return fmt.Errorf(
 				"counter watermark: scope %q is both set and cleared", c,
 			)
+		}
+	}
+	for _, b := range bump {
+		if _, dup := seen[b]; dup {
+			return fmt.Errorf(
+				"counter watermark: scope %q is both set and bumped", b,
+			)
+		}
+		for _, c := range clear {
+			if c == b {
+				return fmt.Errorf(
+					"counter watermark: scope %q is both cleared and bumped", b,
+				)
+			}
 		}
 	}
 	return nil

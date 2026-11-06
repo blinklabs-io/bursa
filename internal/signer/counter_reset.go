@@ -89,7 +89,9 @@ func ReadOpCertRecords(
 // ResetOpCertChain is the administrative reset of the chain-counter records,
 // the signer's counterpart of the armory device's floor reset. It sets the
 // chain floor of key to chainCounter, lower or higher than the stored value,
-// and clears the issued record, in one transaction. The reported counter is
+// and clears the issued record, in one transaction that first bumps the reset
+// generation, which refuses any opcert request that read the records before
+// the reset and commits after it. The reported counter is
 // trusted. The explicit issue-counter record and the payload watermarks are
 // not touched. With apply false no record is written and after is the planned
 // state; store then needs only to read.
@@ -131,6 +133,7 @@ func ResetOpCertChain(
 			{Scope: opcertChainFloorScope, Value: chainCounter},
 		},
 		[]string{opcertChainIssuedScope},
+		opcertResetGenScope,
 	)
 	if err != nil {
 		return before, after, err

@@ -312,10 +312,13 @@ refuses it the same way. With `mode: warn`, A logs the conflict and signs
 without changing its records.
 
 Reset A's records to the current chain counter before failing back. The
-reset does not serialize with in-flight opcert requests: a request for the
-key that passed its pre-sign check can commit after the reset and recreate
-`opcert-chain-issued`. Stop or drain opcert requests for the key first (pause
-the renewal for that pool), reset, then resume:
+reset is fenced against in-flight opcert requests: it bumps a per-key reset
+generation (`opcert-chain-reset-gen`) in the same transaction, and a request
+that read the records before the reset and commits after it is refused with a
+conflict (HTTP 409) and returns no signature, so it cannot overwrite the
+reset's floor or recreate `opcert-chain-issued`. The caller retries. Pausing
+the renewal for that pool around the reset is still advisable, to avoid
+refused requests, but is not required for safety:
 
 ```
 bursa signer counter-reset --config signer.yaml \
@@ -328,7 +331,7 @@ SQLite may still create its own `-wal` and `-shm` files beside the store,
 which hold no records; the dry run fails with an error naming the directory
 when it cannot. It sets `opcert-chain-floor` to the reported counter, lower or
 higher than the stored value, and deletes `opcert-chain-issued`, in one
-transaction. It leaves `opcert-counter` (explicit `issue_counter` requests)
+transaction that also bumps `opcert-chain-reset-gen`. It leaves `opcert-counter` (explicit `issue_counter` requests)
 and the tx and cip8 watermarks alone, and refuses a `mem` store, watermark
 `mode: off`, and a `file` store path that does not exist. It is a local command with no API route.
 
