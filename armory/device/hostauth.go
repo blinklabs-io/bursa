@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -268,10 +269,8 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 	now := s.clock()
 	s.purgeUsed(now)
 
-	binary.BigEndian.PutUint64(
-		c,
-		uint64(now.UnixNano()),
-	) //nolint:gosec // post-epoch time
+	stamp := uint64(now.UnixNano()) //nolint:gosec // post-epoch time
+	binary.BigEndian.PutUint64(c, stamp)
 	copy(c[challengeBody:], s.challengeMAC(c[:challengeBody]))
 
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
@@ -290,8 +289,12 @@ func (s *Service) takeChallenge(ch []byte) error {
 	}
 
 	now := s.clock()
-	nanos := int64(binary.BigEndian.Uint64(ch)) //nolint:gosec // bounded by MAC
-	issued := time.Unix(0, nanos)
+	raw := binary.BigEndian.Uint64(ch)
+	if raw > math.MaxInt64 {
+		return errBad
+	}
+
+	issued := time.Unix(0, int64(raw)) //nolint:gosec // checked above
 
 	if age := now.Sub(issued); age < 0 || age >= challengeTTL {
 		return errBad
