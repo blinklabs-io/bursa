@@ -42,12 +42,14 @@ const opcertCounterScope = "opcert-counter"
 // rules differ: a chain counter may repeat, a legacy issue counter may not.
 const opcertChainFloorScope = "opcert-chain-floor"
 
-// opcertChainIssuedScope records the highest issue number SignOpCertFromChain
-// produced. The ledger only holds counters that were issued, so a reported
-// chain counter above it is refused: it would raise the floor past every
-// counter the ledger accepts and lock out renewals. With no record, as for a
-// key first signed before this record existed, the chain counter is not
-// bounded until the next opcert sets it.
+// opcertChainIssuedScope records the highest issue number signed for a cold
+// key by either request form. The ledger only holds counters that were
+// issued, so a reported chain counter above it is refused: it would raise the
+// floor past every counter the ledger accepts and lock out renewals. Both
+// forms are also bounded below by it: an issue counter must exceed it, and a
+// chain counter's issue number (chain + 1) may repeat it but not go under it.
+// With no record, as for a key first signed before this record existed,
+// neither bound applies until the next opcert sets it.
 const opcertChainIssuedScope = "opcert-chain-issued"
 
 // opcertCounterRule is the anti-double-sign check for one request: the value
@@ -314,9 +316,9 @@ func (c *Coordinator) signOpCert(
 	var (
 		counterWM               watermark.CounterWatermark
 		counterConflictReported bool
-		// aboveIssued marks a chain counter above the issued record that warn
-		// mode signs anyway; it leaves the floor and the record unchanged.
-		aboveIssued bool
+		// issuedConflict marks a request outside the issued record's bounds
+		// that warn mode signs anyway; it leaves every record unchanged.
+		issuedConflict bool
 	)
 	if c.deps.WMMode != watermark.ModeOff {
 		cw, ok := c.deps.Watermark.(watermark.CounterWatermark)
@@ -398,7 +400,9 @@ func (c *Coordinator) signOpCert(
 				"issue counter is not strictly greater than the highest signed (warn mode)",
 			)
 		}
-		if rule.floor && !counterConflictReported {
+		// Both request forms are checked against the one issued record, so
+		// switching forms cannot go back below a counter already issued.
+		if !counterConflictReported {
 			issued, issuedExists, ierr := cw.CounterFor(
 				ctx,
 				hash,
@@ -423,9 +427,56 @@ func (c *Coordinator) signOpCert(
 					ierr,
 				)
 			}
-			if issuedExists && rule.value > issued {
+			// a chain counter may reissue the last issued counter, an issue
+			// counter may not
+			belowIssued := issuedExists &&
+				(issueCounter < issued || !rule.floor && issueCounter == issued)
+			if belowIssued {
 				counterConflictReported = true
-				aboveIssued = true
+				issuedConflict = true
+				c.deps.Metrics.observeWatermarkConflict()
+				if c.deps.WMMode == watermark.ModeEnforce {
+					c.deps.Logger.Info(
+						"sign",
+						"type",
+						"opcert",
+						"caller-key",
+						hash.String(),
+						"issue-counter",
+						issueCounter,
+						"issued-counter",
+						issued,
+						"result",
+						"denied",
+						"reason",
+						"issue counter below the last issued counter",
+					)
+					c.deps.Metrics.observe("opcert", string(CodeConflict))
+					c.deps.Metrics.observeDeny(string(CodeConflict))
+					return nil, CodeConflict, fmt.Errorf(
+						"opcert issue counter %d is below the last counter %d issued for this cold key, or repeats it without a chain counter",
+						issueCounter,
+						issued,
+					)
+				}
+				c.deps.Logger.Warn(
+					"sign",
+					"type",
+					"opcert",
+					"caller-key",
+					hash.String(),
+					"issue-counter",
+					issueCounter,
+					"issued-counter",
+					issued,
+					"result",
+					"warn",
+					"reason",
+					"issue counter below the last issued counter (warn mode)",
+				)
+			} else if issuedExists && rule.floor && rule.value > issued {
+				counterConflictReported = true
+				issuedConflict = true
 				c.deps.Metrics.observeWatermarkConflict()
 				if c.deps.WMMode == watermark.ModeEnforce {
 					c.deps.Logger.Info(
@@ -574,88 +625,139 @@ func (c *Coordinator) signOpCert(
 		)
 	}
 
+	// A request warn mode signed despite a conflict records no issue number.
 	recordIssued := !counterConflictReported
 
-	// Persist the new highest counter only after a verified signature. The commit
-	// is an atomic advance-if-greater, so if a concurrent request advanced the
-	// counter past ours between the pre-sign check and here, we lose the race and
-	// must discard this signature rather than return a second opcert for a
-	// now-stale counter.
-	if counterWM != nil && !aboveIssued {
-		if werr := rule.commit(ctx, counterWM, hash); werr != nil {
-			if errors.Is(werr, watermark.ErrCounterRegression) {
-				if c.deps.WMMode == watermark.ModeEnforce {
-					c.deps.Logger.Info(
-						"sign",
-						"type",
-						"opcert",
-						"caller-key",
-						hash.String(),
-						"issue-counter",
-						issueCounter,
-						"result",
-						"denied",
-						"reason",
-						"issue counter regression detected at commit (concurrent signer)",
-					)
-					c.deps.Metrics.observe("opcert", string(CodeConflict))
-					c.deps.Metrics.observeDeny(string(CodeConflict))
-					c.deps.Metrics.observeWatermarkConflict()
-					return nil, CodeConflict, rule.conflict(0, false)
-				}
-				recordIssued = false
-				// warn mode: the stored counter already meets or exceeds ours;
-				// nothing to advance. The signature is still returned. Only log
-				// and meter here if the pre-sign check did not already do so for
-				// this same request, so a request that was stale from the start
-				// is not double-counted.
-				if !counterConflictReported {
-					args := []any{
-						"type",
-						"opcert",
-						"caller-key",
-						hash.String(),
-						"issue-counter",
-						issueCounter,
-					}
-					// Best-effort: include the counter that won the race so this
-					// audit record can be correlated to it, matching the fields
-					// the pre-sign warn path records. A lookup failure here must
-					// not block returning the already-produced signature.
-					if stored, ok, cerr := counterWM.CounterFor(ctx, hash, rule.scope); cerr == nil &&
-						ok {
-						args = append(args, "stored-counter", stored)
-					}
-					args = append(
-						args,
-						"result",
-						"warn",
-						"reason",
-						"issue counter regression detected at commit (concurrent signer; warn mode)",
-					)
-					c.deps.Logger.Warn("sign", args...)
-					c.deps.Metrics.observeWatermarkConflict()
-				}
-			} else {
-				c.deps.Logger.Error("sign", "type", "opcert", "caller-key", hash.String(), "result", "error", "reason", werr.Error())
-				if c.deps.WMMode == watermark.ModeEnforce {
-					c.deps.Metrics.observe("opcert", string(CodeBackend))
-					c.deps.Metrics.observeBackendError("watermark")
-					return nil, CodeBackend, fmt.Errorf("opcert counter commit: %w", werr)
-				}
-			}
+	// Persist the new counters only after a verified signature. The commit is
+	// atomic, so if a concurrent request advanced either counter past ours
+	// between the pre-sign check and here, we lose the race and must discard
+	// this signature rather than return a second opcert for a now-stale
+	// counter. The form-specific record and the issued record (the issue
+	// number, from either request form: an opcert issued with an explicit
+	// counter reaches the chain too) commit in one transaction, so a request
+	// refused at either leaves neither behind. The issued record is the
+	// authoritative cross-form check: an issue counter must exceed it, a chain
+	// counter's issue number may equal it and must not leave it below the
+	// chain counter, as a concurrent issue_counter request on a key with no
+	// record could have written one there after the pre-sign check.
+	if counterWM != nil && !issuedConflict {
+		formOp := watermark.CounterOp{
+			Scope: rule.scope,
+			Value: rule.value,
+			Kind:  watermark.CounterStrict,
 		}
-	}
-
-	// Record the issue number for the chain-counter bound, from either request
-	// form: an opcert issued with an explicit counter reaches the chain too. A
-	// lower value means a concurrent request already recorded a higher one,
-	// which keeps the bound. A request warn mode signed despite a conflict is
-	// not recorded. It is written after the floor so that a failure
-	// here leaves the bound lower, never above an opcert that was not returned.
-	if counterWM != nil && recordIssued {
-		if werr := counterWM.CheckAndRaiseFloor(ctx, hash, opcertChainIssuedScope, issueCounter); werr != nil &&
-			!errors.Is(werr, watermark.ErrCounterRegression) {
+		if rule.floor {
+			formOp.Kind = watermark.CounterFloor
+		}
+		var werr error
+		if recordIssued {
+			issuedOp := watermark.CounterOp{
+				Scope: opcertChainIssuedScope,
+				Value: issueCounter,
+				Kind:  watermark.CounterStrict,
+			}
+			if rule.floor {
+				issuedOp.Kind = watermark.CounterFloorFrom
+				issuedOp.Min = rule.value
+			}
+			werr = counterWM.CheckAndCommitCounters(ctx, hash, formOp, issuedOp)
+		} else {
+			werr = rule.commit(ctx, counterWM, hash)
+		}
+		var regression *watermark.CounterRegressionError
+		switch {
+		case werr == nil:
+		case errors.As(werr, &regression) && regression.Scope == opcertChainIssuedScope:
+			c.deps.Metrics.observeWatermarkConflict()
+			if c.deps.WMMode == watermark.ModeEnforce {
+				c.deps.Logger.Info(
+					"sign",
+					"type",
+					"opcert",
+					"caller-key",
+					hash.String(),
+					"issue-counter",
+					issueCounter,
+					"result",
+					"denied",
+					"reason",
+					"issued counter regression detected at commit (concurrent signer)",
+				)
+				c.deps.Metrics.observe("opcert", string(CodeConflict))
+				c.deps.Metrics.observeDeny(string(CodeConflict))
+				return nil, CodeConflict, fmt.Errorf(
+					"opcert issue counter %d conflicts with a counter issued concurrently for this cold key",
+					issueCounter,
+				)
+			}
+			c.deps.Logger.Warn(
+				"sign",
+				"type",
+				"opcert",
+				"caller-key",
+				hash.String(),
+				"issue-counter",
+				issueCounter,
+				"result",
+				"warn",
+				"reason",
+				"issued counter regression detected at commit (concurrent signer; warn mode)",
+			)
+			// warn mode returns the signature and writes neither record, as
+			// when the pre-sign check finds the issued-record conflict
+		case errors.Is(werr, watermark.ErrCounterRegression):
+			if c.deps.WMMode == watermark.ModeEnforce {
+				c.deps.Logger.Info(
+					"sign",
+					"type",
+					"opcert",
+					"caller-key",
+					hash.String(),
+					"issue-counter",
+					issueCounter,
+					"result",
+					"denied",
+					"reason",
+					"issue counter regression detected at commit (concurrent signer)",
+				)
+				c.deps.Metrics.observe("opcert", string(CodeConflict))
+				c.deps.Metrics.observeDeny(string(CodeConflict))
+				c.deps.Metrics.observeWatermarkConflict()
+				return nil, CodeConflict, rule.conflict(0, false)
+			}
+			// warn mode: the stored counter already meets or exceeds ours;
+			// nothing to advance. The signature is still returned. Only log
+			// and meter here if the pre-sign check did not already do so for
+			// this same request, so a request that was stale from the start
+			// is not double-counted.
+			if !counterConflictReported {
+				args := []any{
+					"type",
+					"opcert",
+					"caller-key",
+					hash.String(),
+					"issue-counter",
+					issueCounter,
+				}
+				// Best-effort: include the counter that won the race so this
+				// audit record can be correlated to it, matching the fields
+				// the pre-sign warn path records. A lookup failure here must
+				// not block returning the already-produced signature.
+				if stored, ok, cerr := counterWM.CounterFor(ctx, hash, rule.scope); cerr == nil &&
+					ok {
+					args = append(args, "stored-counter", stored)
+				}
+				args = append(
+					args,
+					"result",
+					"warn",
+					"reason",
+					"issue counter regression detected at commit (concurrent signer; warn mode)",
+				)
+				c.deps.Logger.Warn("sign", args...)
+				c.deps.Metrics.observeWatermarkConflict()
+			}
+		default:
 			c.deps.Logger.Error(
 				"sign",
 				"type",
@@ -671,7 +773,7 @@ func (c *Coordinator) signOpCert(
 				c.deps.Metrics.observe("opcert", string(CodeBackend))
 				c.deps.Metrics.observeBackendError("watermark")
 				return nil, CodeBackend, fmt.Errorf(
-					"opcert issued counter commit: %w",
+					"opcert counter commit: %w",
 					werr,
 				)
 			}

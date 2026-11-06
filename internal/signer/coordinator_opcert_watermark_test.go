@@ -73,14 +73,14 @@ func (h *capturingHandler) findByReason(reason string) (slog.Record, bool) {
 	return slog.Record{}, false
 }
 
-// pausingCounterWatermark wraps a CounterWatermark and, on the first call to
-// CounterFor, blocks the caller until released. Tests use it to force a
-// specific interleaving between two concurrent SignOpCert calls: the paused
-// goroutine's pre-sign lookup completes (and sees no conflict) before the
-// other goroutine commits, so any regression can only be detected later, at
-// commit time.
+// pausingCounterWatermark wraps a CounterWatermark and, on the first
+// CounterFor of the issued record, the last lookup before signing, blocks the
+// caller until released. Tests use it to force a specific interleaving
+// between two concurrent opcert requests: the paused goroutine's pre-sign
+// checks complete (and see no conflict) before the other goroutine commits,
+// so any regression can only be detected later, at commit time.
 //
-// The "first call" gate uses an atomic CompareAndSwap rather than sync.Once:
+// The "first lookup" gate uses an atomic CompareAndSwap rather than sync.Once:
 // a second, concurrent Once.Do call blocks on Once's internal mutex until the
 // first call's function returns, which here would deadlock (the first call's
 // function only returns once the test observes the second call completing).
@@ -100,7 +100,10 @@ func (p *pausingCounterWatermark) CounterFor(
 	scope string,
 ) (uint64, bool, error) {
 	v, ok, err := p.counter.CounterFor(ctx, key, scope)
-	if p.didPause.CompareAndSwap(false, true) {
+	// the issued record is the last lookup before signing, so the paused
+	// request has passed every pre-sign check when the other one runs
+	if scope == opcertChainIssuedScope &&
+		p.didPause.CompareAndSwap(false, true) {
 		close(p.paused)
 		<-p.release
 	}
@@ -123,6 +126,14 @@ func (p *pausingCounterWatermark) CheckAndRaiseFloor(
 	value uint64,
 ) error {
 	return p.counter.CheckAndRaiseFloor(ctx, key, scope, value)
+}
+
+func (p *pausingCounterWatermark) CheckAndCommitCounters(
+	ctx context.Context,
+	key backend.KeyHash,
+	ops ...watermark.CounterOp,
+) error {
+	return p.counter.CheckAndCommitCounters(ctx, key, ops...)
 }
 
 func newOpCertCoordinator(

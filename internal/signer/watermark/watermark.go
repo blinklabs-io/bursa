@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -117,6 +118,95 @@ type CounterWatermark interface {
 		scope string,
 		value uint64,
 	) error
+	// CheckAndCommitCounters validates and records every op for key in one
+	// atomic operation: if any op's check fails, none is written. A failed
+	// check returns a *CounterRegressionError, which satisfies
+	// errors.Is(err, ErrCounterRegression) and names the refused scope. Each
+	// op applies the same rule as the single-scope method of its Kind, and
+	// the first refused op in argument order is reported. Ops must name
+	// distinct scopes. The SQL stores lock rows in argument order, so callers
+	// must pass ops in one consistent order per scope set.
+	CheckAndCommitCounters(
+		ctx context.Context,
+		key backend.KeyHash,
+		ops ...CounterOp,
+	) error
+}
+
+// CounterOpKind selects the check a CounterOp applies to its scope.
+type CounterOpKind int
+
+const (
+	// CounterStrict records Value only if it exceeds the stored one, as
+	// CheckAndCommitCounter does.
+	CounterStrict CounterOpKind = iota
+	// CounterFloor records Value if no record exists or Value is at least the
+	// stored one, as CheckAndRaiseFloor does.
+	CounterFloor
+	// CounterFloorFrom records Value if no record exists or
+	// Min <= stored <= Value.
+	CounterFloorFrom
+)
+
+// CounterOp is one scope's check-and-record within CheckAndCommitCounters.
+type CounterOp struct {
+	Scope string
+	Value uint64
+	Kind  CounterOpKind
+	// Min is the lower bound on the stored value for CounterFloorFrom.
+	Min uint64
+}
+
+// allows reports whether the op accepts the stored value (none when !exists).
+func (o CounterOp) allows(stored uint64, exists bool) bool {
+	if !exists {
+		return true
+	}
+	switch o.Kind {
+	case CounterFloor:
+		return o.Value >= stored
+	case CounterFloorFrom:
+		return o.Value >= stored && stored >= o.Min
+	case CounterStrict:
+		return o.Value > stored
+	default:
+		return false
+	}
+}
+
+// CounterRegressionError is returned by CheckAndCommitCounters when the check
+// of Scope fails. It satisfies errors.Is(err, ErrCounterRegression).
+type CounterRegressionError struct {
+	Scope string
+}
+
+func (e *CounterRegressionError) Error() string {
+	return fmt.Sprintf("%v (scope %q)", ErrCounterRegression, e.Scope)
+}
+
+func (e *CounterRegressionError) Is(
+	target error,
+) bool {
+	return target == ErrCounterRegression
+}
+
+// validateCounterOps rejects an empty op list, an unknown kind and duplicate
+// scopes, which could not be checked and written atomically against one row.
+func validateCounterOps(ops []CounterOp) error {
+	if len(ops) == 0 {
+		return errors.New("counter watermark: no ops")
+	}
+	seen := make(map[string]struct{}, len(ops))
+	for _, o := range ops {
+		if o.Kind < CounterStrict || o.Kind > CounterFloorFrom {
+			return fmt.Errorf("counter watermark: unknown op kind %d", o.Kind)
+		}
+		if _, dup := seen[o.Scope]; dup {
+			return fmt.Errorf("counter watermark: duplicate scope %q", o.Scope)
+		}
+		seen[o.Scope] = struct{}{}
+	}
+	return nil
 }
 
 // Pinger is an optional interface a Watermark store implements when it has a
@@ -285,6 +375,28 @@ func (m *MemWatermark) CheckAndCommitCounter(
 		return ErrCounterRegression
 	}
 	m.counters[k] = counter
+	return nil
+}
+
+func (m *MemWatermark) CheckAndCommitCounters(
+	_ context.Context,
+	key backend.KeyHash,
+	ops ...CounterOp,
+) error {
+	if err := validateCounterOps(ops); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, o := range ops {
+		prev, ok := m.counters[recordKey(key, o.Scope)]
+		if !o.allows(prev, ok) {
+			return &CounterRegressionError{Scope: o.Scope}
+		}
+	}
+	for _, o := range ops {
+		m.counters[recordKey(key, o.Scope)] = o.Value
+	}
 	return nil
 }
 
