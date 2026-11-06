@@ -386,6 +386,12 @@ func TestIdentityProofRejectsOversizedNonce(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newTestService(t)
+
+	// provisioned, so the nonce size is the only reason left to refuse
+	if code, _ := post(t, s, RouteProvisionIdentity, IdentityRequest{}); code != http.StatusOK {
+		t.Fatalf("provision identity: status %d", code)
+	}
+
 	code, _ := post(
 		t,
 		s,
@@ -393,8 +399,8 @@ func TestIdentityProofRejectsOversizedNonce(t *testing.T) {
 		IdentityProofRequest{Nonce: make([]byte, maxNonce+1)},
 	)
 
-	if code == http.StatusOK {
-		t.Fatal("oversized identity nonce accepted")
+	if code < 400 || code >= 500 {
+		t.Fatalf("oversized identity nonce: status %d, want 4xx", code)
 	}
 }
 

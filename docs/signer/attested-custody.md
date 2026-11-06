@@ -485,11 +485,16 @@ exported or backed up, so a lost or broken device would lose the pool for
 good. A cold key is always created off the device, kept in a backup, and
 imported, so the pool can move to a replacement device.
 
-Before `armory-pool` reads a cold or owner signing key from standard input, it
+Before `armory-pool` sends a cold or owner signing key to the device, it
 requires `-identity` and sends a fresh nonce to `/v1/identity`. The
 device signs the nonce and its public identity under the pinned identity key.
-The tool sends the private-key request only after that proof verifies. The
-device zeroes the request buffer and the decoded key once the request is done.
+The tool sends the private-key request only after that proof verifies; with
+`-host-key-dir` it has already read the request from standard input to resolve
+its scope. The proof does not bind the connection, so an on-path relay could
+forward it and then receive the key: the link to the device must be trusted.
+The device zeroes the request buffer and the decoded key once the request is
+done. Copies held by the host, transport, and host tool that sent the request
+are outside that.
 
 ### Provisioning and wipe authentication
 

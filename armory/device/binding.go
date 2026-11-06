@@ -37,8 +37,10 @@ type KeyInfo struct {
 	PublicKey []byte `json:"public_key"`
 }
 
-// IdentityBinding is the digest the device identity key signs to prove it is
-// the endpoint answering a fresh host nonce.
+// IdentityBinding is the digest the device identity key signs to prove the
+// holder of the identity key answered a fresh host nonce. It does not bind the
+// connection that carries a later request, so an on-path relay can forward the
+// proof; the link to the device must be trusted.
 func IdentityBinding(nonce, publicKey []byte) []byte {
 	h := sha256.New()
 

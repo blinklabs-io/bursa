@@ -1260,6 +1260,14 @@ func (s *Service) identityProof(
 		return IdentityProofResponse{}, errors.New("invalid nonce")
 	}
 
+	if ok, err := s.chip.Exists(profile.IdentityKeyID); err != nil {
+		s.logf("exist check identity: %v", err)
+
+		return IdentityProofResponse{}, errDevice
+	} else if !ok {
+		return IdentityProofResponse{}, errors.New("identity key not provisioned")
+	}
+
 	pub, err := s.chip.PublicKeyEd25519(profile.IdentityKeyID)
 	if err != nil {
 		s.logf("read identity public key: %v", err)

@@ -47,6 +47,8 @@ func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
 	// registered; /v1/challenge issues their challenges
 	http.Handle("/provision/", svc.ProvisioningHandler())
 	http.Handle("/v1/challenge", svc.ProvisioningHandler())
+	// the identity proof is unsigned and always served: it is a nonce-bound
+	// signature, not gated by a host key
 	http.Handle(device.RouteIdentityProof, svc.ProvisioningHandler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready

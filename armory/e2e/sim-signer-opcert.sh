@@ -89,10 +89,13 @@ cold_request() {
 	rm -f "$W/cold.key"
 }
 
-if cold_request |
-	curl -fsS -H 'Content-Type: application/json' --data-binary @- "http://$SIM_ADDR/provision/cold" > /dev/null 2>&1; then
-	fail "an unsigned cold import was accepted after a host key was registered"
-fi
+status=$(cold_request |
+	curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @- "http://$SIM_ADDR/provision/cold") ||
+	fail "unsigned cold import request did not complete"
+case "$status" in
+4??) ;;
+*) fail "an unsigned cold import returned $status after a host key was registered, want 4xx" ;;
+esac
 pass "unsigned request refused once a host key exists"
 
 echo '{}' | pool -host-key "$W/host.skey" provision identity > "$W/identity.json"
