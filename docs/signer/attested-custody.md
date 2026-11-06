@@ -308,11 +308,15 @@ workload can serve a pool on several networks to signer backends that each set
 - The attestation token is bound to the nonce and key list, not the profile,
   and the key is the same under every profile; profiles are separated by the
   signing request binding and the counters.
-- A new profile has no counter object. Start the workload once with
-  `--create-profile-counters` to create the missing ones, then remove the flag;
-  without it a missing profile counter stops startup, as a missing unprofiled
-  counter does, so a deleted object is not silently reset. A counter object
-  that carries a `profile` cannot be read by an earlier workload release.
+- First boot, and a restart that finishes a pending bootstrap, create every
+  profile's counter object, as they create the unprofiled one. With an active
+  envelope a missing profile counter stops startup, so a deleted object is not
+  silently reset, unless `--create-profile-counters` is set. Grant the new
+  profile's object (see the permissions below), start the workload once with
+  the flag to add the profile, then remove the flag: while it is set the
+  workload creates any missing profile counter, including one that was
+  deleted, which resets that profile's issue counter. A counter object that
+  carries a `profile` cannot be read by an earlier workload release.
 
 The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
 key inside the workload. Cloud KMS wraps the data-encryption key. The workload
@@ -321,7 +325,9 @@ public metadata in the file named by `--wrapped-key-file`. It first publishes a
 `counter-pending` envelope with mode `0600`, creates the matching counter
 object, and atomically replaces the envelope with an authenticated `active`
 form before serving. A restart can finish an interrupted pending bootstrap with
-the same pool identity. An active envelope never recreates a missing counter.
+the same pool identity. An active envelope never recreates a missing
+unprofiled counter, and creates a missing profile counter only under
+`--create-profile-counters`.
 Cloud KMS must unwrap the same data-encryption key before the public key is
 served. A denial, corrupt envelope, mismatched KMS resource, or changed public
 metadata stops startup.
@@ -371,9 +377,13 @@ counter consistent across restarts and concurrent workload replicas without
 allowing one request to exhaust the counter range. Give the workload
 identity only `storage.objects.get`,
 `storage.objects.create`, and `storage.objects.delete` on the configured object
-name. Cloud Storage requires delete permission when a new generation replaces
-an existing object. Enable Object Versioning for recovery evidence, and do not
-expose the workload's attestation credential outside the measured image.
+name. With `--profile`, grant them instead on each profile's object name,
+`<counter-object>/profiles/<profile>`, and not on `--counter-object`, which is
+then neither read nor written; grant a new profile's object before the start
+that adds it. Cloud Storage requires delete permission when a new generation
+replaces an existing object. Enable Object Versioning for recovery evidence,
+and do not expose the workload's attestation credential outside the measured
+image.
 Counter objects written with `bursa-confidential-space-counter/1` migrate once
 with a generation precondition: `next_issue_number` becomes the stored
 `issue_number` plus one. A legacy maximum value, malformed state, or a key-hash
@@ -384,19 +394,21 @@ and require
 `CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
 and the production support attribute. Grant encrypt and decrypt on only the
 wrapping key, and the three object permissions above on only the counter
-object, to that digest-bound federated principal. The same condition makes
-Cloud KMS and Cloud Storage refuse an unapproved digest, a debug image, an
-expired default token, or a request without attestation. The signer
+object or profile counter objects, to that digest-bound federated principal.
+The same condition makes Cloud KMS and Cloud Storage refuse an unapproved
+digest, a debug image, an expired default token, or a request without
+attestation. The signer
 independently verifies those properties on the custom inventory token before
 it accepts the public key.
 
-Persist the wrapped-key file and counter object across workload restarts.
+Persist the wrapped-key file and counter object, or each profile's counter
+object, across workload restarts.
 Losing the wrapped-key file creates a new pool identity on the next boot;
 copying or rolling it back restores the same pool identity because the private
 key never leaves its envelope. Back up the wrapped file together with the Cloud
 KMS key's retention policy. The counter object is created with a new wrapped
 identity; startup fails if that identity later has no matching counter object.
-Never restore or remove the counter object for an existing pool key.
+Never restore or remove a counter object for an existing pool key.
 
 ## USB armory
 
