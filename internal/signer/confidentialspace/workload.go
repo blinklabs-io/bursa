@@ -235,11 +235,11 @@ func serviceCounters(cfg Config) (map[string]CounterStore, error) {
 	return counters, nil
 }
 
-// maxProfileLength bounds a profile name.
-const maxProfileLength = 128
+// maxProfileLength bounds a profile name, as the armory device does.
+const maxProfileLength = 32
 
-// ValidateProfile checks a profile name: non-empty, bounded, and limited to
-// letters, digits and "._@-", so that it is safe in a counter object name.
+// ValidateProfile checks a profile name with the armory device's rule: 1 to
+// 32 letters, digits and "._@-", which is also safe in a counter object name.
 func ValidateProfile(name string) error {
 	if name == "" || len(name) > maxProfileLength {
 		return fmt.Errorf(

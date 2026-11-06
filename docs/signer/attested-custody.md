@@ -289,8 +289,8 @@ workload can serve a pool on several networks to signer backends that each set
 
 - Requests and inventories must name a configured profile; an unprofiled
   request or an unknown profile is refused, and the refusal consumes no nonce
-  and no counter. A profile name is 1 to 128 characters from letters, digits
-  and `._@-`.
+  and no counter. A profile name is 1 to 32 characters from letters, digits
+  and `._@-`, as on the armory device.
 - Each profile has its own counter object,
   `<counter-object>/profiles/<profile>`, for both `opcert` and `opcert-next`,
   so profiles never share an issue counter, chain-counter floor or KES-period

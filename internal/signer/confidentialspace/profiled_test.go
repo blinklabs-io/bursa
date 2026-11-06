@@ -447,6 +447,14 @@ func TestProfiledConfigValidation(t *testing.T) {
 			c.Profiles = map[string]CounterStore{"p": nil}
 		},
 		"no counter": func(c *Config) {},
+		"profile name longer than armory allows": func(c *Config) {
+			c.Profiles = map[string]CounterStore{
+				strings.Repeat("p", 33): &memoryStore{},
+			}
+		},
+		"profile name with a slash": func(c *Config) {
+			c.Profiles = map[string]CounterStore{"pool/mainnet": &memoryStore{}}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -457,6 +465,25 @@ func TestProfiledConfigValidation(t *testing.T) {
 				t.Fatal("New accepted the configuration")
 			}
 		})
+	}
+}
+
+// Profile names follow the armory device's rule: 1 to 32 of A-Z a-z 0-9 @ . _ -
+func TestValidateProfileMatchesArmory(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"p", "otg@preview", "a.b_c-d@E9", strings.Repeat("p", 32),
+	} {
+		if err := ValidateProfile(name); err != nil {
+			t.Errorf("%q refused: %v", name, err)
+		}
+	}
+	for _, name := range []string{
+		"", strings.Repeat("p", 33), "pool mainnet", "pool/mainnet", "p\u00e9",
+	} {
+		if ValidateProfile(name) == nil {
+			t.Errorf("%q accepted", name)
+		}
 	}
 }
 
