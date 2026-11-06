@@ -50,7 +50,7 @@ type OpCertRecords struct {
 
 func readRecord(
 	ctx context.Context,
-	cw watermark.CounterWatermark,
+	cw watermark.CounterReader,
 	key backend.KeyHash,
 	scope string,
 ) (*uint64, error) {
@@ -67,7 +67,7 @@ func readRecord(
 // ReadOpCertRecords reads the opcert counter records for key.
 func ReadOpCertRecords(
 	ctx context.Context,
-	cw watermark.CounterWatermark,
+	cw watermark.CounterReader,
 	key backend.KeyHash,
 ) (OpCertRecords, error) {
 	var (
@@ -92,12 +92,12 @@ func ReadOpCertRecords(
 // and clears the issued record, in one transaction. The reported counter is
 // trusted. The explicit issue-counter record and the payload watermarks are
 // not touched. With apply false nothing is written and after is the planned
-// state.
+// state; store then needs only to read.
 //
 // It is for an operator command only: nothing on the signing path calls it.
 func ResetOpCertChain(
 	ctx context.Context,
-	wm watermark.Watermark,
+	store watermark.CounterReader,
 	mode watermark.Mode,
 	key backend.KeyHash,
 	chainCounter uint64,
@@ -109,19 +109,7 @@ func ResetOpCertChain(
 	if chainCounter == math.MaxUint64 {
 		return before, after, errors.New("chain counter out of range")
 	}
-	cw, ok := wm.(watermark.CounterWatermark)
-	if !ok {
-		return before, after, errors.New(
-			"watermark store does not support opcert counters",
-		)
-	}
-	admin, ok := wm.(watermark.CounterAdmin)
-	if !ok {
-		return before, after, errors.New(
-			"watermark store does not support administrative reset",
-		)
-	}
-	if before, err = ReadOpCertRecords(ctx, cw, key); err != nil {
+	if before, err = ReadOpCertRecords(ctx, store, key); err != nil {
 		return before, after, err
 	}
 	if !apply {
@@ -129,6 +117,12 @@ func ResetOpCertChain(
 		after.ChainFloor = &chainCounter
 		after.ChainIssued = nil
 		return before, after, nil
+	}
+	admin, ok := store.(watermark.CounterAdmin)
+	if !ok {
+		return before, after, errors.New(
+			"watermark store does not support administrative reset",
+		)
 	}
 	err = admin.AdminResetCounters(
 		ctx,
@@ -141,23 +135,31 @@ func ResetOpCertChain(
 	if err != nil {
 		return before, after, err
 	}
-	after, err = ReadOpCertRecords(ctx, cw, key)
+	after, err = ReadOpCertRecords(ctx, store, key)
 	return before, after, err
 }
 
-// OpenResetStore opens the configured watermark store for ResetOpCertChain
-// through BuildWatermark. It refuses a mem store and mode off, and a file
-// store that does not exist, since opening one would create an empty database
-// the signer never reads. The returned function closes the store.
+// OpenResetStore opens the configured watermark store for ResetOpCertChain.
+// It refuses a mem store and mode off, and a file store that does not exist,
+// since opening one would create an empty database the signer never reads.
+// With apply true the store is opened through BuildWatermark, which
+// initializes its schema. With apply false it is opened read-only, with no
+// schema initialization, so a dry run writes nothing. The returned function
+// closes the store.
 func OpenResetStore(
 	ctx context.Context,
 	c config.SignerWatermarkConfig,
-) (watermark.Watermark, watermark.Mode, func(), error) {
+	apply bool,
+) (watermark.CounterReader, watermark.Mode, func(), error) {
 	noop := func() {}
 	if c.Type == "" || c.Type == "mem" {
 		return nil, "", noop, ErrResetMemStore
 	}
-	if watermark.Mode(c.Mode) == watermark.ModeOff {
+	mode := watermark.Mode(c.Mode)
+	if mode == "" {
+		mode = watermark.ModeEnforce
+	}
+	if mode == watermark.ModeOff {
 		return nil, watermark.ModeOff, noop, ErrResetModeOff
 	}
 	if c.Type == "file" && c.Path != "" {
@@ -166,6 +168,9 @@ func OpenResetStore(
 				"%w: %w", ErrResetStoreMissing, err,
 			)
 		}
+	}
+	if !apply {
+		return openResetReader(ctx, c, mode)
 	}
 	wm, mode, err := BuildWatermark(ctx, c)
 	if err != nil {
@@ -178,5 +183,47 @@ func OpenResetStore(
 	case interface{ Close() }:
 		closeFn = s.Close
 	}
-	return wm, mode, closeFn, nil
+	store, ok := wm.(watermark.CounterReader)
+	if !ok {
+		closeFn()
+		return nil, mode, noop, errors.New(
+			"watermark store does not support opcert counters",
+		)
+	}
+	return store, mode, closeFn, nil
+}
+
+// openResetReader opens the configured store read-only for a dry run.
+func openResetReader(
+	ctx context.Context,
+	c config.SignerWatermarkConfig,
+	mode watermark.Mode,
+) (watermark.CounterReader, watermark.Mode, func(), error) {
+	noop := func() {}
+	switch c.Type {
+	case "file":
+		if c.Path == "" {
+			return nil, mode, noop, fmt.Errorf(
+				"watermark type %q requires a non-empty path",
+				c.Type,
+			)
+		}
+		r, err := watermark.OpenSqliteCounterReader(c.Path)
+		if err != nil {
+			return nil, mode, noop, err
+		}
+		return r, mode, func() { _ = r.Close() }, nil
+	case "postgres":
+		dsn, err := watermarkPostgresDSN(c)
+		if err != nil {
+			return nil, mode, noop, err
+		}
+		r, err := watermark.OpenPostgresCounterReader(ctx, dsn)
+		if err != nil {
+			return nil, mode, noop, err
+		}
+		return r, mode, r.Close, nil
+	default:
+		return nil, mode, noop, fmt.Errorf("unknown watermark type %q", c.Type)
+	}
 }

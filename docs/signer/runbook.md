@@ -289,23 +289,32 @@ resume requests.
 
 #### Failover and failback of an opcert signer
 
-Opcert counter records are per signer store and never sync between signers.
-If signer A issued counter 9 and the pool then renewed through signer B,
-which issued 10 and forged with it, the chain is at 10 while A still records 9
-as issued. A refuses a `chain_counter` of 10 as above the last counter issued,
-and an armory device refuses it the same way.
+Opcert counter records live in the watermark store. Signers that share one
+store share these records, so this procedure applies only to signers with
+independent stores; do not reset a healthy replica on a shared store.
 
-Reset A's records to the current chain counter before failing back:
+If signer A issued counter 9 and the pool then renewed through signer B,
+which has its own store, issued 10 and forged with it, the chain is at 10
+while A still records 9 as issued. With `mode: enforce`, A refuses a
+`chain_counter` of 10 as above the last counter issued, and an armory device
+refuses it the same way. With `mode: warn`, A logs the conflict and signs
+without changing its records.
+
+Reset A's records to the current chain counter before failing back. The
+reset does not serialize with in-flight opcert requests: a request for the
+key that passed its pre-sign check can commit after the reset and recreate
+`opcert-chain-issued`. Stop or drain opcert requests for the key first (pause
+the renewal for that pool), reset, then resume:
 
 ```
 bursa signer counter-reset --config signer.yaml \
   --key <56-character cold key hash> --chain-counter 10 --yes
 ```
 
-Without `--yes` it prints the records and the change, writes nothing, and
-exits non-zero. It sets `opcert-chain-floor` to the reported counter, lower or
+Without `--yes` it opens the store read-only, prints the records and the
+change, writes nothing, and exits non-zero. It sets `opcert-chain-floor` to the reported counter, lower or
 higher than the stored value, and deletes `opcert-chain-issued`, in one
-transaction, so it is safe while the signer runs. It leaves `opcert-counter`
+transaction. It leaves `opcert-counter`
 (explicit `issue_counter` requests) and the tx and cip8 watermarks alone, and
 refuses a `mem` store, watermark `mode: off`, and a `file` store path that does
 not exist. It is a local command with no API route.
@@ -323,8 +332,8 @@ Order:
 
 1. Stop issuing through the old path (signer A and its device).
 2. Renew through the new path (signer B).
-3. Before failing back, read the chain counter, then reset both the device
-   and signer A to it.
+3. Before failing back, with no opcert request for the key in flight, read
+   the chain counter, then reset both the device and signer A to it.
 4. Resume issuing through A; its next opcert is `chain_counter + 1`.
 
 ### High availability

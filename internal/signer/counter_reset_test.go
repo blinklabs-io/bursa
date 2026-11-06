@@ -17,6 +17,7 @@ package signer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -237,27 +238,35 @@ func TestOpenResetStore(t *testing.T) {
 		{"mode off", config.SignerWatermarkConfig{Type: "file", Path: path, Mode: "off"}, ErrResetModeOff},
 		{"missing file", config.SignerWatermarkConfig{Type: "file", Path: filepath.Join(t.TempDir(), "typo.db")}, ErrResetStoreMissing},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, _, closeFn, err := OpenResetStore(ctx, tc.cfg)
-			if closeFn != nil {
-				closeFn()
-			}
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("err = %v, want %v", err, tc.want)
-			}
-		})
+		for _, apply := range []bool{false, true} {
+			t.Run(
+				fmt.Sprintf("%s apply=%v", tc.name, apply),
+				func(t *testing.T) {
+					t.Parallel()
+					_, _, closeFn, err := OpenResetStore(ctx, tc.cfg, apply)
+					if closeFn != nil {
+						closeFn()
+					}
+					if !errors.Is(err, tc.want) {
+						t.Fatalf("err = %v, want %v", err, tc.want)
+					}
+				},
+			)
+		}
 	}
 
-	wm, mode, closeFn, err := OpenResetStore(
-		ctx,
-		config.SignerWatermarkConfig{Type: "file", Path: path},
-	)
-	if err != nil {
-		t.Fatalf("open file store: %v", err)
-	}
-	defer closeFn()
-	if wm == nil || mode != watermark.ModeEnforce {
-		t.Fatalf("got (%v, %s)", wm, mode)
+	for _, apply := range []bool{false, true} {
+		wm, mode, closeFn, err := OpenResetStore(
+			ctx,
+			config.SignerWatermarkConfig{Type: "file", Path: path},
+			apply,
+		)
+		if err != nil {
+			t.Fatalf("open file store (apply=%v): %v", apply, err)
+		}
+		closeFn()
+		if wm == nil || mode != watermark.ModeEnforce {
+			t.Fatalf("apply=%v: got (%v, %s)", apply, wm, mode)
+		}
 	}
 }

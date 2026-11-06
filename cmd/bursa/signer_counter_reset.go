@@ -49,12 +49,14 @@ watermark store, the counterpart of the armory device's floor reset.
 Sets the opcert-chain-floor record to --chain-counter, lower or higher than the
 stored value, and deletes the opcert-chain-issued record. The reported counter
 is trusted. The opcert-counter record (explicit issue counters) and the tx and
-cip8 payload watermarks are not changed. The write is one transaction, so it
-is safe while a signer runs against the same store.
+cip8 payload watermarks are not changed. The write is one transaction, but it
+does not serialize with in-flight opcert requests: stop or drain opcert
+requests for the key first, or one can recreate opcert-chain-issued.
 
 This is a local administrative command: it reads the signer config and writes
 the store directly, and no API route exposes it. It refuses a mem store and
-watermark mode off. Without --yes it prints the change and writes nothing.`,
+watermark mode off. Without --yes it opens the store read-only, prints the
+change and writes nothing.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if configFile == "" {
 				configFile = os.Getenv("BURSA_CONFIG")
@@ -111,7 +113,7 @@ func runSignerCounterReset(
 	if err != nil {
 		return err
 	}
-	wm, mode, closeStore, err := signer.OpenResetStore(ctx, wmCfg)
+	wm, mode, closeStore, err := signer.OpenResetStore(ctx, wmCfg, yes)
 	if err != nil {
 		return err
 	}
