@@ -32,13 +32,17 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// permissiveDir returns a directory whose inheritable ACL grants Everyone full
-// control, so any file created in it without an explicit DACL is readable by
-// other users.
+// permissiveDir returns a directory any user may list and add files to, and
+// whose inheritable ACL grants Everyone full control, so any file created in
+// it without an explicit DACL is readable by other users. Everyone holds no
+// right to delete or rename the directory's own entries, which the store
+// requires.
 func permissiveDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	sd, err := windows.SecurityDescriptorFromString("D:(A;OICI;GA;;;WD)")
+	sd, err := windows.SecurityDescriptorFromString(
+		"D:(A;;0x1201bf;;;WD)(A;OICIIO;GA;;;WD)",
+	)
 	require.NoError(t, err)
 	dacl, _, err := sd.DACL()
 	require.NoError(t, err)
@@ -245,10 +249,16 @@ func TestSQLiteStoreOpensExistingWALDatabaseWhereCreationIsDenied(
 }
 
 // setOwnerToLocalSystem makes path belong to another identity, standing in for
-// a sidecar a different user pre-created in a shared directory. Assigning an
+// a sidecar a different user pre-created in a shared directory.
+func setOwnerToLocalSystem(t *testing.T, path string) {
+	t.Helper()
+	setOwner(t, path, windows.WinLocalSystemSid)
+}
+
+// setOwner makes path belong to the well-known identity sidType. Assigning an
 // owner other than the caller needs SeRestorePrivilege, which this enables
 // only for the call and only when the process holds it.
-func setOwnerToLocalSystem(t *testing.T, path string) {
+func setOwner(t *testing.T, path string, sidType windows.WELL_KNOWN_SID_TYPE) {
 	t.Helper()
 	var token windows.Token
 	require.NoError(t, windows.OpenProcessToken(
@@ -281,13 +291,13 @@ func setOwnerToLocalSystem(t *testing.T, path string) {
 			nil,
 		)
 	}()
-	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	owner, err := windows.CreateWellKnownSid(sidType)
 	require.NoError(t, err)
 	err = windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION,
-		system, nil, nil, nil,
+		owner, nil, nil, nil,
 	)
 	if errors.Is(err, windows.ERROR_INVALID_OWNER) {
 		t.Skip("SeRestorePrivilege is not held; cannot assign another owner")
@@ -358,4 +368,88 @@ func TestSQLiteStoreReadOnlyDSNSecuresDatabaseAndSidecars(t *testing.T) {
 	for _, suffix := range []string{"-wal", "-shm"} {
 		requireOwnerOnly(t, dbPath+suffix)
 	}
+}
+
+// setDirectoryACE adds sddlACE to dir's DACL alongside the ACEs it inherits.
+func setDirectoryACE(t *testing.T, dir, sddlACE string) {
+	t.Helper()
+	sd, err := windows.SecurityDescriptorFromString("D:" + sddlACE)
+	require.NoError(t, err)
+	dacl, _, err := sd.DACL()
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|
+			windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil,
+	))
+}
+
+// requireDirectoryRejected opens a store at dbPath and requires the directory
+// check to refuse it before any file is created, since a principal that can
+// delete or rename an entry can replace the database or a sidecar between
+// the owner and DACL checks and SQLite opening it.
+func requireDirectoryRejected(t *testing.T, dbPath, reason string) {
+	t.Helper()
+	store, err := NewSQLiteStore(dbPath)
+	if store != nil {
+		_ = store.Close()
+	}
+	require.ErrorIs(t, err, bursa.ErrInsecureFileMode)
+	require.ErrorContains(t, err, reason)
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		_, err := os.Stat(dbPath + suffix)
+		require.ErrorIs(t, err, fs.ErrNotExist, suffix)
+	}
+}
+
+func TestSQLiteStoreRejectsDirectoryLettingOthersReplaceEntries(t *testing.T) {
+	t.Parallel()
+	rights := map[string]string{
+		"full control": "GA",
+		// Read and list, plus FILE_DELETE_CHILD.
+		"delete child": "0x1200c9",
+		"delete":       "SD",
+		"write DAC":    "WD",
+		"write owner":  "WO",
+	}
+	for name, right := range rights {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			setDirectoryACE(t, dir, "(A;;"+right+";;;WD)")
+			requireDirectoryRejected(
+				t,
+				filepath.Join(dir, "wallets.db"),
+				"delete or rename",
+			)
+		})
+	}
+}
+
+// Replacing any ancestor directory replaces the database path as well.
+func TestSQLiteStoreRejectsAncestorLettingOthersReplaceEntries(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	setDirectoryACE(t, parent, "(A;;GA;;;WD)")
+	dir := filepath.Join(parent, "store")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	requireDirectoryRejected(
+		t,
+		filepath.Join(dir, "wallets.db"),
+		"delete or rename",
+	)
+}
+
+// The owner of a directory can rewrite its DACL at will. Not parallel: the
+// owner change enables a process-wide privilege.
+func TestSQLiteStoreRejectsDirectoryOwnedByAnotherIdentity(t *testing.T) {
+	dir := t.TempDir()
+	setOwner(t, dir, windows.WinBuiltinUsersSid)
+	requireDirectoryRejected(
+		t,
+		filepath.Join(dir, "wallets.db"),
+		"directory",
+	)
 }
