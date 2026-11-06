@@ -336,6 +336,32 @@ transaction that also bumps `opcert-chain-reset-gen`. It leaves `opcert-counter`
 and the tx and cip8 watermarks alone, and refuses a `mem` store, watermark
 `mode: off`, and a `file` store path that does not exist. It is a local command with no API route.
 
+A key served by a profiled backend keeps these records under its profile
+(see Profile routing). Reset them with `--profile`, naming that backend's
+`profile`:
+
+```
+bursa signer counter-reset --config signer.yaml --profile otg@preview \
+  --key <56-character cold key hash> --chain-counter 10 --yes
+```
+
+It sets `opcert-chain-floor|<profile>`, deletes `opcert-chain-issued|<profile>`
+and bumps `opcert-chain-reset-gen|<profile>`, so only requests under that
+profile are fenced. The same transaction deletes the key's
+`opcert-chain-issued` record written before profile scoping: while the
+profile's backend is the key's only holder the signer reads it whenever the
+profile has no issued record, and it would refuse the failback again. With
+several holders it is not read, and those rows are migrated before a second
+profile is added. The floor written before profile scoping is left alone, as
+the new floor under the profile is read in its place.
+
+`--profile` must be the `profile` of a nitro, confidential-space or armory
+backend in the config. When the config has any such backend, the command
+refuses to run without `--profile`, since an unprofiled reset would neither
+clear the key's records nor fence its requests. For a key served by a backend
+without a profile in such a config, pass `--unprofiled` instead. Configs with
+no profiled backend need neither flag.
+
 The reset trusts the chain counter you report, as the device's floor reset
 does. Read it from the chain (the counter of the pool's last forged block)
 and not from another signer.
