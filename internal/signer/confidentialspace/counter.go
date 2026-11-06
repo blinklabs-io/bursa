@@ -176,9 +176,9 @@ func (s *CloudCounterStore) CheckAndAdvance(
 		); err != nil {
 			return err
 		}
-		next := current
-		next.NextIssueNumber = issueNumber + 1
-		next.LastIssued, next.LastIssuedPeriod = issueNumber, period
+		next := current.withRule(
+			opcertrule.Record(current.rule(), issueNumber, period),
+		)
 		if err := s.store(ctx, next, generation, exists); err == nil {
 			return nil
 		} else if !isPreconditionFailure(err) {
@@ -225,54 +225,34 @@ func (s *CloudCounterStore) NextOpCert(
 }
 
 // applyOpCertNext returns the state after an opcert-next request and the
-// issue number chosen, or the rule that refused it.
+// issue number chosen (opcertrule.Apply), or the rule that refused it.
 func applyOpCertNext(
 	cur counterState,
 	chain, period uint64,
 ) (counterState, uint64, error) {
-	// A record from before opcert-next has no last-issued number; the
-	// explicit path issued every number below NextIssueNumber in sequence, so
-	// the last one is the number before it.
-	last := cur.LastIssued
-	if last == 0 && cur.NextIssueNumber > 0 {
-		last = cur.NextIssueNumber - 1
-		// issue number 0 is below the rule's "unset" marker
-		if last == 0 && chain > 0 {
-			return counterState{}, 0, opcertrule.ErrAboveIssued
-		}
-	}
-	// a floor of 0 refuses nothing, so it needs no separate set flag
-	issue, floor, err := opcertrule.Next(
-		cur.OpCertFloor,
-		true,
-		last,
-		chain,
-	)
+	next, issue, err := opcertrule.Apply(cur.rule(), chain, period)
 	if err != nil {
 		return counterState{}, 0, err
 	}
-	if issue >= math.MaxUint64-1 {
-		return counterState{}, 0, opcertrule.ErrOutOfRange
+	return cur.withRule(next), issue, nil
+}
+
+// rule is the counter state the opcert rules operate on.
+func (s counterState) rule() opcertrule.State {
+	return opcertrule.State{
+		NextIssueNumber:  s.NextIssueNumber,
+		Floor:            s.OpCertFloor,
+		LastIssued:       s.LastIssued,
+		LastIssuedPeriod: s.LastIssuedPeriod,
 	}
-	// A chain counter that lags explicit issues would reissue an earlier
-	// number, whose KES period is not recorded, and lower the last issued
-	// number. Refuse it as a possible backdate.
-	if issue < last {
-		return counterState{}, 0, opcertrule.ErrKESBackdated
-	}
-	if err := opcertrule.CheckPeriod(
-		issue,
-		last,
-		cur.LastIssuedPeriod,
-		period,
-	); err != nil {
-		return counterState{}, 0, err
-	}
-	next := cur
-	next.OpCertFloor = floor
-	next.LastIssued, next.LastIssuedPeriod = issue, period
-	next.NextIssueNumber = max(cur.NextIssueNumber, issue+1)
-	return next, issue, nil
+}
+
+// withRule returns s with the counter fields of r.
+func (s counterState) withRule(r opcertrule.State) counterState {
+	s.NextIssueNumber = r.NextIssueNumber
+	s.OpCertFloor = r.Floor
+	s.LastIssued, s.LastIssuedPeriod = r.LastIssued, r.LastIssuedPeriod
+	return s
 }
 
 func checkCounterSequence(expected, next uint64) error {

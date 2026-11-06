@@ -16,7 +16,10 @@
 // issue number from the on-chain counter ("opcert-next"). Next mirrors
 // armory/device.nextOpCert, which the root module cannot import; the vectors
 // in armory/device/testdata/opcert_vectors.json pin both copies to the same
-// decisions and refusal strings.
+// decisions and refusal strings. State, Apply and Record carry the counter
+// record of a backend that also serves explicit issue counters; they are used
+// by the root module only, as the armory has no explicit path and the vectors
+// pin only Next and CheckPeriod.
 package opcertrule
 
 import (
