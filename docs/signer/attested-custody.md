@@ -384,6 +384,11 @@ The USB armory Mk II holds the pool cold key and the owner stake key in its
 SE050 secure element, one profile per pool and network. Its signing firmware
 serves this protocol at `/v1/inventory` and `/v1/sign`.
 
+Several armory backends, each with its own profile, may hold one cold key (the
+same key in profiles on different networks). Requests then name the profile; see
+the runbook's profile routing section. Each backend keeps its own opcert
+counter records.
+
 For `opcert-next`, the profile record also holds the last counter the device
 issued, and a chain counter above it is refused: the ledger only holds
 counters the device issued. A reissue of that counter, as for a pool that has

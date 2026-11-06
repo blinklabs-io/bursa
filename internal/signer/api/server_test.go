@@ -1313,3 +1313,116 @@ func TestGetKey_PolicySummary(t *testing.T) {
 		},
 	)
 }
+
+// profiledSoftwareBackend serves a software backend's keys under a profile,
+// on the backend and on every key it returns, as the attested backend does.
+type profiledSoftwareBackend struct {
+	*backend.SoftwareBackend
+	profile string
+}
+
+func (b profiledSoftwareBackend) Profile() string { return b.profile }
+
+type profiledSoftwareKey struct {
+	backend.KeyRef
+	profile string
+}
+
+func (k profiledSoftwareKey) Profile() string { return k.profile }
+
+func (b profiledSoftwareBackend) GetKey(ctx context.Context, h backend.KeyHash) (backend.KeyRef, error) {
+	ref, err := b.SoftwareBackend.GetKey(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	return profiledSoftwareKey{ref, b.profile}, nil
+}
+
+// TestHandleSign_ProfileRouting: the request's profile reaches the resolver
+// through the coordinator, and a routing refusal is a 4xx.
+func TestHandleSign_ProfileRouting(t *testing.T) {
+	t.Parallel()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	lk := &bursa.LoadedKey{SKey: []byte(priv), VKey: pub}
+	preview := backend.NewSoftwareBackend("dev-preview")
+	h, err := preview.AddKey(lk, backend.KeyTypePool)
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	musashi := backend.NewSoftwareBackend("dev-musashi")
+	if _, err := musashi.AddKey(lk, backend.KeyTypePool); err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	resolver := backend.NewResolver(
+		profiledSoftwareBackend{preview, "otg@preview"},
+		profiledSoftwareBackend{musashi, "otg@musashi"})
+	eng, err := policy.NewEngine([]policy.KeyPolicy{{Hash: h.String(), AllowedRequests: []string{"opcert"}}})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	coord := signer.New(signer.Deps{
+		Resolver:  resolver,
+		Policy:    eng,
+		Watermark: watermark.NewMemWatermark(),
+		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+	})
+	srv := NewServer(coord, resolver, eng, nil, func(string) (string, error) { return "tester", nil })
+
+	post := func(profile string, chain uint64) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(SignRequest{
+			Type:         "opcert",
+			Key:          h.String(),
+			Profile:      profile,
+			KesVkey:      hex.EncodeToString(bytes.Repeat([]byte{0xAB}, 32)),
+			ChainCounter: &chain,
+		})
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body)))
+		return rr
+	}
+
+	if rr := post("", 0); rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "profile") {
+		t.Fatalf("no profile: want 400 naming the profile, got %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := post("otg@preprod", 0); rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown profile: want 404, got %d %s", rr.Code, rr.Body.String())
+	}
+	// the profile reaches the coordinator: each profile has its own history
+	if rr := post("otg@preview", 6); rr.Code != http.StatusOK {
+		t.Fatalf("preview chain 6: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := post("otg@musashi", 0); rr.Code != http.StatusOK {
+		t.Fatalf("musashi chain 0: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := post("otg@preview", 0); rr.Code != http.StatusConflict {
+		t.Fatalf("preview chain 0: want 409, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	// GET /v1/keys/{hash} routes the same way.
+	get := func(query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String()+query, nil)
+		req.SetPathValue("hash", h.String())
+		rr := httptest.NewRecorder()
+		srv.handleGetKey(rr, req)
+		return rr
+	}
+	if rr := get(""); rr.Code != http.StatusBadRequest {
+		t.Fatalf("get without profile: want 400, got %d", rr.Code)
+	}
+	for _, tc := range []struct{ profile, backend string }{
+		{"otg@preview", "dev-preview"},
+		{"otg@musashi", "dev-musashi"},
+	} {
+		rr := get("?profile=" + tc.profile)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("get with profile %s: want 200, got %d", tc.profile, rr.Code)
+		}
+		var info KeyInfo
+		if err := json.NewDecoder(rr.Body).Decode(&info); err != nil {
+			t.Fatalf("decode key info for %s: %v", tc.profile, err)
+		}
+		if info.Backend != tc.backend {
+			t.Fatalf("backend for %s: want %s, got %s", tc.profile, tc.backend, info.Backend)
+		}
+	}
+}

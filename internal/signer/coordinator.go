@@ -93,6 +93,44 @@ func WithCaller(ctx context.Context, caller string) context.Context {
 	return context.WithValue(ctx, callerCtxKey{}, caller)
 }
 
+// profileCtxKey types the context value carrying the requested profile.
+type profileCtxKey struct{}
+
+// WithProfile returns a context carrying the profile a request names. It
+// selects which backend holding the key hash serves the request; it never
+// authorizes anything.
+func WithProfile(ctx context.Context, profile string) context.Context {
+	return context.WithValue(ctx, profileCtxKey{}, profile)
+}
+
+// profileFromContext returns the profile set by WithProfile, or "".
+func profileFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(profileCtxKey{}).(string)
+	return s
+}
+
+// profileScope derives the watermark scope for a resolved key. A key served by
+// a profiled backend gets its own records per profile, so one cold key held
+// under several profiles never shares a signing history across them. A key
+// with no profile keeps scope unchanged.
+func profileScope(ref backend.KeyRef, scope string) string {
+	if p, ok := ref.(backend.Profiled); ok && p.Profile() != "" {
+		return scope + "|" + p.Profile()
+	}
+	return scope
+}
+
+// keyLogger returns the logger for decisions about a resolved key. It names the
+// backend serving the key and, for a profiled backend, the profile whose
+// records apply, so one cold key held under several profiles is told apart.
+func (c *Coordinator) keyLogger(ref backend.KeyRef) *slog.Logger {
+	l := c.deps.Logger.With("backend", ref.Backend())
+	if p, ok := ref.(backend.Profiled); ok && p.Profile() != "" {
+		l = l.With("profile", p.Profile())
+	}
+	return l
+}
+
 // callerFromContext returns the caller subject set by WithCaller, or "".
 func callerFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(callerCtxKey{}).(string)
@@ -268,7 +306,14 @@ func (c *Coordinator) SignTx(
 	)
 	for i, s := range signers {
 		hash := resolvedSigners[i]
-		ref, err := c.deps.Resolver.Resolve(ctx, hash)
+		ref, err := c.deps.Resolver.Resolve(ctx, hash, profileFromContext(ctx))
+		if errors.Is(err, backend.ErrProfileRequired) {
+			errs = append(errs, SignerError{Signer: s, Code: CodeBadRequest, Reason: err.Error()})
+			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", err.Error())
+			c.deps.Metrics.observe("tx", string(CodeBadRequest))
+			c.deps.Metrics.observeDeny(string(CodeBadRequest))
+			continue
+		}
 		if errors.Is(err, backend.ErrKeyNotFound) {
 			errs = append(
 				errs,
@@ -317,12 +362,13 @@ func (c *Coordinator) SignTx(
 			c.deps.Metrics.observeBackendError("resolver")
 			continue
 		}
+		logger := c.keyLogger(ref)
 		if dec := c.deps.Policy.EvaluateTx(hash, insp, policy.WithCaller(caller), policy.WithOps(ops), policy.WithBackend(ref.Backend())); !dec.Allow {
 			errs = append(
 				errs,
 				SignerError{Signer: s, Code: CodeDenied, Reason: dec.Reason},
 			)
-			c.deps.Logger.Info(
+			logger.Info(
 				"sign",
 				"type",
 				"tx",
@@ -352,7 +398,7 @@ func (c *Coordinator) SignTx(
 						Reason: serr.Error(),
 					},
 				)
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"tx",
@@ -378,7 +424,7 @@ func (c *Coordinator) SignTx(
 						Reason: herr.Error(),
 					},
 				)
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"tx",
@@ -396,9 +442,11 @@ func (c *Coordinator) SignTx(
 				continue
 			}
 		}
+		// Records are per profile for a key served by a profiled backend.
+		wmScope := profileScope(ref, scope)
 		watermarkCommitted := false
 		if c.deps.WMMode == watermark.ModeEnforce {
-			if werr := c.deps.Watermark.CheckAndCommit(ctx, hash, scope, txid); werr != nil {
+			if werr := c.deps.Watermark.CheckAndCommit(ctx, hash, wmScope, txid); werr != nil {
 				if errors.Is(werr, watermark.ErrConflict) {
 					errs = append(
 						errs,
@@ -408,7 +456,7 @@ func (c *Coordinator) SignTx(
 							Reason: werr.Error(),
 						},
 					)
-					c.deps.Logger.Info(
+					logger.Info(
 						"sign",
 						"type",
 						"tx",
@@ -434,7 +482,7 @@ func (c *Coordinator) SignTx(
 						Reason: werr.Error(),
 					},
 				)
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"tx",
@@ -453,13 +501,13 @@ func (c *Coordinator) SignTx(
 			}
 			watermarkCommitted = true
 		} else if c.deps.WMMode == watermark.ModeWarn {
-			if werr := c.deps.Watermark.Check(ctx, hash, scope, txid); werr != nil {
+			if werr := c.deps.Watermark.Check(ctx, hash, wmScope, txid); werr != nil {
 				if errors.Is(werr, watermark.ErrConflict) {
-					c.deps.Logger.Warn("watermark conflict (warn mode)", "key", hash.String(), "scope", scope)
+					logger.Warn("watermark conflict (warn mode)", "key", hash.String(), "scope", wmScope)
 					c.deps.Metrics.observeWatermarkConflict()
 				} else {
 					errs = append(errs, SignerError{Signer: s, Code: CodeBackend, Reason: werr.Error()})
-					c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "error", "reason", werr.Error())
+					logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "error", "reason", werr.Error())
 					c.deps.Metrics.observe("tx", string(CodeBackend))
 					c.deps.Metrics.observeBackendError("watermark")
 					continue
@@ -484,7 +532,7 @@ func (c *Coordinator) SignTx(
 				errs,
 				SignerError{Signer: s, Code: code, Reason: err.Error()},
 			)
-			c.deps.Logger.Info(
+			logger.Info(
 				"sign",
 				"type",
 				"tx",
@@ -521,7 +569,7 @@ func (c *Coordinator) SignTx(
 					Reason: "backend returned malformed public key",
 				},
 			)
-			c.deps.Logger.Error(
+			logger.Error(
 				"sign",
 				"type",
 				"tx",
@@ -546,7 +594,7 @@ func (c *Coordinator) SignTx(
 					Reason: "produced signature failed verification",
 				},
 			)
-			c.deps.Logger.Error(
+			logger.Error(
 				"sign",
 				"type",
 				"tx",
@@ -563,9 +611,9 @@ func (c *Coordinator) SignTx(
 			continue
 		}
 		if c.deps.WMMode != watermark.ModeOff && !watermarkCommitted {
-			if cerr := c.deps.Watermark.Commit(ctx, hash, scope, txid); cerr != nil {
-				c.deps.Logger.Error("watermark commit failed after signing",
-					"key", hash.String(), "scope", scope, "error", cerr.Error())
+			if cerr := c.deps.Watermark.Commit(ctx, hash, wmScope, txid); cerr != nil {
+				logger.Error("watermark commit failed after signing",
+					"key", hash.String(), "scope", wmScope, "error", cerr.Error())
 			}
 		}
 		wits = append(wits, lcommon.VkeyWitness{Vkey: pub, Signature: sig})
@@ -585,7 +633,7 @@ func (c *Coordinator) SignTx(
 				summaries = append(summaries, summary)
 			}
 		}
-		c.deps.Logger.Info("sign", logArgs...)
+		logger.Info("sign", logArgs...)
 		c.deps.Metrics.observe("tx", "signed")
 	}
 

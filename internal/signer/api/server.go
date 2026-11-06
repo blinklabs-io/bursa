@@ -40,6 +40,9 @@ type SignRequest struct {
 	Payload string   `json:"payload"` // cip8: hex
 	Address string   `json:"address"` // cip8: bech32
 	Key     string   `json:"key"`     // cip8 + opcert: cold/signing key hash
+	// Profile selects among backends holding the same key hash. It routes the
+	// request; it never authorizes it.
+	Profile string `json:"profile,omitempty"`
 
 	// opcert: cold-sign an operational certificate. The cold key (identified by
 	// Key) signs the canonical OCertSignable bytes; the cold key itself never
@@ -226,6 +229,8 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := signer.WithProfile(r.Context(), req.Profile)
+
 	switch req.Type {
 	case "tx":
 		resolvedSigners, err := signer.ValidateSignerList(req.Signers)
@@ -284,7 +289,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		// Thread the authenticated caller so the coordinator can apply any
 		// per-caller policy override.
 		res, perr, err := s.coord.SignTx(
-			signer.WithCaller(r.Context(), caller),
+			signer.WithCaller(ctx, caller),
 			[]byte(req.Cbor),
 			req.Era,
 			signers,
@@ -451,7 +456,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		res, code, err := s.coord.SignCIP8(
-			r.Context(),
+			ctx,
 			payload,
 			req.Address,
 			req.Key,
@@ -570,14 +575,14 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		)
 		if req.ChainCounter != nil {
 			res, code, err = s.coord.SignOpCertFromChain(
-				r.Context(),
+				ctx,
 				kesVkey,
 				*req.ChainCounter,
 				req.KesPeriod,
 				req.Key,
 			)
 		} else {
-			res, code, err = s.coord.SignOpCert(r.Context(), kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
+			res, code, err = s.coord.SignOpCert(ctx, kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
 		}
 		if err != nil {
 			st := codeToStatus(code)
@@ -719,7 +724,11 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "key not found")
 		return
 	}
-	ref, err := s.resolver.Resolve(r.Context(), h)
+	ref, err := s.resolver.Resolve(r.Context(), h, r.URL.Query().Get("profile"))
+	if errors.Is(err, backend.ErrProfileRequired) {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		writeErr(w, http.StatusNotFound, "key not found")
 		return

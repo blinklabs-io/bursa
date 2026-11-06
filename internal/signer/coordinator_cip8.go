@@ -59,7 +59,13 @@ func (c *Coordinator) SignCIP8(
 		c.deps.Metrics.observeDeny(string(CodeBadRequest))
 		return nil, CodeBadRequest, fmt.Errorf("invalid key id: %w", err)
 	}
-	ref, err := c.deps.Resolver.Resolve(ctx, hash)
+	ref, err := c.deps.Resolver.Resolve(ctx, hash, profileFromContext(ctx))
+	if errors.Is(err, backend.ErrProfileRequired) {
+		c.deps.Logger.Info("sign", "type", "cip8", "caller-key", hash.String(), "address", address, "result", "denied", "reason", err.Error())
+		c.deps.Metrics.observe("cip8", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
+		return nil, CodeBadRequest, err
+	}
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		c.deps.Logger.Info(
 			"sign",
@@ -97,6 +103,8 @@ func (c *Coordinator) SignCIP8(
 		return nil, CodeBackend, err
 	}
 
+	logger := c.keyLogger(ref)
+
 	// Gate on the key's capability before parsing the address: other
 	// remote-custody keys cannot perform CIP-8 signing regardless of address
 	// validity, so we fail fast here rather than returning a misleading
@@ -104,7 +112,7 @@ func (c *Coordinator) SignCIP8(
 	provider, isLocal := ref.(backend.LoadedKeyProvider)
 	remote, isRemote := ref.(backend.PurposeSigner)
 	if !isLocal && !isRemote {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"cip8",
@@ -127,7 +135,7 @@ func (c *Coordinator) SignCIP8(
 
 	addr, err := lcommon.NewAddress(address)
 	if err != nil {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"cip8",
@@ -160,7 +168,7 @@ func (c *Coordinator) SignCIP8(
 	}
 
 	if dec := c.deps.Policy.EvaluateCIP8(hash, len(payload), addressMatches, policy.WithBackend(ref.Backend())); !dec.Allow {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"cip8",
@@ -182,7 +190,7 @@ func (c *Coordinator) SignCIP8(
 	// into the protected headers.
 	addrBytes, err := addr.Bytes()
 	if err != nil {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"cip8",
@@ -226,7 +234,7 @@ func (c *Coordinator) SignCIP8(
 		time.Since(signStart).Seconds(),
 	)
 	if err != nil {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"cip8",
@@ -244,7 +252,7 @@ func (c *Coordinator) SignCIP8(
 		return nil, CodeBackend, fmt.Errorf("cip8 sign: %w", err)
 	}
 
-	c.deps.Logger.Info(
+	logger.Info(
 		"sign",
 		"type",
 		"cip8",

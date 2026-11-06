@@ -294,9 +294,48 @@ leaves both unchanged.
 If opcerts for the same cold key are also issued by another signer, this
 record falls behind. To clear it, stop opcert requests for the key on
 every signer instance and let in-flight requests finish, then delete the row
-whose `record_key` is `<56-character hex key hash>|opcert-chain-issued` from
+whose `record_key` is `<56-character hex key hash>|opcert-chain-issued` (for a
+key served by a profiled backend, `<hash>|opcert-chain-issued|<profile>`) from
 `signer_counter_watermark` (Postgres) or `counter_watermark` (SQLite), and
 resume requests.
+
+### Profile routing
+
+One cold key may be held by several armory backends, each with its own
+`profile` (for example `otg@preview`, `otg@musashi`, `otg@preprod` on one
+device). Startup accepts a key hash in several backends only when every holder
+has a non-empty profile and the profiles are distinct. A hash in a profiled and
+an unprofiled backend, in two backends with one profile, or in two unprofiled
+backends is refused. Configure one `keys:` entry per hash. Its `backend` field
+is enforced: when set, a request is denied unless the backend the profile
+selects has that name, so a key served under several profiles leaves it empty.
+
+A sign request names the profile in `profile`; `GET /v1/keys/<hash>` takes it as
+the `profile` query parameter. Without it, a key held by one backend is served
+as before, and a key held by several is refused with HTTP 400. A key held by
+profiled backends is served only under the named profile; a profile none of
+them has is refused with HTTP 404. A key held by an unprofiled backend is not
+network scoped and is served whatever the profile, so one tx can name the
+profile for its armory signer and still reach its other signers. The profile
+only routes: the caller is authorized by key hash.
+
+Records of a key served by a profiled backend carry the profile:
+`<hash>|<scope>|<profile>` for the opcert counter, floor and issued scopes and
+for tx records, so each network keeps its own history. Records of an
+unprofiled backend are unchanged. Opcert records an armory-backed key wrote
+before profile scoping are keyed without the profile. While one backend holds
+the key, they still bound its opcert requests until a record under its profile
+exists. Once several backends hold it they are not consulted, as they cannot
+be attributed to one profile. Before adding a second profile for a key, stop
+every signer instance that uses the store, then migrate each of the key's
+`opcert-counter`, `opcert-chain-floor` and `opcert-chain-issued` rows keyed
+without a profile, naming the profile that wrote them:
+
+- If a row for the same scope under `|<profile>` already exists, set it to the
+  higher of the two values and delete the row without the profile.
+- Otherwise append `|<profile>` to the row's `record_key`.
+
+Start the signers again only after every row is migrated.
 
 ### High availability
 
