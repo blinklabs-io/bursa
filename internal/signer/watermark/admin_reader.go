@@ -92,7 +92,7 @@ func readOnlyDirHint(err error) error {
 // is made absolute, since a URI reads its first segment as an authority, and
 // the path is escaped so spaces, '?' and '#' stay part of the file name.
 func sqliteReadOnlyURI(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := filepath.Abs(SqliteFilePath(path))
 	if err != nil {
 		return "", err
 	}
@@ -212,4 +212,22 @@ func decodeStoredCounter(have string) (uint64, bool, error) {
 		)
 	}
 	return v, true, nil
+}
+
+// SqliteFilePath returns the filesystem path of the database a SQLite store
+// opens for path: the path itself, or the path a "file:" URI names, as in
+// "file:/data/wm.db", "file:///data/wm.db" or "file:wm.db". Query options are
+// dropped.
+func SqliteFilePath(path string) string {
+	if !strings.HasPrefix(path, "file:") {
+		return path
+	}
+	u, err := url.Parse(path)
+	if err != nil {
+		return path
+	}
+	if u.Opaque != "" {
+		return u.Opaque
+	}
+	return u.Path
 }

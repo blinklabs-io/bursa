@@ -166,7 +166,7 @@ func OpenResetStore(
 		return nil, watermark.ModeOff, noop, ErrResetModeOff
 	}
 	if c.Type == "file" && c.Path != "" {
-		if _, err := os.Stat(c.Path); err != nil {
+		if _, err := os.Stat(watermark.SqliteFilePath(c.Path)); err != nil {
 			return nil, "", noop, fmt.Errorf(
 				"%w: %w", ErrResetStoreMissing, err,
 			)

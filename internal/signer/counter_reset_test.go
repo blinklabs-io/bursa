@@ -270,3 +270,45 @@ func TestOpenResetStore(t *testing.T) {
 		}
 	}
 }
+
+// A store the signer opens through a SQLite file URI is the same database for
+// counter-reset, in a dry run and when applying.
+func TestOpenResetStore_FileURI(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "wm.db")
+	wm, err := watermark.NewSqliteWatermark("file:" + path)
+	if err != nil {
+		t.Fatalf("NewSqliteWatermark: %v", err)
+	}
+	k := newFakeKey(t)
+	if err := wm.CheckAndCommitCounters(ctx, k.hash, watermark.CounterOp{
+		Scope: opcertChainFloorScope,
+		Value: 7,
+		Kind:  watermark.CounterFloor,
+	}); err != nil {
+		t.Fatalf("seed floor: %v", err)
+	}
+	_ = wm.Close()
+
+	for _, uri := range []string{"file:" + path, "file://" + path} {
+		for _, apply := range []bool{false, true} {
+			store, _, closeFn, err := OpenResetStore(
+				ctx,
+				config.SignerWatermarkConfig{Type: "file", Path: uri},
+				apply,
+			)
+			if err != nil {
+				t.Fatalf("%s apply=%v: %v", uri, apply, err)
+			}
+			v, ok, err := store.CounterFor(ctx, k.hash, opcertChainFloorScope)
+			closeFn()
+			if err != nil || !ok || v != 7 {
+				t.Fatalf(
+					"%s apply=%v: floor = (%d, %v, %v), want 7",
+					uri, apply, v, ok, err,
+				)
+			}
+		}
+	}
+}
