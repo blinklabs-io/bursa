@@ -66,7 +66,7 @@ func TestResetOpCertChain_FailbackRefusedThenIssues(t *testing.T) {
 	}
 
 	before, after, err := ResetOpCertChain(
-		ctx, wm, watermark.ModeEnforce, k.hash, 10, true,
+		ctx, wm, watermark.ModeEnforce, k.hash, "", 10, true,
 	)
 	if err != nil {
 		t.Fatalf("reset: %v", err)
@@ -117,7 +117,7 @@ func TestResetOpCertChain_LowersFloor(t *testing.T) {
 			err,
 		)
 	}
-	if _, _, err := ResetOpCertChain(ctx, wm, watermark.ModeEnforce, k.hash, 10, true); err != nil {
+	if _, _, err := ResetOpCertChain(ctx, wm, watermark.ModeEnforce, k.hash, "", 10, true); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	res, code, err := c.SignOpCertFromChain(ctx, kes, 10, 2, k.hash.String())
@@ -140,6 +140,7 @@ func TestResetOpCertChain_DryRunWritesNothing(t *testing.T) {
 		wm,
 		watermark.ModeEnforce,
 		key,
+		"",
 		10,
 		false,
 	)
@@ -150,7 +151,7 @@ func TestResetOpCertChain_DryRunWritesNothing(t *testing.T) {
 		after.ChainIssued != nil {
 		t.Fatalf("planned after = %+v", after)
 	}
-	now, err := ReadOpCertRecords(ctx, wm, key)
+	now, err := ReadOpCertRecords(ctx, wm, key, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +184,11 @@ func TestResetOpCertChain_OnlyTouchesChainScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := ResetOpCertChain(ctx, wm, watermark.ModeEnforce, key, 10, true); err != nil {
+	if _, _, err := ResetOpCertChain(ctx, wm, watermark.ModeEnforce, key, "", 10, true); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 
-	got, _ := ReadOpCertRecords(ctx, wm, key)
+	got, _ := ReadOpCertRecords(ctx, wm, key, "")
 	if got.Explicit == nil || *got.Explicit != 9 {
 		t.Fatalf("explicit counter = %v, want 9 untouched", got.Explicit)
 	}
@@ -195,7 +196,7 @@ func TestResetOpCertChain_OnlyTouchesChainScopes(t *testing.T) {
 		got.ChainIssued != nil {
 		t.Fatalf("reset key = %+v", got)
 	}
-	o, _ := ReadOpCertRecords(ctx, wm, other)
+	o, _ := ReadOpCertRecords(ctx, wm, other, "")
 	if o.Explicit == nil || *o.Explicit != 9 || o.ChainIssued == nil ||
 		*o.ChainIssued != 9 || o.ChainFloor == nil || *o.ChainFloor != 8 {
 		t.Fatalf("other key changed: %+v", o)
@@ -212,13 +213,13 @@ func TestResetOpCertChain_Refusals(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	var key backend.KeyHash
-	if _, _, err := ResetOpCertChain(ctx, watermark.NewMemWatermark(), watermark.ModeOff, key, 10, true); !errors.Is(
+	if _, _, err := ResetOpCertChain(ctx, watermark.NewMemWatermark(), watermark.ModeOff, key, "", 10, true); !errors.Is(
 		err,
 		ErrResetModeOff,
 	) {
 		t.Fatalf("mode off: %v", err)
 	}
-	if _, _, err := ResetOpCertChain(ctx, watermark.NewMemWatermark(), watermark.ModeEnforce, key, ^uint64(0), true); err == nil {
+	if _, _, err := ResetOpCertChain(ctx, watermark.NewMemWatermark(), watermark.ModeEnforce, key, "", ^uint64(0), true); err == nil {
 		t.Fatal("max uint64 chain counter accepted")
 	}
 }

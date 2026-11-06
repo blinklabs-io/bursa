@@ -68,7 +68,7 @@ func resetRecords(
 ) signer.OpCertRecords {
 	t.Helper()
 	k, _ := backend.ParseKeyHash(hexKey)
-	r, err := signer.ReadOpCertRecords(context.Background(), wm, k)
+	r, err := signer.ReadOpCertRecords(context.Background(), wm, k, "")
 	if err != nil {
 		t.Fatal(err)
 	}

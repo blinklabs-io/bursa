@@ -46,6 +46,9 @@ type OpCertRecords struct {
 	// Explicit is the strict issue-counter record of SignOpCert. A reset
 	// never changes it.
 	Explicit *uint64
+	// LegacyChainIssued is the issued record written without a profile,
+	// before profile scoping. It is read only for a profile.
+	LegacyChainIssued *uint64
 }
 
 func readRecord(
@@ -64,26 +67,36 @@ func readRecord(
 	return &v, nil
 }
 
-// ReadOpCertRecords reads the opcert counter records for key.
+// ReadOpCertRecords reads the opcert counter records for key under profile;
+// an empty profile reads the records of an unprofiled backend.
 func ReadOpCertRecords(
 	ctx context.Context,
 	cw watermark.CounterReader,
 	key backend.KeyHash,
+	profile string,
 ) (OpCertRecords, error) {
 	var (
 		r   OpCertRecords
 		err error
 	)
-	if r.ChainFloor, err = readRecord(ctx, cw, key, opcertChainFloorScope); err != nil {
-		return r, err
+	for _, rec := range []struct {
+		dst   **uint64
+		scope string
+	}{
+		{&r.ChainFloor, scopeForProfile(opcertChainFloorScope, profile)},
+		{&r.ChainIssued, scopeForProfile(opcertChainIssuedScope, profile)},
+		{&r.Explicit, scopeForProfile(opcertCounterScope, profile)},
+	} {
+		if *rec.dst, err = readRecord(ctx, cw, key, rec.scope); err != nil {
+			return r, err
+		}
 	}
-	if r.ChainIssued, err = readRecord(ctx, cw, key, opcertChainIssuedScope); err != nil {
-		return r, err
+	if profile != "" {
+		r.LegacyChainIssued, err = readRecord(
+			ctx, cw, key, opcertChainIssuedScope,
+		)
 	}
-	if r.Explicit, err = readRecord(ctx, cw, key, opcertCounterScope); err != nil {
-		return r, err
-	}
-	return r, nil
+	return r, err
 }
 
 // ResetOpCertChain is the administrative reset of the chain-counter records,
@@ -96,12 +109,20 @@ func ReadOpCertRecords(
 // not touched. With apply false no record is written and after is the planned
 // state; store then needs only to read.
 //
+// A non-empty profile resets the records of a key served under that profile.
+// The same transaction also deletes the issued record written without a
+// profile: while the profile's backend is the key's only holder, the signer
+// reads it whenever the profile has no issued record, so it would otherwise
+// bound the next request again. The floor written without a profile needs no
+// change, as the reset leaves a floor under the profile.
+//
 // It is for an operator command only: nothing on the signing path calls it.
 func ResetOpCertChain(
 	ctx context.Context,
 	store watermark.CounterReader,
 	mode watermark.Mode,
 	key backend.KeyHash,
+	profile string,
 	chainCounter uint64,
 	apply bool,
 ) (before, after OpCertRecords, err error) {
@@ -111,13 +132,14 @@ func ResetOpCertChain(
 	if chainCounter == math.MaxUint64 {
 		return before, after, errors.New("chain counter out of range")
 	}
-	if before, err = ReadOpCertRecords(ctx, store, key); err != nil {
+	if before, err = ReadOpCertRecords(ctx, store, key, profile); err != nil {
 		return before, after, err
 	}
 	if !apply {
 		after = before
 		after.ChainFloor = &chainCounter
 		after.ChainIssued = nil
+		after.LegacyChainIssued = nil
 		return before, after, nil
 	}
 	admin, ok := store.(watermark.CounterAdmin)
@@ -126,19 +148,24 @@ func ResetOpCertChain(
 			"watermark store does not support administrative reset",
 		)
 	}
+	clearScopes := []string{scopeForProfile(opcertChainIssuedScope, profile)}
+	if profile != "" {
+		clearScopes = append(clearScopes, opcertChainIssuedScope)
+	}
 	err = admin.AdminResetCounters(
 		ctx,
 		key,
-		[]watermark.CounterSet{
-			{Scope: opcertChainFloorScope, Value: chainCounter},
-		},
-		[]string{opcertChainIssuedScope},
-		opcertResetGenScope,
+		[]watermark.CounterSet{{
+			Scope: scopeForProfile(opcertChainFloorScope, profile),
+			Value: chainCounter,
+		}},
+		clearScopes,
+		scopeForProfile(opcertResetGenScope, profile),
 	)
 	if err != nil {
 		return before, after, err
 	}
-	after, err = ReadOpCertRecords(ctx, store, key)
+	after, err = ReadOpCertRecords(ctx, store, key, profile)
 	return before, after, err
 }
 

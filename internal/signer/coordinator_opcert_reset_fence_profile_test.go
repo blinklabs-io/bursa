@@ -51,6 +51,20 @@ func newProfiledResetFenceCoordinator(
 		paused:    make(chan struct{}),
 		release:   make(chan struct{}),
 	}
+	c := newProfiledStoreCoordinator(t, k, pw, mode)
+	return c, pw, wm, k
+}
+
+// newProfiledStoreCoordinator returns a coordinator over wm for a pool key
+// held by one backend under profPreview.
+func newProfiledStoreCoordinator(
+	t *testing.T,
+	k *fakeKey,
+	wm watermark.Watermark,
+	mode watermark.Mode,
+) *Coordinator {
+	t.Helper()
+	k.typ = backend.KeyTypePool
 	eng, err := policy.NewEngine([]policy.KeyPolicy{{
 		Hash:            k.hash.String(),
 		AllowedRequests: []string{"opcert"},
@@ -58,16 +72,15 @@ func newProfiledResetFenceCoordinator(
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	c := New(Deps{
+	return New(Deps{
 		Resolver: backend.NewResolver(
 			profiledFakeBackend{"dev-preview", profPreview, k},
 		),
 		Policy:    eng,
-		Watermark: pw,
+		Watermark: wm,
 		WMMode:    mode,
 		Metrics:   NewMetrics(),
 	})
-	return c, pw, wm, k
 }
 
 // profiledReset is the admin reset of the chain records under profPreview:

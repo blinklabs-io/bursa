@@ -56,7 +56,7 @@ func requireRecords(
 	issued *uint64,
 ) {
 	t.Helper()
-	got, err := ReadOpCertRecords(context.Background(), wm, k.hash)
+	got, err := ReadOpCertRecords(context.Background(), wm, k.hash, "")
 	if err != nil {
 		t.Fatalf("read records: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSignOpCertFromChain_ResetBetweenCheckAndCommit(t *testing.T) {
 			res, code, err := raceOpCert(t, pw, first,
 				func() (*OpCertResult, ErrorCode, error) {
 					_, _, rerr := ResetOpCertChain(
-						ctx, wm, watermark.ModeEnforce, k.hash, 2, true,
+						ctx, wm, watermark.ModeEnforce, k.hash, "", 2, true,
 					)
 					return nil, "", rerr
 				},
@@ -149,7 +149,7 @@ func TestSignOpCertFromChain_ResetBetweenCheckAndCommitWarn(t *testing.T) {
 		},
 		func() (*OpCertResult, ErrorCode, error) {
 			_, _, rerr := ResetOpCertChain(
-				ctx, wm, watermark.ModeWarn, k.hash, 2, true,
+				ctx, wm, watermark.ModeWarn, k.hash, "", 2, true,
 			)
 			return nil, "", rerr
 		},
@@ -178,7 +178,7 @@ func TestSignOpCertFromChain_CommitThenReset(t *testing.T) {
 	requireRecords(t, wm, k, u64p(4), u64p(5))
 
 	if _, _, err := ResetOpCertChain(
-		ctx, wm, watermark.ModeEnforce, k.hash, 2, true,
+		ctx, wm, watermark.ModeEnforce, k.hash, "", 2, true,
 	); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestSignOpCertFromChain_FenceNoReset(t *testing.T) {
 	requireRecords(t, wm, k, u64p(5), u64p(7))
 
 	if _, _, err := ResetOpCertChain(
-		ctx, wm, watermark.ModeEnforce, k.hash, 8, true,
+		ctx, wm, watermark.ModeEnforce, k.hash, "", 8, true,
 	); err != nil {
 		t.Fatalf("reset: %v", err)
 	}

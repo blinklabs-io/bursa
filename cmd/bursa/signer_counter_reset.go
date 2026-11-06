@@ -123,7 +123,7 @@ func runSignerCounterReset(
 	}
 	defer closeStore()
 	before, after, err := signer.ResetOpCertChain(
-		ctx, wm, mode, key, chainCounter, yes,
+		ctx, wm, mode, key, "", chainCounter, yes,
 	)
 	if err != nil {
 		return err
