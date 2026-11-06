@@ -15,6 +15,7 @@
 package signer
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,6 +33,9 @@ func TestCheckBackendWatermark_NitroRequiresEnforcingDurable(t *testing.T) {
 		{Type: "file", Mode: "enforce"},
 		{Type: "postgres", Mode: "enforce"},
 		{Type: "postgres", DSNEnv: "BURSA_TEST_UNSET_WATERMARK_DSN"},
+		// SQLite opens these in memory, which a restart loses
+		{Type: "file", Path: ":memory:", Mode: "enforce"},
+		{Type: "file", Path: "file::memory:", Mode: "enforce"},
 		{Type: "mem", Mode: "enforce"},
 		{Type: "", Mode: "warn"},
 		{Mode: "off"},
@@ -52,12 +56,14 @@ func TestCheckBackendWatermark_NitroRequiresEnforcingDurable(t *testing.T) {
 func TestCheckBackendWatermark_Allowed(t *testing.T) {
 	t.Parallel()
 	nitro := []config.SignerBackendConfig{{Name: "n", Type: "nitro"}}
+	dir := t.TempDir()
 	for _, wm := range []config.SignerWatermarkConfig{
-		{Type: "file", Path: "/x", Mode: "enforce"},
-		{Type: "file", Path: "/x"},
+		{Type: "file", Path: filepath.Join(dir, "a.db"), Mode: "enforce"},
+		{Type: "file", Path: filepath.Join(dir, "b.db")},
+		{Type: "file", Path: "file:" + filepath.Join(dir, "c.db"), Mode: "enforce"},
 		{Type: "postgres", Mode: "enforce", DSN: "postgres://x"},
 		// New coerces any mode other than warn or off to enforce
-		{Type: "file", Path: "/x", Mode: "Enforce"},
+		{Type: "file", Path: filepath.Join(dir, "d.db"), Mode: "Enforce"},
 	} {
 		if err := CheckBackendWatermark(nitro, wm); err != nil {
 			t.Fatalf("watermark %+v: %v", wm, err)

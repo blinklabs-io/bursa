@@ -170,7 +170,8 @@ signature before constructing the operational certificate.
 The signer's durable watermark enforces the operational-certificate issue
 counter. `bursa signer` refuses to start with a `nitro` backend unless
 `signer.watermark.mode` is `enforce` (the default) and `signer.watermark.type`
-is `file` or `postgres`. The enclave's own counter lives in memory and resets
+is `file` or `postgres`. A `file` path must open a file-backed SQLite
+database; an in-memory one such as `:memory:` is refused. The enclave's own counter lives in memory and resets
 on restart, so it is defence in depth only. The host can roll back the wrapped
 envelope in Secrets Manager, so persisting enclave state there would not stop
 a rollback either.

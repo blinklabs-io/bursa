@@ -503,6 +503,15 @@ func CheckBackendWatermark(
 			err = errors.New(
 				"watermark type \"file\" requires a non-empty path",
 			)
+		} else if c.Type == "file" {
+			var fileBacked bool
+			fileBacked, err = watermark.SqliteFileBacked(c.Path)
+			if err == nil && !fileBacked {
+				err = fmt.Errorf(
+					"watermark path %q opens an in-memory database",
+					c.Path,
+				)
+			}
 		} else if c.Type == "postgres" {
 			_, err = watermarkPostgresDSN(c)
 		}
