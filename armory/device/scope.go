@@ -477,9 +477,10 @@ func (s *Service) addHostKeyMulti(req HostKeyRequest) (HostKeyResponse, error) {
 }
 
 // revokeHostKeyMulti removes a host key. A key revokes keys of its own
-// scope, its last one included; a key of a mainnet scope also revokes the
-// keys of other scopes, but never a scope's last key, which would lock that
-// scope out and let the mainnet key choose its next key.
+// scope, its last one included unless it is the device's last key, which
+// would return the device to the unsigned bootstrap state; a key of a mainnet
+// scope also revokes the keys of other scopes, but never a scope's last key,
+// which would lock that scope out and let the mainnet key choose its next key.
 // mayAddHostKey checks that c may add a key for scope sc: a key of sc, or a
 // signed key of a mainnet scope adding the first key of another scope.
 func (s *Service) mayAddHostKey(c caller, sc Scope) error {
@@ -556,6 +557,10 @@ func (s *Service) revokeHostKeyMulti(
 		}
 
 		entries = append(entries, e)
+	}
+
+	if len(entries) == 0 {
+		return HostKeyResponse{}, errLastHostKey
 	}
 
 	return s.writeHostKeys(entries)

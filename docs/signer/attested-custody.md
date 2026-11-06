@@ -518,6 +518,10 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   length-prefixed as in the request binding. The signature thus binds the
   exact key while the key never passes through the JSON encoder used for the
   binding. The challenge is one-time.
+- The device's last host key cannot be revoked: an empty list is the
+  bootstrap state, which accepts unsigned provisioning and key enrollment.
+  Add the replacement key first, then revoke the old one; only a device wipe
+  returns to the bootstrap state.
 - A host key list the device cannot read refuses every authenticated route,
   because no key is left to check a signature against.
 - `POST /wipe/device` stays confirmed by the identity public key alone and
@@ -565,8 +569,9 @@ are unchanged. `TESTNET=1` is refused with it.
   log read and listing the keys of other scopes need a key of a mainnet scope
   while the image serves one. A key revokes keys of its own scope; revoking
   another scope's key is device-wide too, and never removes that scope's
-  last key. A scope that revokes its own last key gets its next first key
-  from a mainnet key.
+  last key. A scope may revoke its own last key while another scope holds
+  one, and gets its next first key from a mainnet key; the device's last key
+  of all stays.
 - One key, one scope. A cold key import or an imported owner key whose public
   key already belongs to a profile of another scope is refused, as is a cold
   key slot a profile of another scope names. Two slots of one scope may hold
@@ -608,10 +613,20 @@ are unchanged. `TESTNET=1` is refused with it.
   older one.
 - Moving a testnet device. Flashing the multi image over a device that ran a
   testnet image keeps its profiles and host keys: the stored list is not
-  rewritten. A testnet key does not act device-wide on the multi image, so to
-  add mainnet scopes, revoke the testnet keys with a testnet key on the multi
-  provisioning image, register a mainnet key unsigned, and add the testnet
-  key again with it. The profiles are kept.
+  rewritten. A testnet key does not act device-wide on the multi image and
+  the device's last key cannot be revoked, so adding mainnet scopes takes a
+  device wipe. `/wipe/device` deletes every armory object: the cold keys and
+  their ownership record, the profiles with their owner keys and pins, the
+  host keys, the signing log head and the identity key. Then, on the multi
+  provisioning image, register a mainnet key unsigned and add the testnet key
+  with it; send `/provision/identity`, which generates a new identity key, and
+  pin its public key as `identity_public_key` in place of the old one; import
+  the backed-up testnet cold keys with a signed `/provision/cold`; provision
+  each testnet profile again with `chain_counter` at the pool's on-chain
+  counter, and send its `/provision/pins` again.
+  An owner key the device generated is gone, so the profile gets a new one
+  unless its owner key is imported again. The signing log starts again on a
+  zeroed card, as for any device wipe.
 
 `armory-pool` signs these requests with its host key. The request JSON is read
 from standard input and the device's answer is printed. `armory-pool host-key

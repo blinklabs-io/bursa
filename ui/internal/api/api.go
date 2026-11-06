@@ -2173,9 +2173,10 @@ func NewHandler(
 
 	// Import transaction: paste a full tx CBOR built elsewhere to inspect it
 	// (decode-tx), add this wallet's witness(es) (cosign-tx), and broadcast the
-	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx —
-	// pure crypto over the keystore/tx bytes, no node needed; submit-tx needs a
-	// synced node like submit-signed. Each handler classifies the pasted tx via
+	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx; they
+	// need no synced tip, but cosign-tx on either path refuses a transaction
+	// whose inputs the chain cannot resolve. submit-tx needs a synced node like
+	// submit-signed. Each handler classifies the pasted tx via
 	// ms.InspectTx and routes native-script multisig txs to the multisig
 	// service, ordinary vkey txs straight to the spender (see importDecode/
 	// importCosign/importSubmit below).
@@ -2572,7 +2573,7 @@ func NewHandler(
 	}
 
 	if ms != nil {
-		registerMultiSigRoutes(mux, st, vlt, ms, network, bindActive)
+		registerMultiSigRoutes(mux, st, vlt, sp, ms, network, bindActive)
 	}
 
 	if cfg.connector != nil {
@@ -3369,12 +3370,14 @@ func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
 // registerMultiSigRoutes wires the native multi-signature endpoints under
 // /wallet/multisig. Account management (list/create/get/delete) and sharing the
 // wallet's own participant key are local/offline; balance is a node read
-// (gated); build and submit need a synced node (readyGate); sign is pure crypto
-// over the keystore (ungated).
+// (gated); build and submit need a synced node (readyGate). sign is ungated,
+// but it resolves the transaction's inputs through the chain before signing, so
+// it fails while the node cannot answer UTxO lookups.
 func registerMultiSigRoutes(
 	mux *http.ServeMux,
 	st Statuser,
 	vlt Vault,
+	sp Spender,
 	ms MultiSig,
 	network string,
 	bindActive func(vault.WalletMeta),
@@ -3504,7 +3507,7 @@ func registerMultiSigRoutes(
 	)
 
 	// Co-sign an unsigned multi-sig tx with the wallet's CIP-1854 key. Ungated
-	// (pure crypto over the keystore, no node), like sign-tx.
+	// like sign-tx; the effect check needs chain UTxO lookups, not a synced tip.
 	mux.HandleFunc(
 		"POST /wallet/multisig/sign",
 		func(w http.ResponseWriter, r *http.Request) {
@@ -3513,6 +3516,10 @@ func registerMultiSigRoutes(
 				Password       string `json:"password"`
 			}
 			if !decodeBody(w, r, &req) {
+				return
+			}
+			if err := requireCompleteEffects(r.Context(), sp, req.UnsignedTxCBOR); err != nil {
+				serve(w, struct{}{}, err)
 				return
 			}
 			v, err := ms.Sign(req.UnsignedTxCBOR, req.Password)
@@ -3529,6 +3536,10 @@ func registerMultiSigRoutes(
 				Witnesses      []string `json:"witnesses"`
 			}
 			if !decodeBody(w, r, &req) {
+				return
+			}
+			if err := requireCompleteEffects(r.Context(), sp, req.UnsignedTxCBOR); err != nil {
+				serve(w, struct{}{}, err)
 				return
 			}
 			v, err := ms.Submit(
@@ -3578,6 +3589,30 @@ func importDecode(
 	return resp, nil
 }
 
+// requireCompleteEffects applies the vkey path's signing gate to a
+// transaction the multisig service is about to sign or broadcast: every input
+// and collateral input must resolve and no effect may be unsupported. It runs
+// before the multisig service so the keystore is never unlocked, and nothing is
+// submitted, for a transaction whose effects the wallet cannot account for.
+func requireCompleteEffects(
+	ctx context.Context,
+	sp Spender,
+	txCbor string,
+) error {
+	summary, err := sp.DecodeTx(ctx, txCbor)
+	if err != nil {
+		return err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return fmt.Errorf(
+			"%w: transaction effects are incomplete: %w",
+			spend.ErrInvalidTx,
+			err,
+		)
+	}
+	return nil
+}
+
 func importCosign(
 	ctx context.Context,
 	sp Spender,
@@ -3590,6 +3625,9 @@ func importCosign(
 		return nil, err
 	}
 	if info.IsMultiSig {
+		if err := requireCompleteEffects(ctx, sp, txCbor); err != nil {
+			return nil, err
+		}
 		return ms.CosignImported(txCbor, password)
 	}
 	return sp.CosignTx(ctx, txCbor, password, partial)
@@ -3606,6 +3644,9 @@ func importSubmit(
 		return nil, err
 	}
 	if info.IsMultiSig {
+		if err := requireCompleteEffects(ctx, sp, txCbor); err != nil {
+			return nil, err
+		}
 		return ms.SubmitImported(ctx, txCbor)
 	}
 	return sp.SubmitTxCbor(ctx, txCbor)

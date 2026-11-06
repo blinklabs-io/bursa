@@ -222,7 +222,7 @@ func TestMultiTestnetKeyAddsNoFirstMainnetKey(t *testing.T) {
 		errFirstKeyHeld,
 	)
 
-	// revoking its own last key empties the device, which takes an unsigned key again
+	// the device's last key stays: emptying it would take an unsigned key again
 	code, body = postAs(
 		t,
 		h,
@@ -230,10 +230,35 @@ func TestMultiTestnetKeyAddsNoFirstMainnetKey(t *testing.T) {
 		HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)},
 		multiKeyTestnet,
 	)
-	mustOK(t, "testnet key revokes itself", code, body)
+	refused(
+		t,
+		"testnet key revokes the device's last key",
+		code,
+		body,
+		errLastHostKey,
+	)
 
 	code, body = firstKey(t, h, multiKeyPrime, scopePrimeName)
-	mustOK(t, "unsigned prime key on an emptied device", code, body)
+	refused(
+		t,
+		"unsigned prime key after the refused revoke",
+		code,
+		body,
+		errFirstKeyHeld,
+	)
+
+	// a device wipe returns to the bootstrap state
+	code, body = rawPost(
+		multiImage(t, chip, false).WipeHandler(),
+		"/wipe/device",
+		[]byte(`{"identity_public_key":""}`),
+	)
+	mustOK(t, "device wipe", code, body)
+
+	h = multiImage(t, chip, true).Handler()
+
+	code, body = firstKey(t, h, multiKeyPrime, scopePrimeName)
+	mustOK(t, "unsigned prime key on a wiped device", code, body)
 }
 
 func TestMultiFirstHostKeyRefusals(t *testing.T) {
@@ -1034,7 +1059,8 @@ func TestMultiProvisionRefusesCrossScopeKeys(t *testing.T) {
 // Flashing the multi image onto a device that ran a testnet image keeps its
 // profile and its testnet host key working with nothing rewritten, whether
 // the key list is the scoped one or the legacy unscoped one. The mainnet
-// scopes then get their first keys from the provisioning image.
+// scopes get their first keys from the provisioning image only after a
+// device wipe.
 func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 	t.Parallel()
 
@@ -1127,20 +1153,62 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 				t.Fatal("the legacy host key was rewritten as scoped")
 			}
 
-			// the testnet keys revoke themselves; the emptied device takes the
-			// mainnet key unsigned, which adds the other scopes' keys
-			for _, k := range []ed25519.PrivateKey{extra, multiKeyTestnet} {
-				code, body = postAs(
-					t,
-					prov.Handler(),
-					RouteProvisionHostRevoke,
-					HostKeyRequest{PublicKey: hostPub(k)},
-					multiKeyTestnet,
-				)
-				mustOK(t, "testnet key revokes a testnet key", code, body)
-			}
+			// a testnet key revokes another, never the device's last key
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionHostRevoke,
+				HostKeyRequest{PublicKey: hostPub(extra)},
+				multiKeyTestnet,
+			)
+			mustOK(t, "testnet key revokes a testnet key", code, body)
 
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionHostRevoke,
+				HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)},
+				multiKeyTestnet,
+			)
+			refused(
+				t,
+				"testnet key revokes the device's last key",
+				code,
+				body,
+				errLastHostKey,
+			)
+
+			// only a device wipe takes the mainnet key unsigned again, which
+			// adds the other scopes' keys; the wipe removes the profile too
+			code, body = rawPost(
+				multiImage(t, chip, false).WipeHandler(),
+				"/wipe/device",
+				[]byte(`{"identity_public_key":""}`),
+			)
+			mustOK(t, "device wipe", code, body)
+
+			prov = multiImage(t, chip, true)
 			seedHostKeys(t, prov.Handler())
+
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionCold,
+				coldReq(testColdID, 0x56),
+				multiKeyTestnet,
+			)
+			mustOK(t, "testnet cold key", code, body)
+
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionProfile,
+				ProvisionRequest{
+					Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
+				},
+				multiKeyTestnet,
+			)
+			mustOK(t, "testnet profile", code, body)
 
 			// each key signs for its own scope only
 			signing = multiImage(t, chip, false)
