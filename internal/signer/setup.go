@@ -497,6 +497,22 @@ func CheckBackendWatermark(
 				b.Name,
 			)
 		}
+		// fail before BuildBackends contacts the enclave, not after
+		var err error
+		if c.Type == "file" && c.Path == "" {
+			err = errors.New(
+				"watermark type \"file\" requires a non-empty path",
+			)
+		} else if c.Type == "postgres" {
+			_, err = watermarkPostgresDSN(c)
+		}
+		if err != nil {
+			return fmt.Errorf(
+				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store: %w",
+				b.Name,
+				err,
+			)
+		}
 	}
 	return nil
 }

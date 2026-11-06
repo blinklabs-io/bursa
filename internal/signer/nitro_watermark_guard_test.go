@@ -28,6 +28,10 @@ func TestCheckBackendWatermark_NitroRequiresEnforcingDurable(t *testing.T) {
 		{Type: "file", Path: "/x", Mode: "warn"},
 		{Type: "file", Path: "/x", Mode: "off"},
 		{Type: "postgres", Mode: "warn"},
+		// durable type without the settings to open it
+		{Type: "file", Mode: "enforce"},
+		{Type: "postgres", Mode: "enforce"},
+		{Type: "postgres", DSNEnv: "BURSA_TEST_UNSET_WATERMARK_DSN"},
 		{Type: "mem", Mode: "enforce"},
 		{Type: "", Mode: "warn"},
 		{Mode: "off"},
@@ -51,7 +55,7 @@ func TestCheckBackendWatermark_Allowed(t *testing.T) {
 	for _, wm := range []config.SignerWatermarkConfig{
 		{Type: "file", Path: "/x", Mode: "enforce"},
 		{Type: "file", Path: "/x"},
-		{Type: "postgres", Mode: "enforce"},
+		{Type: "postgres", Mode: "enforce", DSN: "postgres://x"},
 		// New coerces any mode other than warn or off to enforce
 		{Type: "file", Path: "/x", Mode: "Enforce"},
 	} {
