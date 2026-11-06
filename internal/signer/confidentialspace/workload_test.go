@@ -417,7 +417,7 @@ func TestWorkloadInventorySignAndRestart(t *testing.T) {
 	w := newTestWorkload(t, store, wrapper, tokens)
 
 	nonce := bytes.Repeat([]byte{0x42}, 32)
-	inv, err := w.Inventory(t.Context(), nonce)
+	inv, err := w.Inventory(t.Context(), nonce, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +720,7 @@ func TestWorkloadKMSDenialAndMissingAttestation(t *testing.T) {
 		&testWrapper{},
 		&testTokens{err: errors.New("no attestation")},
 	)
-	if _, err := attestationDown.Inventory(t.Context(), make([]byte, 32)); err == nil {
+	if _, err := attestationDown.Inventory(t.Context(), make([]byte, 32), ""); err == nil {
 		t.Fatal("inventory succeeded without attestation")
 	}
 }

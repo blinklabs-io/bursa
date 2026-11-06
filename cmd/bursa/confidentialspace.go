@@ -44,6 +44,8 @@ func confidentialSpaceCommand() *cobra.Command {
 		tlsCertFile    string
 		tlsKeyFile     string
 		clientCAFile   string
+		profiles       []string
+		createProfiles bool
 	)
 	cmd := &cobra.Command{
 		Use:   "confidential-space-workload",
@@ -81,31 +83,62 @@ func confidentialSpaceCommand() *cobra.Command {
 				return err
 			}
 			defer wrapper.Close()
-			counter, err := confidentialspace.NewCloudCounterStore(
-				ctx,
-				counterBucket,
-				counterObject,
-				wifCredentials,
-			)
-			if err != nil {
-				return err
+			cfg := confidentialspace.Config{
+				Audience:              audience,
+				KMSKey:                kmsKey,
+				Tokens:                tokens,
+				Wrapper:               wrapper,
+				CreateProfileCounters: createProfiles,
 			}
-			defer counter.Close()
+			if createProfiles && len(profiles) == 0 {
+				return errors.New(
+					"--create-profile-counters requires --profile",
+				)
+			}
+			if len(profiles) == 0 {
+				counter, err := confidentialspace.NewCloudCounterStore(
+					ctx,
+					counterBucket,
+					counterObject,
+					wifCredentials,
+				)
+				if err != nil {
+					return err
+				}
+				defer counter.Close()
+				cfg.Counter = counter
+			} else {
+				cfg.Profiles = make(
+					map[string]confidentialspace.CounterStore,
+					len(profiles),
+				)
+				for _, profile := range profiles {
+					if _, dup := cfg.Profiles[profile]; dup {
+						return fmt.Errorf("duplicate --profile %q", profile)
+					}
+					counter, err := confidentialspace.NewProfiledCloudCounterStore(
+						ctx,
+						counterBucket,
+						confidentialspace.ProfileCounterObject(
+							counterObject,
+							profile,
+						),
+						profile,
+						wifCredentials,
+					)
+					if err != nil {
+						return err
+					}
+					defer counter.Close()
+					cfg.Profiles[profile] = counter
+				}
+			}
 			store, err := confidentialspace.NewFileEnvelopeStore(wrappedKeyFile)
 			if err != nil {
 				return err
 			}
-			workload, err := confidentialspace.New(
-				ctx,
-				confidentialspace.Config{
-					Audience: audience,
-					KMSKey:   kmsKey,
-					Tokens:   tokens,
-					Wrapper:  wrapper,
-					Store:    store,
-					Counter:  counter,
-				},
-			)
+			cfg.Store = store
+			workload, err := confidentialspace.New(ctx, cfg)
 			if err != nil {
 				return err
 			}
@@ -159,6 +192,10 @@ func confidentialSpaceCommand() *cobra.Command {
 		StringVar(&counterBucket, "counter-bucket", "", "Cloud Storage bucket for the pool issue counter")
 	cmd.Flags().
 		StringVar(&counterObject, "counter-object", "", "Cloud Storage object for the pool issue counter")
+	cmd.Flags().
+		StringArrayVar(&profiles, "profile", nil, "serve the key under this profile, repeatable; counter state moves to <counter-object>/profiles/<profile> and requests without a profile are refused")
+	cmd.Flags().
+		BoolVar(&createProfiles, "create-profile-counters", false, "create the counter state of a --profile that has none yet, for the start that adds a profile")
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().

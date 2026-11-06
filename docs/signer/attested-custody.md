@@ -211,7 +211,7 @@ backends:
   - name: "gcp-cs"
     type: "confidential-space"
     address: "https://workload.example.internal:8443"
-    profile: "pool@mainnet"                     # optional; unset for `bursa confidential-space-workload`
+    profile: "pool@mainnet"                     # optional; must match a `--profile` of `bursa confidential-space-workload`, unset without any
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
     tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
@@ -279,11 +279,40 @@ nothing. Both request forms write the new fields, and an earlier workload
 release cannot read an object that has them; roll the workload forward, not
 back, once this release has signed a certificate.
 
-One signer feature is still refused:
+#### Profiles
 
-- A backend `profile`. The workload signs no profile binding, so leave
-  `profile` unset on its `confidential-space` backend; with it set, the
-  inventory request is refused and the backend does not load.
+Without `--profile` the workload serves unprofiled requests only, and refuses
+any request or inventory that names a profile. With `--profile NAME`
+(repeatable) it holds the same cold key under each named profile, so one
+workload can serve a pool on several networks to signer backends that each set
+`profile`:
+
+- Requests and inventories must name a configured profile; an unprofiled
+  request or an unknown profile is refused, and the refusal consumes no nonce
+  and no counter. A profile name is 1 to 128 characters from letters, digits
+  and `._@-`.
+- Each profile has its own counter object,
+  `<counter-object>/profiles/<profile>`, for both `opcert` and `opcert-next`,
+  so profiles never share an issue counter, chain-counter floor or KES-period
+  record. The object records its `profile`, and the workload refuses an object
+  that names another profile or none. The unprofiled object at
+  `--counter-object` is neither read nor written, and is unchanged; a profile
+  does not adopt it, so a profile's counter starts empty. Use `opcert-next`,
+  which takes the on-chain counter, to continue a pool whose certificates were
+  issued earlier.
+- Every profiled response carries `binding_signature`, the pool key's
+  signature over `AttestedResponseBinding` (the request including its profile,
+  and the Cardano signature). The signer rejects a response whose binding does
+  not match the profile it asked for, so an untrusted proxy cannot move a
+  request to another profile.
+- The attestation token is bound to the nonce and key list, not the profile,
+  and the key is the same under every profile; profiles are separated by the
+  signing request binding and the counters.
+- A new profile has no counter object. Start the workload once with
+  `--create-profile-counters` to create the missing ones, then remove the flag;
+  without it a missing profile counter stops startup, as a missing unprofiled
+  counter does, so a deleted object is not silently reset. A counter object
+  that carries a `profile` cannot be read by an earlier workload release.
 
 The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
 key inside the workload. Cloud KMS wraps the data-encryption key. The workload
@@ -297,7 +326,8 @@ Cloud KMS must unwrap the same data-encryption key before the public key is
 served. A denial, corrupt envelope, mismatched KMS resource, or changed public
 metadata stops startup.
 
-The command requires:
+The command requires the following; the `--profile` lines are optional (see
+Profiles above):
 
 ```text
 bursa confidential-space-workload \
@@ -307,6 +337,7 @@ bursa confidential-space-workload \
   --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
   --counter-bucket POOL_COUNTER_BUCKET \
   --counter-object pool-cold/counter.json \
+  --profile pool@mainnet --profile pool@preview \
   --wif-credentials /etc/bursa/confidential-space-wif.json \
   --tls-cert-file /etc/bursa/confidential-space-server.pem \
   --tls-key-file /etc/bursa/confidential-space-server-key.pem \

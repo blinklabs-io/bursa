@@ -28,9 +28,9 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
-// A profiled request needs a binding signature the workload does not
-// produce. A refused request must not consume its nonce or advance the
-// durable counter. opcert-next is served; see opcert_next_test.go.
+// An unprofiled workload refuses a profiled request. A refused request must
+// not consume its nonce or advance the durable counter. opcert-next is served;
+// see opcert_next_test.go, and profiled_test.go for a profiled workload.
 func TestWorkloadRefusesUnsupportedSignScope(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*backend.AttestedRequest){

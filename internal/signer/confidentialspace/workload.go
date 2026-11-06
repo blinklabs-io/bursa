@@ -27,8 +27,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"runtime"
+	"slices"
 	"sync"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -91,6 +93,12 @@ type Config struct {
 	Wrapper  KeyWrapper
 	Store    EnvelopeStore
 	Counter  CounterStore
+	// Profiles serves the key under each named profile, every one with its
+	// own counter store. Exclusive with Counter.
+	Profiles map[string]CounterStore
+	// CreateProfileCounters lets a start create the counter state of a
+	// profile that has none yet.
+	CreateProfileCounters bool
 }
 
 type envelope struct {
@@ -120,7 +128,9 @@ type Workload struct {
 	pub      ed25519.PublicKey
 	priv     ed25519.PrivateKey
 	hash     backend.KeyHash
-	counter  CounterStore
+	// counters holds the counter store of each served profile; the
+	// unprofiled workload has the single entry "".
+	counters map[string]CounterStore
 
 	mu        sync.Mutex
 	nonces    map[[32]byte]struct{}
@@ -142,11 +152,14 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	if cfg.KMSKey == "" || len(cfg.KMSKey) > 1024 {
 		return nil, errors.New("confidential space workload requires a KMS key")
 	}
-	if cfg.Tokens == nil || cfg.Wrapper == nil || cfg.Store == nil ||
-		cfg.Counter == nil {
+	if cfg.Tokens == nil || cfg.Wrapper == nil || cfg.Store == nil {
 		return nil, errors.New(
 			"confidential space workload requires token, KMS, envelope, and counter providers",
 		)
+	}
+	counters, err := serviceCounters(cfg)
+	if err != nil {
+		return nil, err
 	}
 	key, err := loadOrCreateKey(ctx, cfg)
 	if err != nil {
@@ -156,9 +169,18 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 		ed25519.PublicKey(nil),
 		key.priv.Public().(ed25519.PublicKey)...)
 	hash := backend.HashPublicKey(pub)
-	if err := cfg.Counter.Prepare(ctx, hash, key.pending); err != nil {
-		wipe(key.priv)
-		return nil, fmt.Errorf("prepare counter state: %w", err)
+	for _, profile := range slices.Sorted(maps.Keys(counters)) {
+		allowCreate := key.pending ||
+			(profile != "" && cfg.CreateProfileCounters)
+		if err := counters[profile].Prepare(ctx, hash, allowCreate); err != nil {
+			wipe(key.priv)
+			if profile != "" {
+				return nil, fmt.Errorf(
+					"prepare counter state of profile %q: %w", profile, err,
+				)
+			}
+			return nil, fmt.Errorf("prepare counter state: %w", err)
+		}
 	}
 	if key.pending {
 		if err := activateEnvelope(ctx, cfg, key, pub); err != nil {
@@ -172,11 +194,62 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 		pub:       pub,
 		priv:      key.priv,
 		hash:      hash,
-		counter:   cfg.Counter,
+		counters:  counters,
 		nonces:    make(map[[32]byte]struct{}),
 		nonceFIFO: make([][32]byte, 0, maxRequestNonces),
 		signFunc:  ed25519.Sign,
 	}, nil
+}
+
+// serviceCounters returns the counter store of every profile the workload
+// serves: the single unprofiled store, or the configured profiles, never both.
+func serviceCounters(cfg Config) (map[string]CounterStore, error) {
+	if len(cfg.Profiles) == 0 {
+		if cfg.Counter == nil {
+			return nil, errors.New(
+				"confidential space workload requires token, KMS, envelope, and counter providers",
+			)
+		}
+		return map[string]CounterStore{"": cfg.Counter}, nil
+	}
+	if cfg.Counter != nil {
+		return nil, errors.New(
+			"confidential space workload serves either the unprofiled counter or profiles, not both",
+		)
+	}
+	counters := make(map[string]CounterStore, len(cfg.Profiles))
+	for name, store := range cfg.Profiles {
+		if err := ValidateProfile(name); err != nil {
+			return nil, err
+		}
+		if store == nil {
+			return nil, fmt.Errorf("profile %q has no counter store", name)
+		}
+		counters[name] = store
+	}
+	return counters, nil
+}
+
+// maxProfileLength bounds a profile name.
+const maxProfileLength = 128
+
+// ValidateProfile checks a profile name: non-empty, bounded, and limited to
+// letters, digits and "._@-", so that it is safe in a counter object name.
+func ValidateProfile(name string) error {
+	if name == "" || len(name) > maxProfileLength {
+		return fmt.Errorf(
+			"profile name must be 1 to %d characters", maxProfileLength,
+		)
+	}
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '@', c == '-':
+		default:
+			return fmt.Errorf("profile name %q has an invalid character", name)
+		}
+	}
+	return nil
 }
 
 func loadOrCreateKey(
@@ -447,12 +520,22 @@ func activateEnvelope(
 	return errors.New("wrapped key changed too often")
 }
 
+// errProfileNotServed reports a profile the workload is not configured for.
+var errProfileNotServed = errors.New("profile is not served by this workload")
+
 // Inventory returns the public key and a custom token bound to the caller's
-// nonce and the exact inventory.
+// nonce and the exact inventory. profile must be one the workload serves, ""
+// for an unprofiled workload. The attested binding does not cover the profile:
+// every key is the same under all profiles, and each profiled signature is
+// bound to its profile by its own binding signature.
 func (w *Workload) Inventory(
 	ctx context.Context,
 	nonce []byte,
+	profile string,
 ) (backend.AttestedInventory, error) {
+	if _, ok := w.counters[profile]; !ok {
+		return backend.AttestedInventory{}, errProfileNotServed
+	}
 	if len(nonce) != 32 {
 		return backend.AttestedInventory{}, errors.New(
 			"inventory nonce must be 32 bytes",
@@ -488,8 +571,10 @@ func (w *Workload) Inventory(
 // Sign serves pool operational-certificate requests: opcert with an explicit
 // issue counter, and opcert-next, where the workload chooses the issue number
 // from the chain counter with the armory device's rules and its durable
-// counter. It refuses profiled requests, whose binding signature this
-// workload does not produce.
+// counter. A workload configured with profiles serves only requests naming one
+// of them, each against that profile's counter, and signs a binding over the
+// response (backend.AttestedResponseBinding) so an untrusted proxy cannot move
+// a request to another profile. An unprofiled workload refuses any profile.
 func (w *Workload) Sign(
 	ctx context.Context,
 	req backend.AttestedRequest,
@@ -498,10 +583,11 @@ func (w *Workload) Sign(
 		Version: backend.AttestedProtocol,
 		Nonce:   append([]byte(nil), req.Nonce...),
 	}
-	if req.Version != backend.AttestedProtocol ||
+	counter, served := w.counters[req.Profile]
+	if !served ||
+		req.Version != backend.AttestedProtocol ||
 		(req.Purpose != backend.PurposeOpCert &&
 			req.Purpose != backend.PurposeOpCertNext) ||
-		req.Profile != "" ||
 		req.Role != backend.KeyTypePool ||
 		req.KeyHash != w.hash.String() ||
 		len(req.Nonce) != 32 ||
@@ -523,10 +609,10 @@ func (w *Workload) Sign(
 	}
 	signable := req.Payload
 	var issued *uint64
-	counter := binary.BigEndian.Uint64(req.Payload[32:40])
+	chainOrIssue := binary.BigEndian.Uint64(req.Payload[32:40])
 	period := binary.BigEndian.Uint64(req.Payload[40:])
 	if req.Purpose == backend.PurposeOpCertNext {
-		issue, err := w.counter.NextOpCert(ctx, w.hash, counter, period)
+		issue, err := counter.NextOpCert(ctx, w.hash, chainOrIssue, period)
 		if err != nil {
 			resp.Error = opCertNextRefusal(err)
 			return resp, nil
@@ -534,10 +620,10 @@ func (w *Workload) Sign(
 		signable = bytes.Clone(req.Payload)
 		binary.BigEndian.PutUint64(signable[32:40], issue)
 		issued = &issue
-	} else if err := w.counter.CheckAndAdvance(
+	} else if err := counter.CheckAndAdvance(
 		ctx,
 		w.hash,
-		counter,
+		chainOrIssue,
 		period,
 	); err != nil {
 		resp.Error = "request refused"
@@ -558,6 +644,19 @@ func (w *Workload) Sign(
 		return backend.AttestedResponse{}, errors.New(
 			"pool key signature verification failed",
 		)
+	}
+	if req.Profile != "" {
+		binding := backend.AttestedResponseBinding(req, sig, "")
+		bsig := w.signFunc(w.priv, binding)
+		if len(bsig) != ed25519.SignatureSize ||
+			!ed25519.Verify(w.pub, binding, bsig) {
+			wipe(sig)
+			wipe(bsig)
+			return backend.AttestedResponse{}, errors.New(
+				"pool key binding signature verification failed",
+			)
+		}
+		resp.BindingSignature = bsig
 	}
 	resp.Signature = sig
 	resp.IssueCounter = issued
@@ -604,13 +703,18 @@ func (w *Workload) Handler() http.Handler {
 
 func (w *Workload) handleInventory(rw http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Nonce []byte `json:"nonce"`
+		Nonce   []byte `json:"nonce"`
+		Profile string `json:"profile,omitempty"`
 	}
 	if err := decodeRequest(rw, r, &req); err != nil {
 		http.Error(rw, "invalid request", http.StatusBadRequest)
 		return
 	}
-	inv, err := w.Inventory(r.Context(), req.Nonce)
+	inv, err := w.Inventory(r.Context(), req.Nonce, req.Profile)
+	if errors.Is(err, errProfileNotServed) {
+		http.Error(rw, "invalid request", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		http.Error(rw, "attestation unavailable", http.StatusServiceUnavailable)
 		return
