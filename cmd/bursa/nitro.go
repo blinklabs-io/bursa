@@ -143,7 +143,7 @@ func nitroEnclaveCommand() *cobra.Command {
 
 func nitroProxyCommand() *cobra.Command {
 	var (
-		socket                               string
+		socket, socketMode                   string
 		region, kmsKeyID, secretID           string
 		enclaveCAFile, clientCertFile        string
 		clientKeyFile, enclaveServerName     string
@@ -167,6 +167,13 @@ func nitroProxyCommand() *cobra.Command {
 				return errors.New(
 					"absolute --socket, --region, --secret-id, and provisioning --kms-key-id and --provision-authorization-file are required",
 				)
+			}
+			mode, err := parseSocketMode(socketMode)
+			if err != nil {
+				return err
+			}
+			if err := validateServiceSocketMode(mode); err != nil {
+				return err
 			}
 			var provisionAuthorization []byte
 			if provision {
@@ -288,7 +295,7 @@ func nitroProxyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			listener, err := listenPrivateUnix(socket)
+			listener, err := listenPrivateUnix(socket, mode)
 			if err != nil {
 				return err
 			}
@@ -325,6 +332,8 @@ func nitroProxyCommand() *cobra.Command {
 	}
 	command.Flags().
 		StringVar(&socket, "socket", "/run/bursa/nitro.sock", "private Unix socket exposed to bursa signer")
+	command.Flags().
+		StringVar(&socketMode, "socket-mode", "0600", "octal signer socket mode")
 	command.Flags().StringVar(&region, "region", "", "AWS region")
 	command.Flags().
 		StringVar(&secretID, "secret-id", "", "existing Secrets Manager secret containing the wrapped envelope")
@@ -372,7 +381,10 @@ func readFixedHexFile(path, label string, size int) ([]byte, error) {
 	return raw, nil
 }
 
-func listenPrivateUnix(path string) (net.Listener, error) {
+func listenPrivateUnix(path string, mode os.FileMode) (net.Listener, error) {
+	if err := validateServiceSocketMode(mode); err != nil {
+		return nil, err
+	}
 	if _, err := os.Lstat(path); err == nil {
 		return nil, errors.New(
 			"refusing to replace an existing Nitro proxy socket",
@@ -380,7 +392,7 @@ func listenPrivateUnix(path string) (net.Listener, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	listener, err := kesagent.ListenUnix(path, 0o600)
+	listener, err := kesagent.ListenUnix(path, mode)
 	if err != nil {
 		return nil, fmt.Errorf("listen on Nitro proxy socket: %w", err)
 	}

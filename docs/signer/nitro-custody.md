@@ -24,8 +24,11 @@ Secrets Manager contains the pool role, public key, KMS key ARN, KMS
 is authenticated as AES-GCM additional data. A reload derives the public key
 from the recovered seed and refuses a mismatch.
 
-The host proxy listens on an owner-only Unix socket. Configure the signer's
-`nitro` backend with that socket:
+The host proxy socket defaults to owner-only mode. When the proxy and signer
+run as separate users, put only those users in a dedicated socket group, run
+the proxy with that effective group, and set `--socket-mode 0660`. Keep the
+signer's `host_key_file` owner-only so the proxy cannot read it. Configure the
+signer's `nitro` backend with that socket:
 
 ```yaml
 backends:
@@ -68,6 +71,7 @@ On the parent instance run:
 ```text
 bursa nitro proxy --enclave-cid <cid> --region <region> \
   --secret-id <existing-secret-id> --socket /run/bursa/nitro.sock \
+  --socket-mode 0660 \
   --enclave-ca-file /etc/bursa/nitro/enclave-ca.pem \
   --enclave-server-name nitro-enclave.internal \
   --client-cert-file /etc/bursa/nitro/proxy.pem \
