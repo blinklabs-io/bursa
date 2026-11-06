@@ -57,7 +57,8 @@ const opcertChainIssuedScope = "opcert-chain-issued"
 // A request reads it before its pre-sign checks and its commit requires it
 // unchanged, so a reset in between refuses the request instead of letting it
 // overwrite the reset's records. No record counts as generation 0. The commit
-// locks it before the form and issued records, as the reset does.
+// locks it before the form and issued records, as the reset does. Like the
+// other records it is per profile for a key served by a profiled backend.
 const opcertResetGenScope = "opcert-chain-reset-gen"
 
 // opcertCounterRule is the anti-double-sign check for one request: the value
@@ -316,6 +317,7 @@ func (c *Coordinator) signOpCert(
 	formScope := rule.scope
 	rule.scope = profileScope(ref, rule.scope)
 	issuedScope := profileScope(ref, opcertChainIssuedScope)
+	genScope := profileScope(ref, opcertResetGenScope)
 
 	if dec := c.deps.Policy.EvaluateOpCert(hash, policy.WithBackend(ref.Backend())); !dec.Allow {
 		logger.Info(
@@ -394,9 +396,9 @@ func (c *Coordinator) signOpCert(
 		counterWM = cw
 		// read first: any later check is then covered by the commit's
 		// generation check
-		gen, _, gerr := cw.CounterFor(ctx, hash, opcertResetGenScope)
+		gen, _, gerr := cw.CounterFor(ctx, hash, genScope)
 		if gerr != nil {
-			c.deps.Logger.Info(
+			logger.Info(
 				"sign",
 				"type",
 				"opcert",
@@ -721,7 +723,7 @@ func (c *Coordinator) signOpCert(
 		formOp := rule.op()
 		// the generation is locked first, then the form record, then issued
 		genOp := watermark.CounterOp{
-			Scope: opcertResetGenScope,
+			Scope: genScope,
 			Value: resetGen,
 			Kind:  watermark.CounterEqual,
 		}
@@ -745,12 +747,12 @@ func (c *Coordinator) signOpCert(
 		var regression *watermark.CounterRegressionError
 		switch {
 		case werr == nil:
-		case errors.As(werr, &regression) && regression.Scope == opcertResetGenScope:
+		case errors.As(werr, &regression) && regression.Scope == genScope:
 			// a counter reset ran after the pre-sign checks: its records
 			// stand, and this request records nothing
 			c.deps.Metrics.observeWatermarkConflict()
 			if c.deps.WMMode == watermark.ModeEnforce {
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"opcert",
@@ -769,7 +771,7 @@ func (c *Coordinator) signOpCert(
 					"opcert counters for this cold key were reset while the request was in flight, retry",
 				)
 			}
-			c.deps.Logger.Warn(
+			logger.Warn(
 				"sign",
 				"type",
 				"opcert",
