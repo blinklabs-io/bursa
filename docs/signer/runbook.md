@@ -326,10 +326,16 @@ unprofiled backend are unchanged. Opcert records an armory-backed key wrote
 before profile scoping are keyed without the profile. While one backend holds
 the key, they still bound its opcert requests until a record under its profile
 exists. Once several backends hold it they are not consulted, as they cannot
-be attributed to one profile: before adding a second profile for a key, append
-`|<profile>` to the `record_key` of each of its `opcert-counter`,
-`opcert-chain-floor` and `opcert-chain-issued` rows, naming the profile that
-wrote them.
+be attributed to one profile. Before adding a second profile for a key, stop
+every signer instance that uses the store, then migrate each of the key's
+`opcert-counter`, `opcert-chain-floor` and `opcert-chain-issued` rows keyed
+without a profile, naming the profile that wrote them:
+
+- If a row for the same scope under `|<profile>` already exists, set it to the
+  higher of the two values and delete the row without the profile.
+- Otherwise append `|<profile>` to the row's `record_key`.
+
+Start the signers again only after every row is migrated.
 
 ### High availability
 
