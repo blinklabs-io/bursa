@@ -91,7 +91,7 @@ func ReadOpCertRecords(
 // chain floor of key to chainCounter, lower or higher than the stored value,
 // and clears the issued record, in one transaction. The reported counter is
 // trusted. The explicit issue-counter record and the payload watermarks are
-// not touched. With apply false nothing is written and after is the planned
+// not touched. With apply false no record is written and after is the planned
 // state; store then needs only to read.
 //
 // It is for an operator command only: nothing on the signing path calls it.
@@ -144,7 +144,7 @@ func ResetOpCertChain(
 // since opening one would create an empty database the signer never reads.
 // With apply true the store is opened through BuildWatermark, which
 // initializes its schema. With apply false it is opened read-only, with no
-// schema initialization, so a dry run writes nothing. The returned function
+// schema initialization, so a dry run writes no records. The returned function
 // closes the store.
 func OpenResetStore(
 	ctx context.Context,

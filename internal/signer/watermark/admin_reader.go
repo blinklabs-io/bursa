@@ -20,10 +20,14 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
+	"strings"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // CounterReader reads counter records without writing. A missing counter
@@ -42,7 +46,8 @@ var (
 )
 
 // SqliteCounterReader reads a SQLite watermark store opened read-only. It
-// creates no table and runs no migration.
+// creates no table and runs no migration; for a WAL store SQLite may create
+// its own -wal and -shm files, which hold no records.
 type SqliteCounterReader struct {
 	db *sql.DB
 }
@@ -50,21 +55,58 @@ type SqliteCounterReader struct {
 // OpenSqliteCounterReader opens the SQLite store at path read-only. The file
 // must exist.
 func OpenSqliteCounterReader(path string) (*SqliteCounterReader, error) {
-	u := url.URL{
-		Scheme:   "file",
-		Path:     path,
-		RawQuery: "mode=ro&_pragma=busy_timeout(5000)",
+	uri, err := sqliteReadOnlyURI(path)
+	if err != nil {
+		return nil, fmt.Errorf("open watermark db read-only: %w", err)
 	}
-	db, err := sql.Open("sqlite", u.String())
+	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, fmt.Errorf("open watermark db read-only: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("open watermark db read-only: %w", err)
+		return nil, fmt.Errorf(
+			"open watermark db read-only: %w",
+			readOnlyDirHint(err),
+		)
 	}
 	return &SqliteCounterReader{db: db}, nil
+}
+
+// readOnlyDirHint explains a SQLITE_READONLY failure of a read-only open. To
+// read a WAL database SQLite creates its -shm file beside the store, which
+// fails when the directory is not writable.
+func readOnlyDirHint(err error) error {
+	var se *sqlite.Error
+	if errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_READONLY {
+		return fmt.Errorf(
+			"%w (SQLite could not create its -wal or -shm file in the store's directory; run as a user that can write that directory)",
+			err,
+		)
+	}
+	return err
+}
+
+// sqliteReadOnlyURI returns a read-only SQLite URI for path. A relative path
+// is made absolute, since a URI reads its first segment as an authority, and
+// the path is escaped so spaces, '?' and '#' stay part of the file name.
+func sqliteReadOnlyURI(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.ToSlash(abs)
+	if !strings.HasPrefix(p, "/") {
+		// A Windows drive path: file:///C:/dir/wm.db.
+		p = "/" + p
+	}
+	u := url.URL{
+		Scheme:   "file",
+		Path:     p,
+		RawQuery: "mode=ro&_pragma=busy_timeout(5000)",
+	}
+	return u.String(), nil
 }
 
 // Close closes the underlying database.

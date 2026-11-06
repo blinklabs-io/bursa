@@ -312,12 +312,14 @@ bursa signer counter-reset --config signer.yaml \
 ```
 
 Without `--yes` it opens the store read-only, prints the records and the
-change, writes nothing, and exits non-zero. It sets `opcert-chain-floor` to the reported counter, lower or
+change, writes no records, and exits non-zero. For a `file` store in WAL mode
+SQLite may still create its own `-wal` and `-shm` files beside the store,
+which hold no records; the dry run fails with an error naming the directory
+when it cannot. It sets `opcert-chain-floor` to the reported counter, lower or
 higher than the stored value, and deletes `opcert-chain-issued`, in one
-transaction. It leaves `opcert-counter`
-(explicit `issue_counter` requests) and the tx and cip8 watermarks alone, and
-refuses a `mem` store, watermark `mode: off`, and a `file` store path that does
-not exist. It is a local command with no API route.
+transaction. It leaves `opcert-counter` (explicit `issue_counter` requests)
+and the tx and cip8 watermarks alone, and refuses a `mem` store, watermark
+`mode: off`, and a `file` store path that does not exist. It is a local command with no API route.
 
 The reset trusts the chain counter you report, as the device's floor reset
 does. Read it from the chain (the counter of the pool's last forged block)

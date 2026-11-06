@@ -18,6 +18,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -136,5 +138,61 @@ func TestSqliteCounterReader_WriterClosed(t *testing.T) {
 	if v, ok, err := r.CounterFor(ctx, k, "floor"); err != nil || !ok ||
 		v != 7 {
 		t.Fatalf("got (%d, %v, %v), want 7", v, ok, err)
+	}
+}
+
+// TestSqliteCounterReader_PathCharacters opens stores whose names need URI
+// escaping.
+func TestSqliteCounterReader_PathCharacters(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"a b.db", "w#1.db", "w%20.db"} {
+		path := filepath.Join(t.TempDir(), name)
+		w, err := NewSqliteWatermark(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = w.Close() })
+		r, err := OpenSqliteCounterReader(path)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = r.Close() })
+		var a, b backend.KeyHash
+		a[0], b[0] = 1, 2
+		checkCounterReader(t, w, r, a, b)
+	}
+}
+
+// TestSqliteCounterReader_ReadOnlyDirectory: a WAL store whose directory
+// cannot be written fails to open with an error naming the directory.
+func TestSqliteCounterReader_ReadOnlyDirectory(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permissions are not enforced here")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "wm.db")
+	w, err := NewSqliteWatermark(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k backend.KeyHash
+	if err := w.CheckAndRaiseFloor(context.Background(), k, "floor", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	r, err := OpenSqliteCounterReader(path)
+	if err == nil {
+		_ = r.Close()
+		t.Skip("this SQLite build reads the WAL store without its directory")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("error does not name the directory: %v", err)
 	}
 }

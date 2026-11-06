@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -31,9 +32,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// dryRunReset runs the command without --yes and requires the not-confirmed
-// result and a report of no records.
-func dryRunReset(t *testing.T, cfg config.SignerWatermarkConfig, key string) {
+// dryRunReset runs the command without --yes, requires the not-confirmed
+// result, and returns the output.
+func dryRunReset(
+	t *testing.T,
+	cfg config.SignerWatermarkConfig,
+	key string,
+) string {
 	t.Helper()
 	var out bytes.Buffer
 	err := runSignerCounterReset(
@@ -42,8 +47,82 @@ func dryRunReset(t *testing.T, cfg config.SignerWatermarkConfig, key string) {
 	if !errors.Is(err, errCounterResetNotConfirmed) {
 		t.Fatalf("err = %v, want errCounterResetNotConfirmed", err)
 	}
-	if !strings.Contains(out.String(), "none") {
-		t.Fatalf("output lacks the empty records:\n%s", out.String())
+	return out.String()
+}
+
+// requireBefore fails unless the before section of out reports each of the
+// three records with the given value, "none" for no record.
+func requireBefore(t *testing.T, out, floor, issued, explicit string) {
+	t.Helper()
+	start := strings.Index(out, "before:\n")
+	end := strings.Index(out, "would become:")
+	if start < 0 || end < start {
+		t.Fatalf("output lacks the before section:\n%s", out)
+	}
+	section := out[start:end]
+	for _, rec := range []struct{ name, want string }{
+		{"opcert-chain-floor", floor},
+		{"opcert-chain-issued", issued},
+		{"opcert-counter (unchanged)", explicit},
+	} {
+		re := regexp.MustCompile(
+			`(?m)^\s+` + regexp.QuoteMeta(rec.name) + `\s+(\S+)$`,
+		)
+		m := re.FindStringSubmatch(section)
+		if m == nil || m[1] != rec.want {
+			t.Fatalf(
+				"before %s = %v, want %s:\n%s",
+				rec.name,
+				m,
+				rec.want,
+				out,
+			)
+		}
+	}
+}
+
+// withSearchPath returns dsn with search_path set to schema, in either the
+// URL or the keyword/value DSN form.
+func withSearchPath(dsn, schema string) (string, error) {
+	if !strings.Contains(dsn, "://") {
+		return strings.TrimSpace(dsn) + " search_path=" + schema, nil
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func TestWithSearchPath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ dsn, want string }{
+		{
+			"postgres://u:p@127.0.0.1:5432/db?sslmode=disable",
+			"postgres://u:p@127.0.0.1:5432/db?search_path=s1&sslmode=disable",
+		},
+		{
+			"host=127.0.0.1 port=5432 dbname=db sslmode=disable",
+			"host=127.0.0.1 port=5432 dbname=db sslmode=disable search_path=s1",
+		},
+	} {
+		got, err := withSearchPath(tc.dsn, "s1")
+		if err != nil || got != tc.want {
+			t.Errorf(
+				"withSearchPath(%q) = %q, %v; want %q",
+				tc.dsn,
+				got,
+				err,
+				tc.want,
+			)
+		}
+		cfg, err := pgx.ParseConfig(got)
+		if err != nil || cfg.RuntimeParams["search_path"] != "s1" {
+			t.Errorf("%q: search_path not parsed: %v", got, err)
+		}
 	}
 }
 
@@ -75,11 +154,12 @@ func TestSignerCounterReset_DryRunLeavesEmptySqliteFile(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	dryRunReset(
+	out := dryRunReset(
 		t,
 		config.SignerWatermarkConfig{Type: "file", Path: path},
 		resetKeyHex,
 	)
+	requireBefore(t, out, "none", "none", "none")
 	requireUnchangedFile(t, path, nil)
 }
 
@@ -102,12 +182,26 @@ func TestSignerCounterReset_DryRunLeavesPartialSqliteSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dryRunReset(
+	out := dryRunReset(
 		t,
 		config.SignerWatermarkConfig{Type: "file", Path: path},
 		resetKeyHex,
 	)
+	requireBefore(t, out, "none", "none", "none")
 	requireUnchangedFile(t, path, want)
+}
+
+// TestSignerCounterReset_DryRunRelativePath reads, through a relative store
+// path, the records an applying reset would change. Not parallel: it changes
+// the working directory.
+func TestSignerCounterReset_DryRunRelativePath(t *testing.T) {
+	cfg, _ := seedResetStore(t)
+	dir, name := filepath.Split(filepath.Clean(cfg.Path))
+	parent, sub := filepath.Split(filepath.Clean(dir))
+	t.Chdir(parent)
+	cfg.Path = filepath.Join(sub, name)
+	out := dryRunReset(t, cfg, resetKeyHex)
+	requireBefore(t, out, "8", "9", "9")
 }
 
 // TestSignerCounterReset_DryRunPostgresFreshSchema runs a dry run against an
@@ -139,23 +233,21 @@ func TestSignerCounterReset_DryRunPostgresFreshSchema(t *testing.T) {
 			context.Background(), "DROP SCHEMA "+schema+" CASCADE",
 		)
 	})
-	u, err := url.Parse(dsn)
+	schemaDSN, err := withSearchPath(dsn, schema)
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
 
 	var key [28]byte
 	if _, err := rand.Read(key[:]); err != nil {
 		t.Fatal(err)
 	}
-	dryRunReset(
+	out := dryRunReset(
 		t,
-		config.SignerWatermarkConfig{Type: "postgres", DSN: u.String()},
+		config.SignerWatermarkConfig{Type: "postgres", DSN: schemaDSN},
 		hex.EncodeToString(key[:]),
 	)
+	requireBefore(t, out, "none", "none", "none")
 	var tables int
 	if err := admin.QueryRow(ctx,
 		`SELECT count(*) FROM information_schema.tables WHERE table_schema = $1`,

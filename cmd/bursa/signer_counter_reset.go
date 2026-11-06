@@ -28,9 +28,9 @@ import (
 )
 
 // errCounterResetNotConfirmed is returned when --yes is absent: the command
-// printed the planned change and wrote nothing.
+// printed the planned change and wrote no records.
 var errCounterResetNotConfirmed = errors.New(
-	"nothing written: re-run with --yes to apply",
+	"no records written: re-run with --yes to apply",
 )
 
 func signerCounterResetCommand() *cobra.Command {
@@ -56,7 +56,8 @@ requests for the key first, or one can recreate opcert-chain-issued.
 This is a local administrative command: it reads the signer config and writes
 the store directly, and no API route exposes it. It refuses a mem store and
 watermark mode off. Without --yes it opens the store read-only, prints the
-change and writes nothing.`,
+change and writes no records; SQLite may still create its own -wal and -shm
+files beside a file store.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			if configFile == "" {
 				configFile = os.Getenv("BURSA_CONFIG")
@@ -94,7 +95,7 @@ change and writes nothing.`,
 		"the pool's current on-chain opcert counter",
 	)
 	cmd.Flags().BoolVar(
-		&yes, "yes", false, "apply the reset; without it nothing is written",
+		&yes, "yes", false, "apply the reset; without it no records are written",
 	)
 	_ = cmd.MarkFlagRequired("key")
 	_ = cmd.MarkFlagRequired("chain-counter")
