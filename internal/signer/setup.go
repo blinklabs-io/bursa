@@ -475,3 +475,53 @@ func watermarkPostgresDSN(c config.SignerWatermarkConfig) (string, error) {
 	}
 	return "", errors.New("watermark type \"postgres\" requires dsn or dsn_env")
 }
+
+// CheckBackendWatermark refuses a nitro backend unless the watermark enforces
+// on durable storage. The enclave's own issue counter is in memory and resets
+// on restart, so the signer's watermark is what stops a reused issue counter.
+func CheckBackendWatermark(
+	backends []config.SignerBackendConfig,
+	c config.SignerWatermarkConfig,
+) error {
+	for _, b := range backends {
+		if b.Type != "nitro" {
+			continue
+		}
+		// New coerces any mode other than warn or off to enforce
+		mode := watermark.Mode(c.Mode)
+		enforcing := mode != watermark.ModeWarn && mode != watermark.ModeOff
+		durable := c.Type == "file" || c.Type == "postgres"
+		if !enforcing || !durable {
+			return fmt.Errorf(
+				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store (type \"file\" or \"postgres\"): the enclave's issue counter does not survive a restart",
+				b.Name,
+			)
+		}
+		// fail before BuildBackends contacts the enclave, not after
+		var err error
+		if c.Type == "file" && c.Path == "" {
+			err = errors.New(
+				"watermark type \"file\" requires a non-empty path",
+			)
+		} else if c.Type == "file" {
+			var fileBacked bool
+			fileBacked, err = watermark.SqliteFileBacked(c.Path)
+			if err == nil && !fileBacked {
+				err = fmt.Errorf(
+					"watermark path %q opens an in-memory database",
+					c.Path,
+				)
+			}
+		} else if c.Type == "postgres" {
+			_, err = watermarkPostgresDSN(c)
+		}
+		if err != nil {
+			return fmt.Errorf(
+				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store: %w",
+				b.Name,
+				err,
+			)
+		}
+	}
+	return nil
+}
