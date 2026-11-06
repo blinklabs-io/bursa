@@ -248,17 +248,39 @@ protocol for one pool cold key. It runs from the signer container image, obtains
 custom tokens from the Confidential Space launcher socket, and exposes only
 `/v1/inventory` and `/v1/sign` over TLS 1.3. Both endpoints require a client
 certificate signed by `--client-ca-file`. The sign endpoint accepts only a
-`pool` key with the `opcert` purpose and the canonical 48-byte
+`pool` key with the `opcert` or `opcert-next` purpose and the 48-byte
 operational-certificate payload. It rejects reused request nonces and verifies
 each signature before returning it.
 
-Two signer features are refused by design:
+The workload serves both opcert forms, and keeps all counter state in the
+Cloud Storage counter object:
 
-- `chain_counter` requests. The signer sends these as `opcert-next`, which
-  accepts the same chain counter again so a KES rotation can reuse an issue
-  number. The workload's durable counter only advances, so it never signs a
-  second certificate at an issue number it has already used. Send
-  `issue_counter` instead.
+- `issue_counter` requests (`opcert`) must carry the next number in the
+  object's sequence. The workload records that number and the certificate's
+  KES period.
+- `chain_counter` requests (`opcert-next`) follow the armory device's rules.
+  The workload issues the chain counter plus one and returns it as
+  `issue_counter`. It records the highest chain counter reported, the last
+  number issued and that certificate's KES period. It refuses a chain counter
+  below the recorded one ("chain counter below the recorded on-chain counter")
+  or above the last issued number ("chain counter above the last counter the
+  device issued"); the signer maps both to HTTP 409. It also refuses
+  reissuing the last number at a lower KES period ("KES period below the
+  logged opcert at this counter"), and with the same text a chain counter
+  that would issue a number below the last issued one, whose KES period is
+  not recorded, so the last issued number never decreases. Repeating the
+  recorded request signs again without a write.
+
+The counter object keeps its version. It gains `opcert_floor`, `last_issued`
+and `last_issued_period`, omitted while zero, so an object written earlier
+loads unchanged. For such an object the last issued number is taken to be the
+one before `next_issue_number`, and the unknown KES period is 0 and refuses
+nothing. Both request forms write the new fields, and an earlier workload
+release cannot read an object that has them; roll the workload forward, not
+back, once this release has signed a certificate.
+
+One signer feature is still refused:
+
 - A backend `profile`. The workload signs no profile binding, so leave
   `profile` unset on its `confidential-space` backend; with it set, the
   inventory request is refused and the backend does not load.
@@ -309,10 +331,13 @@ workload requests it for the configured signer audience with
 Use direct resource access for the Cloud KMS key and counter object. Before a
 signature is made, the workload commits the operational-certificate issue
 counter to the configured Cloud Storage object with a generation precondition.
-The first counter must be `0`, and every later counter must be exactly one
-greater than the committed value. The maximum `uint64` value is refused. This
-keeps the counter sequential across restarts and concurrent workload replicas
-without allowing one request to exhaust the counter range. Give the workload
+For `issue_counter` requests the first counter must be `0`, and every later
+counter must be exactly one greater than the committed value. A
+`chain_counter` request instead issues the chain counter plus one, which can
+skip numbers or repeat the last one, and a repeat of the recorded request
+signs without a write. The maximum `uint64` value is refused. This keeps the
+counter consistent across restarts and concurrent workload replicas without
+allowing one request to exhaust the counter range. Give the workload
 identity only `storage.objects.get`,
 `storage.objects.create`, and `storage.objects.delete` on the configured object
 name. Cloud Storage requires delete permission when a new generation replaces
@@ -366,9 +391,15 @@ counter records.
 
 For `opcert-next`, the profile record also holds the last counter the device
 issued, and a chain counter above it is refused: the ledger only holds
-counters the device issued. `bursa signer` answers a request the device
-refuses for its floor or its last issued counter with HTTP 409, whatever its
-watermark mode: the device signs nothing. A record written before this counter existed has
+counters the device issued. A reissue of that counter, as for a pool that has
+not forged since, may not take a KES period below the one the signing log
+holds for it for the same profile and cold key, so it cannot extend an older
+KES key's window. A profile name reprovisioned with a different cold key does
+not inherit the old key's period; the log records the cold key hash with each
+`opcert-next` entry. `bursa signer`
+answers a request the device refuses for its floor, its last issued counter
+or a backdated reissue with HTTP 409, whatever its watermark mode: the device
+signs nothing. A record written before this counter existed has
 none until its next `opcert-next`. `POST /provision/floor` on the provisioning
 firmware sets the floor to the operator's chain counter and clears the last
 issued counter. Firmware without this counter refuses a record that carries
@@ -468,12 +499,19 @@ challenge from `/v1/challenge` before each signature and adds `challenge`,
 request fields and the challenge, length-prefixed as in the response binding.
 A device with a registered host key refuses requests without it. The file
 must not be readable by group or others, and an unreadable or malformed file
-fails startup.
+fails startup. A multi image (below) authenticates inventory requests as well:
+a host-key enclave whose unauthenticated `/v1/inventory` request is refused
+asks again with `challenge`, `host_key` and `host_signature`, signed over
+`AttestedInventoryRequestBinding` (the domain `bursa-armory-inventory-request/1`,
+the nonce, the profile and the challenge, length-prefixed). The inventory
+attestation itself encodes no network or chain, so the pinned identity key
+verifies a multi image as any other. Point `host_key_file` at the key of the
+profile's scope.
 
 ### Cold key provisioning
 
 The provisioning firmware's `POST /provision/cold` imports a cold key into a
-free cold key object (`0x20e50010`-`0x20e5001f`):
+free cold key object (`0x20e50010`-`0x20e5001f` or `0x20e50600`-`0x20e5060f`):
 `{"cold_key_id": N, "signing_key": "<cborHex>"}`, the cardano-cli `cborHex`
 (`5820` and the 32-byte seed). An existing object is never replaced; repeating
 the request with the same key confirms the earlier import.
@@ -502,7 +540,7 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
   `/provision/reward`, `/provision/pins`, `/provision/cold`,
   `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
-  `/wipe/profile` and
+  `/wipe/profile`, `/wipe/cold` and
   `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
@@ -516,6 +554,10 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   length-prefixed as in the request binding. The signature thus binds the
   exact key while the key never passes through the JSON encoder used for the
   binding. The challenge is one-time.
+- The device's last host key cannot be revoked: an empty list is the
+  bootstrap state, which accepts unsigned provisioning and key enrollment.
+  Add the replacement key first, then revoke the old one; only a device wipe
+  returns to the bootstrap state.
 - A host key list the device cannot read refuses every authenticated route,
   because no key is left to check a signature against.
 - `POST /wipe/device` stays confirmed by the identity public key alone and
@@ -525,6 +567,102 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   key), after which the device is in the bootstrap state again. Anyone who can
   boot the wipe image and knows the identity public key can do this.
   `POST /wipe/objects` only lists object IDs.
+
+#### Multi image
+
+`make imx NETWORK=multi` builds one image that serves a set of scopes: every
+testnet (network id 0), `cardano-mainnet` and `prime-mainnet` (network id 1,
+profile names ending `@cardano-mainnet` or `@prime-mainnet`, because chains
+sharing network id 1 cannot be told apart otherwise). The single-scope images
+are unchanged. `TESTNET=1` is refused with it.
+
+- Scope binding. Every request that targets a profile needs a host key whose
+  scope equals the profile's: signing, inventory, `/provision/profile`,
+  `/provision/floor`, `/provision/reward`, `/provision/pins` and
+  `/wipe/profile`. A testnet key never signs or provisions for a mainnet
+  profile, and a cardano-mainnet key never for a prime-mainnet one. A key
+  registered by an image that did not scope host keys is a testnet key. A
+  new testnet profile may not take a name ending `@cardano-mainnet` or
+  `@prime-mainnet`. Every profile request and every device-wide request
+  needs a host key, testnet profiles included. The exceptions are the
+  device's first host key, `/v1/challenge`, and the wipe image's
+  `/wipe/device` and `/wipe/objects`.
+- First keys. Only the provisioning image (`PROVISION=1`) accepts an
+  unsigned `POST /provision/host-key`, and only while the device holds no
+  host key at all, for a `scope` (`testnet`, `cardano-mainnet` or
+  `prime-mainnet`) of the image; the answer lists only that scope's keys.
+  The first key of every other scope is a signed add by a key of a mainnet
+  scope, so an unsigned key never gains device-wide power over scopes
+  already on the device. The signing and wipe images never accept an
+  unsigned request. A signed add names the `scope`, which is part of the
+  signed request; the key that signs it is of that scope, or, while the
+  scope has no key, of a mainnet scope. The list keeps its four slots and its stored format; a
+  scoped entry already holds the network id and a tag of the chain label.
+  This image registers a key for one scope only and refuses a key another
+  scope already holds. A key that an older image registered for several
+  scopes keeps every one of them and acts under each.
+- Device-wide requests. `/provision/identity`, `/wipe/signlog`, the signing
+  log read and listing the keys of other scopes need a key of a mainnet scope
+  while the image serves one. A key revokes keys of its own scope; revoking
+  another scope's key is device-wide too, and never removes that scope's
+  last key. A scope may revoke its own last key while another scope holds
+  one, and gets its next first key from a mainnet key; the device's last key
+  of all stays.
+- One key, one scope. A cold key import or an imported owner key whose public
+  key already belongs to a profile of another scope is refused, as is a cold
+  key slot a profile of another scope names. Two slots of one scope may hold
+  the same key.
+- Cold key ownership. There are 32 cold key objects, `0x20e50010`-`0x20e5001f`
+  and `0x20e50600`-`0x20e5060f`. Any scope imports into any free one, and the
+  import first records the scope as its owner in one fixed-size object
+  (`0x20e50023`: a version byte, then per cold key object a claimed flag, the
+  network id and the chain tag). A cold key object holding a key is used only
+  by its owner: `/provision/cold` and `/provision/profile` refuse another
+  scope's, so a cold key imported by one scope cannot be taken by a profile of
+  another, across restarts too. An empty object is free whatever a stale claim
+  says. Single-scope images keep the record with their own scope. A corrupt
+  record is refused with an error until the device is wiped. Signing refuses
+  a cold key the record gives to another scope than the profile's; a record
+  that cannot be read, or no claim, does not stop signing. A profile stored
+  by an older image is still served.
+- Legacy and unowned keys. A cold key an older image stored has no claim; it
+  belongs to the scope of the profiles that name it, and to none when
+  profiles of two scopes name it. A key with no claim and no
+  profile belongs to no scope and every scope is refused; a mainnet key
+  removes it with the wipe image's `/wipe/cold`. A multi image refuses it,
+  and a single-scope image keeps serving it as before.
+- Removing cold keys and profiles. `POST /wipe/cold` on the wipe image, with
+  `identity_public_key` and `cold_key_id` and signed by a host key, deletes a
+  cold key no profile names and its claim. The owner's key may; a key of a
+  mainnet scope may delete a testnet key or one with no owner, never the
+  other mainnet scope's. A key a profile names goes with `/wipe/profile`,
+  which a mainnet key also sends for a testnet profile.
+- Not changed: `/wipe/device`, which stays confirmed by the identity public
+  key alone as the recovery path when every host key is lost, and
+  `/wipe/objects`, which only lists object IDs and needs no confirmation.
+  The unsigned firmware `/provision` cold key import is closed in a multi
+  image: import cold keys with a signed `/provision/cold`.
+- No downgrade. An image older than this one does not know the second cold
+  key block (`0x20e50600`-`0x20e5060f`) or the ownership record: its
+  `/wipe/device` leaves them on the chip, and it imports into an object
+  another scope owns. Wipe with this version's wipe image before flashing an
+  older one.
+- Moving a testnet device. Flashing the multi image over a device that ran a
+  testnet image keeps its profiles and host keys: the stored list is not
+  rewritten. A testnet key does not act device-wide on the multi image and
+  the device's last key cannot be revoked, so adding mainnet scopes takes a
+  device wipe. `/wipe/device` deletes every armory object: the cold keys and
+  their ownership record, the profiles with their owner keys and pins, the
+  host keys, the signing log head and the identity key. Then, on the multi
+  provisioning image, register a mainnet key unsigned and add the testnet key
+  with it; send `/provision/identity`, which generates a new identity key, and
+  pin its public key as `identity_public_key` in place of the old one; import
+  the backed-up testnet cold keys with a signed `/provision/cold`; provision
+  each testnet profile again with `chain_counter` at the pool's on-chain
+  counter, and send its `/provision/pins` again.
+  An owner key the device generated is gone, so the profile gets a new one
+  unless its owner key is imported again. The signing log starts again on a
+  zeroed card, as for any device wipe.
 
 `armory-pool` signs these requests with its host key. The request JSON is read
 from standard input and the device's answer is printed. `armory-pool host-key
@@ -540,9 +678,24 @@ armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
 
+For a multi image, `armory-pool host-key -scope prime-mainnet -out prime.key`
+prints a request that names the scope, and `-host-key-dir DIR` picks
+`DIR/<scope>.key` by the profile a request or `-profile` names (a name ending
+`@cardano-mainnet` or `@prime-mainnet` is that scope, any other is testnet;
+a network-0 profile an older image stored under such a name takes
+`-scope testnet`).
+The device's first key is added unsigned, so send that request without
+`-host-key` or `-host-key-dir`; register a mainnet scope's key first. Add
+every other scope's first key with that key, e.g. `-host-key-dir DIR -scope
+cardano-mainnet provision host-key < testnet.pub`. Requests that
+name no profile, such as `provision cold`, `provision identity`, `wipe
+signlog` and `signlog`, need `-scope`. `opcert-check -host-key` takes the key
+of the profile's scope. `signlog-verify` and `opcert-check` read no network or
+chain: a log with entries of several scopes verifies as one chain.
+
 `provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
-`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile` or
-`signlog`. Without `-host-key` a request is sent unsigned, which the device
+`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile`,
+`cold` or `signlog`. Without `-host-key` a request is sent unsigned, which the device
 accepts only in the bootstrap state, and always for `wipe device` and `wipe
 objects`. Register the first host key before the other provisioning steps.
 
@@ -559,8 +712,15 @@ checks the card against it at boot and before every write, so an older copy of
 the card, a blank card or a truncated log is refused. The entry is written and
 the card read back before the signature leaves the device.
 
+A card formatted by this firmware uses log format version 2, whose
+`opcert-next` entries also carry the cold key hash (blake2b-224 of the cold
+verification key, the pool ID). A card formatted by earlier firmware (format
+version 1) is still read, verified and appended to in its own format: its
+entries carry no cold key hash, and an entry without one limits every cold key
+of its profile. `signlog-verify` reads both versions.
+
 One request is not recorded again: an `opcert-next` whose profile, issue
-counter, KES key hash and KES period match the latest entry is signed again
+counter, KES key hash, cold key hash and KES period match the latest entry is signed again
 without a new entry, since that entry already records it. The device checks
 the card against the head before signing such a repeat, as it does before a
 write.

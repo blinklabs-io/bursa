@@ -91,7 +91,11 @@ func (e *stubEnclave) Sign(
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, req)
 	if e.refuse != "" {
-		return backend.AttestedResponse{Version: backend.AttestedProtocol, Nonce: req.Nonce, Error: e.refuse}, nil
+		return backend.AttestedResponse{
+			Version: backend.AttestedProtocol,
+			Nonce:   req.Nonce,
+			Error:   e.refuse,
+		}, nil
 	}
 	key := e.priv
 	if e.forge != nil {
@@ -104,8 +108,13 @@ func (e *stubEnclave) Sign(
 		hash := blake2b.Sum256(req.Payload)
 		payload = hash[:]
 	case backend.PurposeOpCertNext:
-		n := binary.BigEndian.Uint64(req.Payload[kesVkeySize:]) + 1 + e.issueSkew
-		payload = binary.BigEndian.AppendUint64(append([]byte(nil), req.Payload[:kesVkeySize]...), n)
+		n := binary.BigEndian.Uint64(
+			req.Payload[kesVkeySize:],
+		) + 1 + e.issueSkew
+		payload = binary.BigEndian.AppendUint64(
+			append([]byte(nil), req.Payload[:kesVkeySize]...),
+			n,
+		)
 		payload = append(payload, req.Payload[kesVkeySize+8:]...)
 		if !e.omitIssue {
 			issue = &n
@@ -185,7 +194,10 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 	}
 	txid := blake2b.Sum256(body)
 	card := fakeCardano{
-		insp:      &bursa.TxInspection{TxId: "abc", Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}},
+		insp: &bursa.TxInspection{
+			TxId:    "abc",
+			Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}},
+		},
 		txid:      txid[:],
 		assembled: []byte{1},
 	}
@@ -196,7 +208,12 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 		card,
 	)
 
-	res, perr, err := c.SignTx(t.Context(), []byte(txCBOR), testTxEra, []string{hash.String()})
+	res, perr, err := c.SignTx(
+		t.Context(),
+		[]byte(txCBOR),
+		testTxEra,
+		[]string{hash.String()},
+	)
 	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
 		t.Fatalf("SignTx: res=%+v perr=%+v err=%v", res, perr, err)
 	}
@@ -204,16 +221,29 @@ func TestAttestedKeySignsTransaction(t *testing.T) {
 		t.Fatalf("enclave purposes = %v, want [tx-body]", got)
 	}
 	if !bytes.Equal(enc.calls[0].Payload, body) {
-		t.Fatalf("enclave payload = %x, want raw body %x", enc.calls[0].Payload, body)
+		t.Fatalf(
+			"enclave payload = %x, want raw body %x",
+			enc.calls[0].Payload,
+			body,
+		)
 	}
 	if enc.calls[0].Era == nil || *enc.calls[0].Era != ledger.TxTypeBabbage {
-		t.Fatalf("enclave era = %v, want %d", enc.calls[0].Era, ledger.TxTypeBabbage)
+		t.Fatalf(
+			"enclave era = %v, want %d",
+			enc.calls[0].Era,
+			ledger.TxTypeBabbage,
+		)
 	}
 
 	// A signature that does not verify under the attested key is not a witness.
 	_, forged, _ := ed25519.GenerateKey(nil)
 	enc.forge = forged
-	res, perr, err = c.SignTx(t.Context(), []byte(txCBOR), testTxEra, []string{hash.String()})
+	res, perr, err = c.SignTx(
+		t.Context(),
+		[]byte(txCBOR),
+		testTxEra,
+		[]string{hash.String()},
+	)
 	if err != nil || len(perr) != 1 || perr[0].Code != CodeInternal {
 		t.Fatalf("forged signature: res=%+v perr=%+v err=%v", res, perr, err)
 	}
@@ -277,14 +307,25 @@ func TestAttestedKeySignsOpCert(t *testing.T) {
 // and Bursa accepts only chain counter + 1 under a verified signature.
 func TestAttestedKeySignsOpCertFromChain(t *testing.T) {
 	t.Parallel()
-	c, enc, hash, pub := newAttestedCoordinator(t, backend.KeyTypePool, "opcert", fakeCardano{})
+	c, enc, hash, pub := newAttestedCoordinator(
+		t,
+		backend.KeyTypePool,
+		"opcert",
+		fakeCardano{},
+	)
 	kes := bytes.Repeat([]byte{9}, kesVkeySize)
 	signable := func(issue, period uint64) []byte {
 		b := binary.BigEndian.AppendUint64(append([]byte(nil), kes...), issue)
 		return binary.BigEndian.AppendUint64(b, period)
 	}
 
-	res, code, err := c.SignOpCertFromChain(t.Context(), kes, 4, 100, hash.String())
+	res, code, err := c.SignOpCertFromChain(
+		t.Context(),
+		kes,
+		4,
+		100,
+		hash.String(),
+	)
 	if err != nil {
 		t.Fatalf("SignOpCertFromChain: code=%s err=%v", code, err)
 	}
@@ -292,16 +333,25 @@ func TestAttestedKeySignsOpCertFromChain(t *testing.T) {
 	if res.IssueCounter != 5 || !ed25519.Verify(pub, signable(5, 100), sig) {
 		t.Fatalf("result %+v does not verify at issue 5", res)
 	}
-	if got := enc.purposes(); len(got) != 1 || got[0] != backend.PurposeOpCertNext {
+	if got := enc.purposes(); len(got) != 1 ||
+		got[0] != backend.PurposeOpCertNext {
 		t.Fatalf("enclave purposes = %v, want [opcert-next]", got)
 	}
 	if !bytes.Equal(enc.calls[0].Payload, signable(4, 100)) {
-		t.Fatalf("enclave payload = %x, want kes || chain 4 || period 100", enc.calls[0].Payload)
+		t.Fatalf(
+			"enclave payload = %x, want kes || chain 4 || period 100",
+			enc.calls[0].Payload,
+		)
 	}
 
 	// a chain counter below the recorded floor never reaches custody
-	if _, code, err := c.SignOpCertFromChain(t.Context(), kes, 3, 100, hash.String()); err == nil || code != CodeConflict {
-		t.Fatalf("stale chain counter: code=%s err=%v, want conflict", code, err)
+	if _, code, err := c.SignOpCertFromChain(t.Context(), kes, 3, 100, hash.String()); err == nil ||
+		code != CodeConflict {
+		t.Fatalf(
+			"stale chain counter: code=%s err=%v, want conflict",
+			code,
+			err,
+		)
 	}
 	if len(enc.calls) != 1 {
 		t.Fatalf("enclave contacted %d times, want 1", len(enc.calls))
@@ -314,7 +364,8 @@ func TestAttestedKeySignsOpCertFromChain(t *testing.T) {
 	} {
 		enc.issueSkew, enc.omitIssue, enc.forge = 0, false, nil
 		misbehave()
-		if res, _, err := c.SignOpCertFromChain(t.Context(), kes, 6, 100, hash.String()); err == nil || res != nil {
+		if res, _, err := c.SignOpCertFromChain(t.Context(), kes, 6, 100, hash.String()); err == nil ||
+			res != nil {
 			t.Fatalf("%s: accepted %+v", name, res)
 		}
 	}
@@ -331,7 +382,12 @@ func TestAttestedKeySignsOpCertFromChain(t *testing.T) {
 // floor where it was.
 func TestAttestedKeyCustodyCounterConflict(t *testing.T) {
 	t.Parallel()
-	c, enc, hash, _ := newAttestedCoordinator(t, backend.KeyTypePool, "opcert", fakeCardano{})
+	c, enc, hash, _ := newAttestedCoordinator(
+		t,
+		backend.KeyTypePool,
+		"opcert",
+		fakeCardano{},
+	)
 	kes := bytes.Repeat([]byte{9}, kesVkeySize)
 
 	for refusal, want := range map[string]ErrorCode{
@@ -340,8 +396,17 @@ func TestAttestedKeyCustodyCounterConflict(t *testing.T) {
 		"opcert-next requires the pool key":                      CodeBackend,
 	} {
 		enc.refuse = refusal
-		if res, code, err := c.SignOpCertFromChain(t.Context(), kes, 6, 100, hash.String()); err == nil || res != nil || code != want {
-			t.Fatalf("%q: code=%s err=%v res=%+v, want %s", refusal, code, err, res, want)
+		if res, code, err := c.SignOpCertFromChain(t.Context(), kes, 6, 100, hash.String()); err == nil ||
+			res != nil ||
+			code != want {
+			t.Fatalf(
+				"%q: code=%s err=%v res=%+v, want %s",
+				refusal,
+				code,
+				err,
+				res,
+				want,
+			)
 		}
 	}
 
@@ -553,17 +618,26 @@ func TestBuildBackendsArmory(t *testing.T) {
 	pool, _, _ := ed25519.GenerateKey(nil)
 	stake, _, _ := ed25519.GenerateKey(nil)
 	profiles := make(chan string, 2)
-	device := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Nonce   []byte `json:"nonce"`
-			Profile string `json:"profile"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&in)
-		profiles <- in.Profile
-		keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pool}, {Role: backend.KeyTypeStake, PublicKey: stake}}
-		att := ed25519.Sign(identityPriv, backend.InventoryBinding(in.Nonce, keys))
-		_ = json.NewEncoder(w).Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
-	}))
+	device := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Nonce   []byte `json:"nonce"`
+				Profile string `json:"profile"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			profiles <- in.Profile
+			keys := []backend.AttestedKeyInfo{
+				{Role: backend.KeyTypePool, PublicKey: pool},
+				{Role: backend.KeyTypeStake, PublicKey: stake},
+			}
+			att := ed25519.Sign(
+				identityPriv,
+				backend.InventoryBinding(in.Nonce, keys),
+			)
+			_ = json.NewEncoder(w).
+				Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
+		}),
+	)
 	t.Cleanup(device.Close)
 
 	cfg := config.SignerBackendConfig{
@@ -594,10 +668,18 @@ func TestBuildBackendsArmory(t *testing.T) {
 }
 
 // writeHostKeyFile writes an armory-pool host key envelope with mode.
-func writeHostKeyFile(t *testing.T, typ, cborHex string, mode os.FileMode) string {
+func writeHostKeyFile(
+	t *testing.T,
+	typ, cborHex string,
+	mode os.FileMode,
+) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "host.skey")
-	body := fmt.Sprintf("{\n    \"type\": %q,\n    \"description\": \"\",\n    \"cborHex\": %q\n}\n", typ, cborHex)
+	body := fmt.Sprintf(
+		"{\n    \"type\": %q,\n    \"description\": \"\",\n    \"cborHex\": %q\n}\n",
+		typ,
+		cborHex,
+	)
 	if err := os.WriteFile(path, []byte(body), mode); err != nil {
 		t.Fatal(err)
 	}
@@ -616,45 +698,69 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 	host, hostPriv, _ := ed25519.GenerateKey(nil)
 	var mu sync.Mutex
 	var challenges [][]byte
-	device := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch r.URL.Path {
-		case "/v1/inventory":
-			var in struct {
-				Nonce   []byte `json:"nonce"`
-				Profile string `json:"profile"`
+	device := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			switch r.URL.Path {
+			case "/v1/inventory":
+				var in struct {
+					Nonce   []byte `json:"nonce"`
+					Profile string `json:"profile"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&in)
+				keys := []backend.AttestedKeyInfo{
+					{Role: backend.KeyTypePool, PublicKey: pool},
+				}
+				att := ed25519.Sign(
+					identityPriv,
+					backend.InventoryBinding(in.Nonce, keys),
+				)
+				_ = json.NewEncoder(w).
+					Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
+			case "/v1/challenge":
+				c := bytes.Repeat([]byte{byte(len(challenges) + 1)}, 32)
+				challenges = append(challenges, c)
+				_ = json.NewEncoder(w).
+					Encode(map[string]any{"version": backend.AttestedProtocol, "challenge": c})
+			case "/v1/sign":
+				var req backend.AttestedRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				resp := backend.AttestedResponse{
+					Version: backend.AttestedProtocol,
+					Nonce:   req.Nonce,
+				}
+				if !bytes.Equal(req.HostKey, host) || len(challenges) == 0 ||
+					!bytes.Equal(
+						req.Challenge,
+						challenges[len(challenges)-1],
+					) ||
+					!ed25519.Verify(
+						host,
+						backend.AttestedRequestBinding(req),
+						req.HostSignature,
+					) {
+					resp.Error = "host authentication failed"
+				} else {
+					hash := blake2b.Sum256(req.Payload)
+					resp.Signature = ed25519.Sign(poolPriv, hash[:])
+					resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature, ""))
+				}
+				_ = json.NewEncoder(w).Encode(resp)
 			}
-			_ = json.NewDecoder(r.Body).Decode(&in)
-			keys := []backend.AttestedKeyInfo{{Role: backend.KeyTypePool, PublicKey: pool}}
-			att := ed25519.Sign(identityPriv, backend.InventoryBinding(in.Nonce, keys))
-			_ = json.NewEncoder(w).Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
-		case "/v1/challenge":
-			c := bytes.Repeat([]byte{byte(len(challenges) + 1)}, 32)
-			challenges = append(challenges, c)
-			_ = json.NewEncoder(w).Encode(map[string]any{"version": backend.AttestedProtocol, "challenge": c})
-		case "/v1/sign":
-			var req backend.AttestedRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			resp := backend.AttestedResponse{Version: backend.AttestedProtocol, Nonce: req.Nonce}
-			if !bytes.Equal(req.HostKey, host) || len(challenges) == 0 ||
-				!bytes.Equal(req.Challenge, challenges[len(challenges)-1]) ||
-				!ed25519.Verify(host, backend.AttestedRequestBinding(req), req.HostSignature) {
-				resp.Error = "host authentication failed"
-			} else {
-				hash := blake2b.Sum256(req.Payload)
-				resp.Signature = ed25519.Sign(poolPriv, hash[:])
-				resp.BindingSignature = ed25519.Sign(poolPriv, backend.AttestedResponseBinding(req, resp.Signature, ""))
-			}
-			_ = json.NewEncoder(w).Encode(resp)
-		}
-	}))
+		}),
+	)
 	t.Cleanup(device.Close)
 
 	cfg := config.SignerBackendConfig{
 		Name: "armory", Type: "armory", Address: device.URL, Profile: "pool@preview",
 		IdentityPublicKey: hex.EncodeToString(identity),
-		HostKeyFile:       writeHostKeyFile(t, "ArmoryHostSigningKey_ed25519", "5820"+hex.EncodeToString(hostPriv.Seed()), 0o600),
+		HostKeyFile: writeHostKeyFile(
+			t,
+			"ArmoryHostSigningKey_ed25519",
+			"5820"+hex.EncodeToString(hostPriv.Seed()),
+			0o600,
+		),
 	}
 	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
 	if err != nil {
@@ -681,7 +787,8 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 	} {
 		bad := cfg
 		bad.HostKeyFile = path
-		if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil || !strings.Contains(err.Error(), "host_key_file") {
+		if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil ||
+			!strings.Contains(err.Error(), "host_key_file") {
 			t.Errorf("%s: got %v, want a host_key_file error", name, err)
 		}
 	}

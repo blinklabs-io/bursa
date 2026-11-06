@@ -167,7 +167,8 @@ func addressListCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunAddressList("", mnemonicFile, password, network, account, start, count); err != nil {
-				logging.GetLogger().Error("failed to list addresses", "error", err)
+				logging.GetLogger().
+					Error("failed to list addresses", "error", err)
 				os.Exit(1)
 			}
 		},

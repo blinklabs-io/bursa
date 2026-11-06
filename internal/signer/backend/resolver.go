@@ -113,13 +113,18 @@ func (r *Resolver) CheckAmbiguous(ctx context.Context) error {
 				if prev.profile == "" || profile == "" {
 					return fmt.Errorf(
 						"key hash %s appears in both backend %q and %q; a key may be held by several backends only when each has a distinct profile",
-						h.String(), prev.backend, b.Name(),
+						h.String(),
+						prev.backend,
+						b.Name(),
 					)
 				}
 				if prev.profile == profile {
 					return fmt.Errorf(
 						"key hash %s appears in both backend %q and %q under the same profile %q",
-						h.String(), prev.backend, b.Name(), profile,
+						h.String(),
+						prev.backend,
+						b.Name(),
+						profile,
 					)
 				}
 			}

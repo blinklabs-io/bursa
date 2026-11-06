@@ -58,8 +58,17 @@ const (
 	RecordBlocks = 4
 	// RecordSize is the size of one entry record in bytes.
 	RecordSize = BlockSize * RecordBlocks
-	// FormatVersion is the on-medium format version.
-	FormatVersion = 1
+	// FormatVersion is the on-medium format version a new medium is
+	// formatted with. Version 2 adds the cold key hash to opcert-next
+	// records. A version 1 medium is still read, verified and appended to; its
+	// records keep the version 1 encoding, so its opcert entries carry no cold
+	// key hash.
+	FormatVersion = 2
+	// formatV1 is the first on-medium format version.
+	formatV1 = 1
+	// ColdHashSize is the size of the cold key hash, the blake2b-224 of the
+	// cold verification key (the pool ID).
+	ColdHashSize = 28
 	// DefaultMaxEntries bounds the record slots a freshly formatted medium
 	// gets, so a large card does not make every open scan gigabytes.
 	DefaultMaxEntries = 1 << 15
@@ -82,7 +91,9 @@ const (
 var (
 	// ErrBlank is returned for a blank medium when the head store says
 	// entries or a header exist.
-	ErrBlank = errors.New("signlog: blank medium but the head store is initialised")
+	ErrBlank = errors.New(
+		"signlog: blank medium but the head store is initialised",
+	)
 	// ErrNotBlank is returned when a medium with a blank header holds data
 	// in its record slots: Open formats only an all-zero medium.
 	ErrNotBlank = errors.New("signlog: medium to format is not all zero")
@@ -90,7 +101,9 @@ var (
 	// fails its checksum where one was required to be valid.
 	ErrCorrupt = errors.New("signlog: corrupt medium")
 	// ErrWrongDevice is returned when the medium belongs to another identity.
-	ErrWrongDevice = errors.New("signlog: medium belongs to a different device identity")
+	ErrWrongDevice = errors.New(
+		"signlog: medium belongs to a different device identity",
+	)
 	// ErrRollback is returned when the medium is behind the head store: an
 	// older copy of the card or a truncated record.
 	ErrRollback = errors.New("signlog: medium is behind the head store")
@@ -99,7 +112,9 @@ var (
 	ErrAhead = errors.New("signlog: medium is ahead of the head store")
 	// ErrHashMismatch is returned when the latest entry's hash differs from
 	// the head store's.
-	ErrHashMismatch = errors.New("signlog: latest entry does not match the head store")
+	ErrHashMismatch = errors.New(
+		"signlog: latest entry does not match the head store",
+	)
 	// ErrFull is returned when no record slot is left.
 	ErrFull = errors.New("signlog: medium is full")
 	// ErrBadSignature is returned when an entry or the header signature does
@@ -159,9 +174,10 @@ type Identity interface {
 }
 
 // Record is what the device knows when it signs. A tx-body record carries
-// BodyHash; an opcert-next record carries IssueCounter, KESPeriod and
-// KESKeyHash, the blake2b-256 of the KES verification key. Summary is the
-// parameter summary the policy computed.
+// BodyHash; an opcert-next record carries IssueCounter, KESPeriod,
+// KESKeyHash, the blake2b-256 of the KES verification key, and ColdKeyHash,
+// the blake2b-224 of the cold verification key (absent on a version 1
+// medium). Summary is the parameter summary the policy computed.
 type Record struct {
 	Profile      string
 	Role         string
@@ -171,6 +187,7 @@ type Record struct {
 	IssueCounter uint64
 	KESPeriod    uint64
 	KESKeyHash   []byte
+	ColdKeyHash  []byte
 	// SummaryTruncated is set when Summary was cut to MaxSummary bytes.
 	SummaryTruncated bool
 }
@@ -183,6 +200,8 @@ type Entry struct {
 	Signature []byte
 	// Hash chains the next entry to this one.
 	Hash [HashSize]byte
+	// ver is the format version the entry was read under; zero is current.
+	ver uint32
 }
 
 // Header identifies the device and the format.
@@ -206,7 +225,11 @@ type Log struct {
 type KeySigner struct{ key ed25519.PrivateKey }
 
 // NewKeySigner returns an Identity that signs with key.
-func NewKeySigner(key ed25519.PrivateKey) *KeySigner { return &KeySigner{key: key} }
+func NewKeySigner(
+	key ed25519.PrivateKey,
+) *KeySigner {
+	return &KeySigner{key: key}
+}
 
 // Public implements Identity.
 func (k *KeySigner) Public() ed25519.PublicKey {

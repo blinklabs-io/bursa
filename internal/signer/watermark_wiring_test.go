@@ -44,14 +44,21 @@ func TestBuildWatermark_MemRefusedUnderEnforce(t *testing.T) {
 			t.Fatalf("config %+v: expected error, got store %T", c, wm)
 		}
 		if !strings.Contains(err.Error(), "durable") {
-			t.Fatalf("config %+v: error should name durable storage, got %v", c, err)
+			t.Fatalf(
+				"config %+v: error should name durable storage, got %v",
+				c,
+				err,
+			)
 		}
 	}
 }
 
 func TestBuildWatermark_MemRefusalNamesMode(t *testing.T) {
 	t.Parallel()
-	_, _, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Mode: "enforced"})
+	_, _, err := BuildWatermark(
+		context.Background(),
+		config.SignerWatermarkConfig{Mode: "enforced"},
+	)
 	if err == nil || !strings.Contains(err.Error(), `"enforced"`) {
 		t.Fatalf("error should name the configured mode, got %v", err)
 	}
@@ -60,7 +67,10 @@ func TestBuildWatermark_MemRefusalNamesMode(t *testing.T) {
 func TestBuildWatermark_MemAllowedWhenNotEnforcing(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []watermark.Mode{watermark.ModeWarn, watermark.ModeOff} {
-		wm, got, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Mode: string(mode)})
+		wm, got, err := BuildWatermark(
+			context.Background(),
+			config.SignerWatermarkConfig{Mode: string(mode)},
+		)
 		if err != nil {
 			t.Fatalf("mode %q: BuildWatermark: %v", mode, err)
 		}
@@ -105,26 +115,38 @@ func TestBuildWatermark_EnforcedFileSurvivesRestart(t *testing.T) {
 	defer second.(io.Closer).Close()
 	err = second.CheckAndCommit(ctx, key, "tx:restart", []byte("payload-2"))
 	if !errors.Is(err, watermark.ErrConflict) {
-		t.Fatalf("divergent payload after restart: got %v, want ErrConflict", err)
+		t.Fatalf(
+			"divergent payload after restart: got %v, want ErrConflict",
+			err,
+		)
 	}
 }
 
 func TestBuildWatermark_FileRequiresPath(t *testing.T) {
-	_, _, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Type: "file"})
+	_, _, err := BuildWatermark(
+		context.Background(),
+		config.SignerWatermarkConfig{Type: "file"},
+	)
 	if err == nil || !strings.Contains(err.Error(), "non-empty path") {
 		t.Fatalf("file without path: want non-empty-path error, got %v", err)
 	}
 }
 
 func TestBuildWatermark_UnknownType(t *testing.T) {
-	_, _, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Type: "bogus"})
+	_, _, err := BuildWatermark(
+		context.Background(),
+		config.SignerWatermarkConfig{Type: "bogus"},
+	)
 	if err == nil || !strings.Contains(err.Error(), "unknown watermark type") {
 		t.Fatalf("unknown type: want unknown-type error, got %v", err)
 	}
 }
 
 func TestBuildWatermark_PostgresRequiresDSN(t *testing.T) {
-	_, _, err := BuildWatermark(context.Background(), config.SignerWatermarkConfig{Type: "postgres"})
+	_, _, err := BuildWatermark(
+		context.Background(),
+		config.SignerWatermarkConfig{Type: "postgres"},
+	)
 	if err == nil || !strings.Contains(err.Error(), "requires dsn or dsn_env") {
 		t.Fatalf("postgres without dsn: want dsn-required error, got %v", err)
 	}
@@ -153,7 +175,11 @@ func TestWatermarkPostgresDSN_DSNEnvEmpty(t *testing.T) {
 		DSN:    "postgres://from-plaintext/db",
 		DSNEnv: "BURSA_TEST_WM_DSN_UNSET",
 	})
-	if err == nil || !strings.Contains(err.Error(), "is set but the environment variable is empty") {
+	if err == nil ||
+		!strings.Contains(
+			err.Error(),
+			"is set but the environment variable is empty",
+		) {
 		t.Fatalf("empty dsn_env var: want empty-env error, got %v", err)
 	}
 }

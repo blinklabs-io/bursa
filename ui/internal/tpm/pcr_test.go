@@ -34,12 +34,19 @@ func TestAuthValueNormalizesPasswordLength(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authValue short: %v", err)
 	}
-	long, err := authValue("vault-password-with-a-long-passphrase-that-exceeds-common-tpm-auth-buffer-limits", salt)
+	long, err := authValue(
+		"vault-password-with-a-long-passphrase-that-exceeds-common-tpm-auth-buffer-limits",
+		salt,
+	)
 	if err != nil {
 		t.Fatalf("authValue long: %v", err)
 	}
 	if len(short) != 32 || len(long) != 32 {
-		t.Fatalf("authValue lengths = %d, %d; want 32, 32", len(short), len(long))
+		t.Fatalf(
+			"authValue lengths = %d, %d; want 32, 32",
+			len(short),
+			len(long),
+		)
 	}
 	if string(short) == "vault-password" {
 		t.Fatal("authValue should not return raw password bytes")
@@ -62,7 +69,9 @@ func TestAuthValueUsesSalt(t *testing.T) {
 		t.Fatalf("authValue salt B: %v", err)
 	}
 	if !bytes.Equal(a1, a2) {
-		t.Fatal("authValue must be deterministic for the same password and salt")
+		t.Fatal(
+			"authValue must be deterministic for the same password and salt",
+		)
 	}
 	if bytes.Equal(a1, b) {
 		t.Fatal("authValue should differ when the salt differs")

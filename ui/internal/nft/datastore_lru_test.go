@@ -30,7 +30,13 @@ func TestLRUDatastoreEvictsLeastRecentlyUsed(t *testing.T) {
 		t.Fatalf("newLRUDatastore: %v", err)
 	}
 	ctx := context.Background()
-	one, two, three := datastore.NewKey("one"), datastore.NewKey("two"), datastore.NewKey("three")
+	one, two, three := datastore.NewKey(
+		"one",
+	), datastore.NewKey(
+		"two",
+	), datastore.NewKey(
+		"three",
+	)
 	if err := ds.Put(ctx, one, []byte("11")); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +56,9 @@ func TestLRUDatastoreEvictsLeastRecentlyUsed(t *testing.T) {
 
 func TestNewLRUDatastoreRejectsEntryLimitAboveByteLimit(t *testing.T) {
 	if _, err := newLRUDatastore(3, 4); err == nil {
-		t.Fatal("newLRUDatastore accepted per-entry limit above aggregate byte limit")
+		t.Fatal(
+			"newLRUDatastore accepted per-entry limit above aggregate byte limit",
+		)
 	}
 }
 

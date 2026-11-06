@@ -69,7 +69,10 @@ func runGitPushAs(t *testing.T, userID, serverToken string) gitPushRun {
 	}
 	execPath, err := exec.Command(gitPath, "--exec-path").Output()
 	require.NoError(t, err)
-	backend := filepath.Join(strings.TrimSpace(string(execPath)), "git-http-backend")
+	backend := filepath.Join(
+		strings.TrimSpace(string(execPath)),
+		"git-http-backend",
+	)
 	if _, err := os.Stat(backend); err != nil {
 		t.Skip("git-http-backend is not installed")
 	}
@@ -95,25 +98,30 @@ func runGitPushAs(t *testing.T, userID, serverToken string) gitPushRun {
 			"PATH=" + os.Getenv("PATH"),
 		},
 	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if ok {
-			atomic.AddInt32(&run.challenged, 1)
-		}
-		if !ok || user != pushTestUser || pass != serverToken {
-			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		atomic.AddInt32(&run.authenticated, 1)
-		cgiHandler.ServeHTTP(w, r)
-	}))
+	server := httptest.NewTLSServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, pass, ok := r.BasicAuth()
+			if ok {
+				atomic.AddInt32(&run.challenged, 1)
+			}
+			if !ok || user != pushTestUser || pass != serverToken {
+				w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			atomic.AddInt32(&run.authenticated, 1)
+			cgiHandler.ServeHTTP(w, r)
+		}),
+	)
 	t.Cleanup(server.Close)
 	host := server.Listener.Addr().String()
 
 	work := filepath.Join(root, "work")
 	require.NoError(t, os.MkdirAll(work, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte("x"), 0o600))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(work, "file.txt"), []byte("x"), 0o600),
+	)
 
 	script, err := filepath.Abs(filepath.Join("openapi", "git_push.sh"))
 	require.NoError(t, err)

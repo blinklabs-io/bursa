@@ -123,7 +123,10 @@ func TestUnlockFallsBackWhenTPMReturnsMalformedVEK(t *testing.T) {
 	v.Lock()
 
 	if _, err := v.Unlock(vaultPw); err != nil {
-		t.Fatalf("Unlock should fall back when TPM returns malformed VEK: %v", err)
+		t.Fatalf(
+			"Unlock should fall back when TPM returns malformed VEK: %v",
+			err,
+		)
 	}
 }
 
@@ -155,7 +158,10 @@ func TestUnlockFallsBackWhenTPMReportsWrongPassword(t *testing.T) {
 	f.failUnseal = tpmpkg.ErrWrongPassword
 
 	if _, err := v.Unlock(vaultPw); err != nil {
-		t.Fatalf("Unlock should fall back when TPM auth fails but password is correct: %v", err)
+		t.Fatalf(
+			"Unlock should fall back when TPM auth fails but password is correct: %v",
+			err,
+		)
 	}
 }
 
@@ -218,7 +224,10 @@ func TestEnableTPMWrongPassword(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := v.EnableTPM("wrong-password", false); !errors.Is(err, ErrWrongPassword) {
+	if err := v.EnableTPM("wrong-password", false); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("EnableTPM wrong password = %v, want ErrWrongPassword", err)
 	}
 	env := readEnvelopeFile(t, v.path)
@@ -268,6 +277,8 @@ func TestTPMStatus(t *testing.T) {
 		t.Fatal("status.Available = true after TPM went away")
 	}
 	if !st.Enabled {
-		t.Fatal("status.Enabled should stay true (envelope still has the section)")
+		t.Fatal(
+			"status.Enabled should stay true (envelope still has the section)",
+		)
 	}
 }

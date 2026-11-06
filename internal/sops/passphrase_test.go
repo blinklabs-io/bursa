@@ -22,7 +22,9 @@ import (
 )
 
 func TestPassphraseRoundTrip(t *testing.T) {
-	plaintext := []byte(`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`)
+	plaintext := []byte(
+		`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`,
+	)
 	enc, err := EncryptWithPassphrase(plaintext, "correct horse battery staple")
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)

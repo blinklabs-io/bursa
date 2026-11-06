@@ -22,6 +22,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"math"
 	"time"
 )
 
@@ -67,6 +69,10 @@ type ChallengeResponse struct {
 type HostKeyRequest struct {
 	HostAuth
 	PublicKey []byte `json:"public_key"`
+	// Scope names the scope a key is added for in a multi image: "testnet"
+	// or a chain label such as "prime-mainnet". It is part of the signed
+	// request. A single-scope image takes it empty or naming its own scope.
+	Scope string `json:"scope,omitempty"`
 }
 
 // HostKeyResponse lists the registered host public keys.
@@ -75,9 +81,14 @@ type HostKeyResponse struct {
 }
 
 var (
-	errHostKeyUnknown  = errors.New("host key not registered")
-	errHostKeysBad     = errors.New("host key list unreadable; wipe the device to reset it")
+	errHostKeyUnknown = errors.New("host key not registered")
+	errHostKeysBad    = errors.New(
+		"host key list unreadable; wipe the device to reset it",
+	)
 	errHostAuthMissing = errors.New("signing requires host authentication")
+	// errLastHostKey refuses a revoke that would empty the key list: an
+	// empty list is the bootstrap state, which accepts unsigned requests
+	errLastHostKey = errors.New("the last host key may not be revoked; wipe the device to return to the bootstrap state")
 )
 
 // RequireHostAuth refuses every signing request that is not authenticated
@@ -108,7 +119,12 @@ func chainTag(chain string) (tag [chainTagSize]byte) {
 
 // scopeEntry is the entry for key registered by this build.
 func (s *Service) scopeEntry(key []byte) hostEntry {
-	return hostEntry{key: bytes.Clone(key), kind: scopeImage, network: s.network, chain: chainTag(s.chain)}
+	return hostEntry{
+		key:     bytes.Clone(key),
+		kind:    scopeImage,
+		network: s.network,
+		chain:   chainTag(s.chain),
+	}
 }
 
 // trusts reports whether this build trusts, lists and may revoke e. A build
@@ -117,6 +133,11 @@ func (s *Service) scopeEntry(key []byte) hostEntry {
 // them are testnet devices, and a mainnet build cannot tell which network
 // they were registered for.
 func (s *Service) trusts(e hostEntry) bool {
+	if s.multi() {
+		_, ok := s.entryScope(e)
+		return ok
+	}
+
 	if e.kind == scopeLegacy {
 		return !s.networkFixed || s.network != 1
 	}
@@ -197,8 +218,8 @@ func (s *Service) loadHostKeys(chip Chip) error {
 		s.logf("host key %x", keyHash(k))
 	}
 
-	// revoking the last key deletes the object, so a present list with no
-	// key is not a valid empty list
+	// the last key is never revoked and a wipe deletes the object, so a
+	// present list with no key is not a valid empty list
 	if len(entries) == 0 {
 		s.logf("host key list: present but empty")
 		s.hostKeysBad = true
@@ -251,7 +272,8 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 	now := s.clock()
 	s.purgeUsed(now)
 
-	binary.BigEndian.PutUint64(c, uint64(now.UnixNano())) //nolint:gosec // post-epoch time
+	stamp := uint64(now.UnixNano()) //nolint:gosec // post-epoch time
+	binary.BigEndian.PutUint64(c, stamp)
 	copy(c[challengeBody:], s.challengeMAC(c[:challengeBody]))
 
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
@@ -270,7 +292,12 @@ func (s *Service) takeChallenge(ch []byte) error {
 	}
 
 	now := s.clock()
-	issued := time.Unix(0, int64(binary.BigEndian.Uint64(ch))) //nolint:gosec // bounded by MAC
+	raw := binary.BigEndian.Uint64(ch)
+	if raw > math.MaxInt64 {
+		return errBad
+	}
+
+	issued := time.Unix(0, int64(raw)) //nolint:gosec // checked above
 
 	if age := now.Sub(issued); age < 0 || age >= challengeTTL {
 		return errBad
@@ -291,7 +318,10 @@ func (s *Service) takeChallenge(ch []byte) error {
 	}
 
 	s.usedChallenges[key] = struct{}{}
-	s.usedOrder = append(s.usedOrder, usedChallenge{expires: now.Add(challengeTTL), key: key})
+	s.usedOrder = append(
+		s.usedOrder,
+		usedChallenge{expires: now.Add(challengeTTL), key: key},
+	)
 
 	return nil
 }
@@ -326,27 +356,68 @@ func (s *Service) purgeUsed(now time.Time) {
 // the challenge is outstanding. The challenge is burned only after the
 // signature verifies, so a forged request cannot use up a real one.
 func (s *Service) authenticate(req SignRequest) error {
-	return s.authenticateHost(req.HostKey, req.HostSignature, req.Challenge, RequestBinding(req))
+	_, err := s.authenticateHostScope(
+		req.HostKey,
+		req.HostSignature,
+		req.Challenge,
+		RequestBinding(req),
+		func(sc Scope) error {
+			if !s.multi() {
+				return nil
+			}
+
+			// the key is authentic; in a multi image it must also be of the
+			// scope of the profile it signs for. An unknown profile is refused
+			// later as ever.
+			if p, ok := s.profiles[req.Profile]; ok {
+				if target, err := s.scopeOf(p.NetworkID, p.Name); err == nil &&
+					target != sc {
+					return errScopeMismatch
+				}
+			}
+
+			return nil
+		},
+	)
+
+	return err
 }
 
 // authenticateHost checks that hostKey is registered, that sig is its
 // signature over binding, and that challenge is outstanding, burning it. With
 // no host key registered for any network or chain it refuses when host
 // authentication is required and accepts otherwise.
-func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) error {
+func (s *Service) authenticateHost(
+	hostKey, sig, challenge, binding []byte,
+) error {
+	_, err := s.authenticateHostScope(hostKey, sig, challenge, binding, nil)
+
+	return err
+}
+
+// authenticateHostScope is authenticateHost returning the scope of the key
+// that authenticated the request: its registered scope in a multi image, the
+// image's scope otherwise. authorize, when set, refuses a scope that may not
+// make the request; it runs after the signature verifies and before the
+// challenge is burned, so only an authorized request uses one up. A request
+// accepted because no host key exists returns the image scope and no error.
+func (s *Service) authenticateHostScope(
+	hostKey, sig, challenge, binding []byte,
+	authorize func(Scope) error,
+) (Scope, error) {
 	if s.hostKeysBad {
-		return errHostKeysBad
+		return Scope{}, errHostKeysBad
 	}
 
 	if len(s.hostKeys) == 0 {
 		if s.requireHostAuth {
-			return errHostAuthMissing
+			return Scope{}, errHostAuthMissing
 		}
 
 		// a key of another network or chain still means the device
 		// refuses unauthenticated requests
 		if len(s.hostEntries) == 0 {
-			return nil
+			return s.imageScope(), nil
 		}
 	}
 
@@ -360,18 +431,56 @@ func (s *Service) authenticateHost(hostKey, sig, challenge, binding []byte) erro
 	}
 
 	if !registered {
-		return errHostKeyUnknown
+		return Scope{}, errHostKeyUnknown
 	}
 
-	if len(sig) != ed25519.SignatureSize || !ed25519.Verify(hostKey, binding, sig) {
-		return errors.New("host signature does not verify")
+	if len(sig) != ed25519.SignatureSize ||
+		!ed25519.Verify(hostKey, binding, sig) {
+		return Scope{}, errors.New("host signature does not verify")
 	}
 
-	return s.takeChallenge(challenge)
+	candidates := []Scope{s.imageScope()}
+
+	if s.multi() {
+		if candidates = s.hostKeyScopes(hostKey); len(candidates) == 0 {
+			return Scope{}, errHostKeyUnknown
+		}
+	}
+
+	// a key registered for several scopes acts under the first that allows
+	// the request; the refusal reported is the first scope's
+	sc := candidates[0]
+
+	if authorize != nil {
+		var refusal error
+
+		for _, c := range candidates {
+			err := authorize(c)
+			if err == nil {
+				sc, refusal = c, nil
+				break
+			}
+
+			if refusal == nil {
+				refusal = err
+			}
+		}
+
+		if refusal != nil {
+			return Scope{}, refusal
+		}
+	}
+
+	if err := s.takeChallenge(challenge); err != nil {
+		return Scope{}, err
+	}
+
+	return sc, nil
 }
 
 func validHostKey(k []byte) error {
-	if len(k) != ed25519.PublicKeySize || bytes.Equal(k, make([]byte, ed25519.PublicKeySize)) {
+	if len(k) != ed25519.PublicKeySize ||
+		bytes.Equal(k, make([]byte, ed25519.PublicKeySize)) {
 		return errors.New("host key must be a 32-byte Ed25519 public key")
 	}
 
@@ -386,6 +495,18 @@ func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 		return HostKeyResponse{}, err
 	}
 
+	if s.multi() {
+		return s.addHostKeyMulti(req)
+	}
+
+	if req.Scope != "" && req.Scope != s.imageScope().Name() {
+		return HostKeyResponse{}, fmt.Errorf(
+			"this image serves the scope %s, not %q",
+			s.imageScope().Name(),
+			req.Scope,
+		)
+	}
+
 	for _, k := range s.hostKeys {
 		if bytes.Equal(k, req.PublicKey) {
 			return HostKeyResponse{HostKeys: s.hostKeys}, nil
@@ -393,15 +514,28 @@ func (s *Service) addHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 	}
 
 	if len(s.hostEntries) >= maxHostKeys {
-		return HostKeyResponse{}, errors.New("host key list is full; revoke a key first")
+		return HostKeyResponse{}, errors.New(
+			"host key list is full; revoke a key first",
+		)
 	}
 
-	return s.writeHostKeys(append(append([]hostEntry(nil), s.hostEntries...), s.scopeEntry(req.PublicKey)))
+	return s.writeHostKeys(
+		append(
+			append([]hostEntry(nil), s.hostEntries...),
+			s.scopeEntry(req.PublicKey),
+		),
+	)
 }
 
 // revokeHostKey removes a registered host key this build trusts; keys of
-// other networks and chains are not visible to it.
+// other networks and chains are not visible to it. The last key of the device
+// stays: an empty list is the bootstrap state, so only a device wipe empties
+// it.
 func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
+	if s.multi() {
+		return s.revokeHostKeyMulti(req)
+	}
+
 	entries := []hostEntry{}
 	found := false
 
@@ -416,6 +550,10 @@ func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 
 	if !found {
 		return HostKeyResponse{}, errHostKeyUnknown
+	}
+
+	if len(entries) == 0 {
+		return HostKeyResponse{}, errLastHostKey
 	}
 
 	return s.writeHostKeys(entries)
@@ -473,7 +611,7 @@ func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 		s.logf("host key %x", keyHash(k))
 	}
 
-	return HostKeyResponse{HostKeys: append([][]byte{}, s.hostKeys...)}, nil
+	return HostKeyResponse{HostKeys: s.listedKeys()}, nil
 }
 
 // deleteHostKeys removes the key list object and checks it is gone, so a

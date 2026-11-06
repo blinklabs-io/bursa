@@ -36,7 +36,10 @@ type fakePoolRegistry struct {
 	calls      []string
 }
 
-func (f *fakePoolRegistry) PoolRegistered(_ context.Context, poolID string) (bool, error) {
+func (f *fakePoolRegistry) PoolRegistered(
+	_ context.Context,
+	poolID string,
+) (bool, error) {
 	f.calls = append(f.calls, poolID)
 	return f.registered, f.err
 }
@@ -57,14 +60,22 @@ type registrationFixture struct {
 	acct  *wallet.Account
 }
 
-func newRegistrationFixture(t *testing.T, lovelace uint64, registered bool) registrationFixture {
+func newRegistrationFixture(
+	t *testing.T,
+	lovelace uint64,
+	registered bool,
+) registrationFixture {
 	t.Helper()
 	acct, err := wallet.Derive(testMnemonic, "preview", 2)
 	if err != nil {
 		t.Fatalf("derive account: %v", err)
 	}
 	chain := newRetirementFakeChain(acct.ReceiveAddresses[0], lovelace)
-	ks := &fakeKeystore{mnemonic: testMnemonic, password: "spend-password", exists: true}
+	ks := &fakeKeystore{
+		mnemonic: testMnemonic,
+		password: "spend-password",
+		exists:   true,
+	}
 	s := NewService(chain, ks, fakeGenesis{}, fakeTip{slot: 259200})
 	s.SetAccount("wallet-a", acct)
 	reg := &fakePoolRegistry{registered: registered}
@@ -94,7 +105,10 @@ func netDeposit(tx conway.ConwayTransaction, inLovelace uint64) *big.Int {
 	return net.Sub(net, new(big.Int).SetUint64(tx.Body.TxFee))
 }
 
-func witnessKeyHashes(t *testing.T, tx conway.ConwayTransaction) map[lcommon.Blake2b224]bool {
+func witnessKeyHashes(
+	t *testing.T,
+	tx conway.ConwayTransaction,
+) map[lcommon.Blake2b224]bool {
 	t.Helper()
 	out := map[lcommon.Blake2b224]bool{}
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
@@ -103,7 +117,13 @@ func witnessKeyHashes(t *testing.T, tx conway.ConwayTransaction) map[lcommon.Bla
 	return out
 }
 
-func assertRegistrationTx(t *testing.T, f registrationFixture, res RegistrationTxResult, wantDeposit int64, inLovelace uint64) {
+func assertRegistrationTx(
+	t *testing.T,
+	f registrationFixture,
+	res RegistrationTxResult,
+	wantDeposit int64,
+	inLovelace uint64,
+) {
 	t.Helper()
 	if res.TxHash == "" {
 		t.Fatal("empty tx hash")
@@ -112,7 +132,10 @@ func assertRegistrationTx(t *testing.T, f registrationFixture, res RegistrationT
 
 	// The submitted certificate is byte-identical to the canonical certificate
 	// the build endpoint returns (correct 29-byte reward account).
-	built, err := f.svc.BuildRegistrationFromSeed("spend-password", registrationParams())
+	built, err := f.svc.BuildRegistrationFromSeed(
+		"spend-password",
+		registrationParams(),
+	)
 	if err != nil {
 		t.Fatalf("BuildRegistrationFromSeed: %v", err)
 	}
@@ -127,10 +150,16 @@ func assertRegistrationTx(t *testing.T, f registrationFixture, res RegistrationT
 		t.Fatalf("submitted certificate = %s, want %s", got, built.CBORHex)
 	}
 
-	if got := netDeposit(tx, inLovelace); got.Cmp(big.NewInt(wantDeposit)) != 0 {
+	if got := netDeposit(tx, inLovelace); got.Cmp(
+		big.NewInt(wantDeposit),
+	) != 0 {
 		t.Fatalf("locked deposit = %s, want %d", got, wantDeposit)
 	}
-	finalMinFee := uint64(int64(len(f.chain.submitCbor))*f.chain.pp.MinFeeCoefficient + f.chain.pp.MinFeeConstant) //nolint:gosec // small test params
+	finalMinFee := uint64(
+		int64(
+			len(f.chain.submitCbor),
+		)*f.chain.pp.MinFeeCoefficient + f.chain.pp.MinFeeConstant,
+	) //nolint:gosec // small test params
 	if tx.Body.TxFee < finalMinFee {
 		t.Fatalf("fee = %d, below final min fee %d", tx.Body.TxFee, finalMinFee)
 	}
@@ -165,8 +194,15 @@ func assertRegistrationTx(t *testing.T, f registrationFixture, res RegistrationT
 	// Every witness signs the submitted transaction body.
 	bodyHash := lcommon.Blake2b256Hash(tx.Body.Cbor())
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
-		if !ed25519.Verify(ed25519.PublicKey(w.Vkey), bodyHash.Bytes(), w.Signature) {
-			t.Errorf("witness %s does not verify over the transaction body", lcommon.Blake2b224Hash(w.Vkey))
+		if !ed25519.Verify(
+			ed25519.PublicKey(w.Vkey),
+			bodyHash.Bytes(),
+			w.Signature,
+		) {
+			t.Errorf(
+				"witness %s does not verify over the transaction body",
+				lcommon.Blake2b224Hash(w.Vkey),
+			)
 		}
 	}
 }
@@ -175,7 +211,11 @@ func TestSubmitRegistrationNewPoolLocksDepositAndWitnesses(t *testing.T) {
 	t.Parallel()
 	const funds = 700_000_000
 	f := newRegistrationFixture(t, funds, false)
-	res, err := f.svc.SubmitRegistration(context.Background(), "spend-password", registrationParams())
+	res, err := f.svc.SubmitRegistration(
+		context.Background(),
+		"spend-password",
+		registrationParams(),
+	)
 	if err != nil {
 		t.Fatalf("SubmitRegistration: %v", err)
 	}
@@ -189,7 +229,11 @@ func TestSubmitRegistrationExistingPoolLocksNoDeposit(t *testing.T) {
 	t.Parallel()
 	const funds = 5_000_000
 	f := newRegistrationFixture(t, funds, true)
-	res, err := f.svc.SubmitRegistration(context.Background(), "spend-password", registrationParams())
+	res, err := f.svc.SubmitRegistration(
+		context.Background(),
+		"spend-password",
+		registrationParams(),
+	)
 	if err != nil {
 		t.Fatalf("SubmitRegistration: %v", err)
 	}
@@ -258,7 +302,11 @@ func TestSubmitRegistrationRefusals(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(&f, &p)
 			}
-			_, err := f.svc.SubmitRegistration(context.Background(), "spend-password", p)
+			_, err := f.svc.SubmitRegistration(
+				context.Background(),
+				"spend-password",
+				p,
+			)
 			if err == nil {
 				t.Fatal("SubmitRegistration succeeded, want an error")
 			}
@@ -278,7 +326,11 @@ func TestSubmitRegistrationRefusals(t *testing.T) {
 func TestSubmitRegistrationWrongPassword(t *testing.T) {
 	t.Parallel()
 	f := newRegistrationFixture(t, 700_000_000, false)
-	_, err := f.svc.SubmitRegistration(context.Background(), "nope", registrationParams())
+	_, err := f.svc.SubmitRegistration(
+		context.Background(),
+		"nope",
+		registrationParams(),
+	)
 	if !errors.Is(err, ErrWrongPassword) {
 		t.Fatalf("err = %v, want ErrWrongPassword", err)
 	}

@@ -28,7 +28,13 @@ import (
 
 func TestPrepareQuickstartOwnerOnly(t *testing.T) {
 	tmpDir := t.TempDir()
-	cmd := exec.Command("sh", "-c", `umask 000; exec sh "$1"`, "sh", "./prepare-quickstart.sh")
+	cmd := exec.Command(
+		"sh",
+		"-c",
+		`umask 000; exec sh "$1"`,
+		"sh",
+		"./prepare-quickstart.sh",
+	)
 	cmd.Env = append(os.Environ(), "TMPDIR="+tmpDir)
 	output, err := cmd.Output()
 	if err != nil {
@@ -37,7 +43,10 @@ func TestPrepareQuickstartOwnerOnly(t *testing.T) {
 
 	devDir := strings.TrimSpace(string(output))
 	if filepath.Dir(devDir) != tmpDir {
-		t.Fatalf("development directory %q is outside the selected temporary directory", devDir)
+		t.Fatalf(
+			"development directory %q is outside the selected temporary directory",
+			devDir,
+		)
 	}
 
 	assertMode(t, devDir, 0o700)
@@ -51,7 +60,9 @@ func TestPrepareQuickstartOwnerOnly(t *testing.T) {
 		t.Fatalf("read auth environment: %v", err)
 	}
 	if !regexp.MustCompile(`^SIGNER_JWT_SECRET=[0-9a-f]{64}\n$`).Match(auth) {
-		t.Fatal("authentication environment does not contain one generated 32-byte hex secret")
+		t.Fatal(
+			"authentication environment does not contain one generated 32-byte hex secret",
+		)
 	}
 }
 
@@ -103,6 +114,11 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 		t.Fatalf("stat %s: %v", filepath.Base(path), err)
 	}
 	if got := info.Mode().Perm(); got != want {
-		t.Fatalf("%s mode = %04o, want %04o owner-only permissions", filepath.Base(path), got, want)
+		t.Fatalf(
+			"%s mode = %04o, want %04o owner-only permissions",
+			filepath.Base(path),
+			got,
+			want,
+		)
 	}
 }

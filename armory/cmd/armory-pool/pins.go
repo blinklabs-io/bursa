@@ -37,24 +37,40 @@ func pinsRequest(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("pins-request", flag.ContinueOnError)
 	name := fs.String("profile", "", "device profile the pins belong to")
 	vrf := fs.String("vrf-key-hash", "", "VRF key hash (32 bytes, hex)")
-	meta := fs.String("metadata-hash", "", "pool metadata hash (32 bytes, hex); empty pins no metadata")
+	meta := fs.String(
+		"metadata-hash",
+		"",
+		"pool metadata hash (32 bytes, hex); empty pins no metadata",
+	)
 	pledgeMin := fs.Uint64("pledge-min", 0, "lowest pledge, in lovelace")
 	pledgeMax := fs.Uint64("pledge-max", 0, "highest pledge, in lovelace")
 	costMax := fs.Uint64("cost-max", 0, "highest fixed cost, in lovelace")
 	marginMax := fs.String("margin-max", "", "highest margin as N/D, e.g. 1/10")
-	metaURL := fs.String("metadata-url", "", "pool metadata URL; required with -metadata-hash")
-	unpinned := fs.Bool("unpinned-relays", false, "leave the relays and metadata unpinned, so registrations may change them; refused with -relay or -metadata-*")
+	metaURL := fs.String(
+		"metadata-url",
+		"",
+		"pool metadata URL; required with -metadata-hash",
+	)
+	unpinned := fs.Bool(
+		"unpinned-relays",
+		false,
+		"leave the relays and metadata unpinned, so registrations may change them; refused with -relay or -metadata-*",
+	)
 
 	var relays []common.PoolRelay
 
-	fs.Func("relay", "a registration relay, repeated in registration order: HOST:PORT, IPV4:PORT, [IPV6]:PORT, IPV4,[IPV6]:PORT or srv:NAME", func(v string) error {
-		r, err := parseRelay(v)
-		if err == nil {
-			relays = append(relays, r)
-		}
+	fs.Func(
+		"relay",
+		"a registration relay, repeated in registration order: HOST:PORT, IPV4:PORT, [IPV6]:PORT, IPV4,[IPV6]:PORT or srv:NAME",
+		func(v string) error {
+			r, err := parseRelay(v)
+			if err == nil {
+				relays = append(relays, r)
+			}
 
-		return err
-	})
+			return err
+		},
+	)
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -74,7 +90,9 @@ func pinsRequest(args []string, out io.Writer) error {
 	}
 
 	if *name == "" || *vrf == "" || *pledgeMax < *pledgeMin {
-		return errors.New("-profile and -vrf-key-hash are required, and -pledge-max must not be below -pledge-min")
+		return errors.New(
+			"-profile and -vrf-key-hash are required, and -pledge-max must not be below -pledge-min",
+		)
 	}
 
 	if err := checkHash32("-vrf-key-hash", *vrf); err != nil {
@@ -83,7 +101,9 @@ func pinsRequest(args []string, out io.Writer) error {
 
 	if *unpinned {
 		if len(relays) > 0 || *meta != "" || *metaURL != "" {
-			return errors.New("-unpinned-relays leaves relays and metadata unpinned: drop -relay, -metadata-hash and -metadata-url")
+			return errors.New(
+				"-unpinned-relays leaves relays and metadata unpinned: drop -relay, -metadata-hash and -metadata-url",
+			)
 		}
 
 		return printPins(out, device.PinsRequest{
@@ -147,14 +167,20 @@ func checkHash32(flagName, v string) error {
 // relay; otherwise the value ends in :PORT and names either one host or one
 // or two addresses (an IPv4 and an IPv6, comma separated, IPv6 in brackets).
 func parseRelay(v string) (common.PoolRelay, error) {
-	bad := fmt.Errorf("relay %q: want HOST:PORT, IPV4:PORT, [IPV6]:PORT, IPV4,[IPV6]:PORT or srv:NAME", v)
+	bad := fmt.Errorf(
+		"relay %q: want HOST:PORT, IPV4:PORT, [IPV6]:PORT, IPV4,[IPV6]:PORT or srv:NAME",
+		v,
+	)
 
 	if srv, ok := strings.CutPrefix(v, "srv:"); ok {
 		if srv == "" {
 			return common.PoolRelay{}, bad
 		}
 
-		return common.PoolRelay{Type: common.PoolRelayTypeMultiHostName, Hostname: &srv}, nil
+		return common.PoolRelay{
+			Type:     common.PoolRelayTypeMultiHostName,
+			Hostname: &srv,
+		}, nil
 	}
 
 	i := strings.LastIndexByte(v, ':')
@@ -171,10 +197,17 @@ func parseRelay(v string) (common.PoolRelay, error) {
 	host := v[:i]
 
 	if !strings.ContainsAny(host, ",[]") && net.ParseIP(host) == nil {
-		return common.PoolRelay{Type: common.PoolRelayTypeSingleHostName, Port: &port, Hostname: &host}, nil
+		return common.PoolRelay{
+			Type:     common.PoolRelayTypeSingleHostName,
+			Port:     &port,
+			Hostname: &host,
+		}, nil
 	}
 
-	r := common.PoolRelay{Type: common.PoolRelayTypeSingleHostAddress, Port: &port}
+	r := common.PoolRelay{
+		Type: common.PoolRelayTypeSingleHostAddress,
+		Port: &port,
+	}
 
 	for _, a := range strings.Split(host, ",") {
 		v6, bracketed := strings.CutPrefix(a, "[")

@@ -40,7 +40,14 @@ func TestExistingWalletDefaultsToAccountZero(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
@@ -54,7 +61,10 @@ func TestExistingWalletDefaultsToAccountZero(t *testing.T) {
 		t.Fatalf("ActiveAccount = %+v, want index 0", meta.ActiveAccount())
 	}
 	if v.ActiveAccountIndexFor(meta.ID) != 0 {
-		t.Fatalf("ActiveAccountIndexFor = %d, want 0", v.ActiveAccountIndexFor(meta.ID))
+		t.Fatalf(
+			"ActiveAccountIndexFor = %d, want 0",
+			v.ActiveAccountIndexFor(meta.ID),
+		)
 	}
 }
 
@@ -67,7 +77,14 @@ func TestAddAccountThenSelectPersists(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
@@ -79,7 +96,10 @@ func TestAddAccountThenSelectPersists(t *testing.T) {
 		t.Fatalf("AddAccount(1): %v", err)
 	}
 	if len(updated.AccountList()) != 2 {
-		t.Fatalf("after AddAccount, AccountList len = %d, want 2", len(updated.AccountList()))
+		t.Fatalf(
+			"after AddAccount, AccountList len = %d, want 2",
+			len(updated.AccountList()),
+		)
 	}
 	acct0 := updated.AccountByIndex(0)
 	acct1 := updated.AccountByIndex(1)
@@ -91,7 +111,10 @@ func TestAddAccountThenSelectPersists(t *testing.T) {
 	}
 	// AddAccount must NOT change the active selection yet.
 	if updated.ActiveAccountIndex != 0 {
-		t.Fatalf("ActiveAccountIndex after AddAccount = %d, want 0", updated.ActiveAccountIndex)
+		t.Fatalf(
+			"ActiveAccountIndex after AddAccount = %d, want 0",
+			updated.ActiveAccountIndex,
+		)
 	}
 
 	// Select account #1.
@@ -100,10 +123,16 @@ func TestAddAccountThenSelectPersists(t *testing.T) {
 		t.Fatalf("SelectAccount(1): %v", err)
 	}
 	if sel.ActiveAccountIndex != 1 {
-		t.Fatalf("selected ActiveAccountIndex = %d, want 1", sel.ActiveAccountIndex)
+		t.Fatalf(
+			"selected ActiveAccountIndex = %d, want 1",
+			sel.ActiveAccountIndex,
+		)
 	}
 	if sel.ActiveAccount().AccountIndex != 1 {
-		t.Fatalf("ActiveAccount index = %d, want 1", sel.ActiveAccount().AccountIndex)
+		t.Fatalf(
+			"ActiveAccount index = %d, want 1",
+			sel.ActiveAccount().AccountIndex,
+		)
 	}
 
 	// Reopen from disk: the selection must persist and the account list too.
@@ -116,13 +145,22 @@ func TestAddAccountThenSelectPersists(t *testing.T) {
 		t.Fatalf("reloaded wallet count = %d, want 1", len(wallets))
 	}
 	if wallets[0].ActiveAccountIndex != 1 {
-		t.Fatalf("reloaded ActiveAccountIndex = %d, want 1 (selection not persisted)", wallets[0].ActiveAccountIndex)
+		t.Fatalf(
+			"reloaded ActiveAccountIndex = %d, want 1 (selection not persisted)",
+			wallets[0].ActiveAccountIndex,
+		)
 	}
 	if len(wallets[0].AccountList()) != 2 {
-		t.Fatalf("reloaded AccountList len = %d, want 2", len(wallets[0].AccountList()))
+		t.Fatalf(
+			"reloaded AccountList len = %d, want 2",
+			len(wallets[0].AccountList()),
+		)
 	}
 	if v2.ActiveAccountIndexFor(id) != 1 {
-		t.Fatalf("reloaded ActiveAccountIndexFor = %d, want 1", v2.ActiveAccountIndexFor(id))
+		t.Fatalf(
+			"reloaded ActiveAccountIndexFor = %d, want 1",
+			v2.ActiveAccountIndexFor(id),
+		)
 	}
 }
 
@@ -134,7 +172,14 @@ func TestSelectBackToZeroClearsPersistedEntry(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
@@ -153,7 +198,10 @@ func TestSelectBackToZeroClearsPersistedEntry(t *testing.T) {
 	}
 	env := readEnvelopeFile(t, path)
 	if _, ok := env.ActiveAccounts[meta.ID]; ok {
-		t.Fatalf("active-accounts map still holds an entry after selecting 0: %v", env.ActiveAccounts)
+		t.Fatalf(
+			"active-accounts map still holds an entry after selecting 0: %v",
+			env.ActiveAccounts,
+		)
 	}
 }
 
@@ -163,28 +211,47 @@ func TestAddAccountErrors(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
 
 	// Wrong spend password → ErrWrongPassword.
-	if _, err := v.AddAccount(meta.ID, vaultPw, "wrong-spend-password", 1, window); !errors.Is(err, ErrWrongPassword) {
+	if _, err := v.AddAccount(meta.ID, vaultPw, "wrong-spend-password", 1, window); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("AddAccount wrong spend pw = %v, want ErrWrongPassword", err)
 	}
 	// Wrong vault password → ErrWrongPassword.
-	if _, err := v.AddAccount(meta.ID, "wrong-vault-password", spendPwA, 1, window); !errors.Is(err, ErrWrongPassword) {
+	if _, err := v.AddAccount(meta.ID, "wrong-vault-password", spendPwA, 1, window); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("AddAccount wrong vault pw = %v, want ErrWrongPassword", err)
 	}
 	// Unknown wallet id.
-	if _, err := v.AddAccount("nope", vaultPw, spendPwA, 1, window); !errors.Is(err, ErrUnknownWallet) {
+	if _, err := v.AddAccount("nope", vaultPw, spendPwA, 1, window); !errors.Is(
+		err,
+		ErrUnknownWallet,
+	) {
 		t.Fatalf("AddAccount unknown wallet = %v, want ErrUnknownWallet", err)
 	}
 	// Add index 1, then a duplicate add must be rejected.
 	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); err != nil {
 		t.Fatalf("AddAccount(1): %v", err)
 	}
-	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); !errors.Is(err, ErrDuplicateAccount) {
+	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); !errors.Is(
+		err,
+		ErrDuplicateAccount,
+	) {
 		t.Fatalf("duplicate AddAccount = %v, want ErrDuplicateAccount", err)
 	}
 }
@@ -196,11 +263,21 @@ func TestSelectUnknownAccountRejected(t *testing.T) {
 	if err := v.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}
-	if _, err := v.SelectAccount(meta.ID, 7); !errors.Is(err, ErrUnknownAccount) {
+	if _, err := v.SelectAccount(meta.ID, 7); !errors.Is(
+		err,
+		ErrUnknownAccount,
+	) {
 		t.Fatalf("SelectAccount underived = %v, want ErrUnknownAccount", err)
 	}
 }
@@ -220,7 +297,10 @@ func TestAddAccountRejectedForHardwareWallet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddHardwareWallet: %v", err)
 	}
-	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); !errors.Is(err, ErrNoSeed) {
+	if _, err := v.AddAccount(meta.ID, vaultPw, spendPwA, 1, window); !errors.Is(
+		err,
+		ErrNoSeed,
+	) {
 		t.Fatalf("AddAccount on hardware wallet = %v, want ErrNoSeed", err)
 	}
 }

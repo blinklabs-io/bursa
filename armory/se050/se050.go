@@ -193,7 +193,9 @@ func (se *SE050) call(ins, p1, p2 byte, tlvs []byte, le bool) ([]byte, error) {
 }
 
 func objectID(id uint32) []byte {
-	return appendTLV(nil, tag1, []byte{byte(id >> 24), byte(id >> 16), byte(id >> 8), byte(id)}) //nolint:gosec // uint32 values are truncated to bytes by design
+	//nolint:gosec // uint32 values are truncated to bytes by design
+	b := []byte{byte(id >> 24), byte(id >> 16), byte(id >> 8), byte(id)}
+	return appendTLV(nil, tag1, b)
 }
 
 // GetVersion returns the applet version and configuration.
@@ -208,7 +210,9 @@ func (se *SE050) GetVersion() (AppletVersion, error) {
 
 // Random returns n bytes from the SE050 random number generator.
 func (se *SE050) Random(n uint16) ([]byte, error) {
-	return se.call(insMgmt, p1Default, p2Random, appendTLV(nil, tag1, []byte{byte(n >> 8), byte(n)}), true) //nolint:gosec // uint16 values are truncated to bytes by design
+	//nolint:gosec // uint16 values are truncated to bytes by design
+	req := []byte{byte(n >> 8), byte(n)}
+	return se.call(insMgmt, p1Default, p2Random, appendTLV(nil, tag1, req), true)
 }
 
 // Exists reports whether a secure object is present.
@@ -219,7 +223,10 @@ func (se *SE050) Exists(id uint32) (bool, error) {
 	}
 
 	if len(res) != 1 {
-		return false, fmt.Errorf("se050: invalid exist result length %d", len(res))
+		return false, fmt.Errorf(
+			"se050: invalid exist result length %d",
+			len(res),
+		)
 	}
 
 	return res[0] == resultSuccess, nil
@@ -245,7 +252,13 @@ func (se *SE050) GenerateEd25519(id uint32, transient bool) error {
 	tlvs := objectID(id)
 	tlvs = appendTLV(tlvs, tag2, []byte{curveEd25519})
 
-	_, err := se.call(writeIns(transient), p1EC|p1KeyPair, p2Default, tlvs, false)
+	_, err := se.call(
+		writeIns(transient),
+		p1EC|p1KeyPair,
+		p2Default,
+		tlvs,
+		false,
+	)
 
 	return err
 }
@@ -266,7 +279,13 @@ func (se *SE050) ImportEd25519(id uint32, seed []byte, transient bool) error {
 	tlvs = appendTLV(tlvs, tag3, seed)
 	tlvs = appendTLV(tlvs, tag4, pub)
 
-	_, err := se.call(writeIns(transient), p1EC|p1KeyPair, p2Default, tlvs, false)
+	_, err := se.call(
+		writeIns(transient),
+		p1EC|p1KeyPair,
+		p2Default,
+		tlvs,
+		false,
+	)
 
 	return err
 }

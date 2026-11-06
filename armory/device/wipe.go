@@ -34,7 +34,9 @@ const (
 	feeKeyLast   uint32 = 0x20e5021f
 )
 
-var errWipeConfirm = errors.New("identity_public_key does not match the device identity key")
+var errWipeConfirm = errors.New(
+	"identity_public_key does not match the device identity key",
+)
 
 // WipeDeviceRequest confirms a device wipe with the device identity public
 // key in hex, as Bursa pins it. A device with no identity key takes an empty
@@ -71,13 +73,26 @@ type WipeResponse struct {
 func (s *Service) WipeHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/challenge", handle(s, s.challenge))
-	mux.HandleFunc("POST /wipe/objects", handle(s, func(struct{}) (WipeResponse, error) {
-		ids, err := s.armoryObjects()
-		return WipeResponse{Objects: hexIDs(ids)}, err
-	}))
+	mux.HandleFunc(
+		"POST /wipe/objects",
+		handle(s, func(struct{}) (WipeResponse, error) {
+			ids, err := s.armoryObjects()
+			return WipeResponse{Objects: hexIDs(ids)}, err
+		}),
+	)
 	mux.HandleFunc("POST /wipe/device", handle(s, s.wipeDevice))
-	mux.HandleFunc("POST "+RouteWipeProfile, handleAdmin(s, RouteWipeProfile, s.wipeProfile))
-	mux.HandleFunc("POST "+RouteWipeSignLog, handleAdmin(s, RouteWipeSignLog, s.wipeSignLog))
+	mux.HandleFunc(
+		"POST "+RouteWipeProfile,
+		handleAdmin(s, RouteWipeProfile, s.wipeProfile),
+	)
+	mux.HandleFunc(
+		"POST "+RouteWipeSignLog,
+		handleAdmin(s, RouteWipeSignLog, s.wipeSignLog),
+	)
+	mux.HandleFunc(
+		"POST "+RouteWipeCold,
+		handleAdmin(s, RouteWipeCold, s.wipeCold),
+	)
 
 	return mux
 }
@@ -95,7 +110,7 @@ func armoryIDs() []uint32 {
 	}
 
 	add(bringupFirst, bringupLast)
-	add(coldKeyFirst, coldKeyLast)
+	ids = append(ids, coldKeyIDs()...)
 	ids = append(ids, hostKeysID)
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
@@ -105,11 +120,16 @@ func armoryIDs() []uint32 {
 	add(feeKeyFirst, feeKeyLast)
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
-		ids = append(ids, profile.Profile{Slot: slot}.PinsID(), profile.Profile{Slot: slot}.RecordID())
+		ids = append(
+			ids,
+			profile.Profile{Slot: slot}.PinsID(),
+			profile.Profile{Slot: slot}.RecordID(),
+		)
 	}
 
-	// the signing log head is chained to the identity key, so it goes with it
-	return append(ids, profile.SignLogHeadID, profile.IdentityKeyID)
+	// the ownership record goes after the cold keys it describes; the signing
+	// log head is chained to the identity key, so it goes with it
+	return append(ids, ownersID, profile.SignLogHeadID, profile.IdentityKeyID)
 }
 
 // armoryObjects returns the armory objects present on the chip.
@@ -178,7 +198,11 @@ func (s *Service) remove(ids []uint32) ([]uint32, error) {
 
 		if err = s.chip.Delete(id); err != nil {
 			s.logf("wipe: delete %#08x: %v", id, err)
-			return nil, fmt.Errorf("%w: deleting %#08x; send the request again", errDevice, id)
+			return nil, fmt.Errorf(
+				"%w: deleting %#08x; send the request again",
+				errDevice,
+				id,
+			)
 		}
 
 		s.logf("wipe: deleted %#08x", id)
@@ -248,12 +272,16 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 	// an unreadable, misplaced or duplicate record may name the same cold
 	// key or this profile's objects, so ownership cannot be established
 	if len(s.badSlots) > 0 {
-		return WipeResponse{}, errors.New("a profile record is unreadable or inconsistent; wipe the device instead")
+		return WipeResponse{}, errors.New(
+			"a profile record is unreadable or inconsistent; wipe the device instead",
+		)
 	}
 
 	// a stored record may name any object; delete only an armory cold key
-	if p.ColdKeyID < coldKeyFirst || p.ColdKeyID > coldKeyLast {
-		return WipeResponse{}, errors.New("profile cold key id outside the cold key range; wipe the device instead")
+	if !isColdKeyID(p.ColdKeyID) {
+		return WipeResponse{}, errors.New(
+			"profile cold key id outside the cold key range; wipe the device instead",
+		)
 	}
 
 	ids := []uint32{p.OwnerKeyID()}
@@ -274,8 +302,67 @@ func (s *Service) wipeProfile(req WipeProfileRequest) (WipeResponse, error) {
 		return WipeResponse{}, err
 	}
 
+	// the claim on a deleted cold key is dropped; a stale one frees the empty
+	// object anyway, so a record that cannot be updated does not fail the wipe
+	if !shared {
+		if err = s.unclaim(p.ColdKeyID); err != nil {
+			s.logf("wipe: claim on %#08x not cleared: %v", p.ColdKeyID, err)
+		}
+	}
+
 	delete(s.profiles, p.Name)
 	s.logf("wipe: profile %q slot %d removed", p.Name, p.Slot)
+
+	return WipeResponse{Deleted: hexIDs(deleted)}, nil
+}
+
+// wipeCold deletes one cold key that no profile names, and its claim. It
+// clears a key left with no owner, or one a scope no longer needs, without
+// wiping the device. A key a profile names goes with /wipe/profile.
+func (s *Service) wipeCold(req WipeColdRequest) (WipeResponse, error) {
+	if err := s.confirm(req.IdentityPublicKey); err != nil {
+		return WipeResponse{}, err
+	}
+
+	if !isColdKeyID(req.ColdKeyID) {
+		return WipeResponse{}, errColdOwner
+	}
+
+	// an unreadable record may name this object
+	if len(s.badSlots) > 0 {
+		return WipeResponse{}, errors.New(
+			"a profile record is unreadable or inconsistent; wipe the device instead",
+		)
+	}
+
+	for _, p := range s.profiles {
+		if p.ColdKeyID == req.ColdKeyID {
+			return WipeResponse{}, errColdInUse
+		}
+	}
+
+	key, err := s.objectKey(req.ColdKeyID)
+	if err != nil {
+		return WipeResponse{}, err
+	}
+
+	if key != nil {
+		if err = s.mayWipeCold(req.ColdKeyID, s.callerOrImageScope()); err != nil {
+			return WipeResponse{}, err
+		}
+	}
+
+	deleted, err := s.remove([]uint32{req.ColdKeyID})
+	if err != nil {
+		return WipeResponse{}, err
+	}
+
+	// a stale claim frees the empty object anyway
+	if err = s.unclaim(req.ColdKeyID); err != nil {
+		s.logf("wipe: claim on %#08x not cleared: %v", req.ColdKeyID, err)
+	}
+
+	s.logf("wipe: cold key %#08x removed", req.ColdKeyID)
 
 	return WipeResponse{Deleted: hexIDs(deleted)}, nil
 }

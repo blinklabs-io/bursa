@@ -38,6 +38,9 @@ func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
 	// The check runs under the lock the import holds, which the service
 	// shares, so a host key registered meanwhile cannot let it through.
 	s.importOpen = svc.UnsignedProvisioningLocked
+	// a multi image takes the device's first host key here, unsigned; no
+	// other image does
+	svc.AllowFirstHostKey()
 	http.HandleFunc("/provision", s.provision)
 	http.HandleFunc("/pubkey", s.publicKey)
 	// the provisioning requests are signed by a host key once one is

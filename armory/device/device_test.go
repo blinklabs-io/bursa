@@ -59,10 +59,15 @@ type fakeChip struct {
 	// refuses the next one
 	failDeleteAfter int
 	deletes         int
+	// failPublic fails the public key read of these objects
+	failPublic map[uint32]bool
 }
 
 func newFakeChip() *fakeChip {
-	c := &fakeChip{keys: map[uint32]ed25519.PrivateKey{}, bins: map[uint32][]byte{}}
+	c := &fakeChip{
+		keys: map[uint32]ed25519.PrivateKey{},
+		bins: map[uint32][]byte{},
+	}
 	c.keys[testColdID] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, 32))
 
 	return c
@@ -109,6 +114,10 @@ func (c *fakeChip) ImportEd25519(id uint32, seed []byte, _ bool) error {
 }
 
 func (c *fakeChip) PublicKeyEd25519(id uint32) (ed25519.PublicKey, error) {
+	if c.failPublic[id] {
+		return nil, errors.New("i2c failure")
+	}
+
 	k, ok := c.keys[id]
 
 	if !ok {
@@ -144,7 +153,8 @@ func (c *fakeChip) WriteBinary(id uint32, data []byte) error {
 }
 
 func (c *fakeChip) Delete(id uint32) error {
-	if c.failDelete || c.failDeleteAfter != 0 && c.deletes >= c.failDeleteAfter {
+	if c.failDelete ||
+		c.failDeleteAfter != 0 && c.deletes >= c.failDeleteAfter {
 		return errors.New("i2c failure")
 	}
 
@@ -268,7 +278,9 @@ func TestProvisionProfile(t *testing.T) {
 	rec, _ := chip.ReadBinary(p.RecordID())
 	got, err := profile.Decode(rec)
 
-	if err != nil || !got.FloorSet || got.OpCertFloor != 3 || got.ColdKeyID != testColdID || got.RewardAccount != testReward {
+	if err != nil || !got.FloorSet || got.OpCertFloor != 3 ||
+		got.ColdKeyID != testColdID ||
+		got.RewardAccount != testReward {
 		t.Fatalf("record %+v, %v", got, err)
 	}
 
@@ -320,7 +332,8 @@ func TestProvisionIdentity(t *testing.T) {
 
 	var resp IdentityResponse
 
-	if err := json.Unmarshal(first, &resp); err != nil || !bytes.Equal(resp.PublicKey, pub) {
+	if err := json.Unmarshal(first, &resp); err != nil ||
+		!bytes.Equal(resp.PublicKey, pub) {
 		t.Fatalf("identity response %s", first)
 	}
 }
@@ -330,7 +343,12 @@ func TestInventory(t *testing.T) {
 	provisionTestProfile(t, s)
 	post(t, s, "/provision/identity", struct{}{})
 
-	code, body := post(t, s, "/v1/inventory", InventoryRequest{Nonce: nonce(1), Profile: "otg@preview"})
+	code, body := post(
+		t,
+		s,
+		"/v1/inventory",
+		InventoryRequest{Nonce: nonce(1), Profile: "otg@preview"},
+	)
 
 	if code != http.StatusOK {
 		t.Fatalf("%d %s", code, body)
@@ -354,18 +372,27 @@ func TestInventory(t *testing.T) {
 	}{{"pool", p.ColdKeyID}, {"stake", p.OwnerKeyID()}} {
 		pub, _ := chip.PublicKeyEd25519(want.id)
 
-		if inv.Keys[i].Role != want.role || !bytes.Equal(inv.Keys[i].PublicKey, pub) {
+		if inv.Keys[i].Role != want.role ||
+			!bytes.Equal(inv.Keys[i].PublicKey, pub) {
 			t.Fatalf("key %d = %+v, want %s", i, inv.Keys[i], want.role)
 		}
 	}
 
 	identity, _ := chip.PublicKeyEd25519(profile.IdentityKeyID)
 
-	if !ed25519.Verify(identity, InventoryBinding(nonce(1), inv.Keys), inv.Attestation) {
+	if !ed25519.Verify(
+		identity,
+		InventoryBinding(nonce(1), inv.Keys),
+		inv.Attestation,
+	) {
 		t.Fatal("attestation does not verify under the identity key")
 	}
 
-	if ed25519.Verify(identity, InventoryBinding(nonce(2), inv.Keys), inv.Attestation) {
+	if ed25519.Verify(
+		identity,
+		InventoryBinding(nonce(2), inv.Keys),
+		inv.Attestation,
+	) {
 		t.Fatal("attestation verifies for another nonce")
 	}
 
@@ -402,10 +429,19 @@ func certBody(certs ...[]any) []byte {
 	return b
 }
 
-func retirement(pool [28]byte) []any { return []any{uint64(4), pool[:], uint64(900)} }
+func retirement(
+	pool [28]byte,
+) []any {
+	return []any{uint64(4), pool[:], uint64(900)}
+}
 
 func regDeleg(owner, pool [28]byte) []any {
-	return []any{uint64(11), []any{uint64(0), owner[:]}, pool[:], uint64(2_000_000)}
+	return []any{
+		uint64(11),
+		[]any{uint64(0), owner[:]},
+		pool[:],
+		uint64(2_000_000),
+	}
 }
 
 func TestSignTxBody(t *testing.T) {
@@ -424,7 +460,9 @@ func TestSignTxBody(t *testing.T) {
 	} {
 		r := sign(t, s, SignRequest{
 			Purpose: "tx-body", KeyHash: hashHex(c.pub), Role: c.role,
-			Nonce: []byte(c.role), Payload: c.body, Profile: "otg@preview", Era: conwayEra(),
+			Nonce: []byte(
+				c.role,
+			), Payload: c.body, Profile: "otg@preview", Era: conwayEra(),
 		})
 
 		if r.Error != "" {
@@ -473,7 +511,8 @@ func TestRewardAccountChange(t *testing.T) {
 
 	rec, _ := chip.ReadBinary(profile.Profile{Slot: 0}.RecordID())
 
-	if p, _ := profile.Decode(rec); p.RewardAccount != next || p.OpCertFloor != 3 {
+	if p, _ := profile.Decode(rec); p.RewardAccount != next ||
+		p.OpCertFloor != 3 {
 		t.Fatalf("record after change: %+v", p)
 	}
 
@@ -547,7 +586,9 @@ func TestOpCertNext(t *testing.T) {
 
 	r := sign(t, s, SignRequest{
 		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(1), Payload: opCertPayload(kes, 3, 1100), Profile: "otg@preview",
+		Nonce: nonce(
+			1,
+		), Payload: opCertPayload(kes, 3, 1100), Profile: "otg@preview",
 	})
 
 	if r.Error != "" || r.IssueCounter == nil || *r.IssueCounter != 4 {
@@ -561,7 +602,9 @@ func TestOpCertNext(t *testing.T) {
 	// the pool forged with the counter the device issued
 	r = sign(t, s, SignRequest{
 		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(2), Payload: opCertPayload(kes, 4, 1100), Profile: "otg@preview",
+		Nonce: nonce(
+			2,
+		), Payload: opCertPayload(kes, 4, 1100), Profile: "otg@preview",
 	})
 
 	if r.Error != "" || *r.IssueCounter != 5 {
@@ -570,7 +613,9 @@ func TestOpCertNext(t *testing.T) {
 
 	r = sign(t, s, SignRequest{
 		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(3), Payload: opCertPayload(kes, 5, 1100), Profile: "otg@preview",
+		Nonce: nonce(
+			3,
+		), Payload: opCertPayload(kes, 5, 1100), Profile: "otg@preview",
 	})
 
 	if r.Error != "" || *r.IssueCounter != 6 {
@@ -609,7 +654,9 @@ func TestOpCertNextRefusesChainAboveIssued(t *testing.T) {
 	req := func(n byte, chain uint64) SignRequest {
 		return SignRequest{
 			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-			Nonce: nonce(n), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
+			Nonce: nonce(
+				n,
+			), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
 		}
 	}
 	record := func() profile.Profile {
@@ -664,7 +711,9 @@ func TestOpCertNextOldRecordUnbounded(t *testing.T) {
 
 	r := sign(t, s, SignRequest{
 		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(1), Payload: opCertPayload(kes, 50, 1100), Profile: "otg@preview",
+		Nonce: nonce(
+			1,
+		), Payload: opCertPayload(kes, 50, 1100), Profile: "otg@preview",
 	})
 
 	if r.Error != "" || *r.IssueCounter != 51 {
@@ -689,7 +738,9 @@ func TestFloorResetClearsIssued(t *testing.T) {
 	req := func(n byte, chain uint64) SignRequest {
 		return SignRequest{
 			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-			Nonce: nonce(n), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
+			Nonce: nonce(
+				n,
+			), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
 		}
 	}
 
@@ -718,7 +769,8 @@ func TestRequestBodyLimit(t *testing.T) {
 	big := `{"nonce":"` + strings.Repeat("A", maxRequest) + `"}`
 
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, jsonRequest("/v1/inventory", strings.NewReader(big)))
+	s.Handler().
+		ServeHTTP(w, jsonRequest("/v1/inventory", strings.NewReader(big)))
 
 	if w.Code == http.StatusOK {
 		t.Fatal("oversized request accepted")
@@ -769,7 +821,9 @@ func TestFloorReset(t *testing.T) {
 	req := func(n byte, chain uint64) SignRequest {
 		return SignRequest{
 			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-			Nonce: nonce(n), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
+			Nonce: nonce(
+				n,
+			), Payload: opCertPayload(kes, chain, 1100), Profile: "otg@preview",
 		}
 	}
 
@@ -810,7 +864,9 @@ func TestOpCertNextFloorWriteFailure(t *testing.T) {
 	cold, _ := chip.PublicKeyEd25519(testColdID)
 	r := sign(t, s, SignRequest{
 		Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(1), Payload: opCertPayload(make([]byte, 32), 7, 1100), Profile: "otg@preview",
+		Nonce: nonce(
+			1,
+		), Payload: opCertPayload(make([]byte, 32), 7, 1100), Profile: "otg@preview",
 	})
 
 	if r.Error == "" || r.Signature != nil {
@@ -826,9 +882,15 @@ func TestChipErrorsReportedAsDeviceErrors(t *testing.T) {
 	s, chip := newTestService(t)
 	chip.failExists = true
 
-	code, body := post(t, s, "/provision/profile", ProvisionRequest{Name: "x", Slot: 3, ColdKeyID: testColdID})
+	code, body := post(
+		t,
+		s,
+		"/provision/profile",
+		ProvisionRequest{Name: "x", Slot: 3, ColdKeyID: testColdID},
+	)
 
-	if code == http.StatusOK || !strings.Contains(string(body), "device error") {
+	if code == http.StatusOK ||
+		!strings.Contains(string(body), "device error") {
 		t.Fatalf("got %d %q, want a device error", code, body)
 	}
 }
@@ -850,7 +912,11 @@ func TestResponseBindingMatchesBursa(t *testing.T) {
 	era := uint(6)
 	req := SignRequest{
 		Version: Protocol, Purpose: "tx-body", KeyHash: "ab12", Role: "pool",
-		Nonce: []byte{1, 2, 3}, Payload: []byte{0xa0, 0xff}, Profile: "otg@preview", Era: &era,
+		Nonce: []byte{
+			1,
+			2,
+			3,
+		}, Payload: []byte{0xa0, 0xff}, Profile: "otg@preview", Era: &era,
 	}
 
 	if got := hex.EncodeToString(ResponseBinding(req, sig, "")); got != "0c01c305ffe8ff31572a4a84655dff50ab2e79354ce185b2f55166451b21e74e" {
@@ -889,7 +955,9 @@ func TestSignSummaryNegotiated(t *testing.T) {
 	for i, version := range []string{Protocol, ProtocolSummary} {
 		req := SignRequest{
 			Version: version, Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(byte(20 + i)),
-			Payload: certBody(retirement(pool)), Profile: "otg@preview", Era: conwayEra(),
+			Payload: certBody(
+				retirement(pool),
+			), Profile: "otg@preview", Era: conwayEra(),
 		}
 
 		code, body := post(t, s, "/v1/sign", req)
@@ -918,7 +986,11 @@ func TestSignSummaryNegotiated(t *testing.T) {
 				t.Fatalf("version 1 reply carries a summary: %s", body)
 			}
 
-			if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, ""), r.BindingSignature) {
+			if !ed25519.Verify(
+				cold,
+				ResponseBinding(req, r.Signature, ""),
+				r.BindingSignature,
+			) {
 				t.Fatal("version 1 reply does not carry the version 1 binding")
 			}
 
@@ -929,11 +1001,19 @@ func TestSignSummaryNegotiated(t *testing.T) {
 			t.Fatalf("summary reply carries no summary: %s", body)
 		}
 
-		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary), r.BindingSignature) {
+		if !ed25519.Verify(
+			cold,
+			ResponseBinding(req, r.Signature, r.Summary),
+			r.BindingSignature,
+		) {
 			t.Fatal("binding signature does not cover the summary")
 		}
 
-		if ed25519.Verify(cold, ResponseBinding(req, r.Signature, ""), r.BindingSignature) {
+		if ed25519.Verify(
+			cold,
+			ResponseBinding(req, r.Signature, ""),
+			r.BindingSignature,
+		) {
 			t.Error("binding signature accepts a dropped summary")
 		}
 	}
@@ -970,32 +1050,59 @@ func TestSignResponseBindsRequest(t *testing.T) {
 			t.Fatalf("%s: summary %q", req.Purpose, r.Summary)
 		}
 
-		if !ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary), r.BindingSignature) {
-			t.Fatalf("%s: binding signature does not cover the request", req.Purpose)
+		if !ed25519.Verify(
+			cold,
+			ResponseBinding(req, r.Signature, r.Summary),
+			r.BindingSignature,
+		) {
+			t.Fatalf(
+				"%s: binding signature does not cover the request",
+				req.Purpose,
+			)
 		}
 
 		other := req
 		other.Profile = "other@preview"
 
-		if ed25519.Verify(cold, ResponseBinding(other, r.Signature, r.Summary), r.BindingSignature) {
-			t.Errorf("%s: binding signature accepts another profile", req.Purpose)
+		if ed25519.Verify(
+			cold,
+			ResponseBinding(other, r.Signature, r.Summary),
+			r.BindingSignature,
+		) {
+			t.Errorf(
+				"%s: binding signature accepts another profile",
+				req.Purpose,
+			)
 		}
 
 		other = req
 		other.Nonce = nonce(9)
 
-		if ed25519.Verify(cold, ResponseBinding(other, r.Signature, r.Summary), r.BindingSignature) {
+		if ed25519.Verify(
+			cold,
+			ResponseBinding(other, r.Signature, r.Summary),
+			r.BindingSignature,
+		) {
 			t.Errorf("%s: binding signature accepts another nonce", req.Purpose)
 		}
 
-		if ed25519.Verify(cold, ResponseBinding(req, r.Signature, r.Summary+" pledge=1"), r.BindingSignature) {
-			t.Errorf("%s: binding signature accepts another summary", req.Purpose)
+		if ed25519.Verify(
+			cold,
+			ResponseBinding(req, r.Signature, r.Summary+" pledge=1"),
+			r.BindingSignature,
+		) {
+			t.Errorf(
+				"%s: binding signature accepts another summary",
+				req.Purpose,
+			)
 		}
 	}
 
 	r := sign(t, s, SignRequest{
 		Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(3),
-		Payload: certBody(retirement([28]byte{1})), Profile: "otg@preview", Era: conwayEra(),
+		Payload: certBody(
+			retirement([28]byte{1}),
+		), Profile: "otg@preview", Era: conwayEra(),
 	})
 
 	if r.Error == "" || r.BindingSignature != nil {

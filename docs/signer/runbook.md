@@ -199,7 +199,10 @@ Configure:
 `signer.keys` attaches a policy to each key hash (deny-by-default: a key with no
 entry can sign nothing). `allowed_requests` lists the permitted request kinds
 (`tx`, `cip8`, `opcert`); `tx_policy` / `cip8_policy` add typed constraints.
-Unknown policy fields fail at boot.
+`backend`, when set, names the configured backend (`backends[].name`) that
+must hold the key; a request is denied when the key resolves from any other
+backend. Omit it to accept any backend. A `backend` that matches no configured
+backend name, or more than one, fails at boot, as do unknown policy fields.
 
 ### External transaction-policy hook
 
@@ -283,6 +286,10 @@ reissue) but not be lower. Either is otherwise refused with HTTP 409; in `warn`
 mode it is logged and signed, and the record does not change. A key with no
 record (first use, or signed before this record existed) is not bounded until
 its next opcert.
+
+After signing, the request's own record (issue counter or floor) and this
+record are written in one database transaction. A request refused at either
+leaves both unchanged.
 
 If opcerts for the same cold key are also issued by another signer, this
 record falls behind. To clear it, stop opcert requests for the key on

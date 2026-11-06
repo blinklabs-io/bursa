@@ -85,7 +85,10 @@ func TestLoadKeyFromFileRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.vkey")
 	link := filepath.Join(dir, "link.vkey")
-	require.NoError(t, os.WriteFile(target, []byte(testPublicKeyEnvelope), 0o644))
+	require.NoError(
+		t,
+		os.WriteFile(target, []byte(testPublicKeyEnvelope), 0o644),
+	)
 	require.NoError(t, os.Symlink(target, link))
 
 	key, err := LoadKeyFromFile(link)

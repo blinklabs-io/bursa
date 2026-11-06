@@ -115,16 +115,37 @@ func (s *Supervisor) ConfiguredPeers() []ConfiguredPeer {
 	}
 	var out []ConfiguredPeer
 	for _, bp := range topo.BootstrapPeers {
-		out = append(out, ConfiguredPeer{Address: bp.Address, Port: bp.Port, Source: "bootstrap"})
+		out = append(
+			out,
+			ConfiguredPeer{
+				Address: bp.Address,
+				Port:    bp.Port,
+				Source:  "bootstrap",
+			},
+		)
 	}
 	for _, lr := range topo.LocalRoots {
 		for _, ap := range lr.AccessPoints {
-			out = append(out, ConfiguredPeer{Address: ap.Address, Port: ap.Port, Source: "localRoot"})
+			out = append(
+				out,
+				ConfiguredPeer{
+					Address: ap.Address,
+					Port:    ap.Port,
+					Source:  "localRoot",
+				},
+			)
 		}
 	}
 	for _, pr := range topo.PublicRoots {
 		for _, ap := range pr.AccessPoints {
-			out = append(out, ConfiguredPeer{Address: ap.Address, Port: ap.Port, Source: "publicRoot"})
+			out = append(
+				out,
+				ConfiguredPeer{
+					Address: ap.Address,
+					Port:    ap.Port,
+					Source:  "publicRoot",
+				},
+			)
 		}
 	}
 	return out

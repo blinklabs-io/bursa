@@ -96,7 +96,10 @@ func TestCounterSequence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			err := checkCounterSequence(test.expected, test.next)
 			if test.wantErr && !errors.Is(err, ErrCounterRegression) {
-				t.Fatalf("checkCounterSequence() error = %v, want ErrCounterRegression", err)
+				t.Fatalf(
+					"checkCounterSequence() error = %v, want ErrCounterRegression",
+					err,
+				)
 			}
 			if !test.wantErr && err != nil {
 				t.Fatalf("checkCounterSequence() error = %v", err)
@@ -127,6 +130,7 @@ func TestMemoryCounterStoreConcurrentAdvance(t *testing.T) {
 				t.Context(),
 				backend.KeyHash{},
 				0,
+				0,
 			)
 			if err == nil {
 				mu.Lock()
@@ -148,6 +152,7 @@ func TestMemoryCounterStoreConcurrentAdvance(t *testing.T) {
 		t.Context(),
 		backend.KeyHash{},
 		1,
+		0,
 	); err != nil {
 		t.Fatalf("sequential advance after race: %v", err)
 	}
@@ -226,9 +231,17 @@ func TestCounterStateV1Migration(t *testing.T) {
 	generation := object.generation
 	object.mu.Unlock()
 	if generation != 2 {
-		t.Fatalf("generation = %d, want exactly one migration write", generation)
+		t.Fatalf(
+			"generation = %d, want exactly one migration write",
+			generation,
+		)
 	}
-	if err := store.CheckAndAdvance(t.Context(), key, issueNumber+1); err != nil {
+	if err := store.CheckAndAdvance(
+		t.Context(),
+		key,
+		issueNumber+1,
+		0,
+	); err != nil {
 		t.Fatalf("advance after migration: %v", err)
 	}
 }

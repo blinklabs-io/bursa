@@ -111,7 +111,12 @@ func (c *fakeChip) ReadBinary(id uint32) ([]byte, error) {
 	return bytes.Clone(b), nil
 }
 
-func devicePost(t *testing.T, srv *httptest.Server, path string, req, resp any) {
+func devicePost(
+	t *testing.T,
+	srv *httptest.Server,
+	path string,
+	req, resp any,
+) {
 	t.Helper()
 
 	b, _ := json.Marshal(req)
@@ -146,13 +151,21 @@ type rig struct {
 	hostFile string
 }
 
-func writeHostKey(t *testing.T, seed byte, mode os.FileMode) (string, ed25519.PrivateKey) {
+func writeHostKey(
+	t *testing.T,
+	seed byte,
+	mode os.FileMode,
+) (string, ed25519.PrivateKey) {
 	t.Helper()
 
 	priv := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, 32))
 	file := filepath.Join(t.TempDir(), "host.skey")
-	body := fmt.Sprintf("{\n    \"type\": %q,\n    \"description\": %q,\n    \"cborHex\": \"5820%x\"\n}\n",
-		hostkey.Type, hostkey.Description, priv.Seed())
+	body := fmt.Sprintf(
+		"{\n    \"type\": %q,\n    \"description\": %q,\n    \"cborHex\": \"5820%x\"\n}\n",
+		hostkey.Type,
+		hostkey.Description,
+		priv.Seed(),
+	)
 
 	if err := os.WriteFile(file, []byte(body), mode); err != nil {
 		t.Fatal(err)
@@ -179,10 +192,12 @@ func newRig(t *testing.T, registered ed25519.PrivateKey) *rig {
 
 	// the device answers only to its own address, not the loopback one
 	dev := svc.Handler()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = device.Address
-		dev.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Host = device.Address
+			dev.ServeHTTP(w, r)
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	var id device.IdentityResponse
@@ -209,8 +224,15 @@ func newRig(t *testing.T, registered ed25519.PrivateKey) *rig {
 	if registered != nil {
 		var keys device.HostKeyResponse
 
-		devicePost(t, srv, "/provision/host-key",
-			device.HostKeyRequest{PublicKey: registered.Public().(ed25519.PublicKey)}, &keys)
+		devicePost(
+			t,
+			srv,
+			"/provision/host-key",
+			device.HostKeyRequest{
+				PublicKey: registered.Public().(ed25519.PublicKey),
+			},
+			&keys,
+		)
 	}
 
 	coldPriv := ed25519.NewKeyFromSeed(coldSeed)
@@ -219,7 +241,11 @@ func newRig(t *testing.T, registered ed25519.PrivateKey) *rig {
 	h, _ := blake2b.New(28, nil)
 	h.Write(vkey)
 
-	body := opCertBody{KESKey: bytes.Repeat([]byte{0x5a}, 32), IssueNumber: chainCtr + 1, KESPeriod: kesPeriod}
+	body := opCertBody{
+		KESKey:      bytes.Repeat([]byte{0x5a}, 32),
+		IssueNumber: chainCtr + 1,
+		KESPeriod:   kesPeriod,
+	}
 	body.ColdSig = ed25519.Sign(coldPriv, body.signable())
 
 	cert, err := cbor.Marshal(opCert{Body: body, ColdKey: vkey})
@@ -255,7 +281,10 @@ func TestNoHostKeyUnchanged(t *testing.T) {
 		t.Fatalf("device without host keys: %v", err)
 	}
 
-	if !strings.Contains(out, "ok   binding signature covers the request under node.vkey") {
+	if !strings.Contains(
+		out,
+		"ok   binding signature covers the request under node.vkey",
+	) {
 		t.Fatalf("output %q", out)
 	}
 }
@@ -265,8 +294,12 @@ func TestRegisteredHostKeyRefusesUnauthenticated(t *testing.T) {
 
 	_, priv := writeHostKey(t, 0x48, 0o600)
 
-	if _, err := newRig(t, priv).check(); err == nil || !strings.Contains(err.Error(), "host key not registered") {
-		t.Fatalf("unauthenticated request: err = %v, want host key not registered", err)
+	if _, err := newRig(t, priv).check(); err == nil ||
+		!strings.Contains(err.Error(), "host key not registered") {
+		t.Fatalf(
+			"unauthenticated request: err = %v, want host key not registered",
+			err,
+		)
 	}
 }
 
@@ -298,7 +331,10 @@ func TestWrongHostKeyRefused(t *testing.T) {
 
 	if _, err := newRig(t, registered).check("-host-key", other); err == nil ||
 		!strings.Contains(err.Error(), "host key not registered") {
-		t.Fatalf("unregistered host key: err = %v, want host key not registered", err)
+		t.Fatalf(
+			"unregistered host key: err = %v, want host key not registered",
+			err,
+		)
 	}
 }
 
@@ -319,14 +355,17 @@ func TestHostKeyWrongEnvelopeRejected(t *testing.T) {
 	t.Parallel()
 
 	file := filepath.Join(t.TempDir(), "other.skey")
-	body := fmt.Sprintf("{\"type\": \"PaymentSigningKeyShelley_ed25519\", \"description\": \"\", \"cborHex\": \"5820%x\"}",
-		binary.BigEndian.AppendUint64(nil, 1))
+	body := fmt.Sprintf(
+		"{\"type\": \"PaymentSigningKeyShelley_ed25519\", \"description\": \"\", \"cborHex\": \"5820%x\"}",
+		binary.BigEndian.AppendUint64(nil, 1),
+	)
 
 	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := newRig(t, nil).check("-host-key", file); err == nil || !strings.Contains(err.Error(), "envelope type") {
+	if _, err := newRig(t, nil).check("-host-key", file); err == nil ||
+		!strings.Contains(err.Error(), "envelope type") {
 		t.Fatalf("err = %v, want envelope type error", err)
 	}
 }

@@ -71,7 +71,9 @@ func TestRecoverReplacesOnlyNodeDataAndRestarts(t *testing.T) {
 	}
 
 	factory := &recoveryNodeFactory{}
-	s := New(Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir})
+	s := New(
+		Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir},
+	)
 	s.nodeFactory = factory
 	s.bootstrapper = &fakeBootstrapper{}
 	s.status.State = StateError
@@ -83,7 +85,10 @@ func TestRecoverReplacesOnlyNodeDataAndRestarts(t *testing.T) {
 	if factory.starts != 1 {
 		t.Fatalf("node starts = %d, want 1", factory.starts)
 	}
-	if _, err := os.Stat(filepath.Join(nodeDir, "metadata.sqlite")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(nodeDir, "metadata.sqlite")); !errors.Is(
+		err,
+		os.ErrNotExist,
+	) {
 		t.Fatalf("node sync data still exists: %v", err)
 	}
 	for name, want := range retained {
@@ -107,7 +112,9 @@ func TestRecoverKeepsErrorStateWhenRestartFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	factory := &recoveryNodeFactory{err: errors.New("start failed")}
-	s := New(Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir})
+	s := New(
+		Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir},
+	)
 	s.nodeFactory = factory
 	s.status.State = StateError
 
@@ -118,7 +125,8 @@ func TestRecoverKeepsErrorStateWhenRestartFails(t *testing.T) {
 	if factory.starts != 1 {
 		t.Fatalf("node starts = %d, want 1", factory.starts)
 	}
-	if got := s.Status(); got.State != StateError || !strings.Contains(got.Err, "restart node") {
+	if got := s.Status(); got.State != StateError ||
+		!strings.Contains(got.Err, "restart node") {
 		t.Fatalf("status = %+v, want restart error", got)
 	}
 	entries, readErr := os.ReadDir(nodeDir)
@@ -126,7 +134,10 @@ func TestRecoverKeepsErrorStateWhenRestartFails(t *testing.T) {
 		t.Fatal(readErr)
 	}
 	if len(entries) != 0 {
-		t.Fatalf("node directory has %d entries after clean restart failure", len(entries))
+		t.Fatalf(
+			"node directory has %d entries after clean restart failure",
+			len(entries),
+		)
 	}
 }
 
@@ -137,7 +148,9 @@ func TestRecoverDoesNotRestartAfterCleanupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	factory := &recoveryNodeFactory{}
-	s := New(Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir})
+	s := New(
+		Config{Network: "preview", DataDir: nodeDir, WalletDataDir: appDir},
+	)
 	s.nodeFactory = factory
 	s.status.State = StateError
 	s.removeAll = func(string) error { return errors.New("cleanup failed") }
@@ -162,7 +175,8 @@ func TestRecoverRejectsNodeDirectoryContainingWalletData(t *testing.T) {
 	s.status.State = StateError
 
 	err := s.Recover(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "unsafe node sync directory") {
+	if err == nil ||
+		!strings.Contains(err.Error(), "unsafe node sync directory") {
 		t.Fatalf("Recover = %v, want unsafe-directory error", err)
 	}
 	if factory.starts != 0 {
@@ -187,7 +201,11 @@ func (fakeNodeRunner) Run(ctx context.Context) error {
 // succeed in tests without a real Dingo configuration.
 type fakeNodeFactory struct{}
 
-func (fakeNodeFactory) New(_ dingo.Config) (NodeRunner, error) { return fakeNodeRunner{}, nil }
+func (fakeNodeFactory) New(
+	_ dingo.Config,
+) (NodeRunner, error) {
+	return fakeNodeRunner{}, nil
+}
 
 type blockingNodeFactory struct {
 	newRunner chan *blockingNodeRunner
@@ -262,7 +280,11 @@ func TestReconnectWhileRunningIncreasesRunID(t *testing.T) {
 
 	afterRunID := s.runID
 	if afterRunID <= beforeRunID {
-		t.Fatalf("runID did not increase: before=%d after=%d", beforeRunID, afterRunID)
+		t.Fatalf(
+			"runID did not increase: before=%d after=%d",
+			beforeRunID,
+			afterRunID,
+		)
 	}
 }
 
@@ -284,7 +306,9 @@ func TestReconnectWaitsForPreviousRunToExit(t *testing.T) {
 	waitForClosed(t, first.canceled, "first runner cancellation")
 	select {
 	case <-factory.newRunner:
-		t.Fatal("Reconnect started a replacement node before the previous Run exited")
+		t.Fatal(
+			"Reconnect started a replacement node before the previous Run exited",
+		)
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -415,11 +439,17 @@ func TestReconnectConcurrentStopWins(t *testing.T) {
 	}()
 	wg.Wait()
 	if got := s.Status().State; got != StateStopped {
-		t.Fatalf("state after concurrent Reconnect/Stop = %q, want stopped", got)
+		t.Fatalf(
+			"state after concurrent Reconnect/Stop = %q, want stopped",
+			got,
+		)
 	}
 }
 
-func waitForRunner(t *testing.T, ch <-chan *blockingNodeRunner) *blockingNodeRunner {
+func waitForRunner(
+	t *testing.T,
+	ch <-chan *blockingNodeRunner,
+) *blockingNodeRunner {
 	t.Helper()
 	select {
 	case runner := <-ch:

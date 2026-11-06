@@ -35,7 +35,11 @@ type summaryKey struct {
 	summary string
 }
 
-func (k *summaryKey) SignTxBody(context.Context, []byte, uint) ([]byte, string, error) {
+func (k *summaryKey) SignTxBody(
+	context.Context,
+	[]byte,
+	uint,
+) ([]byte, string, error) {
 	// fakeCardano reports an all-zero tx id, which the coordinator verifies
 	sig, err := k.Sign(context.Background(), make([]byte, 32))
 	return sig, k.summary, err
@@ -48,7 +52,10 @@ func (b summaryBackend) ListKeys(context.Context) ([]backend.KeyRef, error) {
 	return []backend.KeyRef{b.key}, nil
 }
 
-func (b summaryBackend) GetKey(_ context.Context, h backend.KeyHash) (backend.KeyRef, error) {
+func (b summaryBackend) GetKey(
+	_ context.Context,
+	h backend.KeyHash,
+) (backend.KeyRef, error) {
 	if h == b.key.hash {
 		return b.key, nil
 	}
@@ -74,8 +81,19 @@ func (s *syncBuffer) lines() [][]byte {
 
 func TestSignTx_ReportsCustodySummary(t *testing.T) {
 	t.Parallel()
-	k := &summaryKey{fakeKey: newFakeKey(t), summary: "pool retirement: epoch 500"}
-	eng, err := policy.NewEngine([]policy.KeyPolicy{{Hash: k.hash.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}})
+	k := &summaryKey{
+		fakeKey: newFakeKey(t),
+		summary: "pool retirement: epoch 500",
+	}
+	eng, err := policy.NewEngine(
+		[]policy.KeyPolicy{
+			{
+				Hash:            k.hash.String(),
+				AllowedRequests: []string{"tx"},
+				Tx:              &policy.TxPolicy{},
+			},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,13 +103,21 @@ func TestSignTx_ReportsCustodySummary(t *testing.T) {
 		Policy:    eng,
 		Watermark: watermark.NewMemWatermark(),
 		Cardano: fakeCardano{
-			insp: &bursa.TxInspection{TxId: "abc", TTL: 10}, txid: make([]byte, 32), assembled: []byte{1},
+			insp: &bursa.TxInspection{
+				TxId: "abc",
+				TTL:  10,
+			}, txid: make([]byte, 32), assembled: []byte{1},
 		},
 		Metrics: NewMetrics(),
 		Logger:  slog.New(slog.NewJSONHandler(logs, nil)),
 	})
 
-	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+	res, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if err != nil || len(perr) != 0 {
 		t.Fatalf("SignTx: %v %+v", err, perr)
 	}
@@ -116,7 +142,11 @@ func TestSignTx_ReportsCustodySummary(t *testing.T) {
 		t.Fatal("no signed log line")
 	}
 	if signed["summary"] != k.summary {
-		t.Fatalf("signed log line summary = %v, want %q", signed["summary"], k.summary)
+		t.Fatalf(
+			"signed log line summary = %v, want %q",
+			signed["summary"],
+			k.summary,
+		)
 	}
 }
 
@@ -124,11 +154,26 @@ func TestSignTx_ReportsCustodySummary(t *testing.T) {
 func TestSignTx_NoSummaryForPlainKey(t *testing.T) {
 	t.Parallel()
 	k := newFakeKey(t)
-	c, _ := newCoordinator(t, k,
-		policy.KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}},
+	c, _ := newCoordinator(
+		t,
+		k,
+		policy.KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &policy.TxPolicy{},
+		},
 		watermark.NewMemWatermark(),
-		fakeCardano{insp: &bursa.TxInspection{TxId: "abc", TTL: 10}, txid: make([]byte, 32), assembled: []byte{1}})
-	res, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()})
+		fakeCardano{
+			insp:      &bursa.TxInspection{TxId: "abc", TTL: 10},
+			txid:      make([]byte, 32),
+			assembled: []byte{1},
+		},
+	)
+	res, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(testTxCbor),
+		testTxEra,
+		[]string{k.hash.String()},
+	)
 	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
 		t.Fatalf("SignTx: %v %+v %+v", err, perr, res)
 	}
@@ -149,7 +194,15 @@ func TestSignTx_SummaryLogIsEscaped(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			k := &summaryKey{fakeKey: newFakeKey(t), summary: summary}
-			eng, err := policy.NewEngine([]policy.KeyPolicy{{Hash: k.hash.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}})
+			eng, err := policy.NewEngine(
+				[]policy.KeyPolicy{
+					{
+						Hash:            k.hash.String(),
+						AllowedRequests: []string{"tx"},
+						Tx:              &policy.TxPolicy{},
+					},
+				},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,12 +212,16 @@ func TestSignTx_SummaryLogIsEscaped(t *testing.T) {
 				Policy:    eng,
 				Watermark: watermark.NewMemWatermark(),
 				Cardano: fakeCardano{
-					insp: &bursa.TxInspection{TxId: "abc", TTL: 10}, txid: make([]byte, 32), assembled: []byte{1},
+					insp: &bursa.TxInspection{
+						TxId: "abc",
+						TTL:  10,
+					}, txid: make([]byte, 32), assembled: []byte{1},
 				},
 				Metrics: NewMetrics(),
 				Logger:  slog.New(newHandler(logs)),
 			})
-			if _, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()}); err != nil || len(perr) != 0 {
+			if _, perr, err := c.SignTx(context.Background(), []byte(testTxCbor), testTxEra, []string{k.hash.String()}); err != nil ||
+				len(perr) != 0 {
 				t.Fatalf("SignTx: %v %+v", err, perr)
 			}
 			summaryLines := 0
@@ -172,7 +229,8 @@ func TestSignTx_SummaryLogIsEscaped(t *testing.T) {
 				if bytes.Contains(line, []byte("pledge 1")) {
 					summaryLines++
 				}
-				if bytes.Contains(line, []byte("forged")) && !bytes.Contains(line, []byte("pledge 1")) {
+				if bytes.Contains(line, []byte("forged")) &&
+					!bytes.Contains(line, []byte("pledge 1")) {
 					t.Fatalf("summary text began its own log line: %q", line)
 				}
 				if bytes.IndexByte(line, 0x1b) >= 0 {

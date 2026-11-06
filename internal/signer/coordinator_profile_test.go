@@ -254,3 +254,59 @@ func TestProfiledRouting_UnprofiledSignerIgnoresProfile(t *testing.T) {
 		t.Fatalf("res=%+v perr=%+v err=%v", res, perr, err)
 	}
 }
+
+// Under a profile, the issued record's scope carries the profile, and a commit
+// refused at it is still reported as an issued-record conflict.
+func TestProfiledOpCert_ConcurrentIssuedConflict(t *testing.T) {
+	t.Parallel()
+	k := newFakeKey(t)
+	k.typ = backend.KeyTypePool
+	eng, err := policy.NewEngine([]policy.KeyPolicy{{
+		Hash:            k.hash.String(),
+		AllowedRequests: []string{"opcert"},
+	}})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	pw := &pausingCounterWatermark{
+		Watermark: watermark.NewMemWatermark(),
+		counter:   watermark.NewMemWatermark(),
+		paused:    make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	c := New(Deps{
+		Resolver: backend.NewResolver(
+			profiledFakeBackend{"dev-preview", profPreview, k},
+		),
+		Policy:    eng,
+		Watermark: pw,
+		WMMode:    watermark.ModeEnforce,
+		Metrics:   NewMetrics(),
+	})
+	ctx := WithProfile(context.Background(), profPreview)
+	kes := make([]byte, kesVkeySize)
+
+	res, code, err := raceOpCert(
+		t,
+		pw,
+		func() (*OpCertResult, ErrorCode, error) {
+			return c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
+		},
+		func() (*OpCertResult, ErrorCode, error) {
+			return c.SignOpCert(ctx, kes, 5, 101, k.hash.String())
+		},
+	)
+	if code != CodeConflict || res != nil || err == nil ||
+		!strings.Contains(err.Error(), "issued concurrently") {
+		t.Fatalf(
+			"chain 20 racing issue 5 under a profile: res=%v code=%s err=%v, want an issued-record conflict",
+			res,
+			code,
+			err,
+		)
+	}
+	floor := opcertChainFloorScope + "|" + profPreview
+	if v, ok, _ := pw.counter.CounterFor(context.Background(), k.hash, floor); ok {
+		t.Fatalf("profiled floor = %d after a refused request, want none", v)
+	}
+}

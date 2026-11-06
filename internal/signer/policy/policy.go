@@ -34,18 +34,18 @@ import (
 // only the listed kinds. An absent boolean and an empty allow-list preserve
 // deny-by-default.
 type TxPolicy struct {
-	Networks                  []string `yaml:"networks"                    json:"networks"`
-	AllowedOutputs            []string `yaml:"allowed_outputs"             json:"allowed_outputs"`
-	MaxOutputAda              uint64   `yaml:"max_output_ada"              json:"max_output_ada"`
-	MaxTotalOutAda            uint64   `yaml:"max_total_out_ada"           json:"max_total_out_ada"`
-	MaxFeeAda                 uint64   `yaml:"max_fee_ada"                 json:"max_fee_ada"`
-	AllowCertificates         bool     `yaml:"allow_certificates"          json:"allow_certificates"`
-	AllowMint                 bool     `yaml:"allow_mint"                  json:"allow_mint"`
-	AllowWithdrawals          bool     `yaml:"allow_withdrawals"           json:"allow_withdrawals"`
-	AllowMultiAsset           bool     `yaml:"allow_multi_asset"           json:"allow_multi_asset"`
-	AllowVotes                bool     `yaml:"allow_votes"                 json:"allow_votes"`
-	AllowProposals            bool     `yaml:"allow_proposals"             json:"allow_proposals"`
-	AllowTreasury             bool     `yaml:"allow_treasury"              json:"allow_treasury"`
+	Networks                  []string `yaml:"networks"                     json:"networks"`
+	AllowedOutputs            []string `yaml:"allowed_outputs"              json:"allowed_outputs"`
+	MaxOutputAda              uint64   `yaml:"max_output_ada"               json:"max_output_ada"`
+	MaxTotalOutAda            uint64   `yaml:"max_total_out_ada"            json:"max_total_out_ada"`
+	MaxFeeAda                 uint64   `yaml:"max_fee_ada"                  json:"max_fee_ada"`
+	AllowCertificates         bool     `yaml:"allow_certificates"           json:"allow_certificates"`
+	AllowMint                 bool     `yaml:"allow_mint"                   json:"allow_mint"`
+	AllowWithdrawals          bool     `yaml:"allow_withdrawals"            json:"allow_withdrawals"`
+	AllowMultiAsset           bool     `yaml:"allow_multi_asset"            json:"allow_multi_asset"`
+	AllowVotes                bool     `yaml:"allow_votes"                  json:"allow_votes"`
+	AllowProposals            bool     `yaml:"allow_proposals"              json:"allow_proposals"`
+	AllowTreasury             bool     `yaml:"allow_treasury"               json:"allow_treasury"`
 	RequireValidityUpperBound bool     `yaml:"require_validity_upper_bound" json:"require_validity_upper_bound"`
 
 	// AllowedCertificates, when non-empty, restricts the transaction to only
@@ -56,8 +56,8 @@ type TxPolicy struct {
 	// to only these voter kinds (see VoterKindName). AllowedDrepIds, when
 	// non-empty, further restricts DRep voters to the listed hex credential
 	// ids. Either being non-empty selects allow-list mode, overriding AllowVotes.
-	AllowedVoterKinds []string `yaml:"allowed_voter_kinds" json:"allowed_voter_kinds"`
-	AllowedDrepIds    []string `yaml:"allowed_drep_ids"    json:"allowed_drep_ids"`
+	AllowedVoterKinds []string `yaml:"allowed_voter_kinds"  json:"allowed_voter_kinds"`
+	AllowedDrepIds    []string `yaml:"allowed_drep_ids"     json:"allowed_drep_ids"`
 }
 
 // VoterInfo identifies one governance voter present in a transaction's voting
@@ -94,12 +94,12 @@ type CallerTxOverride struct {
 	AllowedVoterKinds   []string `yaml:"allowed_voter_kinds"  json:"allowed_voter_kinds"`
 	AllowedDrepIds      []string `yaml:"allowed_drep_ids"     json:"allowed_drep_ids"`
 	// Forbid* deny an entire category outright regardless of the base policy.
-	ForbidCertificates bool `yaml:"forbid_certificates" json:"forbid_certificates"`
-	ForbidMint         bool `yaml:"forbid_mint"         json:"forbid_mint"`
-	ForbidWithdrawals  bool `yaml:"forbid_withdrawals"  json:"forbid_withdrawals"`
-	ForbidVotes        bool `yaml:"forbid_votes"        json:"forbid_votes"`
-	ForbidProposals    bool `yaml:"forbid_proposals"    json:"forbid_proposals"`
-	ForbidTreasury     bool `yaml:"forbid_treasury"     json:"forbid_treasury"`
+	ForbidCertificates bool `yaml:"forbid_certificates"  json:"forbid_certificates"`
+	ForbidMint         bool `yaml:"forbid_mint"          json:"forbid_mint"`
+	ForbidWithdrawals  bool `yaml:"forbid_withdrawals"   json:"forbid_withdrawals"`
+	ForbidVotes        bool `yaml:"forbid_votes"         json:"forbid_votes"`
+	ForbidProposals    bool `yaml:"forbid_proposals"     json:"forbid_proposals"`
+	ForbidTreasury     bool `yaml:"forbid_treasury"      json:"forbid_treasury"`
 }
 
 // CIP8Policy constrains data signing for a key.
@@ -110,11 +110,40 @@ type CIP8Policy struct {
 
 // KeyPolicy is the per-key authorization rule set.
 type KeyPolicy struct {
-	Hash            string      `yaml:"hash"`
+	Hash string `yaml:"hash"`
+	// Backend is the configured name of the custody backend that must hold the
+	// key. When set, a request is denied unless the resolved key's backend
+	// matches it. When empty, any backend is accepted.
 	Backend         string      `yaml:"backend"`
 	AllowedRequests []string    `yaml:"allowed_requests"`
 	Tx              *TxPolicy   `yaml:"tx_policy"`
 	CIP8            *CIP8Policy `yaml:"cip8_policy"`
+}
+
+// backendDecision denies when the policy pins a custody backend and the
+// resolved key is held by a different one. A pinned policy evaluated without
+// WithBackend is denied: the pin cannot be checked, and a caller that forgot
+// the option must not bypass it.
+func (p KeyPolicy) backendDecision(cfg evalConfig) Decision {
+	if p.Backend == "" {
+		return allow()
+	}
+	if !cfg.backendSet {
+		return deny(
+			"key %s policy requires backend %q, resolved backend unknown",
+			p.Hash,
+			p.Backend,
+		)
+	}
+	if cfg.backend != p.Backend {
+		return deny(
+			"key %s is held in backend %q, policy requires backend %q",
+			p.Hash,
+			cfg.backend,
+			p.Backend,
+		)
+	}
+	return allow()
 }
 
 func (p KeyPolicy) allows(reqType string) bool {
@@ -212,15 +241,30 @@ func IsDrepVoterKind(kind string) bool {
 	return kind == VoterDrepKey || kind == VoterDrepScript
 }
 
-// evalConfig holds the optional inputs threaded into EvaluateTx.
+// evalConfig holds the optional inputs threaded into the Evaluate methods.
 type evalConfig struct {
-	caller string
-	ops    TxOps
+	caller     string
+	ops        TxOps
+	backend    string
+	backendSet bool
 }
 
-// EvalOption configures an EvaluateTx call. Absent options preserve the
-// original two-argument behavior (no caller override, no per-kind gating).
+// EvalOption configures an Evaluate call. Absent WithCaller applies no caller
+// override. Absent WithOps leaves certificate and voter kinds unknown, so a transaction
+// carrying certificates or votes is denied when the matching allow-list is set.
+// Absent WithBackend denies any key whose policy pins a custody backend.
 type EvalOption func(*evalConfig)
+
+// WithBackend supplies the name of the backend that custodies the resolved key.
+// A key policy that names a backend denies every request whose resolved key is
+// held elsewhere. Callers that resolve the key must always pass it: omitting
+// the option denies every key whose policy pins a backend.
+func WithBackend(name string) EvalOption {
+	return func(c *evalConfig) {
+		c.backend = name
+		c.backendSet = true
+	}
+}
 
 // WithCaller threads the authenticated caller into policy evaluation so that a
 // configured per-caller override (see SetCallerPolicies) can further restrict
@@ -271,8 +315,12 @@ func NewEngine(policies []KeyPolicy) (*Engine, error) {
 			cp := *p.Tx
 			cp.Networks = append([]string(nil), p.Tx.Networks...)
 			cp.AllowedOutputs = append([]string(nil), p.Tx.AllowedOutputs...)
-			cp.AllowedCertificates = append([]string(nil), p.Tx.AllowedCertificates...)
-			cp.AllowedVoterKinds = append([]string(nil), p.Tx.AllowedVoterKinds...)
+			cp.AllowedCertificates = append(
+				[]string(nil),
+				p.Tx.AllowedCertificates...)
+			cp.AllowedVoterKinds = append(
+				[]string(nil),
+				p.Tx.AllowedVoterKinds...)
 			cp.AllowedDrepIds = append([]string(nil), p.Tx.AllowedDrepIds...)
 			p.Tx = &cp
 		}
@@ -297,7 +345,9 @@ func (e *Engine) PolicyFor(hash backend.KeyHash) (KeyPolicy, bool) {
 // base policy (see CallerTxOverride); it never widens authority. Overrides are
 // deep-copied. Passing nil clears any installed overrides. Intended to be
 // called once at setup before serving, alongside NewEngine.
-func (e *Engine) SetCallerPolicies(overrides map[string]map[backend.KeyHash]*CallerTxOverride) {
+func (e *Engine) SetCallerPolicies(
+	overrides map[string]map[backend.KeyHash]*CallerTxOverride,
+) {
 	if len(overrides) == 0 {
 		e.callerOverrides = nil
 		return
@@ -315,8 +365,12 @@ func (e *Engine) SetCallerPolicies(overrides map[string]map[backend.KeyHash]*Cal
 			cov := *ov
 			cov.Networks = append([]string(nil), ov.Networks...)
 			cov.AllowedOutputs = append([]string(nil), ov.AllowedOutputs...)
-			cov.AllowedCertificates = append([]string(nil), ov.AllowedCertificates...)
-			cov.AllowedVoterKinds = append([]string(nil), ov.AllowedVoterKinds...)
+			cov.AllowedCertificates = append(
+				[]string(nil),
+				ov.AllowedCertificates...)
+			cov.AllowedVoterKinds = append(
+				[]string(nil),
+				ov.AllowedVoterKinds...)
 			cov.AllowedDrepIds = append([]string(nil), ov.AllowedDrepIds...)
 			m[h] = &cov
 		}
@@ -331,7 +385,10 @@ func (e *Engine) SetCallerPolicies(overrides map[string]map[backend.KeyHash]*Cal
 }
 
 // callerOverride returns the override for a caller+key, if any is installed.
-func (e *Engine) callerOverride(caller string, hash backend.KeyHash) (*CallerTxOverride, bool) {
+func (e *Engine) callerOverride(
+	caller string,
+	hash backend.KeyHash,
+) (*CallerTxOverride, bool) {
 	if caller == "" || e.callerOverrides == nil {
 		return nil, false
 	}
@@ -360,7 +417,8 @@ const lovelacePerAda = 1_000_000
 // limitation; callers that need to distinguish specific testnets must do so
 // outside of this function.
 func networkOfAddress(addr string) string {
-	if strings.HasPrefix(addr, "addr_test1") || strings.HasPrefix(addr, "stake_test1") {
+	if strings.HasPrefix(addr, "addr_test1") ||
+		strings.HasPrefix(addr, "stake_test1") {
 		return "testnet"
 	}
 	if strings.HasPrefix(addr, "addr1") || strings.HasPrefix(addr, "stake1") {
@@ -385,7 +443,9 @@ func parseLovelace(s string) (*big.Int, bool) {
 
 // adaToLovelace converts an ADA bound to lovelace without uint64 overflow.
 func adaToLovelace(ada uint64) *big.Int {
-	return new(big.Int).Mul(new(big.Int).SetUint64(ada), big.NewInt(lovelacePerAda))
+	return new(
+		big.Int,
+	).Mul(new(big.Int).SetUint64(ada), big.NewInt(lovelacePerAda))
 }
 
 type txValueLimits struct {
@@ -402,7 +462,9 @@ type txValueEffect struct {
 	amount string
 }
 
-func transactionValueEffects(insp *bursa.TxInspection) ([]txValueEffect, string) {
+func transactionValueEffects(
+	insp *bursa.TxInspection,
+) ([]txValueEffect, string) {
 	effects := make([]txValueEffect, 0, 3)
 	if insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "" {
 		if insp.TreasuryDonationLovelace == "" {
@@ -476,14 +538,21 @@ func evaluateValuePath(
 
 	total := new(big.Int).Set(charge)
 	for _, out := range outputs {
-		if len(limits.networks) > 0 && !contains(limits.networks, networkOfAddress(out.Address)) {
+		if len(limits.networks) > 0 &&
+			!contains(limits.networks, networkOfAddress(out.Address)) {
 			article := "an "
 			if callerOverride {
 				article = "a caller-override "
 			}
-			return deny("%soutput address %s is not on %sallowed network", prefix, out.Address, article)
+			return deny(
+				"%soutput address %s is not on %sallowed network",
+				prefix,
+				out.Address,
+				article,
+			)
 		}
-		if len(limits.allowedOutputs) > 0 && !contains(limits.allowedOutputs, out.Address) {
+		if len(limits.allowedOutputs) > 0 &&
+			!contains(limits.allowedOutputs, out.Address) {
 			return deny(
 				"%soutput address %s is not in the %sallowlist",
 				prefix,
@@ -492,13 +561,22 @@ func evaluateValuePath(
 			)
 		}
 		if out.HasAssets && !limits.allowMultiAsset {
-			return deny("%soutput %s carries native assets", prefix, out.Address)
+			return deny(
+				"%soutput %s carries native assets",
+				prefix,
+				out.Address,
+			)
 		}
 		lovelace, ok := new(big.Int).SetString(out.Lovelace, 10)
 		if !ok {
-			return deny("unparseable %soutput lovelace %q", prefix, out.Lovelace)
+			return deny(
+				"unparseable %soutput lovelace %q",
+				prefix,
+				out.Lovelace,
+			)
 		}
-		if limits.maxOutputAda > 0 && lovelace.Cmp(adaToLovelace(limits.maxOutputAda)) > 0 {
+		if limits.maxOutputAda > 0 &&
+			lovelace.Cmp(adaToLovelace(limits.maxOutputAda)) > 0 {
 			return deny(
 				"%soutput %s lovelace exceeds %smax_output_ada",
 				prefix,
@@ -519,9 +597,14 @@ func evaluateValuePath(
 		total.Add(total, amount)
 	}
 	if limits.maxTotalOutAda > 0 && unresolvedEffects != "" {
-		return deny("cannot enforce %smax_total_out_ada: %s", limitScope, unresolvedEffects)
+		return deny(
+			"cannot enforce %smax_total_out_ada: %s",
+			limitScope,
+			unresolvedEffects,
+		)
 	}
-	if limits.maxTotalOutAda > 0 && total.Cmp(adaToLovelace(limits.maxTotalOutAda)) > 0 {
+	if limits.maxTotalOutAda > 0 &&
+		total.Cmp(adaToLovelace(limits.maxTotalOutAda)) > 0 {
 		return deny(
 			"%stotal value out exceeds %smax_total_out_ada",
 			prefix,
@@ -534,12 +617,19 @@ func evaluateValuePath(
 // EvaluateTx authorizes (or denies) signing the inspected transaction with the
 // key identified by hash. Deny-by-default: absent policy denies.
 //
-// With no options this preserves the original coarse boolean gating. Supplying
-// WithOps enables per-kind allow-list gating (allowed_certificates /
-// allowed_voter_kinds / allowed_drep_ids); supplying WithCaller applies any
-// per-caller override, which can only further restrict the decision (the
-// effective result is the intersection of the base policy and the override).
-func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts ...EvalOption) Decision {
+// The coarse booleans apply when no allow-list is set. Allow-list gating
+// (allowed_certificates / allowed_voter_kinds / allowed_drep_ids) needs the
+// per-kind details from WithOps; without them, a transaction carrying
+// certificates or votes is denied when the matching allow-list is set.
+// WithCaller applies any per-caller override, which can only further restrict
+// the decision (the effective result is the intersection of the base policy and
+// the override). WithBackend supplies the resolved custody backend; a policy
+// that pins a backend is denied without it.
+func (e *Engine) EvaluateTx(
+	hash backend.KeyHash,
+	insp *bursa.TxInspection,
+	opts ...EvalOption,
+) Decision {
 	var cfg evalConfig
 	for _, o := range opts {
 		o(&cfg)
@@ -550,6 +640,9 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 	p, ok := e.byHash[hash]
 	if !ok {
 		return deny("no policy configured for key %s", hash)
+	}
+	if d := p.backendDecision(cfg); !d.Allow {
+		return d
 	}
 	if !p.allows("tx") {
 		return deny("key %s may not sign transactions", hash)
@@ -583,7 +676,10 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 		}
 		var collateralOutputs []bursa.TxOutput
 		if insp.CollateralReturn != nil {
-			collateralOutputs = append(collateralOutputs, *insp.CollateralReturn)
+			collateralOutputs = append(
+				collateralOutputs,
+				*insp.CollateralReturn,
+			)
 		}
 		if d := evaluateValuePath(
 			"collateral",
@@ -610,10 +706,12 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 	if d := gateVotes(tp, insp, cfg.ops); !d.Allow {
 		return d
 	}
-	if (insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "") && !tp.AllowProposals {
+	if (insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "") &&
+		!tp.AllowProposals {
 		return deny("transaction contains governance proposal procedures")
 	}
-	if (insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "") && !tp.AllowTreasury {
+	if (insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "") &&
+		!tp.AllowTreasury {
 		return deny("transaction contains a treasury donation")
 	}
 	if tp.RequireValidityUpperBound && insp.TTL == 0 {
@@ -632,17 +730,26 @@ func (e *Engine) EvaluateTx(hash backend.KeyHash, insp *bursa.TxInspection, opts
 // configured, permits only the listed kinds; otherwise the coarse boolean
 // applies. A tx that carries certificates but whose kinds could not be decoded
 // (empty ops under allow-list mode) fails closed.
-func gateCertificates(tp *TxPolicy, insp *bursa.TxInspection, ops TxOps) Decision {
+func gateCertificates(
+	tp *TxPolicy,
+	insp *bursa.TxInspection,
+	ops TxOps,
+) Decision {
 	if insp.CertificateCount == 0 {
 		return allow()
 	}
 	if len(tp.AllowedCertificates) > 0 {
 		if len(ops.Certificates) == 0 {
-			return deny("certificate kinds unavailable for allowed_certificates evaluation")
+			return deny(
+				"certificate kinds unavailable for allowed_certificates evaluation",
+			)
 		}
 		for _, k := range ops.Certificates {
 			if !contains(tp.AllowedCertificates, k) {
-				return deny("certificate kind %q is not permitted by allowed_certificates", k)
+				return deny(
+					"certificate kind %q is not permitted by allowed_certificates",
+					k,
+				)
 			}
 		}
 		return allow()
@@ -663,7 +770,9 @@ func gateVotes(tp *TxPolicy, insp *bursa.TxInspection, ops TxOps) Decision {
 	}
 	if len(tp.AllowedVoterKinds) > 0 || len(tp.AllowedDrepIds) > 0 {
 		if len(ops.Voters) == 0 {
-			return deny("voter details unavailable for vote allow-list evaluation")
+			return deny(
+				"voter details unavailable for vote allow-list evaluation",
+			)
 		}
 		return gateVoters(tp.AllowedVoterKinds, tp.AllowedDrepIds, ops.Voters)
 	}
@@ -676,14 +785,23 @@ func gateVotes(tp *TxPolicy, insp *bursa.TxInspection, ops TxOps) Decision {
 // gateVoters denies unless every voter satisfies the voter-kind allow-list (when
 // set) and, for DRep voters, the DRep-id allow-list (when set). When only a
 // DRep-id list is set, non-DRep voters are denied (they carry no id to match).
-func gateVoters(allowedKinds, allowedDreps []string, voters []VoterInfo) Decision {
+func gateVoters(
+	allowedKinds, allowedDreps []string,
+	voters []VoterInfo,
+) Decision {
 	for _, v := range voters {
 		if len(allowedKinds) > 0 && !contains(allowedKinds, v.Kind) {
-			return deny("voter kind %q is not permitted by allowed_voter_kinds", v.Kind)
+			return deny(
+				"voter kind %q is not permitted by allowed_voter_kinds",
+				v.Kind,
+			)
 		}
 		if len(allowedDreps) > 0 {
 			if v.DrepId == "" || !contains(allowedDreps, v.DrepId) {
-				return deny("voter %q is not an allowed DRep (allowed_drep_ids)", v.Kind)
+				return deny(
+					"voter %q is not an allowed DRep (allowed_drep_ids)",
+					v.Kind,
+				)
 			}
 		}
 	}
@@ -693,7 +811,11 @@ func gateVoters(allowedKinds, allowedDreps []string, voters []VoterInfo) Decisio
 // evalOverride applies a per-caller CallerTxOverride. Every check is
 // subtractive: only set fields can add a denial, so the override can only
 // narrow the base decision, never widen it.
-func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Decision {
+func evalOverride(
+	ov *CallerTxOverride,
+	insp *bursa.TxInspection,
+	ops TxOps,
+) Decision {
 	limits := txValueLimits{
 		networks:        ov.Networks,
 		allowedOutputs:  ov.AllowedOutputs,
@@ -712,7 +834,10 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 	if len(insp.CollateralInputs) > 0 {
 		var collateralOutputs []bursa.TxOutput
 		if insp.CollateralReturn != nil {
-			collateralOutputs = append(collateralOutputs, *insp.CollateralReturn)
+			collateralOutputs = append(
+				collateralOutputs,
+				*insp.CollateralReturn,
+			)
 		}
 		if d := evaluateValuePath(
 			"collateral",
@@ -732,11 +857,16 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 	}
 	if len(ov.AllowedCertificates) > 0 && insp.CertificateCount > 0 {
 		if len(ops.Certificates) == 0 {
-			return deny("certificate kinds unavailable for caller override allowed_certificates")
+			return deny(
+				"certificate kinds unavailable for caller override allowed_certificates",
+			)
 		}
 		for _, k := range ops.Certificates {
 			if !contains(ov.AllowedCertificates, k) {
-				return deny("certificate kind %q is not permitted by caller override", k)
+				return deny(
+					"certificate kind %q is not permitted by caller override",
+					k,
+				)
 			}
 		}
 	}
@@ -749,18 +879,23 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 	if ov.ForbidVotes && insp.VotingProcedureCount > 0 {
 		return deny("caller override forbids governance votes")
 	}
-	if (len(ov.AllowedVoterKinds) > 0 || len(ov.AllowedDrepIds) > 0) && insp.VotingProcedureCount > 0 {
+	if (len(ov.AllowedVoterKinds) > 0 || len(ov.AllowedDrepIds) > 0) &&
+		insp.VotingProcedureCount > 0 {
 		if len(ops.Voters) == 0 {
-			return deny("voter details unavailable for caller override vote allow-list")
+			return deny(
+				"voter details unavailable for caller override vote allow-list",
+			)
 		}
 		if d := gateVoters(ov.AllowedVoterKinds, ov.AllowedDrepIds, ops.Voters); !d.Allow {
 			return d
 		}
 	}
-	if ov.ForbidProposals && (insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "") {
+	if ov.ForbidProposals &&
+		(insp.ProposalProcedureCount > 0 || insp.ProposalDepositTotal != "") {
 		return deny("caller override forbids governance proposals")
 	}
-	if ov.ForbidTreasury && (insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "") {
+	if ov.ForbidTreasury &&
+		(insp.HasTreasuryDonation || insp.TreasuryDonationLovelace != "") {
 		return deny("caller override forbids treasury donations")
 	}
 	return allow()
@@ -772,10 +907,20 @@ func evalOverride(ov *CallerTxOverride, insp *bursa.TxInspection, ops TxOps) Dec
 // that lists "opcert" in allowed_requests. Unlike tx/cip8 there is no bounded
 // sub-policy: the KES vkey, issue counter, and KES period are operator-supplied
 // values with no ledger-value semantics to constrain here.
-func (e *Engine) EvaluateOpCert(hash backend.KeyHash) Decision {
+func (e *Engine) EvaluateOpCert(
+	hash backend.KeyHash,
+	opts ...EvalOption,
+) Decision {
+	var cfg evalConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	p, ok := e.byHash[hash]
 	if !ok {
 		return deny("no policy configured for key %s", hash)
+	}
+	if d := p.backendDecision(cfg); !d.Allow {
+		return d
 	}
 	if !p.allows("opcert") {
 		return deny("key %s may not sign operational certificates", hash)
@@ -784,10 +929,22 @@ func (e *Engine) EvaluateOpCert(hash backend.KeyHash) Decision {
 }
 
 // EvaluateCIP8 authorizes (or denies) a CIP-8/CIP-30 data-signing request.
-func (e *Engine) EvaluateCIP8(hash backend.KeyHash, payloadLen int, addressMatches bool) Decision {
+func (e *Engine) EvaluateCIP8(
+	hash backend.KeyHash,
+	payloadLen int,
+	addressMatches bool,
+	opts ...EvalOption,
+) Decision {
+	var cfg evalConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	p, ok := e.byHash[hash]
 	if !ok {
 		return deny("no policy configured for key %s", hash)
+	}
+	if d := p.backendDecision(cfg); !d.Allow {
+		return d
 	}
 	if !p.allows("cip8") {
 		return deny("key %s may not perform data signing", hash)

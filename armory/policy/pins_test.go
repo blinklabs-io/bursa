@@ -38,11 +38,18 @@ func pinnedMeta() *[32]byte {
 const metaURL = "https://example.test/p.json"
 
 func hostRelay(host string, port uint32) common.PoolRelay {
-	return common.PoolRelay{Type: common.PoolRelayTypeSingleHostName, Port: &port, Hostname: &host}
+	return common.PoolRelay{
+		Type:     common.PoolRelayTypeSingleHostName,
+		Port:     &port,
+		Hostname: &host,
+	}
 }
 
 // mustDigest is RelaysDigest for fixtures that always encode.
-func mustDigest(relays []common.PoolRelay, url *string) [profile.RelaysDigestSize]byte {
+func mustDigest(
+	relays []common.PoolRelay,
+	url *string,
+) [profile.RelaysDigestSize]byte {
 	d, err := RelaysDigest(relays, url)
 	if err != nil {
 		panic(err)
@@ -61,14 +68,22 @@ func testPins() *profile.Pins {
 		PledgeMin:  500_000_000, PledgeMax: 600_000_000,
 		CostMax:      170_000_000,
 		MarginMaxNum: 1, MarginMaxDen: 100,
-		RelaysDigest: mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, nil),
+		RelaysDigest: mustDigest(
+			[]common.PoolRelay{hostRelay("relay.example", 3001)},
+			nil,
+		),
 	}
 }
 
 func metadata(h [32]byte) []any { return []any{metaURL, h[:]} }
 
 // relayCBOR is a single-host-name relay as a registration carries it.
-func relayCBOR(host string, port uint64) []any { return []any{uint64(1), port, host} }
+func relayCBOR(
+	host string,
+	port uint64,
+) []any {
+	return []any{uint64(1), port, host}
+}
 
 // regWith returns the fixture registration with field i replaced.
 func regWith(i int, v any) []any {
@@ -84,7 +99,11 @@ const (
 	fVRF, fPledge, fCost, fMargin, fRelays, fMeta = 2, 3, 4, 5, 8, 9
 )
 
-func margin(n, d uint64) cbor.Tag { return cbor.Tag{Number: 30, Content: []uint64{n, d}} }
+func margin(
+	n, d uint64,
+) cbor.Tag {
+	return cbor.Tag{Number: 30, Content: []uint64{n, d}}
+}
 
 func TestEvaluatePoolPins(t *testing.T) {
 	t.Parallel()
@@ -95,10 +114,19 @@ func TestEvaluatePoolPins(t *testing.T) {
 	url := metaURL
 	withMeta := testPins()
 	withMeta.MetadataHash = pinnedMeta()
-	withMeta.RelaysDigest = mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, &url)
+	withMeta.RelaysDigest = mustDigest(
+		[]common.PoolRelay{hostRelay("relay.example", 3001)},
+		&url,
+	)
 
 	twoRelays := testPins()
-	twoRelays.RelaysDigest = mustDigest([]common.PoolRelay{hostRelay("a.example", 1), hostRelay("b.example", 2)}, nil)
+	twoRelays.RelaysDigest = mustDigest(
+		[]common.PoolRelay{
+			hostRelay("a.example", 1),
+			hostRelay("b.example", 2),
+		},
+		nil,
+	)
 
 	// relays and metadata unpinned: only the VRF key and the bounds hold
 	free := testPins()
@@ -114,33 +142,198 @@ func TestEvaluatePoolPins(t *testing.T) {
 	}
 
 	cases := []tc{
-		{"pinned registration matches", testPins(), regWith(fPledge, uint64(500_000_000)), true, ""},
-		{"other VRF key", testPins(), regWith(fVRF, otherVRF), false, "VRF key hash"},
-		{"metadata when none pinned", testPins(), regWith(fMeta, metadata([32]byte{0x44})), false, "metadata"},
-		{"metadata pinned and present", withMeta, regWith(fMeta, metadata(*pinnedMeta())), true, ""},
-		{"metadata pinned and absent", withMeta, poolReg(testKeys.Pool, testKeys.Owner), false, "metadata"},
-		{"other metadata hash", withMeta, regWith(fMeta, metadata([32]byte{0x45})), false, "metadata"},
-		{"pledge below minimum", testPins(), regWith(fPledge, uint64(499_999_999)), false, "pledge"},
-		{"pledge at maximum", testPins(), regWith(fPledge, uint64(600_000_000)), true, ""},
-		{"pledge above maximum", testPins(), regWith(fPledge, uint64(600_000_001)), false, "pledge"},
-		{"cost at maximum", testPins(), regWith(fCost, uint64(170_000_000)), true, ""},
-		{"cost above maximum", testPins(), regWith(fCost, uint64(170_000_001)), false, "cost"},
-		{"margin at maximum", testPins(), regWith(fMargin, margin(2, 200)), true, ""},
-		{"margin above maximum", testPins(), regWith(fMargin, margin(2, 199)), false, "margin"},
+		{
+			"pinned registration matches",
+			testPins(),
+			regWith(fPledge, uint64(500_000_000)),
+			true,
+			"",
+		},
+		{
+			"other VRF key",
+			testPins(),
+			regWith(fVRF, otherVRF),
+			false,
+			"VRF key hash",
+		},
+		{
+			"metadata when none pinned",
+			testPins(),
+			regWith(fMeta, metadata([32]byte{0x44})),
+			false,
+			"metadata",
+		},
+		{
+			"metadata pinned and present",
+			withMeta,
+			regWith(fMeta, metadata(*pinnedMeta())),
+			true,
+			"",
+		},
+		{
+			"metadata pinned and absent",
+			withMeta,
+			poolReg(testKeys.Pool, testKeys.Owner),
+			false,
+			"metadata",
+		},
+		{
+			"other metadata hash",
+			withMeta,
+			regWith(fMeta, metadata([32]byte{0x45})),
+			false,
+			"metadata",
+		},
+		{
+			"pledge below minimum",
+			testPins(),
+			regWith(fPledge, uint64(499_999_999)),
+			false,
+			"pledge",
+		},
+		{
+			"pledge at maximum",
+			testPins(),
+			regWith(fPledge, uint64(600_000_000)),
+			true,
+			"",
+		},
+		{
+			"pledge above maximum",
+			testPins(),
+			regWith(fPledge, uint64(600_000_001)),
+			false,
+			"pledge",
+		},
+		{
+			"cost at maximum",
+			testPins(),
+			regWith(fCost, uint64(170_000_000)),
+			true,
+			"",
+		},
+		{
+			"cost above maximum",
+			testPins(),
+			regWith(fCost, uint64(170_000_001)),
+			false,
+			"cost",
+		},
+		{
+			"margin at maximum",
+			testPins(),
+			regWith(fMargin, margin(2, 200)),
+			true,
+			"",
+		},
+		{
+			"margin above maximum",
+			testPins(),
+			regWith(fMargin, margin(2, 199)),
+			false,
+			"margin",
+		},
 		{"no pins", nil, regWith(fVRF, otherVRF), true, ""},
-		{"other relay host", testPins(), regWith(fRelays, []any{relayCBOR("evil.example", 3001)}), false, "relays"},
-		{"other relay port", testPins(), regWith(fRelays, []any{relayCBOR("relay.example", 3002)}), false, "relays"},
-		{"relay added", testPins(), regWith(fRelays, []any{relayCBOR("relay.example", 3001), relayCBOR("evil.example", 1)}), false, "relays"},
-		{"relays removed", testPins(), regWith(fRelays, []any{}), false, "relays"},
-		{"pinned relays in order", twoRelays, regWith(fRelays, []any{relayCBOR("a.example", 1), relayCBOR("b.example", 2)}), true, ""},
-		{"pinned relays reordered", twoRelays, regWith(fRelays, []any{relayCBOR("b.example", 2), relayCBOR("a.example", 1)}), false, "relays"},
-		{"other metadata URL", withMeta, regWith(fMeta, []any{"https://evil.example/p.json", pinnedMeta()[:]}), false, "metadata URL"},
-		{"unpinned relays changed", free, regWith(fRelays, []any{relayCBOR("new.example", 6000)}), true, ""},
+		{
+			"other relay host",
+			testPins(),
+			regWith(fRelays, []any{relayCBOR("evil.example", 3001)}),
+			false,
+			"relays",
+		},
+		{
+			"other relay port",
+			testPins(),
+			regWith(fRelays, []any{relayCBOR("relay.example", 3002)}),
+			false,
+			"relays",
+		},
+		{
+			"relay added",
+			testPins(),
+			regWith(
+				fRelays,
+				[]any{
+					relayCBOR("relay.example", 3001),
+					relayCBOR("evil.example", 1),
+				},
+			),
+			false,
+			"relays",
+		},
+		{
+			"relays removed",
+			testPins(),
+			regWith(fRelays, []any{}),
+			false,
+			"relays",
+		},
+		{
+			"pinned relays in order",
+			twoRelays,
+			regWith(
+				fRelays,
+				[]any{relayCBOR("a.example", 1), relayCBOR("b.example", 2)},
+			),
+			true,
+			"",
+		},
+		{
+			"pinned relays reordered",
+			twoRelays,
+			regWith(
+				fRelays,
+				[]any{relayCBOR("b.example", 2), relayCBOR("a.example", 1)},
+			),
+			false,
+			"relays",
+		},
+		{
+			"other metadata URL",
+			withMeta,
+			regWith(
+				fMeta,
+				[]any{"https://evil.example/p.json", pinnedMeta()[:]},
+			),
+			false,
+			"metadata URL",
+		},
+		{
+			"unpinned relays changed",
+			free,
+			regWith(fRelays, []any{relayCBOR("new.example", 6000)}),
+			true,
+			"",
+		},
 		{"unpinned relays removed", free, regWith(fRelays, []any{}), true, ""},
-		{"unpinned metadata added", free, regWith(fMeta, metadata([32]byte{0x44})), true, ""},
-		{"unpinned relays, other VRF key", free, regWith(fVRF, otherVRF), false, "VRF key hash"},
-		{"unpinned relays, pledge above maximum", free, regWith(fPledge, uint64(600_000_001)), false, "pledge"},
-		{"unpinned relays, cost above maximum", free, regWith(fCost, uint64(170_000_001)), false, "cost"},
+		{
+			"unpinned metadata added",
+			free,
+			regWith(fMeta, metadata([32]byte{0x44})),
+			true,
+			"",
+		},
+		{
+			"unpinned relays, other VRF key",
+			free,
+			regWith(fVRF, otherVRF),
+			false,
+			"VRF key hash",
+		},
+		{
+			"unpinned relays, pledge above maximum",
+			free,
+			regWith(fPledge, uint64(600_000_001)),
+			false,
+			"pledge",
+		},
+		{
+			"unpinned relays, cost above maximum",
+			free,
+			regWith(fCost, uint64(170_000_001)),
+			false,
+			"cost",
+		},
 	}
 
 	for _, c := range cases {
@@ -159,7 +352,11 @@ func TestEvaluatePoolPins(t *testing.T) {
 			case !c.allow && err == nil:
 				t.Fatalf("signed: %s", d.Summary)
 			case !c.allow && !strings.Contains(err.Error(), c.refusal):
-				t.Fatalf("refused by another rule: %v (want %q)", err, c.refusal)
+				t.Fatalf(
+					"refused by another rule: %v (want %q)",
+					err,
+					c.refusal,
+				)
 			}
 		})
 	}
@@ -191,7 +388,13 @@ func TestEvaluateSummaryShowsPinnedFields(t *testing.T) {
 		return c
 	}())).cbor()
 
-	d, err := Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway), one)
+	d, err := Evaluate(
+		testProfile,
+		testKeys,
+		RoleCold,
+		uint(ledger.TxTypeConway),
+		one,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,8 +405,14 @@ func TestEvaluateSummaryShowsPinnedFields(t *testing.T) {
 		}
 	}
 
-	none, err := Evaluate(testProfile, testKeys, RoleCold, uint(ledger.TxTypeConway),
-		baseBody().with(4, certs(poolReg(testKeys.Pool, testKeys.Owner))).cbor())
+	none, err := Evaluate(
+		testProfile,
+		testKeys,
+		RoleCold,
+		uint(ledger.TxTypeConway),
+		baseBody().with(4, certs(poolReg(testKeys.Pool, testKeys.Owner))).
+			cbor(),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +454,8 @@ func TestEvaluateMetadataHashLength(t *testing.T) {
 
 			k := testKeys
 			k.Pins = c.pins
-			body := baseBody().with(4, certs(regWith(fMeta, meta(c.hash)))).cbor()
+			body := baseBody().with(4, certs(regWith(fMeta, meta(c.hash)))).
+				cbor()
 
 			d, err := Evaluate(testProfile, k, RoleCold, conway, body)
 
@@ -275,7 +485,10 @@ func TestRelaysDigest(t *testing.T) {
 	want, _ := blake2b.New(profile.RelaysDigestSize, nil)
 	want.Write(enc)
 
-	if got := mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, &url); !bytes.Equal(got[:], want.Sum(nil)) {
+	if got := mustDigest([]common.PoolRelay{hostRelay("relay.example", 3001)}, &url); !bytes.Equal(
+		got[:],
+		want.Sum(nil),
+	) {
 		t.Errorf("digest %x, want %x", got, want.Sum(nil))
 	}
 
@@ -288,7 +501,17 @@ func TestRelaysDigest(t *testing.T) {
 	}
 
 	// an address relay decoded from a registration matches one built from text
-	reg := regWith(fRelays, []any{[]any{uint64(0), uint64(3001), []byte{1, 2, 3, 4}, net.ParseIP("2001:db8::1").To16()}})
+	reg := regWith(
+		fRelays,
+		[]any{
+			[]any{
+				uint64(0),
+				uint64(3001),
+				[]byte{1, 2, 3, 4},
+				net.ParseIP("2001:db8::1").To16(),
+			},
+		},
+	)
 
 	var cert common.PoolRegistrationCertificate
 	if err := cert.UnmarshalCBOR(encode(reg)); err != nil {
@@ -297,9 +520,20 @@ func TestRelaysDigest(t *testing.T) {
 
 	port := uint32(3001)
 	v4, v6 := net.ParseIP("1.2.3.4"), net.ParseIP("2001:db8::1")
-	built := common.PoolRelay{Type: common.PoolRelayTypeSingleHostAddress, Port: &port, Ipv4: &v4, Ipv6: &v6}
+	built := common.PoolRelay{
+		Type: common.PoolRelayTypeSingleHostAddress,
+		Port: &port,
+		Ipv4: &v4,
+		Ipv6: &v6,
+	}
 
-	if mustDigest(cert.Relays, nil) != mustDigest([]common.PoolRelay{built}, nil) {
+	if mustDigest(
+		cert.Relays,
+		nil,
+	) != mustDigest(
+		[]common.PoolRelay{built},
+		nil,
+	) {
 		t.Error("decoded and built address relays digest differently")
 	}
 }

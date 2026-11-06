@@ -69,7 +69,10 @@ func NewAWSStore(ctx context.Context, prefix string) (*AWSStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load aws configuration: %w", err)
 	}
-	return &AWSStore{client: secretsmanager.NewFromConfig(awsCfg), prefix: prefix}, nil
+	return &AWSStore{
+		client: secretsmanager.NewFromConfig(awsCfg),
+		prefix: prefix,
+	}, nil
 }
 
 func (s *AWSStore) secretName(name string) string { return s.prefix + name }
@@ -94,7 +97,8 @@ func (s *AWSStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			logging.GetLogger().Debug("skipping inaccessible wallet during list", "wallet", name, "error", err)
+			logging.GetLogger().
+				Debug("skipping inaccessible wallet during list", "wallet", name, "error", err)
 			continue
 		}
 		wallets = append(wallets, w)
@@ -104,12 +108,15 @@ func (s *AWSStore) ListWallets(ctx context.Context) ([]Wallet, error) {
 
 // ListWalletNames returns matching secret names without loading wallet contents.
 func (s *AWSStore) ListWalletNames(ctx context.Context) ([]string, error) {
-	pages := secretsmanager.NewListSecretsPaginator(s.client, &secretsmanager.ListSecretsInput{
-		Filters: []smtypes.Filter{{
-			Key:    smtypes.FilterNameStringTypeName,
-			Values: []string{s.prefix},
-		}},
-	})
+	pages := secretsmanager.NewListSecretsPaginator(
+		s.client,
+		&secretsmanager.ListSecretsInput{
+			Filters: []smtypes.Filter{{
+				Key:    smtypes.FilterNameStringTypeName,
+				Values: []string{s.prefix},
+			}},
+		},
+	)
 	var names []string
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
@@ -135,7 +142,10 @@ func (s *AWSStore) DeleteWallet(ctx context.Context, name string) error {
 }
 
 func (s *AWSStore) newWallet(name string) *awsWallet {
-	return &awsWallet{Wallet: &gcpWalletAdapter{wallet: gcp.NewGoogleWallet(name)}, store: s}
+	return &awsWallet{
+		Wallet: &gcpWalletAdapter{wallet: gcp.NewGoogleWallet(name)},
+		store:  s,
+	}
 }
 
 // awsWallet reuses the in-memory item handling of the shared wallet adapter
@@ -146,9 +156,12 @@ type awsWallet struct {
 }
 
 func (w *awsWallet) Load(ctx context.Context) error {
-	out, err := w.store.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
-		SecretId: new(w.store.secretName(w.Name())),
-	})
+	out, err := w.store.client.GetSecretValue(
+		ctx,
+		&secretsmanager.GetSecretValueInput{
+			SecretId: new(w.store.secretName(w.Name())),
+		},
+	)
 	if err != nil {
 		var notFound *smtypes.ResourceNotFoundException
 		if errors.As(err, &notFound) {
@@ -187,19 +200,25 @@ func (w *awsWallet) Save(ctx context.Context) error {
 	}
 	id := w.store.secretName(w.Name())
 	put := func() error {
-		_, err := w.store.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
-			SecretId:     &id,
-			SecretBinary: enc,
-		})
+		_, err := w.store.client.PutSecretValue(
+			ctx,
+			&secretsmanager.PutSecretValueInput{
+				SecretId:     &id,
+				SecretBinary: enc,
+			},
+		)
 		return err
 	}
 	err = put()
 	var notFound *smtypes.ResourceNotFoundException
 	if errors.As(err, &notFound) {
-		_, err = w.store.client.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
-			Name:         &id,
-			SecretBinary: enc,
-		})
+		_, err = w.store.client.CreateSecret(
+			ctx,
+			&secretsmanager.CreateSecretInput{
+				Name:         &id,
+				SecretBinary: enc,
+			},
+		)
 		// A concurrent first save may create the secret between the two
 		// calls; write this save as a new version of it instead.
 		var exists *smtypes.ResourceExistsException
@@ -216,10 +235,13 @@ func (w *awsWallet) Save(ctx context.Context) error {
 }
 
 func (w *awsWallet) Delete(ctx context.Context) error {
-	_, err := w.store.client.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
-		SecretId:                   new(w.store.secretName(w.Name())),
-		ForceDeleteWithoutRecovery: new(true),
-	})
+	_, err := w.store.client.DeleteSecret(
+		ctx,
+		&secretsmanager.DeleteSecretInput{
+			SecretId:                   new(w.store.secretName(w.Name())),
+			ForceDeleteWithoutRecovery: new(true),
+		},
+	)
 	if err != nil {
 		var notFound *smtypes.ResourceNotFoundException
 		if errors.As(err, &notFound) {

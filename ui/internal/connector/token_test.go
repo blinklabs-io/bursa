@@ -10,7 +10,10 @@ import (
 
 func TestTokenStoreMintVerify(t *testing.T) {
 	seq := 0
-	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { seq++; return "tok", nil })
+	ts := NewTokenStore(
+		t.TempDir()+"/token.json",
+		func() (string, error) { seq++; return "tok", nil },
+	)
 	tok, err := ts.Mint("abc")
 	if err != nil || tok != "tok" {
 		t.Fatalf("mint: %q %v", tok, err)
@@ -28,7 +31,10 @@ func TestTokenStoreMintVerify(t *testing.T) {
 
 func TestTokenStoreMintVerifyFirefoxOrigin(t *testing.T) {
 	t.Parallel()
-	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { return "tok", nil })
+	ts := NewTokenStore(
+		t.TempDir()+"/token.json",
+		func() (string, error) { return "tok", nil },
+	)
 	const origin = "moz-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11"
 	if _, err := ts.Mint(origin); err != nil {
 		t.Fatalf("Mint(%q) error = %v", origin, err)
@@ -39,14 +45,22 @@ func TestTokenStoreMintVerifyFirefoxOrigin(t *testing.T) {
 	if ts.Verify("tok", "moz-extension://other") {
 		t.Fatal("verify must fail for a different moz-extension origin")
 	}
-	if ts.Verify("tok", "chrome-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11") {
-		t.Fatal("verify must not treat a chrome-extension origin as the paired moz-extension origin")
+	if ts.Verify(
+		"tok",
+		"chrome-extension://5c0cbe2a-0e5f-4b0a-9a3c-1f2f6c0c1d11",
+	) {
+		t.Fatal(
+			"verify must not treat a chrome-extension origin as the paired moz-extension origin",
+		)
 	}
 }
 
 func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 	blockedPath := t.TempDir()
-	ts := NewTokenStore(blockedPath, func() (string, error) { return "tok", nil })
+	ts := NewTokenStore(
+		blockedPath,
+		func() (string, error) { return "tok", nil },
+	)
 	if _, err := ts.Mint("abc"); err == nil {
 		t.Fatal("Mint to a directory path should fail")
 	}
@@ -63,7 +77,11 @@ func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 	})
 	for _, extID := range []string{"", "https://example.com", "chrome-extension://", "moz-extension://", "moz-extension://has/slash"} {
 		if _, err := ts.Mint(extID); !errors.Is(err, ErrInvalidExtensionID) {
-			t.Fatalf("Mint(%q) error = %v, want ErrInvalidExtensionID", extID, err)
+			t.Fatalf(
+				"Mint(%q) error = %v, want ErrInvalidExtensionID",
+				extID,
+				err,
+			)
 		}
 		if ts.Verify("tok", extID) {
 			t.Fatalf("Verify(%q) should fail for invalid extension id", extID)
@@ -100,7 +118,9 @@ func TestTokenStoreClearRevokesMemoryOnRemoveFailure(t *testing.T) {
 // be unlinked but can still be written: the revocation must survive a restart.
 func TestTokenStoreClearNeutralizesUnremovableFile(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("needs POSIX directory permissions enforced for the current user")
+		t.Skip(
+			"needs POSIX directory permissions enforced for the current user",
+		)
 	}
 	dir := filepath.Join(t.TempDir(), "connector")
 	path := filepath.Join(dir, "token.json")
@@ -147,25 +167,44 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","token":"tok"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	valid := NewTokenStore(validPath, func() (string, error) { return "unused", nil })
+	valid := NewTokenStore(
+		validPath,
+		func() (string, error) { return "unused", nil },
+	)
 	extID, tok, ok := valid.Pair()
 	if !ok || extID != "chrome-extension://abc" || tok != "tok" {
-		t.Fatalf("Pair() = (%q, %q, %v), want normalized valid persisted pair", extID, tok, ok)
+		t.Fatalf(
+			"Pair() = (%q, %q, %v), want normalized valid persisted pair",
+			extID,
+			tok,
+			ok,
+		)
 	}
 
 	invalidPath := filepath.Join(dir, "invalid-token.json")
 	if err := os.WriteFile(invalidPath, []byte(`{"extension_id":"https://evil.example","token":"tok"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	invalid := NewTokenStore(invalidPath, func() (string, error) { return "unused", nil })
+	invalid := NewTokenStore(
+		invalidPath,
+		func() (string, error) { return "unused", nil },
+	)
 	extID, tok, ok = invalid.Pair()
 	if ok || extID != "" || tok != "" {
-		t.Fatalf("Pair() = (%q, %q, %v), want invalid persisted pair ignored", extID, tok, ok)
+		t.Fatalf(
+			"Pair() = (%q, %q, %v), want invalid persisted pair ignored",
+			extID,
+			tok,
+			ok,
+		)
 	}
 }
 
 func TestTokenStoreClearWhenAbsent(t *testing.T) {
-	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) { return "tok", nil })
+	ts := NewTokenStore(
+		t.TempDir()+"/token.json",
+		func() (string, error) { return "tok", nil },
+	)
 	if err := ts.Clear(); err != nil {
 		t.Fatalf("Clear on never-minted store should return nil, got %v", err)
 	}

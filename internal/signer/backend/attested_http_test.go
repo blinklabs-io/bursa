@@ -32,17 +32,20 @@ import (
 // enclaveHandler serves a fakeEnclave over the HTTPEnclave wire format.
 func enclaveHandler(e *fakeEnclave) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/inventory", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Nonce []byte `json:"nonce"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		inv, _ := e.Inventory(r.Context(), in.Nonce)
-		_ = json.NewEncoder(w).Encode(inv)
-	})
+	mux.HandleFunc(
+		"/v1/inventory",
+		func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Nonce []byte `json:"nonce"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			inv, _ := e.Inventory(r.Context(), in.Nonce)
+			_ = json.NewEncoder(w).Encode(inv)
+		},
+	)
 	mux.HandleFunc("/v1/sign", func(w http.ResponseWriter, r *http.Request) {
 		var req AttestedRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -100,19 +103,22 @@ func TestProfiledHTTPEnclaveEndToEnd(t *testing.T) {
 	e := newFakeEnclave(t, KeyTypePayment)
 	inventoryProfiles := make(chan string, 1)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/inventory", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Nonce   []byte `json:"nonce"`
-			Profile string `json:"profile"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		inventoryProfiles <- in.Profile
-		inv, _ := e.Inventory(r.Context(), in.Nonce)
-		_ = json.NewEncoder(w).Encode(inv)
-	})
+	mux.HandleFunc(
+		"/v1/inventory",
+		func(w http.ResponseWriter, r *http.Request) {
+			var in struct {
+				Nonce   []byte `json:"nonce"`
+				Profile string `json:"profile"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			inventoryProfiles <- in.Profile
+			inv, _ := e.Inventory(r.Context(), in.Nonce)
+			_ = json.NewEncoder(w).Encode(inv)
+		},
+	)
 	mux.HandleFunc("/v1/sign", func(w http.ResponseWriter, r *http.Request) {
 		var req AttestedRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -129,7 +135,12 @@ func TestProfiledHTTPEnclaveEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := NewProfiledAttestedBackend("enclave", "pool@preview", enc, stubVerifier{})
+	b := NewProfiledAttestedBackend(
+		"enclave",
+		"pool@preview",
+		enc,
+		stubVerifier{},
+	)
 	if err := b.Load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -155,15 +166,19 @@ func TestProfiledHTTPEnclaveEndToEnd(t *testing.T) {
 func TestHTTPEnclaveDoesNotFollowRedirects(t *testing.T) {
 	t.Parallel()
 	var redirectedRequests atomic.Int32
-	redirected := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		redirectedRequests.Add(1)
-	}))
+	redirected := httptest.NewServer(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			redirectedRequests.Add(1)
+		}),
+	)
 	t.Cleanup(redirected.Close)
 
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Location", redirected.URL)
-		w.WriteHeader(http.StatusTemporaryRedirect)
-	}))
+	proxy := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Location", redirected.URL)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		}),
+	)
 	t.Cleanup(proxy.Close)
 
 	enc, err := NewHTTPEnclave(proxy.URL)
@@ -219,10 +234,12 @@ func TestHTTPEnclaveRejectsBadResponses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(tc.body))
-			}))
+			srv := httptest.NewServer(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				}),
+			)
 			t.Cleanup(srv.Close)
 			enc, err := NewHTTPEnclave(srv.URL)
 			if err != nil {

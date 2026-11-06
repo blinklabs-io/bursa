@@ -47,7 +47,10 @@ func TestNewMTLSHTTPEnclaveRejectsPermissiveKey(t *testing.T) {
 				keyFile,
 			)
 			if !errors.Is(err, bursa.ErrInsecureFileMode) {
-				t.Fatalf("NewMTLSHTTPEnclave error = %v, want ErrInsecureFileMode", err)
+				t.Fatalf(
+					"NewMTLSHTTPEnclave error = %v, want ErrInsecureFileMode",
+					err,
+				)
 			}
 		})
 	}

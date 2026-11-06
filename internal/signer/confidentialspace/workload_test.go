@@ -231,7 +231,7 @@ func (s *memoryStore) Replace(expected, data []byte) error {
 func (s *memoryStore) CheckAndAdvance(
 	_ context.Context,
 	key backend.KeyHash,
-	counter uint64,
+	counter, _ uint64,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -246,6 +246,17 @@ func (s *memoryStore) CheckAndAdvance(
 	}
 	s.counter = counter + 1
 	return nil
+}
+
+// NextOpCert is not modelled here: opcert-next tests run the workload over a
+// CloudCounterStore on a memoryCounterObject so the real counter rules apply.
+func (s *memoryStore) NextOpCert(
+	context.Context,
+	backend.KeyHash,
+	uint64,
+	uint64,
+) (uint64, error) {
+	return 0, errors.New("opcert-next is not supported by memoryStore")
 }
 
 type testWrapper struct {
@@ -472,7 +483,8 @@ func TestWorkloadInventorySignAndRestart(t *testing.T) {
 	req.Payload = lcommon.OpCertSignableBytes(kesVKey, 1, 12)
 	req.Nonce = bytes.Repeat([]byte{0x26}, 32)
 	resp, err = restarted.Sign(t.Context(), req)
-	if err != nil || !ed25519.Verify(restarted.pub, req.Payload, resp.Signature) {
+	if err != nil ||
+		!ed25519.Verify(restarted.pub, req.Payload, resp.Signature) {
 		t.Fatalf("restarted signature: response=%+v err=%v", resp, err)
 	}
 }
@@ -495,7 +507,8 @@ func TestWorkloadRefusesMissingCounterForExistingIdentity(t *testing.T) {
 		Store:    store,
 		Counter:  store,
 	})
-	if err == nil || !strings.Contains(err.Error(), "counter state is missing") {
+	if err == nil ||
+		!strings.Contains(err.Error(), "counter state is missing") {
 		t.Fatalf("missing counter state error = %v", err)
 	}
 }
@@ -867,12 +880,21 @@ func TestWorkloadHandlerRequiresAuthenticatedTLS(t *testing.T) {
 	t.Parallel()
 	w := newTestWorkload(t, &memoryStore{}, &testWrapper{}, &testTokens{})
 	for _, path := range []string{"/v1/inventory", "/v1/sign"} {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			path,
+			strings.NewReader(`{}`),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		rw := httptest.NewRecorder()
 		w.Handler().ServeHTTP(rw, req)
 		if rw.Code != http.StatusUnauthorized {
-			t.Fatalf("%s status = %d, want %d", path, rw.Code, http.StatusUnauthorized)
+			t.Fatalf(
+				"%s status = %d, want %d",
+				path,
+				rw.Code,
+				http.StatusUnauthorized,
+			)
 		}
 	}
 }

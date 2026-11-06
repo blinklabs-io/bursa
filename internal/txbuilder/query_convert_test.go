@@ -72,7 +72,10 @@ func testQueryPoolParams(t *testing.T) *localstatequery.PoolStateParams {
 		Cost:          340_000_000,
 		Margin:        &cbor.Rat{Rat: big.NewRat(1, 20)},
 		RewardAccount: reward,
-		PoolOwners:    []lcommon.Blake2b224{testQueryHash(0xcc), testQueryHash(0xdd)},
+		PoolOwners: []lcommon.Blake2b224{
+			testQueryHash(0xcc),
+			testQueryHash(0xdd),
+		},
 		Relays: []lcommon.PoolRelay{
 			{
 				Type:     lcommon.PoolRelayTypeSingleHostName,
@@ -387,9 +390,15 @@ func TestParsePaymentAddress(t *testing.T) {
 		require.NoError(t, err)
 		return addr.String()
 	}
-	_, err := ParsePaymentAddress(enterprise(lcommon.AddressNetworkTestnet), "preview")
+	_, err := ParsePaymentAddress(
+		enterprise(lcommon.AddressNetworkTestnet),
+		"preview",
+	)
 	require.NoError(t, err)
-	_, err = ParsePaymentAddress(enterprise(lcommon.AddressNetworkMainnet), "preview")
+	_, err = ParsePaymentAddress(
+		enterprise(lcommon.AddressNetworkMainnet),
+		"preview",
+	)
 	require.ErrorContains(t, err, "network")
 	reward := testQueryRewardAddress(
 		t, lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, cred,
@@ -518,7 +527,9 @@ func TestStakeQueryFromDRepCredential(t *testing.T) {
 			"drep_no_confidence",
 		},
 	} {
-		drepDelegs := localstatequery.FilteredVoteDelegateesResult{cred: tc.drep}
+		drepDelegs := localstatequery.FilteredVoteDelegateesResult{
+			cred: tc.drep,
+		}
 		res := stakeQueryFrom(cred, &deposits, dr, &drepDelegs)
 		require.NotNil(t, res.DRepDelegation)
 		require.Equal(t, tc.expected, *res.DRepDelegation)

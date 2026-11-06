@@ -28,7 +28,11 @@ import (
 func ReadCertificateFile(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read certificate file %q: %w", path, err)
+		return nil, fmt.Errorf(
+			"failed to read certificate file %q: %w",
+			path,
+			err,
+		)
 	}
 	return readCertData(data)
 }
@@ -45,7 +49,8 @@ func readCertData(data []byte) ([]byte, error) {
 			Description string `json:"description"`
 			CborHex     string `json:"cborHex"`
 		}
-		if err := json.Unmarshal([]byte(trimmed), &env); err == nil && env.CborHex != "" {
+		if err := json.Unmarshal([]byte(trimmed), &env); err == nil &&
+			env.CborHex != "" {
 			raw, err := hex.DecodeString(strings.TrimSpace(env.CborHex))
 			if err != nil {
 				return nil, fmt.Errorf("failed to decode cborHex: %w", err)

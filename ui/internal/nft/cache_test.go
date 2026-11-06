@@ -166,7 +166,10 @@ func TestCacheRejectsLargeDecodedImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newCache: %v", err)
 	}
-	if err := c.put("QmDecodedTooBig", pngWithDimensions(5000, 5000)); !errors.Is(err, ErrUnsafeImage) {
+	if err := c.put("QmDecodedTooBig", pngWithDimensions(5000, 5000)); !errors.Is(
+		err,
+		ErrUnsafeImage,
+	) {
 		t.Fatalf("put decoded-oversize image = %v, want ErrUnsafeImage", err)
 	}
 	if c.has("QmDecodedTooBig") {

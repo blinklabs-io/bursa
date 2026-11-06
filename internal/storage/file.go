@@ -183,7 +183,10 @@ func (s *FileStore) GetWallet(
 		return nil, fmt.Errorf("failed to read wallet file: %w", err)
 	}
 	if len(raw) > maxWalletFileSize {
-		return nil, fmt.Errorf("wallet file exceeds %d bytes", maxWalletFileSize)
+		return nil, fmt.Errorf(
+			"wallet file exceeds %d bytes",
+			maxWalletFileSize,
+		)
 	}
 	encryptedAtRest := sops.IsEncrypted(raw)
 	if encryptedAtRest {
@@ -193,7 +196,10 @@ func (s *FileStore) GetWallet(
 		}
 		raw = dec
 		if len(raw) > maxWalletFileSize {
-			return nil, fmt.Errorf("decrypted wallet data exceeds %d bytes", maxWalletFileSize)
+			return nil, fmt.Errorf(
+				"decrypted wallet data exceeds %d bytes",
+				maxWalletFileSize,
+			)
 		}
 	}
 	var data fileWalletData
@@ -434,7 +440,10 @@ func (w *fileWallet) Save(ctx context.Context) error {
 
 	encrypt := w.store.encryptionConfigured()
 	if encryptedAtRest && !encrypt {
-		return fmt.Errorf("wallet encryption is required: %w", sops.ErrNoMasterKey)
+		return fmt.Errorf(
+			"wallet encryption is required: %w",
+			sops.ErrNoMasterKey,
+		)
 	}
 
 	raw, err := json.MarshalIndent(data, "", "  ")

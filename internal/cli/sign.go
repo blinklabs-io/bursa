@@ -49,7 +49,9 @@ func readOptionalPayload(text, hexStr string) ([]byte, error) {
 	}
 }
 
-func RunSignData(addressHex, payloadText, payloadHex, signingKeyFile string) error {
+func RunSignData(
+	addressHex, payloadText, payloadHex, signingKeyFile string,
+) error {
 	addr, err := hex.DecodeString(addressHex)
 	if err != nil {
 		return fmt.Errorf("invalid --address hex: %w", err)
@@ -66,7 +68,11 @@ func RunSignData(addressHex, payloadText, payloadHex, signingKeyFile string) err
 	if err != nil {
 		return err
 	}
-	out, err := json.MarshalIndent(map[string]string{"signature": sig, "key": key}, "", "  ")
+	out, err := json.MarshalIndent(
+		map[string]string{"signature": sig, "key": key},
+		"",
+		"  ",
+	)
 	if err != nil {
 		return fmt.Errorf("failed to marshal signature output: %w", err)
 	}

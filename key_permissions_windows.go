@@ -62,7 +62,11 @@ func openForOwnershipAdoption(file *os.File) (windows.Handle, error) {
 		if errors.As(err, &status) {
 			err = status.Errno()
 		}
-		return 0, fmt.Errorf("failed to open %q for ownership adoption: %w", file.Name(), err)
+		return 0, fmt.Errorf(
+			"failed to open %q for ownership adoption: %w",
+			file.Name(),
+			err,
+		)
 	}
 	return handle, nil
 }
@@ -116,7 +120,10 @@ func ownerOnlySecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, string, error)
 		fmt.Sprintf("O:%[1]sD:P(A;;GA;;;%[1]s)", userSID),
 	)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create owner-only security descriptor: %w", err)
+		return nil, "", fmt.Errorf(
+			"failed to create owner-only security descriptor: %w",
+			err,
+		)
 	}
 	return descriptor, userSID, nil
 }
@@ -170,7 +177,10 @@ func restrictSecretKeyFilePermissions(file *os.File) error {
 		securityInformation,
 		newOwner, nil, dacl, nil,
 	); err != nil {
-		return fmt.Errorf("failed to set current-user ownership and DACL: %w", err)
+		return fmt.Errorf(
+			"failed to set current-user ownership and DACL: %w",
+			err,
+		)
 	}
 	return nil
 }
@@ -182,22 +192,59 @@ func checkOpenFilePermissions(file *os.File) error {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to get security info for %q: %w", file.Name(), err)
+		return fmt.Errorf(
+			"failed to get security info for %q: %w",
+			file.Name(),
+			err,
+		)
 	}
 	return checkOpenSecurityDescriptor(file.Name(), descriptor)
 }
 
-func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCRIPTOR) error {
+// sddlTrustee returns how SDDL writes sid as an ACE trustee. SDDL replaces
+// some account SIDs with a two-letter alias, such as "LA" for the built-in
+// local Administrator account, so comparing an ACE against the numeric SID
+// alone rejects that account's own owner-only DACL.
+func sddlTrustee(sid string) (string, error) {
+	descriptor, err := windows.SecurityDescriptorFromString(
+		"D:(A;;GA;;;" + sid + ")",
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to render SID %s as SDDL: %w", sid, err)
+	}
+	sddl := descriptor.String()
+	start := strings.LastIndexByte(sddl, ';')
+	end := strings.LastIndexByte(sddl, ')')
+	if start < 0 || end <= start {
+		return "", fmt.Errorf("unexpected SDDL %q for SID %s", sddl, sid)
+	}
+	return sddl[start+1 : end], nil
+}
+
+func checkOpenSecurityDescriptor(
+	path string,
+	descriptor *windows.SECURITY_DESCRIPTOR,
+) error {
+	_, currentUser, err := ownerOnlySecurityDescriptor()
+	if err != nil {
+		return err
+	}
+	return checkSecurityDescriptorForUser(path, descriptor, currentUser)
+}
+
+// checkSecurityDescriptorForUser applies the secret-file policy for the
+// account whose numeric SID is currentUser.
+func checkSecurityDescriptorForUser(
+	path string,
+	descriptor *windows.SECURITY_DESCRIPTOR,
+	currentUser string,
+) error {
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
 		return fmt.Errorf(
 			"secret key file %q has no readable owner: %w",
 			path, ErrInsecureFileMode,
 		)
-	}
-	_, currentUser, err := ownerOnlySecurityDescriptor()
-	if err != nil {
-		return err
 	}
 	if owner.String() != currentUser {
 		return fmt.Errorf(
@@ -207,7 +254,11 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
-		return fmt.Errorf("failed to read security descriptor control for %q: %w", path, err)
+		return fmt.Errorf(
+			"failed to read security descriptor control for %q: %w",
+			path,
+			err,
+		)
 	}
 	if control&windows.SE_DACL_PROTECTED == 0 {
 		return fmt.Errorf(
@@ -244,6 +295,11 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 		"CO":        true, // Creator Owner
 		"OW":        true, // Owner Rights
 	}
+	alias, err := sddlTrustee(currentUser)
+	if err != nil {
+		return err
+	}
+	allowed[alias] = true
 	if saclStart := strings.Index(dacl, "S:"); saclStart >= 0 {
 		dacl = dacl[:saclStart]
 	}

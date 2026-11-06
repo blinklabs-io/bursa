@@ -54,14 +54,21 @@ type Queue struct {
 	nextSub int
 }
 
-func NewQueue(now func() time.Time, mkID func() (string, error), timeout time.Duration) *Queue {
+func NewQueue(
+	now func() time.Time,
+	mkID func() (string, error),
+	timeout time.Duration,
+) *Queue {
 	return &Queue{
 		now: now, mkID: mkID, timeout: timeout,
 		waiters: map[string]*waiter{}, subs: map[int]chan struct{}{},
 	}
 }
 
-func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request, error) {
+func (q *Queue) Submit(
+	origin, method string,
+	params json.RawMessage,
+) (*Request, error) {
 	req, err := q.reserve(origin, method, params)
 	if err != nil {
 		return nil, err
@@ -71,10 +78,14 @@ func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request,
 
 // reserve claims queue capacity without exposing a request to approval clients.
 // Callers must publish the complete request or cancel the reservation.
-func (q *Queue) reserve(origin, method string, params json.RawMessage) (*Request, error) {
+func (q *Queue) reserve(
+	origin, method string,
+	params json.RawMessage,
+) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.pendingCountLocked() >= maxPendingRequests || q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
+	if q.pendingCountLocked() >= maxPendingRequests ||
+		q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
 		return nil, ErrQueueFull
 	}
 	id, err := q.mkID()

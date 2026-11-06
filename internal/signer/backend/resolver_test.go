@@ -30,7 +30,13 @@ func mkSoftware(t *testing.T, name string) (*SoftwareBackend, KeyHash) {
 		t.Fatalf("keygen: %v", err)
 	}
 	b := NewSoftwareBackend(name)
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: priv.Public().(ed25519.PublicKey)}, KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{
+			SKey: []byte(priv),
+			VKey: priv.Public().(ed25519.PublicKey),
+		},
+		KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
@@ -54,7 +60,10 @@ func TestResolver_Resolve(t *testing.T) {
 	}
 
 	var missing KeyHash
-	if _, err := r.Resolve(context.Background(), missing, ""); !errors.Is(err, ErrKeyNotFound) {
+	if _, err := r.Resolve(context.Background(), missing, ""); !errors.Is(
+		err,
+		ErrKeyNotFound,
+	) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
 	}
 }
@@ -79,7 +88,10 @@ func TestCheckAmbiguous(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	lk := &bursa.LoadedKey{SKey: []byte(priv), VKey: priv.Public().(ed25519.PublicKey)}
+	lk := &bursa.LoadedKey{
+		SKey: []byte(priv),
+		VKey: priv.Public().(ed25519.PublicKey),
+	}
 
 	b1 := NewSoftwareBackend("primary")
 	b2 := NewSoftwareBackend("secondary")
@@ -99,7 +111,9 @@ func TestCheckAmbiguous(t *testing.T) {
 
 	// Same key in both backends — must be rejected.
 	if err := NewResolver(b1, b2).CheckAmbiguous(context.Background()); err == nil {
-		t.Error("expected error for duplicate key hash across backends, got nil")
+		t.Error(
+			"expected error for duplicate key hash across backends, got nil",
+		)
 	}
 }
 

@@ -87,7 +87,10 @@ func TestConnLimitListener(t *testing.T) {
 
 	select {
 	case err := <-second:
-		t.Fatalf("second connection accepted while the first is open (err %v)", err)
+		t.Fatalf(
+			"second connection accepted while the first is open (err %v)",
+			err,
+		)
 	case <-time.After(200 * time.Millisecond):
 	}
 
@@ -108,7 +111,10 @@ func TestConnLimitListener(t *testing.T) {
 
 	select {
 	case err := <-third:
-		t.Fatalf("third connection accepted while the second is open (err %v)", err)
+		t.Fatalf(
+			"third connection accepted while the second is open (err %v)",
+			err,
+		)
 	case <-time.After(200 * time.Millisecond):
 	}
 

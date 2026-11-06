@@ -51,7 +51,11 @@ const maxCachedBeacons = 32
 
 // Chain is the node surface the service reads. *chain.Client satisfies it.
 type Chain interface {
-	MetadataByLabelPage(ctx context.Context, label uint64, page int) ([]chain.LabelMetadata, error)
+	MetadataByLabelPage(
+		ctx context.Context,
+		label uint64,
+		page int,
+	) ([]chain.LabelMetadata, error)
 	Transaction(ctx context.Context, hash string) (chain.TxInfo, error)
 	RequiredSigners(ctx context.Context, hash string) ([]string, error)
 	LatestEpoch(ctx context.Context) (chain.EpochInfo, error)
@@ -59,8 +63,14 @@ type Chain interface {
 	DRep(ctx context.Context, drepID string) (chain.DRepInfo, error)
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	Account(ctx context.Context, stakeAddr string) (chain.AccountInfo, error)
-	SurveyRoleSnapshot(ctx context.Context, endEpoch uint64, claims []chain.SurveyRoleClaim) (map[chain.SurveyRoleClaim]bool, error)
-	GovernanceAnchorDocuments(ctx context.Context) ([]chain.AnchorDocument, error)
+	SurveyRoleSnapshot(
+		ctx context.Context,
+		endEpoch uint64,
+		claims []chain.SurveyRoleClaim,
+	) (map[chain.SurveyRoleClaim]bool, error)
+	GovernanceAnchorDocuments(
+		ctx context.Context,
+	) ([]chain.AnchorDocument, error)
 }
 
 // Service discovers CIP-179 surveys on chain through the embedded node and
@@ -139,7 +149,9 @@ func (c clk) epochOf(blockTime int64) uint64 {
 	if blockTime >= c.start || c.epochSecs <= 0 {
 		return c.epoch
 	}
-	back := uint64((c.start - blockTime + c.epochSecs - 1) / c.epochSecs) //nolint:gosec // positive by the guard
+	back := uint64( //nolint:gosec // positive by the guard
+		(c.start - blockTime + c.epochSecs - 1) / c.epochSecs,
+	)
 	if back > c.epoch {
 		return 0
 	}
@@ -149,7 +161,9 @@ func (c clk) epochOf(blockTime int64) uint64 {
 // endOf is the moment epoch e ends, projected from the current epoch's start.
 // It is only meaningful for an epoch at or after the current one.
 func (c clk) endOf(e uint64) time.Time {
-	ahead := int64(e-c.epoch) + 1 //nolint:gosec // e >= c.epoch, and any real epoch fits
+	ahead := int64( //nolint:gosec // e >= c.epoch, and any real epoch fits
+		e-c.epoch,
+	) + 1
 	return time.Unix(c.start+ahead*c.epochSecs, 0)
 }
 
@@ -162,7 +176,11 @@ func (s *Service) clock(ctx context.Context) (clk, error) {
 	if err != nil {
 		return clk{}, fmt.Errorf("genesis: %w", err)
 	}
-	return clk{epoch: latest.Epoch, start: latest.StartTime, epochSecs: int64(gen.EpochLength) * int64(gen.SlotLength)}, nil
+	return clk{
+		epoch:     latest.Epoch,
+		start:     latest.StartTime,
+		epochSecs: int64(gen.EpochLength) * int64(gen.SlotLength),
+	}, nil
 }
 
 func (s *Service) txFacts(ctx context.Context, hash string) (txFacts, error) {
@@ -180,7 +198,12 @@ func (s *Service) txFacts(ctx context.Context, hash string) (txFacts, error) {
 	if err != nil {
 		return txFacts{}, fmt.Errorf("required signers %s: %w", hash, err)
 	}
-	f = txFacts{height: tx.BlockHeight, index: tx.Index, blockTime: tx.BlockTime, signers: make(map[string]bool, len(signers))}
+	f = txFacts{
+		height:    tx.BlockHeight,
+		index:     tx.Index,
+		blockTime: tx.BlockTime,
+		signers:   make(map[string]bool, len(signers)),
+	}
 	for _, h := range signers {
 		f.signers[strings.ToLower(h)] = true
 	}
@@ -216,7 +239,12 @@ type known struct {
 
 func (k known) id() string { return idOf(k.tx, k.ref.Index) }
 
-func idOf(tx string, index uint64) string { return tx + ":" + strconv.FormatUint(index, 10) }
+func idOf(
+	tx string,
+	index uint64,
+) string {
+	return tx + ":" + strconv.FormatUint(index, 10)
+}
 
 func parseID(id string) (Ref, bool) {
 	tx, idx, ok := strings.Cut(id, ":")
@@ -253,7 +281,9 @@ func (s *Service) scan(ctx context.Context) ([]entry, error) {
 // transactions land on the last page and a rollback removes a suffix: the last
 // cached page is re-read every time, and a page that no longer matches is
 // dropped together with everything after it.
-func (s *Service) labelHistory(ctx context.Context) ([]chain.LabelMetadata, error) {
+func (s *Service) labelHistory(
+	ctx context.Context,
+) ([]chain.LabelMetadata, error) {
 	s.labelMu.Lock()
 	defer s.labelMu.Unlock()
 	const size = chain.LabelPageSize
@@ -290,7 +320,13 @@ func (s *Service) labelHistory(ctx context.Context) ([]chain.LabelMetadata, erro
 		s.labelRows = append(s.labelRows, rows...)
 		page++
 	}
-	return slices.Clone(s.labelRows), fmt.Errorf("%w: %d transactions scanned", ErrIndexing, len(s.labelRows))
+	return slices.Clone(
+			s.labelRows,
+		), fmt.Errorf(
+			"%w: %d transactions scanned",
+			ErrIndexing,
+			len(s.labelRows),
+		)
 }
 
 func samePage(a, b []chain.LabelMetadata) bool {
@@ -304,7 +340,11 @@ func samePage(a, b []chain.LabelMetadata) bool {
 // transaction and it ends after the epoch it was published in. A script owner
 // is never verified: proving one means resolving the native script and checking
 // the transaction satisfies it, which this service does not do.
-func (s *Service) definitions(ctx context.Context, entries []entry, cl clk) ([]*known, error) {
+func (s *Service) definitions(
+	ctx context.Context,
+	entries []entry,
+	cl clk,
+) ([]*known, error) {
 	var defs []*known
 	byRef := map[Ref]*known{}
 	for _, e := range entries {
@@ -342,7 +382,8 @@ func (s *Service) definitions(ctx context.Context, entries []entry, cl clk) ([]*
 		}
 		for _, r := range e.payload.Cancellations {
 			k, ok := byRef[r]
-			if ok && f.proves(k.def.Owner) && cl.epochOf(f.blockTime) <= k.def.EndEpoch {
+			if ok && f.proves(k.def.Owner) &&
+				cl.epochOf(f.blockTime) <= k.def.EndEpoch {
 				k.cancelled = true
 			}
 		}
@@ -372,18 +413,24 @@ func (s *Service) summarize(k *known, cl clk, links map[Ref][]string) Summary {
 	return Summary{
 		ID: k.id(), TxHash: k.tx, Index: k.ref.Index,
 		Title: k.def.Title, Description: k.def.Description,
-		Owner: hex.EncodeToString(k.def.Owner.Hash[:]), OwnerScript: k.def.Owner.Script,
+		Owner: hex.EncodeToString(
+			k.def.Owner.Hash[:],
+		), OwnerScript: k.def.Owner.Script,
 		Roles: k.def.Roles, EndEpoch: k.def.EndEpoch, Status: status,
 		Sealed: k.def.Mode.Sealed, Questions: len(k.def.Questions),
 		LinkedActions: links[k.ref],
-		Owned:         haveOwner && !k.def.Owner.Script && k.def.Owner.Hash == owner,
+		Owned: haveOwner && !k.def.Owner.Script &&
+			k.def.Owner.Hash == owner,
 	}
 }
 
 // links maps each survey to the governance actions whose anchor links to it.
 // Per CIP-179 the link only holds when the survey exists and ends in the
 // action's expiry epoch; anything else is ignored.
-func (s *Service) links(ctx context.Context, defs []*known) (map[Ref][]string, error) {
+func (s *Service) links(
+	ctx context.Context,
+	defs []*known,
+) (map[Ref][]string, error) {
 	docs, err := s.chain.GovernanceAnchorDocuments(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("governance anchor documents: %w", err)
@@ -398,7 +445,8 @@ func (s *Service) links(ctx context.Context, defs []*known) (map[Ref][]string, e
 		if !ok {
 			continue
 		}
-		if e, exists := end[r]; exists && e == d.ExpiresEpoch && !slices.Contains(out[r], d.ActionID) {
+		if e, exists := end[r]; exists && e == d.ExpiresEpoch &&
+			!slices.Contains(out[r], d.ActionID) {
 			out[r] = append(out[r], d.ActionID)
 		}
 	}
@@ -428,7 +476,12 @@ func (s *Service) snapshot(ctx context.Context) (snapshot, error) {
 	if err != nil {
 		return snapshot{}, err
 	}
-	return snapshot{entries: entries, defs: defs, cl: cl, indexErr: indexErr}, nil
+	return snapshot{
+		entries:  entries,
+		defs:     defs,
+		cl:       cl,
+		indexErr: indexErr,
+	}, nil
 }
 
 func (sn snapshot) find(id string) (*known, bool) {
@@ -477,7 +530,11 @@ func (s *Service) Get(ctx context.Context, id string) (Detail, error) {
 	return s.detail(ctx, sn, k)
 }
 
-func (s *Service) detail(ctx context.Context, sn snapshot, k *known) (Detail, error) {
+func (s *Service) detail(
+	ctx context.Context,
+	sn snapshot,
+	k *known,
+) (Detail, error) {
 	links, err := s.links(ctx, sn.defs)
 	if err != nil {
 		return Detail{}, err
@@ -497,7 +554,12 @@ func (s *Service) detail(ctx context.Context, sn snapshot, k *known) (Detail, er
 
 // observe collects every response to the survey with its chain placement and
 // the outcome of the credential-proof and role checks.
-func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk) ([]Observed, error) {
+func (s *Service) observe(
+	ctx context.Context,
+	entries []entry,
+	k *known,
+	cl clk,
+) ([]Observed, error) {
 	// Beacons are cached by quicknet round only; another chain's survey with the
 	// same round number must not be opened with a quicknet beacon.
 	var beaconSig []byte
@@ -540,7 +602,10 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 			if o.Reject != "" {
 				continue
 			}
-			claim, ok := snapshotRoleClaim(o.Response.Role, o.Response.Credential)
+			claim, ok := snapshotRoleClaim(
+				o.Response.Role,
+				o.Response.Credential,
+			)
 			if !ok {
 				verified[identity{o.Response.Role, o.Response.Credential}] = "role cannot be verified against ledger state"
 				continue
@@ -587,7 +652,11 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 			o.Reject = verified[identity{o.Response.Role, o.Response.Credential}]
 		}
 		if o.Reject == "" && beaconSig != nil && len(o.Response.Sealed) > 0 {
-			answers, uerr := UnsealAnswers(o.Response.Sealed, k.def.Mode, beaconSig)
+			answers, uerr := UnsealAnswers(
+				o.Response.Sealed,
+				k.def.Mode,
+				beaconSig,
+			)
 			if uerr != nil {
 				o.Reject = "cannot be unsealed: " + uerr.Error()
 			}
@@ -600,7 +669,10 @@ func (s *Service) observe(ctx context.Context, entries []entry, k *known, cl clk
 // snapshotRoleClaim maps a response's role claim to the one-byte snapshot
 // encoding. It reports false for a role the snapshot does not define rather
 // than truncating it onto another role.
-func snapshotRoleClaim(role Role, credential Credential) (chain.SurveyRoleClaim, bool) {
+func snapshotRoleClaim(
+	role Role,
+	credential Credential,
+) (chain.SurveyRoleClaim, bool) {
 	var snapshotRole chain.SurveyRole
 	switch role {
 	case RoleDRep:
@@ -641,7 +713,11 @@ func identityFromSnapshotClaim(claim chain.SurveyRoleClaim) identity {
 // a survey that is still open. It returns a non-empty reason when the
 // credential does not hold the role, and an error only when the node could not
 // answer.
-func (s *Service) verifyRole(ctx context.Context, role Role, c Credential) (string, error) {
+func (s *Service) verifyRole(
+	ctx context.Context,
+	role Role,
+	c Credential,
+) (string, error) {
 	var err error
 	switch role {
 	case RoleKeyholder:
@@ -664,7 +740,8 @@ func (s *Service) verifyRole(ctx context.Context, role Role, c Credential) (stri
 		if stake, err = lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, netID, nil, c.Hash[:]); err != nil {
 			return "", err
 		}
-		if acct, err = s.chain.Account(ctx, stake.String()); err == nil && (!acct.Registered || acct.ControlledAmount == "" || acct.ControlledAmount == "0") {
+		if acct, err = s.chain.Account(ctx, stake.String()); err == nil &&
+			(!acct.Registered || acct.ControlledAmount == "" || acct.ControlledAmount == "0") {
 			return "stake credential has no stake", nil
 		}
 	case RoleCC:

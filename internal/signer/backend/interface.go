@@ -37,7 +37,9 @@ type Profiled interface {
 
 // ErrUnsupportedExtended is returned when an extended BIP32-Ed25519 key is
 // routed to a backend that only supports standard Ed25519 (e.g. Vault, PKCS#11).
-var ErrUnsupportedExtended = errors.New("extended (BIP32-Ed25519) keys are not supported by this backend")
+var ErrUnsupportedExtended = errors.New(
+	"extended (BIP32-Ed25519) keys are not supported by this backend",
+)
 
 // Backend is a key-custody provider.
 type Backend interface {

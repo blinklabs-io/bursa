@@ -139,10 +139,16 @@ func TestKeyFileOutputBackwardCompatibility(t *testing.T) {
 	testMnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
 	var err error
-	captureStdout(t, func() { err = RunKeyPayment(testMnemonic, "", "", "-", "", 0, 0) })
+	captureStdout(
+		t,
+		func() { err = RunKeyPayment(testMnemonic, "", "", "-", "", 0, 0) },
+	)
 	require.NoError(t, err)
 
-	captureStdout(t, func() { err = RunKeyStake(testMnemonic, "", "", "-", "", 0, 0) })
+	captureStdout(
+		t,
+		func() { err = RunKeyStake(testMnemonic, "", "", "-", "", 0, 0) },
+	)
 	require.NoError(t, err)
 }
 
@@ -160,7 +166,11 @@ func TestKeyFilePermissionsEnforced(t *testing.T) {
 
 	// First, create a file with insecure permissions
 	insecureData := `{"type":"test","description":"test","cborHex":"00"}`
-	err = os.WriteFile(signingKeyFile, []byte(insecureData), 0o644) // world-readable
+	err = os.WriteFile(
+		signingKeyFile,
+		[]byte(insecureData),
+		0o644,
+	) // world-readable
 	require.NoError(t, err)
 
 	// Verify it has insecure permissions
@@ -175,11 +185,20 @@ func TestKeyFilePermissionsEnforced(t *testing.T) {
 	// Verify the file now has secure permissions
 	info, err = os.Stat(signingKeyFile)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode(), "Key file should have secure permissions (0o600)")
+	assert.Equal(
+		t,
+		os.FileMode(0o600),
+		info.Mode(),
+		"Key file should have secure permissions (0o600)",
+	)
 
 	// Verify the content is correct (not the old insecure content)
 	data, err := os.ReadFile(signingKeyFile)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "PaymentExtendedSigningKeyShelley_ed25519_bip32")
+	assert.Contains(
+		t,
+		string(data),
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+	)
 	assert.NotContains(t, string(data), "test")
 }

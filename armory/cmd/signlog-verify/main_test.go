@@ -31,7 +31,10 @@ import (
 
 // card writes an image holding n entries of a fresh device to a file and
 // returns the path with the identity key in hex.
-func card(t *testing.T, n int) (path, identity string, pub ed25519.PublicKey, w *signlog.Writer, m *signlog.MemMedium) {
+func card(
+	t *testing.T,
+	n int,
+) (path, identity string, pub ed25519.PublicKey, w *signlog.Writer, m *signlog.MemMedium) {
 	t.Helper()
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -41,7 +44,11 @@ func card(t *testing.T, n int) (path, identity string, pub ed25519.PublicKey, w 
 
 	m = signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
 
-	w, err = signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), signlog.NewKeySigner(priv))
+	w, err = signlog.Open(
+		m,
+		signlog.NewMemHeadStore(signlog.Head{}),
+		signlog.NewKeySigner(priv),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,13 +56,17 @@ func card(t *testing.T, n int) (path, identity string, pub ed25519.PublicKey, w 
 	for i := range n {
 		rec := signlog.Record{
 			Profile: "otg@preview", Role: "stake", Purpose: signlog.PurposeTxBody,
-			BodyHash: bytes.Repeat([]byte{byte(i + 1)}, 32), Summary: "fee=170000",
+			BodyHash: bytes.Repeat(
+				[]byte{byte(i + 1)},
+				32,
+			), Summary: "fee=170000",
 		}
 		if i%2 == 1 {
 			rec = signlog.Record{
 				Profile: "otg@preview", Role: "pool", Purpose: signlog.PurposeOpCertNext,
 				IssueCounter: 5, KESPeriod: 700, KESKeyHash: bytes.Repeat([]byte{0xab}, 32),
-				Summary: "chain 4 issue 5 period 700",
+				ColdKeyHash: bytes.Repeat([]byte{0xcd}, signlog.ColdHashSize),
+				Summary:     "chain 4 issue 5 period 700",
 			}
 		}
 
@@ -84,28 +95,41 @@ func TestVerifyPrintsEntries(t *testing.T) {
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 4 {
-		t.Fatalf("got %d lines, want 3 entries and a summary:\n%s", len(lines), out.String())
+		t.Fatalf(
+			"got %d lines, want 3 entries and a summary:\n%s",
+			len(lines),
+			out.String(),
+		)
 	}
 
 	for i, want := range []string{"tx-body", "opcert-next", "tx-body"} {
-		if !strings.HasPrefix(lines[i], []string{"1 ", "2 ", "3 "}[i]) || !strings.Contains(lines[i], want) ||
+		if !strings.HasPrefix(lines[i], []string{"1 ", "2 ", "3 "}[i]) ||
+			!strings.Contains(lines[i], want) ||
 			!strings.Contains(lines[i], "otg@preview") {
 			t.Errorf("line %d: %q", i, lines[i])
 		}
 	}
 
-	if !strings.Contains(lines[0], hex.EncodeToString(bytes.Repeat([]byte{1}, 32))) ||
+	if !strings.Contains(
+		lines[0],
+		hex.EncodeToString(bytes.Repeat([]byte{1}, 32)),
+	) ||
 		!strings.Contains(lines[0], "fee=170000") {
 		t.Errorf("tx-body line lacks the body hash or summary: %q", lines[0])
 	}
 
-	if !strings.Contains(lines[1], "issue=5") || !strings.Contains(lines[1], "kes-period=700") ||
-		!strings.Contains(lines[1], hex.EncodeToString(bytes.Repeat([]byte{0xab}, 32))) {
+	if !strings.Contains(lines[1], "issue=5") ||
+		!strings.Contains(lines[1], "kes-period=700") ||
+		!strings.Contains(
+			lines[1],
+			hex.EncodeToString(bytes.Repeat([]byte{0xab}, 32)),
+		) {
 		t.Errorf("opcert line lacks counters or KES key hash: %q", lines[1])
 	}
 
 	head := w.Head()
-	if !strings.Contains(lines[3], "3 entries") || !strings.Contains(lines[3], hex.EncodeToString(head.Hash[:])) {
+	if !strings.Contains(lines[3], "3 entries") ||
+		!strings.Contains(lines[3], hex.EncodeToString(head.Hash[:])) {
 		t.Errorf("summary line %q", lines[3])
 	}
 }
@@ -125,7 +149,9 @@ func TestVerifyRefusals(t *testing.T) {
 	}
 
 	torn := m.Image()
-	clear(torn[(1+2*signlog.RecordBlocks)*signlog.BlockSize+signlog.BlockSize:][:signlog.BlockSize*3])
+	clear(
+		torn[(1+2*signlog.RecordBlocks)*signlog.BlockSize+signlog.BlockSize:][:signlog.BlockSize*3],
+	)
 	tornPath := filepath.Join(t.TempDir(), "torn.img")
 
 	if err := os.WriteFile(tornPath, torn, 0o600); err != nil {
@@ -159,7 +185,9 @@ func TestVerifyTornTailAllowed(t *testing.T) {
 	_, id, _, _, m := card(t, 3)
 
 	torn := m.Image()
-	clear(torn[(1+2*signlog.RecordBlocks)*signlog.BlockSize+signlog.BlockSize:][:signlog.BlockSize*3])
+	clear(
+		torn[(1+2*signlog.RecordBlocks)*signlog.BlockSize+signlog.BlockSize:][:signlog.BlockSize*3],
+	)
 
 	path := filepath.Join(t.TempDir(), "torn.img")
 	if err := os.WriteFile(path, torn, 0o600); err != nil {
@@ -171,7 +199,8 @@ func TestVerifyTornTailAllowed(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "torn") || !strings.Contains(out.String(), "2 entries") {
+	if !strings.Contains(out.String(), "torn") ||
+		!strings.Contains(out.String(), "2 entries") {
 		t.Errorf("output does not report the torn tail:\n%s", out.String())
 	}
 }
@@ -239,7 +268,9 @@ func TestHelperMain(t *testing.T) {
 		t.Skip("helper for TestExitCode")
 	}
 
-	os.Args = append([]string{"signlog-verify"}, strings.Fields(os.Getenv("SIGNLOG_VERIFY_ARGS"))...)
+	os.Args = append(
+		[]string{"signlog-verify"},
+		strings.Fields(os.Getenv("SIGNLOG_VERIFY_ARGS"))...)
 	main()
 }
 
@@ -265,7 +296,8 @@ func TestVerifyShowsTruncatedSummary(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if strings.Contains(lines[0], "truncated") || !strings.Contains(lines[1], "[summary truncated]") {
+	if strings.Contains(lines[0], "truncated") ||
+		!strings.Contains(lines[1], "[summary truncated]") {
 		t.Errorf("truncation marks wrong:\n%s", out.String())
 	}
 }

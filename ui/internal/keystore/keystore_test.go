@@ -72,7 +72,10 @@ func TestUnlockWrongPassword(t *testing.T) {
 	if err := ks.Create("abandon about", "right-password"); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := ks.Unlock("wrong-password"); !errors.Is(err, ErrDecryptFailed) {
+	if _, err := ks.Unlock("wrong-password"); !errors.Is(
+		err,
+		ErrDecryptFailed,
+	) {
 		t.Fatal("Unlock with wrong password should fail")
 	}
 }
@@ -101,7 +104,10 @@ func TestCreateRejectsShortPassword(t *testing.T) {
 	ks := newTestKeystore(t)
 	// 11 chars: would have passed the old 8-char floor, must be rejected now.
 	if err := ks.Create("m", "elevenchars"); err == nil {
-		t.Fatalf("Create should reject a password shorter than %d characters", MinPasswordLen)
+		t.Fatalf(
+			"Create should reject a password shorter than %d characters",
+			MinPasswordLen,
+		)
 	}
 	if ks.Exists() {
 		t.Fatal("Create persisted a keystore for a too-short password")
@@ -220,7 +226,9 @@ func TestUnlockRejectsWeakParams(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	if _, err := New(path).Unlock("longpassword"); err == nil {
-		t.Fatal("Unlock should reject scrypt params below the production minimum")
+		t.Fatal(
+			"Unlock should reject scrypt params below the production minimum",
+		)
 	}
 }
 

@@ -266,9 +266,18 @@ func TestGovernanceRolesAreDistinct(t *testing.T) {
 	hot, err := GetCommitteeHotKey(accountKey, 0)
 	require.NoError(t, err)
 
-	assert.False(t, bytes.Equal(drep.Public().PublicKey(), cold.Public().PublicKey()))
-	assert.False(t, bytes.Equal(cold.Public().PublicKey(), hot.Public().PublicKey()))
-	assert.False(t, bytes.Equal(drep.Public().PublicKey(), hot.Public().PublicKey()))
+	assert.False(
+		t,
+		bytes.Equal(drep.Public().PublicKey(), cold.Public().PublicKey()),
+	)
+	assert.False(
+		t,
+		bytes.Equal(cold.Public().PublicKey(), hot.Public().PublicKey()),
+	)
+	assert.False(
+		t,
+		bytes.Equal(drep.Public().PublicKey(), hot.Public().PublicKey()),
+	)
 }
 
 // --- VRF keys ------------------------------------------------------------
@@ -301,7 +310,11 @@ func TestVRFDerivation(t *testing.T) {
 	skey, err := GetVRFSKey(sec)
 	require.NoError(t, err)
 	assert.Equal(t, "VrfSigningKey_PraosVRF", skey.Type)
-	assert.Equal(t, append(append([]byte(nil), sec...), pub...), decodeCborBytes(t, skey.CborHex))
+	assert.Equal(
+		t,
+		append(append([]byte(nil), sec...), pub...),
+		decodeCborBytes(t, skey.CborHex),
+	)
 }
 
 func TestVRFSeedInvalidIndex(t *testing.T) {
@@ -585,11 +598,13 @@ func TestCreatePoolRegistrationCertificateRejectsInvalidMargin(t *testing.T) {
 		{name: "numerator exceeds denominator", num: 101, den: 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := CreatePoolRegistrationCertificate(&PoolRegistrationCertificate{
-				MarginNum:     tc.num,
-				MarginDenom:   tc.den,
-				RewardAccount: make([]byte, 29),
-			})
+			_, err := CreatePoolRegistrationCertificate(
+				&PoolRegistrationCertificate{
+					MarginNum:     tc.num,
+					MarginDenom:   tc.den,
+					RewardAccount: make([]byte, 29),
+				},
+			)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "margin")
 		})
@@ -598,17 +613,27 @@ func TestCreatePoolRegistrationCertificateRejectsInvalidMargin(t *testing.T) {
 
 func TestCreatePoolCertificatesRejectNil(t *testing.T) {
 	err, panicked := callPoolRegistration(nil)
-	assert.False(t, panicked, "registration builder must return an error, not panic")
+	assert.False(
+		t,
+		panicked,
+		"registration builder must return an error, not panic",
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "certificate")
 
 	err, panicked = callPoolRetirement(nil)
-	assert.False(t, panicked, "retirement builder must return an error, not panic")
+	assert.False(
+		t,
+		panicked,
+		"retirement builder must return an error, not panic",
+	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parameters")
 }
 
-func callPoolRegistration(cert *PoolRegistrationCertificate) (err error, panicked bool) {
+func callPoolRegistration(
+	cert *PoolRegistrationCertificate,
+) (err error, panicked bool) {
 	defer func() {
 		if recover() != nil {
 			panicked = true
@@ -618,7 +643,9 @@ func callPoolRegistration(cert *PoolRegistrationCertificate) (err error, panicke
 	return err, false
 }
 
-func callPoolRetirement(params *PoolRetirementCertificateParams) (err error, panicked bool) {
+func callPoolRetirement(
+	params *PoolRetirementCertificateParams,
+) (err error, panicked bool) {
 	defer func() {
 		if recover() != nil {
 			panicked = true
@@ -660,7 +687,11 @@ func TestCreatePoolRetirementCertificate(t *testing.T) {
 	// Retirement CBOR is deterministic.
 	cborBytes2, err := CreatePoolRetirementCertificate(params)
 	require.NoError(t, err)
-	assert.Equal(t, hex.EncodeToString(cborBytes), hex.EncodeToString(cborBytes2))
+	assert.Equal(
+		t,
+		hex.EncodeToString(cborBytes),
+		hex.EncodeToString(cborBytes2),
+	)
 }
 
 // --- Address building ----------------------------------------------------

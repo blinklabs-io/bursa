@@ -55,7 +55,11 @@ func SplitLaunchURL(launchURL string) (base, token string) {
 
 // fetchNodeStatus polls GET /status on the control surface, presenting the
 // session capability the endpoint requires.
-func fetchNodeStatus(ctx context.Context, client *http.Client, baseURL, token string) (nodeStatus, error) {
+func fetchNodeStatus(
+	ctx context.Context,
+	client *http.Client,
+	baseURL, token string,
+) (nodeStatus, error) {
 	var st nodeStatus
 	// The launch URL's base ends in "/"; joining it verbatim would request
 	// //status and cost a mux redirect on every poll.
@@ -73,7 +77,10 @@ func fetchNodeStatus(ctx context.Context, client *http.Client, baseURL, token st
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return st, fmt.Errorf("status poll: unexpected status %d", resp.StatusCode)
+		return st, fmt.Errorf(
+			"status poll: unexpected status %d",
+			resp.StatusCode,
+		)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
 		return st, err

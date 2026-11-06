@@ -50,7 +50,11 @@ func (s *signer) rawPublicKey(w http.ResponseWriter, _ *http.Request) {
 	pub, err := device.RawPublicKey(s.se)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("read public key: %v", err), http.StatusInternalServerError)
+		http.Error(
+			w,
+			fmt.Sprintf("read public key: %v", err),
+			http.StatusInternalServerError,
+		)
 		return
 	}
 
@@ -92,7 +96,11 @@ func (s *signer) sign(w http.ResponseWriter, r *http.Request) {
 	sig, err := device.SignRaw(s.se, msg)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("sign: %v", err), http.StatusInternalServerError)
+		http.Error(
+			w,
+			fmt.Sprintf("sign: %v", err),
+			http.StatusInternalServerError,
+		)
 		return
 	}
 

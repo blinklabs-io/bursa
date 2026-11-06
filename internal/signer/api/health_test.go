@@ -31,14 +31,18 @@ func do(t *testing.T, h http.Handler, path string) int {
 
 func TestHealthHandler_LivenessAlwaysOK(t *testing.T) {
 	// Liveness is static 200 even when the readiness dependency is failing.
-	h := HealthHandler(func(context.Context) error { return errors.New("down") })
+	h := HealthHandler(
+		func(context.Context) error { return errors.New("down") },
+	)
 	if code := do(t, h, "/healthz"); code != http.StatusOK {
 		t.Fatalf("/healthz: got %d, want 200", code)
 	}
 }
 
 func TestHealthHandler_ReadyzUnavailableWhenStorePingFails(t *testing.T) {
-	h := HealthHandler(func(context.Context) error { return errors.New("watermark store unreachable") })
+	h := HealthHandler(
+		func(context.Context) error { return errors.New("watermark store unreachable") },
+	)
 	if code := do(t, h, "/readyz"); code != http.StatusServiceUnavailable {
 		t.Fatalf("/readyz with failing store: got %d, want 503", code)
 	}

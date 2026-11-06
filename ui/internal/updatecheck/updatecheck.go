@@ -43,11 +43,19 @@ type Release struct {
 // Check returns the latest stable release and whether it is newer than the
 // supplied version. A development build (see DevelopmentBuild) never reports
 // an update.
-func Check(ctx context.Context, client *http.Client, currentVersion string) (Release, bool, error) {
+func Check(
+	ctx context.Context,
+	client *http.Client,
+	currentVersion string,
+) (Release, bool, error) {
 	return checkAt(ctx, client, currentVersion, latestReleaseURL)
 }
 
-func checkAt(ctx context.Context, client *http.Client, currentVersion, endpoint string) (Release, bool, error) {
+func checkAt(
+	ctx context.Context,
+	client *http.Client,
+	currentVersion, endpoint string,
+) (Release, bool, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -63,7 +71,10 @@ func checkAt(ctx context.Context, client *http.Client, currentVersion, endpoint 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return Release{}, false, fmt.Errorf("release check returned HTTP %d", resp.StatusCode)
+		return Release{}, false, fmt.Errorf(
+			"release check returned HTTP %d",
+			resp.StatusCode,
+		)
 	}
 	var release Release
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&release); err != nil {
@@ -73,7 +84,9 @@ func checkAt(ctx context.Context, client *http.Client, currentVersion, endpoint 
 		return Release{}, false, fmt.Errorf("invalid release tag: %w", err)
 	}
 	if !validReleaseURL(release.HTMLURL, release.TagName) {
-		return Release{}, false, errors.New("release response contains an unsafe URL")
+		return Release{}, false, errors.New(
+			"release response contains an unsafe URL",
+		)
 	}
 	if DevelopmentBuild(currentVersion) {
 		return release, false, nil
@@ -95,7 +108,9 @@ func validReleaseURL(raw, tag string) bool {
 // gitDescribeSuffix matches what `git describe --tags --always --dirty` appends
 // to a tag when the build is not exactly that tag: "-<commits>-g<hash>", an
 // optional "-dirty", or both.
-var gitDescribeSuffix = regexp.MustCompile(`(^|-)(\d+-g[0-9a-f]+(-dirty)?|dirty)$`)
+var gitDescribeSuffix = regexp.MustCompile(
+	`(^|-)(\d+-g[0-9a-f]+(-dirty)?|dirty)$`,
+)
 
 // DevelopmentBuild reports whether currentVersion identifies a build that is
 // not a release: empty, not a vMAJOR.MINOR.PATCH version, or a release tag
@@ -140,7 +155,12 @@ func parseVersion(raw string) (version, error) {
 		}
 		values[i] = value
 	}
-	return version{major: values[0], minor: values[1], patch: values[2], pre: pre}, nil
+	return version{
+		major: values[0],
+		minor: values[1],
+		patch: values[2],
+		pre:   pre,
+	}, nil
 }
 
 func (v version) compare(other version) int {

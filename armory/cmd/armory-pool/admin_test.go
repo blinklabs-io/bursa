@@ -45,10 +45,12 @@ func adminServer(t *testing.T) *httptest.Server {
 	mux.Handle("/", svc.Handler())
 
 	// the device answers only to its own address, not the loopback one
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = device.Address
-		mux.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Host = device.Address
+			mux.ServeHTTP(w, r)
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	return srv
@@ -57,7 +59,11 @@ func adminServer(t *testing.T) *httptest.Server {
 func adminRun(srv *httptest.Server, in string, args ...string) (string, error) {
 	var out bytes.Buffer
 
-	err := runIO(append([]string{"-signer", srv.URL, "-source", ""}, args...), strings.NewReader(in), &out)
+	err := runIO(
+		append([]string{"-signer", srv.URL, "-source", ""}, args...),
+		strings.NewReader(in),
+		&out,
+	)
 
 	return out.String(), err
 }
@@ -91,7 +97,8 @@ func TestProvisionAndWipeSubcommandsSign(t *testing.T) {
 	}
 
 	var id device.IdentityResponse
-	if err = json.Unmarshal([]byte(out), &id); err != nil || len(id.PublicKey) != ed25519.PublicKeySize {
+	if err = json.Unmarshal([]byte(out), &id); err != nil ||
+		len(id.PublicKey) != ed25519.PublicKeySize {
 		t.Fatalf("identity answer %q: %v", out, err)
 	}
 
@@ -131,7 +138,13 @@ func TestAdminRequestChecksRouteFirst(t *testing.T) {
 
 	var out bytes.Buffer
 
-	err := adminRequest(&client{}, "/provision/nonsense", "", failReader{t}, &out)
+	err := adminRequest(
+		&client{},
+		"/provision/nonsense",
+		"",
+		failReader{t},
+		&out,
+	)
 	if err == nil || !strings.Contains(err.Error(), "unknown route") {
 		t.Fatalf("err = %v", err)
 	}

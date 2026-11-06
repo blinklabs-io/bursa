@@ -25,7 +25,10 @@ const validDRepID = "drep1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5z5tpwxqergd3cpvc53e"
 
 // defaultParams is the deposit set used across plan() tests: 2 ₳ key deposit,
 // 500 ₳ DRep deposit (matching mainnet/preview Conway values).
-var defaultParams = ProtocolParams{KeyDeposit: 2_000_000, DRepDeposit: 500_000_000}
+var defaultParams = ProtocolParams{
+	KeyDeposit:  2_000_000,
+	DRepDeposit: 500_000_000,
+}
 
 // kinds extracts the cert kinds from a plan result for concise assertions.
 func kinds(certs []Cert) []CertKind {
@@ -87,20 +90,38 @@ func TestPlanStateMatrix(t *testing.T) {
 		{
 			name:    "fresh wallet, pool + abstain → register + delegate + vote",
 			current: AccountState{Registered: false},
-			req:     DelegationRequest{PoolID: pool, Vote: &Vote{Type: VoteAbstain}},
-			want:    []CertKind{CertStakeRegistration, CertStakeDelegation, CertVoteDelegation},
+			req: DelegationRequest{
+				PoolID: pool,
+				Vote:   &Vote{Type: VoteAbstain},
+			},
+			want: []CertKind{
+				CertStakeRegistration,
+				CertStakeDelegation,
+				CertVoteDelegation,
+			},
 		},
 		{
 			name:    "fresh wallet, register self → register + drep-reg + vote",
 			current: withOwnDRep(AccountState{Registered: false}),
-			req:     DelegationRequest{PoolID: pool, Vote: &Vote{Type: VoteRegisterSelf}},
-			want:    []CertKind{CertStakeRegistration, CertStakeDelegation, CertDRepRegistration, CertVoteDelegation},
+			req: DelegationRequest{
+				PoolID: pool,
+				Vote:   &Vote{Type: VoteRegisterSelf},
+			},
+			want: []CertKind{
+				CertStakeRegistration,
+				CertStakeDelegation,
+				CertDRepRegistration,
+				CertVoteDelegation,
+			},
 		},
 		{
-			name:    "already registered, pool change → delegate only",
-			current: AccountState{Registered: true, CurrentPool: strptr(otherPool)},
-			req:     DelegationRequest{PoolID: pool},
-			want:    []CertKind{CertStakeDelegation},
+			name: "already registered, pool change → delegate only",
+			current: AccountState{
+				Registered:  true,
+				CurrentPool: strptr(otherPool),
+			},
+			req:  DelegationRequest{PoolID: pool},
+			want: []CertKind{CertStakeDelegation},
 		},
 		{
 			name:    "already registered, same pool → no-op",
@@ -129,31 +150,46 @@ func TestPlanStateMatrix(t *testing.T) {
 		{
 			name:    "registered, specific drep vote → vote only",
 			current: AccountState{Registered: true},
-			req:     DelegationRequest{Vote: &Vote{Type: VoteDRep, DRepID: validDRepID}},
-			want:    []CertKind{CertVoteDelegation},
+			req: DelegationRequest{
+				Vote: &Vote{Type: VoteDRep, DRepID: validDRepID},
+			},
+			want: []CertKind{CertVoteDelegation},
 		},
 		{
-			name:    "registered, register self → drep-reg + vote",
-			current: withOwnDRep(AccountState{Registered: true, CurrentPool: strptr(pool)}),
-			req:     DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}},
-			want:    []CertKind{CertDRepRegistration, CertVoteDelegation},
+			name: "registered, register self → drep-reg + vote",
+			current: withOwnDRep(
+				AccountState{Registered: true, CurrentPool: strptr(pool)},
+			),
+			req:  DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}},
+			want: []CertKind{CertDRepRegistration, CertVoteDelegation},
 		},
 		{
-			name:    "registered, same abstain vote → no-op",
-			current: AccountState{Registered: true, CurrentDRep: &lcommon.Drep{Type: lcommon.DrepTypeAbstain}},
+			name: "registered, same abstain vote → no-op",
+			current: AccountState{
+				Registered:  true,
+				CurrentDRep: &lcommon.Drep{Type: lcommon.DrepTypeAbstain},
+			},
 			req:     DelegationRequest{Vote: &Vote{Type: VoteAbstain}},
 			wantErr: ErrNoChange,
 		},
 		{
-			name:    "registered, same no-confidence vote → no-op",
-			current: AccountState{Registered: true, CurrentDRep: &lcommon.Drep{Type: lcommon.DrepTypeNoConfidence}},
+			name: "registered, same no-confidence vote → no-op",
+			current: AccountState{
+				Registered:  true,
+				CurrentDRep: &lcommon.Drep{Type: lcommon.DrepTypeNoConfidence},
+			},
 			req:     DelegationRequest{Vote: &Vote{Type: VoteNoConfidence}},
 			wantErr: ErrNoChange,
 		},
 		{
-			name:    "registered, same specific drep vote → no-op",
-			current: AccountState{Registered: true, CurrentDRep: drepPtr(t, validDRepID)},
-			req:     DelegationRequest{Vote: &Vote{Type: VoteDRep, DRepID: validDRepID}},
+			name: "registered, same specific drep vote → no-op",
+			current: AccountState{
+				Registered:  true,
+				CurrentDRep: drepPtr(t, validDRepID),
+			},
+			req: DelegationRequest{
+				Vote: &Vote{Type: VoteDRep, DRepID: validDRepID},
+			},
 			wantErr: ErrNoChange,
 		},
 		{
@@ -179,32 +215,51 @@ func TestPlanStateMatrix(t *testing.T) {
 		{
 			name:    "register self with anchor url only → error",
 			current: withOwnDRep(AccountState{Registered: true}),
-			req:     DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf, Anchor: &Anchor{URL: "https://example.com/drep.jsonld"}}},
+			req: DelegationRequest{
+				Vote: &Vote{
+					Type:   VoteRegisterSelf,
+					Anchor: &Anchor{URL: "https://example.com/drep.jsonld"},
+				},
+			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
 			name:    "register self with anchor hash only → error",
 			current: withOwnDRep(AccountState{Registered: true}),
-			req:     DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf, Anchor: &Anchor{Hash: strings.Repeat("ab", 32)}}},
+			req: DelegationRequest{
+				Vote: &Vote{
+					Type:   VoteRegisterSelf,
+					Anchor: &Anchor{Hash: strings.Repeat("ab", 32)},
+				},
+			},
 			wantErr: ErrInvalidRequest,
 		},
 		{
-			name:         "registered, withdraw only → withdrawal",
-			current:      AccountState{Registered: true, CurrentPool: strptr(pool)},
+			name: "registered, withdraw only → withdrawal",
+			current: AccountState{
+				Registered:  true,
+				CurrentPool: strptr(pool),
+			},
 			req:          DelegationRequest{Withdraw: true},
 			withdrawable: "5000000",
 			want:         []CertKind{CertWithdrawal},
 		},
 		{
-			name:         "pool change + withdraw → delegate + withdrawal",
-			current:      AccountState{Registered: true, CurrentPool: strptr(otherPool)},
+			name: "pool change + withdraw → delegate + withdrawal",
+			current: AccountState{
+				Registered:  true,
+				CurrentPool: strptr(otherPool),
+			},
 			req:          DelegationRequest{PoolID: pool, Withdraw: true},
 			withdrawable: "5000000",
 			want:         []CertKind{CertStakeDelegation, CertWithdrawal},
 		},
 		{
-			name:         "withdraw with zero rewards → error",
-			current:      AccountState{Registered: true, CurrentPool: strptr(pool)},
+			name: "withdraw with zero rewards → error",
+			current: AccountState{
+				Registered:  true,
+				CurrentPool: strptr(pool),
+			},
 			req:          DelegationRequest{Withdraw: true},
 			withdrawable: "0",
 			wantErr:      ErrInvalidRequest,
@@ -225,7 +280,12 @@ func TestPlanStateMatrix(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			certs, err := plan(tc.current, tc.req, defaultParams, tc.withdrawable)
+			certs, err := plan(
+				tc.current,
+				tc.req,
+				defaultParams,
+				tc.withdrawable,
+			)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("plan err = %v, want %v", err, tc.wantErr)
@@ -248,8 +308,12 @@ func TestPlanDepositMath(t *testing.T) {
 	// each distinctly itemized.
 	certs, err := plan(
 		withOwnDRep(AccountState{Registered: false}),
-		DelegationRequest{PoolID: "pool1abc", Vote: &Vote{Type: VoteRegisterSelf}},
-		defaultParams, "0",
+		DelegationRequest{
+			PoolID: "pool1abc",
+			Vote:   &Vote{Type: VoteRegisterSelf},
+		},
+		defaultParams,
+		"0",
 	)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -284,7 +348,10 @@ func TestPlanWithdrawalAmount(t *testing.T) {
 		t.Fatalf("unexpected certs: %+v", certs)
 	}
 	if certs[0].AmountLovelace != "7500000" {
-		t.Fatalf("withdrawal amount = %q, want 7500000", certs[0].AmountLovelace)
+		t.Fatalf(
+			"withdrawal amount = %q, want 7500000",
+			certs[0].AmountLovelace,
+		)
 	}
 }
 
@@ -307,28 +374,42 @@ type fakeQuerier struct {
 	gotDRepID         string
 }
 
-func (f *fakeQuerier) Account(_ context.Context, _ string) (chain.AccountInfo, error) {
+func (f *fakeQuerier) Account(
+	_ context.Context,
+	_ string,
+) (chain.AccountInfo, error) {
 	return f.account, f.accountErr
 }
 
-func (f *fakeQuerier) AccountDRepID(_ context.Context, _ string) (*string, error) {
+func (f *fakeQuerier) AccountDRepID(
+	_ context.Context,
+	_ string,
+) (*string, error) {
 	f.accountDRepIDUsed = true
 	return f.accountDRepID, f.accountDRepIDErr
 }
 
-func (f *fakeQuerier) Pool(_ context.Context, id string) (chain.PoolInfo, error) {
+func (f *fakeQuerier) Pool(
+	_ context.Context,
+	id string,
+) (chain.PoolInfo, error) {
 	f.poolCalled = true
 	f.gotPoolID = id
 	return f.pool, f.poolErr
 }
 
-func (f *fakeQuerier) DRep(_ context.Context, id string) (chain.DRepInfo, error) {
+func (f *fakeQuerier) DRep(
+	_ context.Context,
+	id string,
+) (chain.DRepInfo, error) {
 	f.drepCalled = true
 	f.gotDRepID = id
 	return f.drep, f.drepErr
 }
 
-func (f *fakeQuerier) ProtocolParams(_ context.Context) (chain.ProtocolParams, error) {
+func (f *fakeQuerier) ProtocolParams(
+	_ context.Context,
+) (chain.ProtocolParams, error) {
 	return f.params, f.paramsErr
 }
 
@@ -338,7 +419,11 @@ func newFakeQuerier() *fakeQuerier {
 		account: chain.AccountInfo{Active: false, WithdrawableAmount: "0"},
 		pool:    chain.PoolInfo{PoolID: "pool1abc"},
 		drep:    chain.DRepInfo{DRepID: "drep1abc", Retired: false},
-		params:  chain.ProtocolParams{KeyDeposit: "2000000", PoolDeposit: "500000000", DRepDeposit: &dd},
+		params: chain.ProtocolParams{
+			KeyDeposit:  "2000000",
+			PoolDeposit: "500000000",
+			DRepDeposit: &dd,
+		},
 	}
 }
 
@@ -351,7 +436,11 @@ func drepKeyHashForAccount(t *testing.T, acct *wallet.Account) string {
 	return hex.EncodeToString(drep.Credential)
 }
 
-func exportedRequiredSignerSet(t *testing.T, s *Service, pendingID string) map[string]bool {
+func exportedRequiredSignerSet(
+	t *testing.T,
+	s *Service,
+	pendingID string,
+) map[string]bool {
 	t.Helper()
 	unsigned, err := s.ExportUnsigned(pendingID)
 	if err != nil {
@@ -366,7 +455,11 @@ func exportedRequiredSignerSet(t *testing.T, s *Service, pendingID string) map[s
 	body := keyHashesHex(p.tx.GetTx().Body.RequiredSigners())
 	s.mu.Unlock()
 	if !equalStringSets(body, unsigned.RequiredSigners) {
-		t.Fatalf("body required signers %v do not match sidecar %v", body, unsigned.RequiredSigners)
+		t.Fatalf(
+			"body required signers %v do not match sidecar %v",
+			body,
+			unsigned.RequiredSigners,
+		)
 	}
 	ret := make(map[string]bool, len(body))
 	for _, signer := range body {
@@ -398,7 +491,10 @@ func TestBuildDelegationNoWallet(t *testing.T) {
 	fc := newFakeChain(5_000_000, mustDeriveTestAccount(t).ReceiveAddresses[0])
 	s := NewService(fc, nil, nil)
 	s.SetChainQuerier(newFakeQuerier())
-	_, err := s.BuildDelegation(context.Background(), DelegationRequest{PoolID: "pool1abc"})
+	_, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{PoolID: "pool1abc"},
+	)
 	if !errors.Is(err, ErrNoWallet) {
 		t.Fatalf("BuildDelegation without wallet = %v, want ErrNoWallet", err)
 	}
@@ -412,9 +508,15 @@ func TestBuildDelegationPoolNotFound(t *testing.T) {
 	q.poolErr = chain.ErrNotFound
 	s.SetChainQuerier(q)
 
-	_, err := s.BuildDelegation(context.Background(), DelegationRequest{PoolID: "pool1missing"})
+	_, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{PoolID: "pool1missing"},
+	)
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("BuildDelegation unknown pool = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"BuildDelegation unknown pool = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if !strings.Contains(err.Error(), "not found by your node") {
 		t.Fatalf("error should mention node not-found: %v", err)
@@ -430,9 +532,15 @@ func TestBuildDelegationDRepNotFound(t *testing.T) {
 	q.drepErr = chain.ErrNotFound
 	s.SetChainQuerier(q)
 
-	_, err := s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteDRep, DRepID: "drep1missing"}})
+	_, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{Vote: &Vote{Type: VoteDRep, DRepID: "drep1missing"}},
+	)
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("BuildDelegation unknown drep = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"BuildDelegation unknown drep = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if !strings.Contains(err.Error(), "not found by your node") {
 		t.Fatalf("error should mention node not-found: %v", err)
@@ -445,10 +553,18 @@ func TestBuildDelegationNoChange(t *testing.T) {
 	s := NewService(fc, nil, acct)
 	q := newFakeQuerier()
 	// Already delegated to the requested pool → no certs.
-	q.account = chain.AccountInfo{Registered: true, Active: true, PoolID: strptr("pool1abc"), WithdrawableAmount: "0"}
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		PoolID:             strptr("pool1abc"),
+		WithdrawableAmount: "0",
+	}
 	s.SetChainQuerier(q)
 
-	_, err := s.BuildDelegation(context.Background(), DelegationRequest{PoolID: "pool1abc"})
+	_, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{PoolID: "pool1abc"},
+	)
 	if !errors.Is(err, ErrNoChange) {
 		t.Fatalf("BuildDelegation no change = %v, want ErrNoChange", err)
 	}
@@ -459,16 +575,25 @@ func TestBuildDelegationVoteNoChange(t *testing.T) {
 	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
 	q := newFakeQuerier()
-	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		WithdrawableAmount: "0",
+	}
 	q.accountDRepID = strptr("drep_abstain")
 	s.SetChainQuerier(q)
 
-	_, err := s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteAbstain}})
+	_, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{Vote: &Vote{Type: VoteAbstain}},
+	)
 	if !errors.Is(err, ErrNoChange) {
 		t.Fatalf("BuildDelegation same vote = %v, want ErrNoChange", err)
 	}
 	if !q.accountDRepIDUsed {
-		t.Fatal("AccountDRepID was not used for account response without drep_id")
+		t.Fatal(
+			"AccountDRepID was not used for account response without drep_id",
+		)
 	}
 }
 
@@ -481,17 +606,28 @@ func TestBuildDelegationRegisterSelfNoChange(t *testing.T) {
 	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
 	q := newFakeQuerier()
-	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		WithdrawableAmount: "0",
+	}
 	q.accountDRepID = strptr(own.String())
 	q.drep = chain.DRepInfo{DRepID: own.String(), Retired: false}
 	s.SetChainQuerier(q)
 
-	_, err = s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}})
+	_, err = s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}},
+	)
 	if !errors.Is(err, ErrNoChange) {
 		t.Fatalf("BuildDelegation same self vote = %v, want ErrNoChange", err)
 	}
 	if !q.drepCalled || q.gotDRepID != own.String() {
-		t.Fatalf("own drep registration not checked: called=%v id=%q", q.drepCalled, q.gotDRepID)
+		t.Fatalf(
+			"own drep registration not checked: called=%v id=%q",
+			q.drepCalled,
+			q.gotDRepID,
+		)
 	}
 }
 
@@ -504,16 +640,26 @@ func TestBuildDelegationRegisterSelfAlreadyRegisteredVoteOnly(t *testing.T) {
 	fc := newFakeChain(5_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
 	q := newFakeQuerier()
-	q.account = chain.AccountInfo{Registered: true, Active: true, WithdrawableAmount: "0"}
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		WithdrawableAmount: "0",
+	}
 	q.accountDRepID = strptr("drep_abstain")
 	q.drep = chain.DRepInfo{DRepID: own.String(), Retired: false}
 	s.SetChainQuerier(q)
 
-	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}})
+	pv, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{Vote: &Vote{Type: VoteRegisterSelf}},
+	)
 	if err != nil {
 		t.Fatalf("BuildDelegation register self already registered: %v", err)
 	}
-	if got, want := kinds(pv.Certs), []CertKind{CertVoteDelegation}; !equalKinds(got, want) {
+	if got, want := kinds(pv.Certs), []CertKind{CertVoteDelegation}; !equalKinds(
+		got,
+		want,
+	) {
 		t.Fatalf("cert kinds = %v, want %v", got, want)
 	}
 	if pv.Deposit != "0" {
@@ -531,17 +677,25 @@ func TestBuildDelegationFreshWalletPreview(t *testing.T) {
 	q := newFakeQuerier()
 	s.SetChainQuerier(q)
 
-	pv, err := s.BuildDelegation(context.Background(), DelegationRequest{PoolID: validPoolID})
+	pv, err := s.BuildDelegation(
+		context.Background(),
+		DelegationRequest{PoolID: validPoolID},
+	)
 	if err != nil {
 		t.Fatalf("BuildDelegation: %v", err)
 	}
 	if !q.poolCalled || q.gotPoolID != validPoolID {
-		t.Fatalf("pool not verified: called=%v id=%q", q.poolCalled, q.gotPoolID)
+		t.Fatalf(
+			"pool not verified: called=%v id=%q",
+			q.poolCalled,
+			q.gotPoolID,
+		)
 	}
 	if pv.PendingID == "" {
 		t.Fatal("expected non-empty pending id")
 	}
-	if len(pv.Certs) != 2 || pv.Certs[0].Kind != CertStakeRegistration || pv.Certs[1].Kind != CertStakeDelegation {
+	if len(pv.Certs) != 2 || pv.Certs[0].Kind != CertStakeRegistration ||
+		pv.Certs[1].Kind != CertStakeDelegation {
 		t.Fatalf("unexpected certs: %+v", pv.Certs)
 	}
 	if pv.Deposit != "2000000" {
@@ -554,7 +708,12 @@ func TestBuildDelegationFreshWalletPreview(t *testing.T) {
 	payment := paymentKeyHashForAddress(t, acct.ReceiveAddresses[0])
 	stake := stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])
 	if !signers[payment] || !signers[stake] || len(signers) != 2 {
-		t.Fatalf("required signers = %v, want payment %s and stake %s", signers, payment, stake)
+		t.Fatalf(
+			"required signers = %v, want payment %s and stake %s",
+			signers,
+			payment,
+			stake,
+		)
 	}
 }
 
@@ -569,12 +728,18 @@ func TestBuildDelegationConfirmSignsAndSubmits(t *testing.T) {
 	s.SetChainQuerier(q)
 
 	ctx := context.Background()
-	pv, err := s.BuildDelegation(ctx, DelegationRequest{PoolID: validPoolID, Vote: &Vote{Type: VoteAbstain}})
+	pv, err := s.BuildDelegation(
+		ctx,
+		DelegationRequest{PoolID: validPoolID, Vote: &Vote{Type: VoteAbstain}},
+	)
 	if err != nil {
 		t.Fatalf("BuildDelegation: %v", err)
 	}
 	if len(pv.Certs) != 3 {
-		t.Fatalf("expected 3 certs (register, delegate, vote), got %+v", pv.Certs)
+		t.Fatalf(
+			"expected 3 certs (register, delegate, vote), got %+v",
+			pv.Certs,
+		)
 	}
 
 	res, err := s.Confirm(ctx, pv.PendingID, "pw")
@@ -599,7 +764,12 @@ func TestBuildDelegationRegisterSelfPreview(t *testing.T) {
 	fc := newFakeChain(600_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
 	q := newFakeQuerier()
-	q.account = chain.AccountInfo{Registered: true, Active: true, PoolID: strptr("pool1abc"), WithdrawableAmount: "0"}
+	q.account = chain.AccountInfo{
+		Registered:         true,
+		Active:             true,
+		PoolID:             strptr("pool1abc"),
+		WithdrawableAmount: "0",
+	}
 	q.drepErr = chain.ErrNotFound
 	s.SetChainQuerier(q)
 
@@ -622,7 +792,10 @@ func TestBuildDelegationRegisterSelfPreview(t *testing.T) {
 		}
 	}
 	if keyDep != "" {
-		t.Fatalf("already-registered wallet should not re-register stake (deposit %q)", keyDep)
+		t.Fatalf(
+			"already-registered wallet should not re-register stake (deposit %q)",
+			keyDep,
+		)
 	}
 	if drepDep != "500000000" {
 		t.Fatalf("drep deposit = %q, want 500000000", drepDep)
@@ -634,12 +807,21 @@ func TestBuildDelegationRegisterSelfPreview(t *testing.T) {
 	payment := paymentKeyHashForAddress(t, acct.ReceiveAddresses[0])
 	stake := stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])
 	drep := drepKeyHashForAccount(t, acct)
-	if !signers[payment] || !signers[stake] || !signers[drep] || len(signers) != 3 {
-		t.Fatalf("required signers = %v, want payment %s, stake %s, drep %s", signers, payment, stake, drep)
+	if !signers[payment] || !signers[stake] || !signers[drep] ||
+		len(signers) != 3 {
+		t.Fatalf(
+			"required signers = %v, want payment %s, stake %s, drep %s",
+			signers,
+			payment,
+			stake,
+			drep,
+		)
 	}
 }
 
-func TestBuildDelegationRegisterSelfOnlyDoesNotRequireStakeSigner(t *testing.T) {
+func TestBuildDelegationRegisterSelfOnlyDoesNotRequireStakeSigner(
+	t *testing.T,
+) {
 	acct := mustDeriveConfirmAccount(t)
 	fc := newFakeChain(600_000_000, acct.ReceiveAddresses[0])
 	s := NewService(fc, nil, acct)
@@ -669,8 +851,14 @@ func TestBuildDelegationRegisterSelfOnlyDoesNotRequireStakeSigner(t *testing.T) 
 	payment := paymentKeyHashForAddress(t, acct.ReceiveAddresses[0])
 	stake := stakeKeyHashForAddress(t, acct.ReceiveAddresses[0])
 	drep := drepKeyHashForAccount(t, acct)
-	if !signers[payment] || !signers[drep] || signers[stake] || len(signers) != 2 {
-		t.Fatalf("required signers = %v, want payment %s and drep %s only", signers, payment, drep)
+	if !signers[payment] || !signers[drep] || signers[stake] ||
+		len(signers) != 2 {
+		t.Fatalf(
+			"required signers = %v, want payment %s and drep %s only",
+			signers,
+			payment,
+			drep,
+		)
 	}
 }
 
@@ -686,7 +874,10 @@ func TestDecodeDRepID(t *testing.T) {
 	if len(hash) != 28 {
 		t.Fatalf("hash len = %d, want 28", len(hash))
 	}
-	if _, _, err := decodeDRepID("notbech32"); !errors.Is(err, ErrInvalidRequest) {
+	if _, _, err := decodeDRepID("notbech32"); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Fatalf("invalid bech32 should error, got %v", err)
 	}
 	if _, _, err := decodeDRepID(validPoolID); err == nil {
@@ -715,18 +906,34 @@ func TestDecodeDRepIDChecksCIP129VoterType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeDRepID(0x22 key-hash id): %v", err)
 	}
-	if typ != lcommon.DrepTypeAddrKeyHash || !bytes.Equal(hash, bytes.Repeat([]byte{0xa1}, 28)) {
-		t.Fatalf("0x22 id = type %d hash %x, want key hash of 0xa1 * 28", typ, hash)
+	if typ != lcommon.DrepTypeAddrKeyHash ||
+		!bytes.Equal(hash, bytes.Repeat([]byte{0xa1}, 28)) {
+		t.Fatalf(
+			"0x22 id = type %d hash %x, want key hash of 0xa1 * 28",
+			typ,
+			hash,
+		)
 	}
 	typ, hash, err = decodeDRepID(scriptHashID)
 	if err != nil {
 		t.Fatalf("decodeDRepID(0x23 script-hash id): %v", err)
 	}
-	if typ != lcommon.DrepTypeScriptHash || !bytes.Equal(hash, bytes.Repeat([]byte{0xb2}, 28)) {
-		t.Fatalf("0x23 id = type %d hash %x, want script hash of 0xb2 * 28", typ, hash)
+	if typ != lcommon.DrepTypeScriptHash ||
+		!bytes.Equal(hash, bytes.Repeat([]byte{0xb2}, 28)) {
+		t.Fatalf(
+			"0x23 id = type %d hash %x, want script hash of 0xb2 * 28",
+			typ,
+			hash,
+		)
 	}
-	if _, _, err := decodeDRepID(wrongVoterID); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("0x33 header must be rejected as an invalid DRep voter type, got err %v", err)
+	if _, _, err := decodeDRepID(wrongVoterID); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
+		t.Fatalf(
+			"0x33 header must be rejected as an invalid DRep voter type, got err %v",
+			err,
+		)
 	}
 }
 
@@ -738,14 +945,48 @@ func TestParseDRepTargetNormalizesCurrentAccountFormats(t *testing.T) {
 		wantType int
 		wantHash string
 	}{
-		{name: "abstain", id: "drep_abstain", wantType: lcommon.DrepTypeAbstain},
-		{name: "legacy always abstain", id: "drep_always_abstain", wantType: lcommon.DrepTypeAbstain},
-		{name: "no confidence", id: "drep_no_confidence", wantType: lcommon.DrepTypeNoConfidence},
-		{name: "legacy always no confidence", id: "drep_always_no_confidence", wantType: lcommon.DrepTypeNoConfidence},
-		{name: "legacy drep bech32", id: validDRepID, wantType: lcommon.DrepTypeAddrKeyHash},
-		{name: "cip129 drep bech32", id: drepPtr(t, validDRepID).String(), wantType: lcommon.DrepTypeAddrKeyHash},
-		{name: "internal key hash", id: "drep-keyHash-" + keyHash, wantType: lcommon.DrepTypeAddrKeyHash, wantHash: keyHash},
-		{name: "raw key hash", id: keyHash, wantType: lcommon.DrepTypeAddrKeyHash, wantHash: keyHash},
+		{
+			name:     "abstain",
+			id:       "drep_abstain",
+			wantType: lcommon.DrepTypeAbstain,
+		},
+		{
+			name:     "legacy always abstain",
+			id:       "drep_always_abstain",
+			wantType: lcommon.DrepTypeAbstain,
+		},
+		{
+			name:     "no confidence",
+			id:       "drep_no_confidence",
+			wantType: lcommon.DrepTypeNoConfidence,
+		},
+		{
+			name:     "legacy always no confidence",
+			id:       "drep_always_no_confidence",
+			wantType: lcommon.DrepTypeNoConfidence,
+		},
+		{
+			name:     "legacy drep bech32",
+			id:       validDRepID,
+			wantType: lcommon.DrepTypeAddrKeyHash,
+		},
+		{
+			name:     "cip129 drep bech32",
+			id:       drepPtr(t, validDRepID).String(),
+			wantType: lcommon.DrepTypeAddrKeyHash,
+		},
+		{
+			name:     "internal key hash",
+			id:       "drep-keyHash-" + keyHash,
+			wantType: lcommon.DrepTypeAddrKeyHash,
+			wantHash: keyHash,
+		},
+		{
+			name:     "raw key hash",
+			id:       keyHash,
+			wantType: lcommon.DrepTypeAddrKeyHash,
+			wantHash: keyHash,
+		},
 	}
 
 	for _, tc := range cases {
@@ -757,7 +998,8 @@ func TestParseDRepTargetNormalizesCurrentAccountFormats(t *testing.T) {
 			if got.Type != tc.wantType {
 				t.Fatalf("type = %d, want %d", got.Type, tc.wantType)
 			}
-			if tc.wantHash != "" && hex.EncodeToString(got.Credential) != tc.wantHash {
+			if tc.wantHash != "" &&
+				hex.EncodeToString(got.Credential) != tc.wantHash {
 				t.Fatalf("hash = %x, want %s", got.Credential, tc.wantHash)
 			}
 		})

@@ -50,8 +50,13 @@ func TestHostKeyFile(t *testing.T) {
 	// the printed line is the /provision/host-key request body, as is
 	var req device.HostKeyRequest
 
-	if err := json.Unmarshal(out.Bytes(), &req); err != nil || !bytes.Equal(req.PublicKey, key.Public().(ed25519.PublicKey)) {
-		t.Fatalf("printed %q, not the host-key request for the public key: %v", out.String(), err)
+	if err := json.Unmarshal(out.Bytes(), &req); err != nil ||
+		!bytes.Equal(req.PublicKey, key.Public().(ed25519.PublicKey)) {
+		t.Fatalf(
+			"printed %q, not the host-key request for the public key: %v",
+			out.String(),
+			err,
+		)
 	}
 
 	if err := run([]string{"host-key", "-out", file}, &out); err == nil {
@@ -83,10 +88,19 @@ func TestHostKeyAuthenticatesSigning(t *testing.T) {
 	var keys device.HostKeyResponse
 
 	// the printed request registers the key unchanged
-	devicePost(t, r.srv, "/provision/host-key", json.RawMessage(out.Bytes()), &keys)
+	devicePost(
+		t,
+		r.srv,
+		"/provision/host-key",
+		json.RawMessage(out.Bytes()),
+		&keys,
+	)
 
 	if len(keys.HostKeys) != 1 {
-		t.Fatalf("host keys after registering the printed request: %d", len(keys.HostKeys))
+		t.Fatalf(
+			"host keys after registering the printed request: %d",
+			len(keys.HostKeys),
+		)
 	}
 
 	kesFile := filepath.Join(dir, "kes.vkey")
@@ -99,11 +113,25 @@ func TestHostKeyAuthenticatesSigning(t *testing.T) {
 			"-signer", r.srv.URL, "-source", "", "-identity", hex.EncodeToString(r.identity), "-profile", profile,
 		}, extra...)
 
-		return run(append(args, "opcert", "-kes-vkey", kesFile, "-kes-period", "7", "-chain-counter", "3",
-			"-out", filepath.Join(dir, "node.cert")), &bytes.Buffer{})
+		return run(
+			append(
+				args,
+				"opcert",
+				"-kes-vkey",
+				kesFile,
+				"-kes-period",
+				"7",
+				"-chain-counter",
+				"3",
+				"-out",
+				filepath.Join(dir, "node.cert"),
+			),
+			&bytes.Buffer{},
+		)
 	}
 
-	if err := opcert(); err == nil || !strings.Contains(err.Error(), "device refused") {
+	if err := opcert(); err == nil ||
+		!strings.Contains(err.Error(), "device refused") {
 		t.Fatalf("unauthenticated opcert: err = %v, want a refusal", err)
 	}
 

@@ -45,11 +45,23 @@ func printEntry(w io.Writer, e signlog.Entry) {
 
 func run(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("signlog-verify", flag.ContinueOnError)
-	identityHex := fs.String("identity", "", "device identity public key (hex), pinned")
+	identityHex := fs.String(
+		"identity",
+		"",
+		"device identity public key (hex), pinned",
+	)
 	image := fs.String("image", "", "raw card image or block device")
 	headSeq := fs.Int64("head-seq", -1, "expected number of the latest entry")
-	headHash := fs.String("head-hash", "", "expected hash of the latest entry (hex)")
-	allowTorn := fs.Bool("allow-torn-tail", false, "accept an incomplete final record")
+	headHash := fs.String(
+		"head-hash",
+		"",
+		"expected hash of the latest entry (hex)",
+	)
+	allowTorn := fs.Bool(
+		"allow-torn-tail",
+		false,
+		"accept an incomplete final record",
+	)
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -62,7 +74,9 @@ func run(args []string, stdout io.Writer) error {
 
 	identity, err := hex.DecodeString(*identityHex)
 	if err != nil || len(identity) != ed25519.PublicKeySize {
-		return errors.New("-identity must be the 32-byte identity public key in hex")
+		return errors.New(
+			"-identity must be the 32-byte identity public key in hex",
+		)
 	}
 
 	if *image == "" {
@@ -72,8 +86,12 @@ func run(args []string, stdout io.Writer) error {
 	var wantHash []byte
 
 	if *headSeq != -1 || *headHash != "" {
-		if wantHash, err = hex.DecodeString(*headHash); err != nil || len(wantHash) != signlog.HashSize || *headSeq < 0 {
-			return errors.New("-head-seq and a 32-byte hex -head-hash must be given together")
+		if wantHash, err = hex.DecodeString(*headHash); err != nil ||
+			len(wantHash) != signlog.HashSize ||
+			*headSeq < 0 {
+			return errors.New(
+				"-head-seq and a 32-byte hex -head-hash must be given together",
+			)
 		}
 	}
 
@@ -98,18 +116,34 @@ func run(args []string, stdout io.Writer) error {
 
 	head := log.Head()
 
-	if wantHash != nil && (head.Seq != uint64(*headSeq) || head.Hash != [signlog.HashSize]byte(wantHash)) { //nolint:gosec // headSeq is non-negative here
-		return fmt.Errorf("latest entry is %d %x, expected %d %x", head.Seq, head.Hash, *headSeq, wantHash)
+	if wantHash != nil &&
+		(head.Seq != uint64(*headSeq) || head.Hash != [signlog.HashSize]byte(wantHash)) { //nolint:gosec // headSeq is non-negative here
+		return fmt.Errorf(
+			"latest entry is %d %x, expected %d %x",
+			head.Seq,
+			head.Hash,
+			*headSeq,
+			wantHash,
+		)
 	}
 
 	for _, e := range log.Entries {
 		printEntry(stdout, e)
 	}
 
-	fmt.Fprintf(stdout, "ok: %d entries, head %d %x\n", len(log.Entries), head.Seq, head.Hash)
+	fmt.Fprintf(
+		stdout,
+		"ok: %d entries, head %d %x\n",
+		len(log.Entries),
+		head.Seq,
+		head.Hash,
+	)
 
 	if torn {
-		fmt.Fprintln(stdout, "warning: incomplete final record ignored (torn write)")
+		fmt.Fprintln(
+			stdout,
+			"warning: incomplete final record ignored (torn write)",
+		)
 	}
 
 	return nil

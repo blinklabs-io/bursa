@@ -99,7 +99,8 @@ func TestHostedIPFSDenylistMatchesRealModulePaths(t *testing.T) {
 // outbound surface lives entirely under cmd/ and internal/, so those roots are
 // the correct and complete scope for this boundary check.
 func TestNoExternalServiceImports(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "../../cmd/...", "../../internal/...").Output()
+	out, err := exec.Command("go", "list", "-deps", "../../cmd/...", "../../internal/...").
+		Output()
 	if err != nil {
 		t.Fatalf("go list -deps: %v", err)
 	}
@@ -108,12 +109,19 @@ func TestNoExternalServiceImports(t *testing.T) {
 	// large transitive closure, so a tiny count means go list returned nothing
 	// useful and the denylist below would vacuously pass.
 	if len(deps) < 50 {
-		t.Fatalf("dependency scan returned only %d entries; go list likely failed", len(deps))
+		t.Fatalf(
+			"dependency scan returned only %d entries; go list likely failed",
+			len(deps),
+		)
 	}
 	for _, imp := range deps {
 		for _, bad := range denylist {
 			if strings.Contains(imp, bad) {
-				t.Errorf("forbidden external-service import in closure: %q (matched %q)", imp, bad)
+				t.Errorf(
+					"forbidden external-service import in closure: %q (matched %q)",
+					imp,
+					bad,
+				)
 			}
 		}
 	}

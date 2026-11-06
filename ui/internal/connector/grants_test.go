@@ -32,10 +32,16 @@ func TestGrantStore(t *testing.T) {
 	if len(got) != 2 || got[0] != "https://a.io" || got[1] != "https://b.io" {
 		t.Fatalf("reload list = %v", got)
 	}
-	if g2.IsGranted("https://a.io", accountIdentity{WalletID: "wallet-a", AccountIndex: 1}) {
+	if g2.IsGranted(
+		"https://a.io",
+		accountIdentity{WalletID: "wallet-a", AccountIndex: 1},
+	) {
 		t.Fatal("account 0 grant must not authorize account 1")
 	}
-	if g2.IsGranted("https://a.io", accountIdentity{WalletID: "wallet-b", AccountIndex: 0}) {
+	if g2.IsGranted(
+		"https://a.io",
+		accountIdentity{WalletID: "wallet-b", AccountIndex: 0},
+	) {
 		t.Fatal("wallet-a grant must not authorize wallet-b")
 	}
 	if err := g2.Revoke("https://a.io", identity); err != nil {
@@ -94,7 +100,9 @@ func TestGrantStoreAcceptsExactHTTPOrigins(t *testing.T) {
 func TestGrantStoreIgnoresLegacyOriginOnlyPersistence(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "grants.json")
-	b, err := json.Marshal([]string{"", "https://user@example.com", "https://valid.example"})
+	b, err := json.Marshal(
+		[]string{"", "https://user@example.com", "https://valid.example"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +113,9 @@ func TestGrantStoreIgnoresLegacyOriginOnlyPersistence(t *testing.T) {
 	g := NewGrantStore(path)
 	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
 	if g.IsGranted("https://valid.example", identity) {
-		t.Fatal("origin-only persisted grant must not authorize a wallet account")
+		t.Fatal(
+			"origin-only persisted grant must not authorize a wallet account",
+		)
 	}
 	if got := g.List(identity); len(got) != 0 {
 		t.Fatalf("legacy origin-only grants loaded: %v", got)

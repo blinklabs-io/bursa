@@ -26,16 +26,26 @@ import (
 
 const testKMSKey = "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000001"
 
-var testCredentials = Credentials{AccessKeyID: "ASIATEST", SecretAccessKey: "secret", SessionToken: "session"}
+var testCredentials = Credentials{
+	AccessKeyID:     "ASIATEST",
+	SecretAccessKey: "secret",
+	SessionToken:    "session",
+}
 
-var testProvisionAuthority = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x42}, ed25519.SeedSize))
+var testProvisionAuthority = ed25519.NewKeyFromSeed(
+	bytes.Repeat([]byte{0x42}, ed25519.SeedSize),
+)
 
 func testEvidence(t *testing.T, measurement byte) []byte {
 	t.Helper()
 	pcr := bytes.Repeat([]byte{measurement}, nitroPCRSize)
-	payload, err := cbor.Marshal(attestationPayload{PCRs: map[uint][]byte{0: pcr}})
+	payload, err := cbor.Marshal(
+		attestationPayload{PCRs: map[uint][]byte{0: pcr}},
+	)
 	require.NoError(t, err)
-	evidence, err := cbor.Marshal(sign1Document{Payload: payload, Signature: []byte{1}})
+	evidence, err := cbor.Marshal(
+		sign1Document{Payload: payload, Signature: []byte{1}},
+	)
 	require.NoError(t, err)
 	return evidence
 }
@@ -64,19 +74,29 @@ type fakeKMS struct {
 func (k *fakeKMS) check(recipient []byte) error {
 	k.calls++
 	if !bytes.Equal(recipient, k.expectedEvidence) {
-		return errors.New("AccessDeniedException: recipient measurement mismatch")
+		return errors.New(
+			"AccessDeniedException: recipient measurement mismatch",
+		)
 	}
 	return nil
 }
 
-func (k *fakeKMS) GenerateDataKey(_ context.Context, _ string, recipient []byte) ([]byte, []byte, error) {
+func (k *fakeKMS) GenerateDataKey(
+	_ context.Context,
+	_ string,
+	recipient []byte,
+) ([]byte, []byte, error) {
 	if err := k.check(recipient); err != nil {
 		return nil, nil, err
 	}
 	return []byte("kms-ciphertext"), bytes.Clone(k.dataKey), nil
 }
 
-func (k *fakeKMS) Decrypt(_ context.Context, _ string, ciphertext, recipient []byte) ([]byte, error) {
+func (k *fakeKMS) Decrypt(
+	_ context.Context,
+	_ string,
+	ciphertext, recipient []byte,
+) ([]byte, error) {
 	if !bytes.Equal(ciphertext, []byte("kms-ciphertext")) {
 		return nil, errors.New("unknown KMS ciphertext")
 	}
@@ -86,15 +106,25 @@ func (k *fakeKMS) Decrypt(_ context.Context, _ string, ciphertext, recipient []b
 	return bytes.Clone(k.dataKey), nil
 }
 
-func newTestService(t *testing.T, evidence []byte) (*Service, *fakeKMS, *fakeRecipient) {
+func newTestService(
+	t *testing.T,
+	evidence []byte,
+) (*Service, *fakeKMS, *fakeRecipient) {
 	t.Helper()
 	recipient := &fakeRecipient{evidence: evidence}
-	kms := &fakeKMS{dataKey: bytes.Repeat([]byte{0x5a}, dataKeySize), expectedEvidence: evidence}
-	service, err := NewService(recipient, func(region string, credentials Credentials) (KMS, error) {
-		require.Equal(t, "us-east-1", region)
-		require.Equal(t, testCredentials, credentials)
-		return kms, nil
-	}, testProvisionAuthority.Public().(ed25519.PublicKey))
+	kms := &fakeKMS{
+		dataKey:          bytes.Repeat([]byte{0x5a}, dataKeySize),
+		expectedEvidence: evidence,
+	}
+	service, err := NewService(
+		recipient,
+		func(region string, credentials Credentials) (KMS, error) {
+			require.Equal(t, "us-east-1", region)
+			require.Equal(t, testCredentials, credentials)
+			return kms, nil
+		},
+		testProvisionAuthority.Public().(ed25519.PublicKey),
+	)
 	require.NoError(t, err)
 	return service, kms, recipient
 }
@@ -105,7 +135,10 @@ func provisionTestKey(t *testing.T, service *Service) Envelope {
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
 		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
 	}
-	request.Authorization = ed25519.Sign(testProvisionAuthority, ProvisionAuthorizationBinding(request))
+	request.Authorization = ed25519.Sign(
+		testProvisionAuthority,
+		ProvisionAuthorizationBinding(request),
+	)
 	response, err := service.Provision(context.Background(), &request)
 	require.NoError(t, err)
 	require.Equal(t, Protocol, response.Version)
@@ -133,7 +166,11 @@ func TestProvisionAuthorizationBindingVector(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			changed := request
 			mutate(&changed)
-			require.NotEqual(t, want, hex.EncodeToString(ProvisionAuthorizationBinding(changed)))
+			require.NotEqual(
+				t,
+				want,
+				hex.EncodeToString(ProvisionAuthorizationBinding(changed)),
+			)
 		})
 	}
 }
@@ -151,13 +188,32 @@ func TestProvisionStoresOnlyWrappedMaterial(t *testing.T) {
 	require.NoError(t, json.Unmarshal(encoded, &decoded))
 	dataKey := bytes.Repeat([]byte{0x5a}, dataKeySize)
 	for name, secret := range map[string][]byte{"seed": seed, "data key": dataKey} {
-		require.False(t, bytes.Contains(encoded, secret), "envelope JSON contains raw %s", name)
-		require.False(t, bytes.Contains(encoded, []byte(base64.StdEncoding.EncodeToString(secret))), "envelope JSON contains base64 %s", name)
+		require.False(
+			t,
+			bytes.Contains(encoded, secret),
+			"envelope JSON contains raw %s",
+			name,
+		)
+		require.False(
+			t,
+			bytes.Contains(
+				encoded,
+				[]byte(base64.StdEncoding.EncodeToString(secret)),
+			),
+			"envelope JSON contains base64 %s",
+			name,
+		)
 		for field, value := range map[string][]byte{
 			"public key": decoded.PublicKey, "encrypted data key": decoded.EncryptedDataKey,
 			"ciphertext": decoded.Ciphertext, "nonce": decoded.Nonce,
 		} {
-			require.False(t, bytes.Contains(value, secret), "envelope %s contains %s", field, name)
+			require.False(
+				t,
+				bytes.Contains(value, secret),
+				"envelope %s contains %s",
+				field,
+				name,
+			)
 		}
 	}
 }
@@ -211,7 +267,10 @@ func TestProvisionFailsClosedOnKMSMeasurementDenial(t *testing.T) {
 	request := testProvisionRequest()
 	_, err := service.Provision(context.Background(), &request)
 	require.ErrorContains(t, err, "measurement mismatch")
-	_, err = service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
+	_, err = service.Inventory(
+		context.Background(),
+		&InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)},
+	)
 	require.ErrorIs(t, err, ErrNotLoaded)
 }
 
@@ -234,7 +293,9 @@ func TestReloadAndCanonicalOpCertSigning(t *testing.T) {
 	binary.BigEndian.PutUint64(payload[40:48], 120)
 	request := &backend.AttestedRequest{
 		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
-		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		KeyHash: backend.HashPublicKey(env.PublicKey).
+			String(),
+		Role:  backend.KeyTypePool,
 		Nonce: nonce, Payload: payload,
 	}
 	signed, err := restarted.Sign(context.Background(), request)
@@ -247,9 +308,19 @@ func TestReloadAndCanonicalOpCertSigning(t *testing.T) {
 	_, err = restarted.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "issue counter is not increasing")
 
-	inv, err := restarted.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: bytes.Repeat([]byte{9}, 32)})
+	inv, err := restarted.Inventory(
+		context.Background(),
+		&InventoryRequest{
+			Version: Protocol,
+			Nonce:   bytes.Repeat([]byte{9}, 32),
+		},
+	)
 	require.NoError(t, err)
-	require.Equal(t, backend.InventoryBinding(bytes.Repeat([]byte{9}, 32), inv.Keys), recipient.attested[0])
+	require.Equal(
+		t,
+		backend.InventoryBinding(bytes.Repeat([]byte{9}, 32), inv.Keys),
+		recipient.attested[0],
+	)
 }
 
 func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
@@ -259,7 +330,9 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	binary.BigEndian.PutUint64(payload[32:40], 1)
 	request := &backend.AttestedRequest{
 		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
-		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		KeyHash: backend.HashPublicKey(env.PublicKey).
+			String(),
+		Role:  backend.KeyTypePool,
 		Nonce: bytes.Repeat([]byte{1}, requestNonceSize), Payload: payload,
 	}
 	_, err := service.Sign(context.Background(), request)
@@ -275,7 +348,10 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrEnvelope)
 
-	inventory, err := service.Inventory(context.Background(), &InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)})
+	inventory, err := service.Inventory(
+		context.Background(),
+		&InventoryRequest{Version: Protocol, Nonce: make([]byte, 32)},
+	)
 	require.NoError(t, err)
 	require.Equal(t, env.PublicKey, inventory.Keys[0].PublicKey)
 	_, err = service.Sign(context.Background(), request)
@@ -326,7 +402,9 @@ func TestServiceRejectsMalformedSignRequests(t *testing.T) {
 	env := provisionTestKey(t, service)
 	valid := backend.AttestedRequest{
 		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
-		KeyHash: backend.HashPublicKey(env.PublicKey).String(), Role: backend.KeyTypePool,
+		KeyHash: backend.HashPublicKey(env.PublicKey).
+			String(),
+		Role:  backend.KeyTypePool,
 		Nonce: make([]byte, 32), Payload: make([]byte, 48),
 	}
 	for name, mutate := range map[string]func(*backend.AttestedRequest){

@@ -91,7 +91,8 @@ func TestWriteBinaryCreatesThenWritesChunks(t *testing.T) {
 		t.Fatalf("first write header % x", first[:4])
 	}
 
-	if v, err := findTLV(first[5:], tag3); err != nil || !bytes.Equal(v, []byte{0x01, 0x2c}) {
+	if v, err := findTLV(first[5:], tag3); err != nil ||
+		!bytes.Equal(v, []byte{0x01, 0x2c}) {
 		t.Fatalf("file length TLV = % x, %v", v, err)
 	}
 
@@ -101,7 +102,10 @@ func TestWriteBinaryCreatesThenWritesChunks(t *testing.T) {
 		t.Fatal("file length must only be sent on create")
 	}
 
-	if v, _ := findTLV(second[5:], tag2); !bytes.Equal(v, []byte{0x00, maxBinaryChunk}) {
+	if v, _ := findTLV(second[5:], tag2); !bytes.Equal(
+		v,
+		[]byte{0x00, maxBinaryChunk},
+	) {
 		t.Fatalf("second write offset % x", v)
 	}
 }
@@ -118,7 +122,10 @@ func TestWriteBinaryRecreatesOnSizeChange(t *testing.T) {
 
 	// exist, size, delete, create
 	if len(s.commands) != 4 || s.commands[2][3] != p2DeleteObject {
-		t.Fatalf("expected delete before recreate, got %d APDUs", len(s.commands))
+		t.Fatalf(
+			"expected delete before recreate, got %d APDUs",
+			len(s.commands),
+		)
 	}
 }
 
@@ -142,7 +149,10 @@ func TestReadBinaryChunks(t *testing.T) {
 		t.Fatal("reassembled data mismatch")
 	}
 
-	if off, _ := findTLV(s.commands[2][5:], tag2); !bytes.Equal(off, []byte{0x00, maxBinaryChunk}) {
+	if off, _ := findTLV(s.commands[2][5:], tag2); !bytes.Equal(
+		off,
+		[]byte{0x00, maxBinaryChunk},
+	) {
 		t.Fatalf("second read offset % x", off)
 	}
 }
@@ -160,11 +170,17 @@ func TestFreeMemoryParse(t *testing.T) {
 		t.Fatalf("free = %#x", n)
 	}
 
-	if !bytes.Equal(s.commands[0][:4], []byte{claSE, insMgmt, p1Default, p2Memory}) {
+	if !bytes.Equal(
+		s.commands[0][:4],
+		[]byte{claSE, insMgmt, p1Default, p2Memory},
+	) {
 		t.Fatalf("header % x", s.commands[0][:4])
 	}
 
-	if v, _ := findTLV(s.commands[0][5:], tag1); !bytes.Equal(v, []byte{memPersistent}) {
+	if v, _ := findTLV(s.commands[0][5:], tag1); !bytes.Equal(
+		v,
+		[]byte{memPersistent},
+	) {
 		t.Fatalf("memory type % x", v)
 	}
 }

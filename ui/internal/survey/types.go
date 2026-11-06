@@ -93,7 +93,9 @@ type anchorJSON struct {
 
 // MarshalJSON renders the hash as hex.
 func (a Anchor) MarshalJSON() ([]byte, error) {
-	return json.Marshal(anchorJSON{URI: a.URI, Hash: hex.EncodeToString(a.Hash[:])})
+	return json.Marshal(
+		anchorJSON{URI: a.URI, Hash: hex.EncodeToString(a.Hash[:])},
+	)
 }
 
 // UnmarshalJSON reads the hash from hex.

@@ -16,7 +16,11 @@ import (
 type VaultSink interface {
 	// id carries the legacy account's own identifier, so references to it keep
 	// resolving after the move.
-	AddScriptWallet(id, name, network string, script ScriptWallet, vaultPassword string) error
+	AddScriptWallet(
+		id, name, network string,
+		script ScriptWallet,
+		vaultPassword string,
+	) error
 	ScriptWallets() ([]ScriptWalletRecord, error)
 }
 
@@ -59,7 +63,11 @@ type ScriptWallet struct {
 //     migration leaves the file untouched, so nothing is lost.
 //   - A missing file is success, not an error — that is the steady state after
 //     the first run and for every wallet created since.
-func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (migrated int, err error) {
+func MigrateStoreToVault(
+	storePath string,
+	v VaultSink,
+	vaultPassword string,
+) (migrated int, err error) {
 	accounts, err := readStoreFile(storePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -83,10 +91,16 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 			return 0, fmt.Errorf("invalid existing script wallet: %w", err)
 		}
 		if prior, ok := have[a.ID]; ok && !sameScriptWalletIdentity(prior, a) {
-			return 0, fmt.Errorf("existing vault contains conflicting wallets for id %q", a.ID)
+			return 0, fmt.Errorf(
+				"existing vault contains conflicting wallets for id %q",
+				a.ID,
+			)
 		}
 		if prior, ok := haveByAddress[a.ScriptAddress]; ok && prior.ID != a.ID {
-			return 0, fmt.Errorf("existing vault contains distinct wallets for script address %q", a.ScriptAddress)
+			return 0, fmt.Errorf(
+				"existing vault contains distinct wallets for script address %q",
+				a.ScriptAddress,
+			)
 		}
 		have[a.ID] = a
 		haveByAddress[a.ScriptAddress] = a
@@ -106,20 +120,30 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 			if prior.ScriptAddress == a.ScriptAddress && prior.ID != a.ID {
 				return 0, fmt.Errorf(
 					"refusing to migrate distinct wallet ids %q and %q sharing script address %q",
-					prior.ID, a.ID, a.ScriptAddress,
+					prior.ID,
+					a.ID,
+					a.ScriptAddress,
 				)
 			}
 			if prior.ID == a.ID && !sameLegacyAccountIdentity(prior, a) {
-				return 0, fmt.Errorf("legacy wallet id %q has conflicting records", a.ID)
+				return 0, fmt.Errorf(
+					"legacy wallet id %q has conflicting records",
+					a.ID,
+				)
 			}
 		}
 		if prior, ok := have[a.ID]; ok && !sameLegacyToVaultIdentity(a, prior) {
-			return 0, fmt.Errorf("legacy wallet id %q conflicts with the vault record", a.ID)
+			return 0, fmt.Errorf(
+				"legacy wallet id %q conflicts with the vault record",
+				a.ID,
+			)
 		}
 		if prior, ok := haveByAddress[a.ScriptAddress]; ok && prior.ID != a.ID {
 			return 0, fmt.Errorf(
 				"refusing to migrate legacy wallet id %q: script address %q belongs to vault wallet id %q",
-				a.ID, a.ScriptAddress, prior.ID,
+				a.ID,
+				a.ScriptAddress,
+				prior.ID,
 			)
 		}
 	}
@@ -130,7 +154,11 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 		}
 		policy, err := json.Marshal(a.Policy)
 		if err != nil {
-			return migrated, fmt.Errorf("encode policy for %q: %w", a.Label, err)
+			return migrated, fmt.Errorf(
+				"encode policy for %q: %w",
+				a.Label,
+				err,
+			)
 		}
 		if err := v.AddScriptWallet(a.ID, a.Label, a.Network, ScriptWallet{
 			Policy:        policy,
@@ -160,7 +188,10 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 	nowHave := make(map[string]ScriptWalletRecord, len(after))
 	for _, a := range after {
 		if err := validateScriptWalletRecord(a); err != nil {
-			return migrated, fmt.Errorf("invalid migrated script wallet: %w", err)
+			return migrated, fmt.Errorf(
+				"invalid migrated script wallet: %w",
+				err,
+			)
 		}
 		nowHave[a.ID] = a
 	}
@@ -169,7 +200,8 @@ func MigrateStoreToVault(storePath string, v VaultSink, vaultPassword string) (m
 		if !ok || !sameLegacyToVaultIdentity(a, stored) {
 			return migrated, fmt.Errorf(
 				"refusing to remove %s: wallet id %q is not preserved in the vault",
-				storePath, a.ID,
+				storePath,
+				a.ID,
 			)
 		}
 	}
@@ -197,7 +229,11 @@ func validateLegacyAccount(a Account) error {
 	// Decode it here so an unusable script fails the migration instead of
 	// surviving it as the only remaining copy.
 	if _, err := decodeScript(a.ScriptCBOR); err != nil {
-		return fmt.Errorf("wallet id %q has unusable script CBOR: %w", a.ID, err)
+		return fmt.Errorf(
+			"wallet id %q has unusable script CBOR: %w",
+			a.ID,
+			err,
+		)
 	}
 	return nil
 }

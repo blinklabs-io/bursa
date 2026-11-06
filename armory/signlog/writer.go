@@ -33,6 +33,60 @@ type Writer struct {
 	last *Entry
 	// pending is a head that reached the medium but not yet the head store
 	pending *Head
+	// opcerts is the latest opcert-next entry on the medium for each profile
+	// and cold key
+	opcerts map[opCertKey]opCertMark
+}
+
+// opCertKey names a profile and the cold key its opcerts were issued under.
+// An entry without a cold key hash (a version 1 medium) has an empty cold.
+type opCertKey struct {
+	profile, cold string
+}
+
+// opCertMark is the issue counter and KES period of an opcert-next entry, and
+// the entry's sequence number.
+type opCertMark struct {
+	issue, period, seq uint64
+}
+
+// noteOpCert records e as the latest opcert of its profile and cold key when
+// it is one.
+func (w *Writer) noteOpCert(e Entry) {
+	if e.Purpose != PurposeOpCertNext {
+		return
+	}
+
+	if w.opcerts == nil {
+		w.opcerts = make(map[opCertKey]opCertMark)
+	}
+
+	w.opcerts[opCertKey{e.Profile, string(e.ColdKeyHash)}] = opCertMark{
+		issue: e.IssueCounter, period: e.KESPeriod, seq: e.Seq,
+	}
+}
+
+// LastOpCert returns the issue counter and KES period of the latest
+// opcert-next entry on the medium for profile and the cold key with hash
+// cold, false when it has none. Entries of a version 1 medium carry no cold
+// key hash and count for every cold key of their profile, so a profile
+// reprovisioned there keeps its mark. An entry whose head update is still
+// pending counts: it reached the medium.
+func (w *Writer) LastOpCert(
+	profile string,
+	cold []byte,
+) (issue, period uint64, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	m, ok := w.opcerts[opCertKey{profile, string(cold)}]
+
+	if legacy, found := w.opcerts[opCertKey{profile, ""}]; found &&
+		(!ok || legacy.seq > m.seq) {
+		m, ok = legacy, true
+	}
+
+	return m.issue, m.period, ok
 }
 
 // Open checks the medium against the head store and returns a writer.
@@ -92,6 +146,10 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 	w.hdr = hdr
 	last := headOf(hdr, entries)
 
+	for _, e := range entries {
+		w.noteOpCert(e)
+	}
+
 	if n := len(entries); n > 0 {
 		e := cloneEntry(entries[n-1])
 		w.last = &e
@@ -100,12 +158,21 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 	switch {
 	case head == (Head{}):
 		if last.Seq != 0 {
-			return nil, fmt.Errorf("%w: head store is uninitialised but the medium holds %d entries", ErrAhead, last.Seq)
+			return nil, fmt.Errorf(
+				"%w: head store is uninitialised but the medium holds %d entries",
+				ErrAhead,
+				last.Seq,
+			)
 		}
 
 		return w, w.repair(last)
 	case last.Seq < head.Seq:
-		return nil, fmt.Errorf("%w: medium at entry %d, head at %d", ErrRollback, last.Seq, head.Seq)
+		return nil, fmt.Errorf(
+			"%w: medium at entry %d, head at %d",
+			ErrRollback,
+			last.Seq,
+			head.Seq,
+		)
 	case last.Seq == head.Seq:
 		if last.Hash != head.Hash {
 			return nil, ErrHashMismatch
@@ -118,7 +185,12 @@ func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
 		return w, w.repair(last)
 	}
 
-	return nil, fmt.Errorf("%w: medium at entry %d, head at %d", ErrAhead, last.Seq, head.Seq)
+	return nil, fmt.Errorf(
+		"%w: medium at entry %d, head at %d",
+		ErrAhead,
+		last.Seq,
+		head.Seq,
+	)
 }
 
 // isBlankHeader reports whether block 0 is all zero.
@@ -147,14 +219,18 @@ func (w *Writer) format(head Head) (*Writer, error) {
 
 	slots := min((w.medium.NumBlocks()-1)/RecordBlocks, DefaultMaxEntries)
 	if w.medium.NumBlocks() < 1 || slots == 0 {
-		return nil, fmt.Errorf("%w: %d blocks hold no entry", ErrMedium, w.medium.NumBlocks())
+		return nil, fmt.Errorf(
+			"%w: %d blocks hold no entry",
+			ErrMedium,
+			w.medium.NumBlocks(),
+		)
 	}
 
 	if err := checkBlank(w.medium, 0, 1+slots*RecordBlocks, ErrNotBlank); err != nil {
 		return nil, err
 	}
 
-	block, err := formatHeader(w.id, slots)
+	block, err := formatHeader(w.id, slots, FormatVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +266,12 @@ func checkBlank(m Medium, from, end uint64, notBlank error) error {
 		}
 
 		if !isZero(p) {
-			return fmt.Errorf("%w: data in blocks %d+%d", notBlank, lba, len(p)/BlockSize)
+			return fmt.Errorf(
+				"%w: data in blocks %d+%d",
+				notBlank,
+				lba,
+				len(p)/BlockSize,
+			)
 		}
 	}
 
@@ -223,6 +304,7 @@ func (w *Writer) Last() (Entry, bool) {
 func cloneEntry(e Entry) Entry {
 	e.BodyHash = bytes.Clone(e.BodyHash)
 	e.KESKeyHash = bytes.Clone(e.KESKeyHash)
+	e.ColdKeyHash = bytes.Clone(e.ColdKeyHash)
 	e.Signature = bytes.Clone(e.Signature)
 
 	return e
@@ -249,13 +331,19 @@ func (w *Writer) Check() error {
 // retried before the next entry is written, so the medium is never more than
 // one entry ahead of the head store.
 func (w *Writer) Append(rec Record) (Entry, error) {
-	rec, err := normalize(rec)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// the header's version governs the record encoding, so a version 1 medium
+	// keeps taking version 1 records, which have no cold key hash
+	if w.hdr.Version == formatV1 {
+		rec.ColdKeyHash = nil
+	}
+
+	rec, err := normalize(rec, w.hdr.Version)
 	if err != nil {
 		return Entry{}, err
 	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	if w.pending != nil {
 		if err = w.heads.Store(*w.pending); err != nil {
@@ -273,12 +361,20 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 		return Entry{}, err
 	}
 
-	raw, err := frameEntry(Entry{Record: rec, Seq: w.head.Seq + 1, Prev: w.head.Hash}, w.id)
+	raw, err := frameEntry(
+		Entry{
+			Record: rec,
+			Seq:    w.head.Seq + 1,
+			Prev:   w.head.Hash,
+			ver:    w.hdr.Version,
+		},
+		w.id,
+	)
 	if err != nil {
 		return Entry{}, err
 	}
 
-	e, err := decodeRecord(raw)
+	e, err := decodeRecord(raw, w.hdr.Version)
 	if err != nil {
 		return Entry{}, fmt.Errorf("signlog: framed entry unreadable: %w", err)
 	}
@@ -298,6 +394,7 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 	next := Head{Seq: e.Seq, Hash: e.Hash}
 	last := cloneEntry(e)
 	w.head, w.pending, w.last = next, &next, &last
+	w.noteOpCert(e)
 
 	if err = w.heads.Store(next); err != nil {
 		return Entry{}, fmt.Errorf("signlog: store head: %w", err)
@@ -339,9 +436,14 @@ func (w *Writer) recheck() error {
 		return fmt.Errorf("%w: read entry %d: %w", ErrMedium, w.head.Seq, err)
 	}
 
-	e, err := decodeRecord(buf)
+	e, err := decodeRecord(buf, w.hdr.Version)
 	if err != nil {
-		return fmt.Errorf("%w: entry %d unreadable: %w", ErrRollback, w.head.Seq, err)
+		return fmt.Errorf(
+			"%w: entry %d unreadable: %w",
+			ErrRollback,
+			w.head.Seq,
+			err,
+		)
 	}
 
 	if e.Seq != w.head.Seq || e.Hash != w.head.Hash {
