@@ -231,7 +231,7 @@ func (s *memoryStore) Replace(expected, data []byte) error {
 func (s *memoryStore) CheckAndAdvance(
 	_ context.Context,
 	key backend.KeyHash,
-	counter uint64,
+	counter, _ uint64,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -246,6 +246,17 @@ func (s *memoryStore) CheckAndAdvance(
 	}
 	s.counter = counter + 1
 	return nil
+}
+
+// NextOpCert is not modelled here: opcert-next tests run the workload over a
+// CloudCounterStore on a memoryCounterObject so the real counter rules apply.
+func (s *memoryStore) NextOpCert(
+	context.Context,
+	backend.KeyHash,
+	uint64,
+	uint64,
+) (uint64, error) {
+	return 0, errors.New("opcert-next is not supported by memoryStore")
 }
 
 type testWrapper struct {

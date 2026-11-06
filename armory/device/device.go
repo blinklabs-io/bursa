@@ -807,6 +807,26 @@ func (s *Service) signOpCertNext(
 	kesHash := blake2b.Sum256(payload[:32])
 	period := binary.BigEndian.Uint64(payload[40:])
 
+	// the log tells cold keys apart by their hash (the pool ID), so a profile
+	// name reprovisioned with another cold key does not inherit the old mark
+	cold, err := s.publicKey(p.ColdKeyID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	coldHash := keyHash(cold)
+
+	// a reissue of the logged counter keeps at least its logged KES period.
+	// The log is the record: it is written before the profile, so after a
+	// failed profile write it holds the counter the profile does not.
+	if s.log != nil {
+		if logged, loggedPeriod, ok := s.log.LastOpCert(p.Name, coldHash[:]); ok &&
+			logged == issue &&
+			period < loggedPeriod {
+			return nil, nil, errKESBackdated
+		}
+	}
+
 	rec := signlog.Record{
 		Profile: p.Name, Role: "pool", Purpose: signlog.PurposeOpCertNext,
 		Summary: fmt.Sprintf(
@@ -815,7 +835,7 @@ func (s *Service) signOpCertNext(
 			issue,
 			period,
 		),
-		IssueCounter: issue, KESPeriod: period, KESKeyHash: kesHash[:],
+		IssueCounter: issue, KESPeriod: period, KESKeyHash: kesHash[:], ColdKeyHash: coldHash[:],
 	}
 
 	// the counter was already issued and the latest entry records this exact

@@ -130,6 +130,7 @@ func TestMemoryCounterStoreConcurrentAdvance(t *testing.T) {
 				t.Context(),
 				backend.KeyHash{},
 				0,
+				0,
 			)
 			if err == nil {
 				mu.Lock()
@@ -151,6 +152,7 @@ func TestMemoryCounterStoreConcurrentAdvance(t *testing.T) {
 		t.Context(),
 		backend.KeyHash{},
 		1,
+		0,
 	); err != nil {
 		t.Fatalf("sequential advance after race: %v", err)
 	}
@@ -234,7 +236,12 @@ func TestCounterStateV1Migration(t *testing.T) {
 			generation,
 		)
 	}
-	if err := store.CheckAndAdvance(t.Context(), key, issueNumber+1); err != nil {
+	if err := store.CheckAndAdvance(
+		t.Context(),
+		key,
+		issueNumber+1,
+		0,
+	); err != nil {
 		t.Fatalf("advance after migration: %v", err)
 	}
 }

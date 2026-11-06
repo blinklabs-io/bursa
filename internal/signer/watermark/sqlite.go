@@ -30,12 +30,35 @@ type SqliteWatermark struct {
 	db *sql.DB
 }
 
+// sqliteDSN is the data source NewSqliteWatermark opens for path.
+func sqliteDSN(path string) string {
+	return path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+}
+
+// SqliteFileBacked opens path as NewSqliteWatermark does and reports whether
+// SQLite backs the main database with a file. An in-memory database, such as
+// path ":memory:" or "file::memory:", reports false: its records do not
+// survive a restart. Opening a file path creates the file if it is missing.
+func SqliteFileBacked(path string) (bool, error) {
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		return false, fmt.Errorf("open watermark db: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var (
+		seq        int
+		name, file string
+	)
+	if err := db.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &file); err != nil {
+		return false, fmt.Errorf("open watermark db: %w", err)
+	}
+	return file != "", nil
+}
+
 // NewSqliteWatermark opens (creating if needed) a sqlite watermark store at path.
 func NewSqliteWatermark(path string) (*SqliteWatermark, error) {
-	db, err := sql.Open(
-		"sqlite",
-		path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)",
-	)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open watermark db: %w", err)
 	}

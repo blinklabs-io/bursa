@@ -45,7 +45,7 @@ func scan(
 			)
 		}
 
-		e, derr := decodeRecord(buf)
+		e, derr := decodeRecord(buf, h.Version)
 		if errors.Is(derr, errBlankSlot) || errors.Is(derr, errTorn) {
 			torn = errors.Is(derr, errTorn)
 			end = seq

@@ -116,6 +116,33 @@ func (r opcertCounterRule) conflict(stored uint64, known bool) error {
 	)
 }
 
+// opcertCounterFor reads the counter record under scope for a resolved key.
+// A profiled key with no record under its profile reads the one written
+// before profile scoping, while its backend is the key's only holder: that
+// record is then this profile's. With several holders it may be another
+// network's, and no unscoped record applies.
+func (c *Coordinator) opcertCounterFor(
+	ctx context.Context,
+	cw watermark.CounterWatermark,
+	hash backend.KeyHash,
+	ref backend.KeyRef,
+	scope string,
+) (uint64, bool, error) {
+	scoped := profileScope(ref, scope)
+	v, ok, err := cw.CounterFor(ctx, hash, scoped)
+	if err != nil || ok || scoped == scope {
+		return v, ok, err
+	}
+	_, rerr := c.deps.Resolver.Resolve(ctx, hash, "")
+	if errors.Is(rerr, backend.ErrProfileRequired) {
+		return 0, false, nil
+	}
+	if rerr != nil {
+		return 0, false, rerr
+	}
+	return cw.CounterFor(ctx, hash, scope)
+}
+
 // OpCertResult is the outcome of an operational-certificate cold-signing request.
 type OpCertResult struct {
 	// SignatureHex is the 64-byte Ed25519 cold-key signature over the
@@ -242,7 +269,13 @@ func (c *Coordinator) signOpCert(
 		c.deps.Metrics.observeDeny(string(CodeBadRequest))
 		return nil, CodeBadRequest, fmt.Errorf("invalid key id: %w", err)
 	}
-	ref, err := c.deps.Resolver.Resolve(ctx, hash)
+	ref, err := c.deps.Resolver.Resolve(ctx, hash, profileFromContext(ctx))
+	if errors.Is(err, backend.ErrProfileRequired) {
+		c.deps.Logger.Info("sign", "type", "opcert", "caller-key", hash.String(), "result", "denied", "reason", err.Error())
+		c.deps.Metrics.observe("opcert", string(CodeBadRequest))
+		c.deps.Metrics.observeDeny(string(CodeBadRequest))
+		return nil, CodeBadRequest, err
+	}
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		c.deps.Logger.Info(
 			"sign",
@@ -276,8 +309,16 @@ func (c *Coordinator) signOpCert(
 		return nil, CodeBackend, err
 	}
 
+	logger := c.keyLogger(ref)
+
+	// Counter records are per profile for a key served by a profiled backend,
+	// so one cold key held under several profiles keeps one history each.
+	formScope := rule.scope
+	rule.scope = profileScope(ref, rule.scope)
+	issuedScope := profileScope(ref, opcertChainIssuedScope)
+
 	if dec := c.deps.Policy.EvaluateOpCert(hash, policy.WithBackend(ref.Backend())); !dec.Allow {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"opcert",
@@ -298,7 +339,7 @@ func (c *Coordinator) signOpCert(
 	// (payment, stake, committee, etc.); such a key must never produce an opcert
 	// signature regardless of what the ACL permits.
 	if ref.Type() != backend.KeyTypePool {
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"opcert",
@@ -334,7 +375,7 @@ func (c *Coordinator) signOpCert(
 	if c.deps.WMMode != watermark.ModeOff {
 		cw, ok := c.deps.Watermark.(watermark.CounterWatermark)
 		if !ok {
-			c.deps.Logger.Error(
+			logger.Error(
 				"sign",
 				"type",
 				"opcert",
@@ -374,9 +415,9 @@ func (c *Coordinator) signOpCert(
 			)
 		}
 		resetGen = gen
-		stored, exists, cerr := cw.CounterFor(ctx, hash, rule.scope)
+		stored, exists, cerr := c.opcertCounterFor(ctx, cw, hash, ref, formScope)
 		if cerr != nil {
-			c.deps.Logger.Info(
+			logger.Info(
 				"sign",
 				"type",
 				"opcert",
@@ -398,7 +439,7 @@ func (c *Coordinator) signOpCert(
 			counterConflictReported = true
 			c.deps.Metrics.observeWatermarkConflict()
 			if c.deps.WMMode == watermark.ModeEnforce {
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"opcert",
@@ -418,7 +459,7 @@ func (c *Coordinator) signOpCert(
 				return nil, CodeConflict, rule.conflict(stored, true)
 			}
 			// warn mode: log and allow; the signature is still produced.
-			c.deps.Logger.Warn(
+			logger.Warn(
 				"sign",
 				"type",
 				"opcert",
@@ -437,13 +478,15 @@ func (c *Coordinator) signOpCert(
 		// Both request forms are checked against the one issued record, so
 		// switching forms cannot go back below a counter already issued.
 		if !counterConflictReported {
-			issued, issuedExists, ierr := cw.CounterFor(
+			issued, issuedExists, ierr := c.opcertCounterFor(
 				ctx,
+				cw,
 				hash,
+				ref,
 				opcertChainIssuedScope,
 			)
 			if ierr != nil {
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"opcert",
@@ -470,7 +513,7 @@ func (c *Coordinator) signOpCert(
 				issuedConflict = true
 				c.deps.Metrics.observeWatermarkConflict()
 				if c.deps.WMMode == watermark.ModeEnforce {
-					c.deps.Logger.Info(
+					logger.Info(
 						"sign",
 						"type",
 						"opcert",
@@ -493,7 +536,7 @@ func (c *Coordinator) signOpCert(
 						issued,
 					)
 				}
-				c.deps.Logger.Warn(
+				logger.Warn(
 					"sign",
 					"type",
 					"opcert",
@@ -513,7 +556,7 @@ func (c *Coordinator) signOpCert(
 				issuedConflict = true
 				c.deps.Metrics.observeWatermarkConflict()
 				if c.deps.WMMode == watermark.ModeEnforce {
-					c.deps.Logger.Info(
+					logger.Info(
 						"sign",
 						"type",
 						"opcert",
@@ -536,7 +579,7 @@ func (c *Coordinator) signOpCert(
 						issued,
 					)
 				}
-				c.deps.Logger.Warn(
+				logger.Warn(
 					"sign",
 					"type",
 					"opcert",
@@ -597,7 +640,7 @@ func (c *Coordinator) signOpCert(
 		} else if errors.Is(err, backend.ErrCustodyCounterConflict) {
 			code = CodeConflict
 		}
-		c.deps.Logger.Info(
+		logger.Info(
 			"sign",
 			"type",
 			"opcert",
@@ -625,7 +668,7 @@ func (c *Coordinator) signOpCert(
 
 	pub := ref.PublicKey()
 	if len(pub) != ed25519.PublicKeySize {
-		c.deps.Logger.Error(
+		logger.Error(
 			"sign",
 			"type",
 			"opcert",
@@ -642,7 +685,7 @@ func (c *Coordinator) signOpCert(
 		)
 	}
 	if !ed25519.Verify(pub, signable, sig) {
-		c.deps.Logger.Error(
+		logger.Error(
 			"sign",
 			"type",
 			"opcert",
@@ -685,7 +728,7 @@ func (c *Coordinator) signOpCert(
 		var werr error
 		if recordIssued {
 			issuedOp := watermark.CounterOp{
-				Scope: opcertChainIssuedScope,
+				Scope: issuedScope,
 				Value: issueCounter,
 				Kind:  watermark.CounterStrict,
 			}
@@ -739,10 +782,10 @@ func (c *Coordinator) signOpCert(
 				"reason",
 				"counter reset detected at commit (warn mode)",
 			)
-		case errors.As(werr, &regression) && regression.Scope == opcertChainIssuedScope:
+		case errors.As(werr, &regression) && regression.Scope == issuedScope:
 			c.deps.Metrics.observeWatermarkConflict()
 			if c.deps.WMMode == watermark.ModeEnforce {
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"opcert",
@@ -762,7 +805,7 @@ func (c *Coordinator) signOpCert(
 					issueCounter,
 				)
 			}
-			c.deps.Logger.Warn(
+			logger.Warn(
 				"sign",
 				"type",
 				"opcert",
@@ -779,7 +822,7 @@ func (c *Coordinator) signOpCert(
 			// when the pre-sign check finds the issued-record conflict
 		case errors.Is(werr, watermark.ErrCounterRegression):
 			if c.deps.WMMode == watermark.ModeEnforce {
-				c.deps.Logger.Info(
+				logger.Info(
 					"sign",
 					"type",
 					"opcert",
@@ -826,11 +869,11 @@ func (c *Coordinator) signOpCert(
 					"reason",
 					"issue counter regression detected at commit (concurrent signer; warn mode)",
 				)
-				c.deps.Logger.Warn("sign", args...)
+				logger.Warn("sign", args...)
 				c.deps.Metrics.observeWatermarkConflict()
 			}
 		default:
-			c.deps.Logger.Error(
+			logger.Error(
 				"sign",
 				"type",
 				"opcert",
@@ -852,7 +895,7 @@ func (c *Coordinator) signOpCert(
 		}
 	}
 
-	c.deps.Logger.Info(
+	logger.Info(
 		"sign",
 		"type",
 		"opcert",

@@ -67,6 +67,21 @@ func (l *fakeLog) Last() (signlog.Entry, bool) {
 	}, true
 }
 
+func (l *fakeLog) LastOpCert(
+	profile string,
+	cold []byte,
+) (issue, period uint64, ok bool) {
+	for i := len(l.records) - 1; i >= 0; i-- {
+		if r := l.records[i]; r.Profile == profile &&
+			r.Purpose == signlog.PurposeOpCertNext &&
+			(len(r.ColdKeyHash) == 0 || bytes.Equal(r.ColdKeyHash, cold)) {
+			return r.IssueCounter, r.KESPeriod, true
+		}
+	}
+
+	return 0, 0, false
+}
+
 // loggedService is a provisioned service with a fake signing log installed.
 func loggedService(
 	t *testing.T,
@@ -773,5 +788,310 @@ func TestOpCertNextRepeatOnFullLog(t *testing.T) {
 	if r := sign(t, s, req(3, 1101)); !strings.Contains(r.Error, "full") ||
 		r.Signature != nil {
 		t.Fatalf("new opcert on a full log: %+v", r)
+	}
+}
+
+// A reissue of the last issued counter may not take a KES period below the
+// one the log holds for it; a new counter, or an equal or later period, may.
+func TestOpCertNextRefusesBackdatedReissue(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	id := signlog.NewKeySigner(priv)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+	hs := signlog.NewMemHeadStore(signlog.Head{})
+
+	w, err := signlog.Open(m, hs, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	kesA := bytes.Repeat([]byte{0x4b}, 32)
+	kesB := bytes.Repeat([]byte{0x4c}, 32)
+	n := byte(0)
+
+	issue := func(svc *Service, kes []byte, chain, period uint64) SignResponse {
+		t.Helper()
+
+		n++
+
+		return sign(t, svc, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(kes, chain, period), Profile: "otg@preview",
+		})
+	}
+
+	if r := issue(s, kesA, 3, 1100); r.Error != "" {
+		t.Fatalf("first: %+v", r)
+	}
+
+	if r := issue(s, kesB, 3, 1099); r.Error != errKESBackdated.Error() ||
+		len(r.Signature) != 0 {
+		t.Fatalf("backdated reissue: %+v", r)
+	}
+
+	if r := issue(s, kesB, 3, 1100); r.Error != "" {
+		t.Fatalf("reissue at the same period: %+v", r)
+	}
+
+	// a restart rebuilds the bound from the log
+	w2, err := signlog.Open(m, hs, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := New(&sync.Mutex{}, t.Logf)
+	if err = s2.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	s2.RequireSigningLog()
+	s2.SetSigningLog(w2, m)
+
+	if r := issue(s2, kesA, 3, 1050); r.Error != errKESBackdated.Error() {
+		t.Fatalf("backdated reissue after restart: %+v", r)
+	}
+
+	// the next counter is not a reissue
+	if r := issue(s2, kesA, 4, 1050); r.Error != "" || r.IssueCounter == nil ||
+		*r.IssueCounter != 5 {
+		t.Fatalf("next counter: %+v", r)
+	}
+
+	if got := w2.Head().Seq; got != 3 {
+		t.Fatalf("head at entry %d, want 3: a refusal is not logged", got)
+	}
+}
+
+// A request whose profile write failed after its log entry leaves the log
+// ahead of the profile record; a retry of that counter at an older KES period
+// is still refused.
+func TestOpCertNextBackdatedAfterProfileWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	provisionTestProfile(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+
+	w, err := signlog.Open(
+		m,
+		signlog.NewMemHeadStore(signlog.Head{}),
+		signlog.NewKeySigner(priv),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	cold, _ := chip.PublicKeyEd25519(testColdID)
+	issue := func(n byte, period uint64) SignResponse {
+		t.Helper()
+
+		return sign(t, s, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(n),
+			Payload: opCertPayload(
+				bytes.Repeat([]byte{n}, 32),
+				3,
+				period,
+			), Profile: "otg@preview",
+		})
+	}
+
+	chip.failWrite = true
+	if r := issue(1, 1100); r.Error == "" || len(r.Signature) != 0 {
+		t.Fatalf("signed although the profile write failed: %+v", r)
+	}
+
+	chip.failWrite = false
+	if r := issue(2, 1099); r.Error != errKESBackdated.Error() ||
+		len(r.Signature) != 0 {
+		t.Fatalf("backdated retry after a failed profile write: %+v", r)
+	}
+}
+
+// A profile name reprovisioned with another cold key does not inherit the
+// KES period the log holds for the old key; the same cold key keeps it, a
+// profile of another name does not share it, and an entry that records no
+// cold key (a version 1 medium) binds every cold key of its profile.
+func TestOpCertNextBackdatedFloorIsPerColdKey(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		profile string
+		cold    func(real []byte) []byte
+		want    string
+	}{
+		{
+			"same name, same cold key",
+			"otg@preview",
+			func(real []byte) []byte { return real },
+			errKESBackdated.Error(),
+		},
+		{
+			"same name, another cold key",
+			"otg@preview",
+			func([]byte) []byte { return bytes.Repeat([]byte{0x77}, 28) },
+			"",
+		},
+		{
+			"other profile, same cold key",
+			"otg@other",
+			func(real []byte) []byte { return real },
+			"",
+		},
+		{
+			"same name, entry without a cold key",
+			"otg@preview",
+			func([]byte) []byte { return nil },
+			errKESBackdated.Error(),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, chip := newTestService(t)
+			provisionTestProfile(t, s)
+
+			cold, _ := chip.PublicKeyEd25519(testColdID)
+			realHash := keyHash(cold)
+
+			l := &fakeLog{chip: chip}
+			l.records = append(l.records, signlog.Record{
+				Profile: tc.profile, Role: "pool", Purpose: signlog.PurposeOpCertNext,
+				IssueCounter: 4, KESPeriod: 1100, KESKeyHash: bytes.Repeat([]byte{1}, 32),
+				ColdKeyHash: tc.cold(realHash[:]),
+			})
+
+			s.RequireSigningLog()
+			s.SetSigningLog(l, nil)
+
+			r := sign(t, s, SignRequest{
+				Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool", Nonce: nonce(1),
+				Payload: opCertPayload(
+					bytes.Repeat([]byte{2}, 32),
+					3,
+					1000,
+				), Profile: "otg@preview",
+			})
+			if r.Error != tc.want {
+				t.Fatalf("error %q, want %q", r.Error, tc.want)
+			}
+
+			if tc.want == "" {
+				got := l.records[len(l.records)-1]
+				if !bytes.Equal(got.ColdKeyHash, realHash[:]) {
+					t.Fatalf(
+						"logged cold hash %x, want %x",
+						got.ColdKeyHash,
+						realHash,
+					)
+				}
+			}
+		})
+	}
+}
+
+// Through a real signing log: a profile wiped and reprovisioned under the same
+// name with another cold key may issue the logged counter at a lower KES
+// period, while the original cold key reprovisioned there may not.
+func TestOpCertNextReprovisionedColdKeyThroughWriter(t *testing.T) {
+	t.Parallel()
+
+	const (
+		name   = "w@preview"
+		coldID = uint32(0x20e50602)
+	)
+
+	s, chip := newTestService(t)
+	id := identityHex(t, s)
+
+	_, priv, _ := ed25519.GenerateKey(nil)
+	m := signlog.NewMemMedium(1 + 8*signlog.RecordBlocks)
+
+	w, err := signlog.Open(
+		m,
+		signlog.NewMemHeadStore(signlog.Head{}),
+		signlog.NewKeySigner(priv),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.RequireSigningLog()
+	s.SetSigningLog(w, m)
+
+	provision := func(seed byte) []byte {
+		t.Helper()
+
+		code, body := post(t, s, "/provision/cold", coldReq(coldID, seed))
+		mustOK(t, "import", code, body)
+
+		chain := uint64(3)
+		code, body = post(t, s, "/provision/profile", ProvisionRequest{
+			Name: name, Slot: 2, ColdKeyID: coldID, ChainCounter: &chain,
+			RewardAccount: testReward,
+		})
+		mustOK(t, "profile", code, body)
+
+		cold, _ := chip.PublicKeyEd25519(coldID)
+
+		return cold
+	}
+
+	issue := func(cold []byte, n byte, period uint64) SignResponse {
+		t.Helper()
+
+		return sign(t, s, SignRequest{
+			Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
+			Nonce: nonce(n), Profile: name,
+			Payload: opCertPayload(bytes.Repeat([]byte{n}, 32), 3, period),
+		})
+	}
+
+	wipe := func() {
+		t.Helper()
+
+		code, body := wipePost(t, s, "/wipe/profile",
+			WipeProfileRequest{IdentityPublicKey: id, Profile: name})
+		mustOK(t, "wipe profile", code, body)
+	}
+
+	coldA := provision(0x6a)
+	if r := issue(coldA, 1, 1100); r.Error != "" {
+		t.Fatalf("first opcert: %s", r.Error)
+	}
+
+	wipe()
+
+	coldB := provision(0x6b)
+	if r := issue(coldB, 2, 1000); r.Error != "" || len(r.Signature) == 0 {
+		t.Fatalf("another cold key under the reused name: %+v", r)
+	}
+
+	hashB := keyHash(coldB)
+	if e, ok := w.Last(); !ok || !bytes.Equal(e.ColdKeyHash, hashB[:]) {
+		t.Fatalf("logged cold hash %x, want %x", e.ColdKeyHash, hashB)
+	}
+
+	wipe()
+
+	coldA = provision(0x6a)
+	if r := issue(coldA, 3, 1099); r.Error != errKESBackdated.Error() ||
+		len(r.Signature) != 0 {
+		t.Fatalf("the original cold key reprovisioned: %+v", r)
 	}
 }

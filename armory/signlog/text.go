@@ -26,8 +26,13 @@ func FormatEntry(e Entry) string {
 	}
 
 	if e.Purpose == PurposeOpCertNext {
+		cold := ""
+		if len(e.ColdKeyHash) > 0 {
+			cold = fmt.Sprintf(" cold=%x", e.ColdKeyHash)
+		}
+
 		return fmt.Sprintf(
-			"%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x %s",
+			"%d %s %s %s issue=%d kes-period=%d kes-vkey-hash=%x%s %s",
 			e.Seq,
 			e.Purpose,
 			e.Profile,
@@ -35,6 +40,7 @@ func FormatEntry(e Entry) string {
 			e.IssueCounter,
 			e.KESPeriod,
 			e.KESKeyHash,
+			cold,
 			summary,
 		)
 	}

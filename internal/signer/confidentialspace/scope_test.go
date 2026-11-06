@@ -28,15 +28,13 @@ import (
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
-// The workload signs only explicit-counter opcerts. opcert-next would let the
-// host re-issue an existing issue number for a new KES key, and a profiled
-// request needs a binding signature the workload does not produce. A refused
-// request must not consume its nonce or advance the durable counter.
+// A profiled request needs a binding signature the workload does not
+// produce. A refused request must not consume its nonce or advance the
+// durable counter. opcert-next is served; see opcert_next_test.go.
 func TestWorkloadRefusesUnsupportedSignScope(t *testing.T) {
 	t.Parallel()
 	for name, mutate := range map[string]func(*backend.AttestedRequest){
-		"opcert-next": func(r *backend.AttestedRequest) { r.Purpose = backend.PurposeOpCertNext },
-		"profile":     func(r *backend.AttestedRequest) { r.Profile = "pool@mainnet" },
+		"profile": func(r *backend.AttestedRequest) { r.Profile = "pool@mainnet" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

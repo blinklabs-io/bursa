@@ -230,6 +230,13 @@ key.`,
 			)
 			defer stop()
 
+			if err := signer.CheckBackendWatermark(
+				cfg.Signer.Backends,
+				cfg.Signer.Watermark,
+			); err != nil {
+				logger.Error("invalid watermark for backend", "error", err)
+				os.Exit(1)
+			}
 			backends, err := signer.BuildBackends(ctx, cfg.Signer.Backends)
 			if err != nil {
 				logger.Error("failed to build backends", "error", err)
@@ -241,9 +248,10 @@ key.`,
 			}
 			resolver := backend.NewResolver(backends...)
 
-			// Fix 5: ambiguous duplicate-hash check — same key hash in multiple
-			// backends is a config error; fail at boot rather than silently
-			// routing to whichever backend happens to be first.
+			// Fix 5: ambiguous duplicate-hash check — a key hash in several
+			// backends is a config error unless each holder has a distinct
+			// profile; fail at boot rather than silently routing to whichever
+			// backend happens to be first.
 			if err := resolver.CheckAmbiguous(ctx); err != nil {
 				logger.Error("ambiguous key configuration", "error", err)
 				os.Exit(1)
