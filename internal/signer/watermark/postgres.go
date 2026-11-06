@@ -327,39 +327,6 @@ func (s *PostgresWatermark) CheckAndCommitCounter(
 	return nil
 }
 
-func (s *PostgresWatermark) CheckAndRaiseFloorFrom(
-	ctx context.Context,
-	key backend.KeyHash,
-	scope string,
-	value, min uint64,
-) error {
-	// CheckAndRaiseFloor's upsert with the stored value also bounded below by
-	// min.
-	want := counterEncode(value)
-	var have string
-	err := s.pool.QueryRow(
-		ctx,
-		`INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
-		 ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
-		 WHERE (EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")
-		   AND (signer_counter_watermark.counter COLLATE "C") >= ($3 COLLATE "C")
-		 RETURNING counter`,
-		recordKey(key, scope),
-		want,
-		counterEncode(min),
-	).Scan(&have)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrCounterRegression
-	}
-	if err != nil {
-		return fmt.Errorf("counter watermark raise floor: %w", err)
-	}
-	if have != want {
-		return ErrCounterRegression
-	}
-	return nil
-}
-
 func (s *PostgresWatermark) CheckAndRaiseFloor(
 	ctx context.Context,
 	key backend.KeyHash,

@@ -118,15 +118,6 @@ type CounterWatermark interface {
 		scope string,
 		value uint64,
 	) error
-	// CheckAndRaiseFloorFrom is CheckAndRaiseFloor that also refuses, with
-	// ErrCounterRegression, a recorded value below min: it records value if no
-	// record exists or min <= recorded <= value, in one atomic operation.
-	CheckAndRaiseFloorFrom(
-		ctx context.Context,
-		key backend.KeyHash,
-		scope string,
-		value, min uint64,
-	) error
 	// CheckAndCommitCounters validates and records every op for key in one
 	// atomic operation: if any op's check fails, none is written. A failed
 	// check returns a *CounterRegressionError, which satisfies
@@ -152,8 +143,8 @@ const (
 	// CounterFloor records Value if no record exists or Value is at least the
 	// stored one, as CheckAndRaiseFloor does.
 	CounterFloor
-	// CounterFloorFrom is CounterFloor that also refuses a stored value below
-	// Min, as CheckAndRaiseFloorFrom does.
+	// CounterFloorFrom records Value if no record exists or
+	// Min <= stored <= Value.
 	CounterFloorFrom
 )
 
@@ -406,22 +397,6 @@ func (m *MemWatermark) CheckAndCommitCounters(
 	for _, o := range ops {
 		m.counters[recordKey(key, o.Scope)] = o.Value
 	}
-	return nil
-}
-
-func (m *MemWatermark) CheckAndRaiseFloorFrom(
-	_ context.Context,
-	key backend.KeyHash,
-	scope string,
-	value, min uint64,
-) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	k := recordKey(key, scope)
-	if prev, ok := m.counters[k]; ok && (value < prev || prev < min) {
-		return ErrCounterRegression
-	}
-	m.counters[k] = value
 	return nil
 }
 

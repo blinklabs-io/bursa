@@ -153,24 +153,32 @@ func runRaiseFloor(t *testing.T, wm counterStore) {
 	}
 }
 
-func runRaiseFloorFrom(t *testing.T, wm counterStore, key backend.KeyHash) {
+func runCommitCountersFloorFrom(
+	t *testing.T,
+	wm counterStore,
+	key backend.KeyHash,
+) {
 	t.Helper()
 	ctx := context.Background()
 	scope := "opcert-chain-issued"
 
 	// no record: recorded whatever the lower bound
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); err != nil {
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: scope, Value: 5, Kind: CounterFloorFrom, Min: 4}); err != nil {
 		t.Fatalf("first raise to 5: %v", err)
 	}
 	// equal and next values from a record at or above min
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); err != nil {
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: scope, Value: 5, Kind: CounterFloorFrom, Min: 4}); err != nil {
 		t.Fatalf("equal raise to 5: %v", err)
 	}
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 6, 5); err != nil {
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: scope, Value: 6, Kind: CounterFloorFrom, Min: 5}); err != nil {
 		t.Fatalf("raise to 6: %v", err)
 	}
 	// a record below min refuses, as does a value below the record
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 9, 8); !errors.Is(
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: scope, Value: 9, Kind: CounterFloorFrom, Min: 8}); !errors.Is(
 		err,
 		ErrCounterRegression,
 	) {
@@ -179,7 +187,8 @@ func runRaiseFloorFrom(t *testing.T, wm counterStore, key backend.KeyHash) {
 			err,
 		)
 	}
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); !errors.Is(
+	if err := wm.CheckAndCommitCounters(ctx, key,
+		CounterOp{Scope: scope, Value: 5, Kind: CounterFloorFrom, Min: 4}); !errors.Is(
 		err,
 		ErrCounterRegression,
 	) {
@@ -199,17 +208,17 @@ func runRaiseFloorFrom(t *testing.T, wm counterStore, key backend.KeyHash) {
 	}
 }
 
-func TestMemWatermark_RaiseFloorFrom(t *testing.T) {
-	runRaiseFloorFrom(t, NewMemWatermark(), backend.KeyHash{0xBC})
+func TestMemWatermark_CommitCountersFloorFrom(t *testing.T) {
+	runCommitCountersFloorFrom(t, NewMemWatermark(), backend.KeyHash{0xBC})
 }
 
-func TestSqliteWatermark_RaiseFloorFrom(t *testing.T) {
+func TestSqliteWatermark_CommitCountersFloorFrom(t *testing.T) {
 	wm, err := NewSqliteWatermark(filepath.Join(t.TempDir(), "wm.db"))
 	if err != nil {
 		t.Fatalf("NewSqliteWatermark: %v", err)
 	}
 	defer wm.Close()
-	runRaiseFloorFrom(t, wm, backend.KeyHash{0xBC})
+	runCommitCountersFloorFrom(t, wm, backend.KeyHash{0xBC})
 }
 
 func TestMemWatermark_RaiseFloor(t *testing.T) {

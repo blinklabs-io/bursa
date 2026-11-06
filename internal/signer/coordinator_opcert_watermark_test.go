@@ -128,15 +128,6 @@ func (p *pausingCounterWatermark) CheckAndRaiseFloor(
 	return p.counter.CheckAndRaiseFloor(ctx, key, scope, value)
 }
 
-func (p *pausingCounterWatermark) CheckAndRaiseFloorFrom(
-	ctx context.Context,
-	key backend.KeyHash,
-	scope string,
-	value, min uint64,
-) error {
-	return p.counter.CheckAndRaiseFloorFrom(ctx, key, scope, value, min)
-}
-
 func (p *pausingCounterWatermark) CheckAndCommitCounters(
 	ctx context.Context,
 	key backend.KeyHash,

@@ -205,9 +205,9 @@ func TestPostgres_RaiseFloor(t *testing.T) {
 	}
 }
 
-func TestPostgres_RaiseFloorFrom(t *testing.T) {
+func TestPostgres_CommitCountersFloorFrom(t *testing.T) {
 	// the CI database is shared across runs, so each run uses a fresh key
-	runRaiseFloorFrom(t, newTestPG(t, testPGDSN(t)), randKey(t))
+	runCommitCountersFloorFrom(t, newTestPG(t, testPGDSN(t)), randKey(t))
 }
 
 func TestPostgres_CounterPerKeyIsolation(t *testing.T) {
