@@ -133,6 +133,17 @@ func newTestService(
 	return service, kms, recipient
 }
 
+func TestNewServiceRejectsSharedAuthorities(t *testing.T) {
+	authority := testProvisionAuthority.Public().(ed25519.PublicKey)
+	_, err := NewService(
+		&fakeRecipient{},
+		func(string, Credentials) (KMS, error) { return nil, nil },
+		authority,
+		authority,
+	)
+	require.ErrorContains(t, err, "authorities must differ")
+}
+
 func authorizeTestRequest(
 	t *testing.T,
 	service *Service,

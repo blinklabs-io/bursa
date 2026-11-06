@@ -69,6 +69,11 @@ func NewService(
 			"nitro recipient, KMS factory, provisioning authority, and signer authority are required",
 		)
 	}
+	if bytes.Equal(provisionAuthority, signerAuthority) {
+		return nil, errors.New(
+			"provisioning and signer authorities must differ",
+		)
+	}
 	return &Service{
 		recipient: recipient, kms: kms,
 		provisionAuthority: bytes.Clone(provisionAuthority),
