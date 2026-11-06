@@ -35,14 +35,26 @@ import (
 
 // Errors returned by the agent.
 var (
-	ErrNoActiveKey  = errors.New("kesagent: no active KES key installed")
-	ErrNoStagedKey  = errors.New("kesagent: no staged KES key")
-	ErrExhausted    = errors.New("kesagent: active KES key has exhausted its evolutions")
-	ErrPastPeriod   = errors.New("kesagent: requested KES period is in the past for the active key")
-	ErrFuturePeriod = errors.New("kesagent: requested KES period is in the future")
-	ErrOpCertColdVK = errors.New("kesagent: opcert cold vkey does not match configured cold vkey")
-	ErrOpCertKESVK  = errors.New("kesagent: opcert KES vkey does not match the staged key")
-	ErrColdVKey     = errors.New("kesagent: configured cold verification key must be 32 bytes")
+	ErrNoActiveKey = errors.New("kesagent: no active KES key installed")
+	ErrNoStagedKey = errors.New("kesagent: no staged KES key")
+	ErrExhausted   = errors.New(
+		"kesagent: active KES key has exhausted its evolutions",
+	)
+	ErrPastPeriod = errors.New(
+		"kesagent: requested KES period is in the past for the active key",
+	)
+	ErrFuturePeriod = errors.New(
+		"kesagent: requested KES period is in the future",
+	)
+	ErrOpCertColdVK = errors.New(
+		"kesagent: opcert cold vkey does not match configured cold vkey",
+	)
+	ErrOpCertKESVK = errors.New(
+		"kesagent: opcert KES vkey does not match the staged key",
+	)
+	ErrColdVKey = errors.New(
+		"kesagent: configured cold verification key must be 32 bytes",
+	)
 )
 
 // Config configures an Agent.
@@ -142,7 +154,9 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 		return nil, errors.New("kesagent: slot_length must be positive")
 	}
 	if cfg.SlotsPerKESPeriod == 0 {
-		return nil, errors.New("kesagent: slots_per_kes_period must be positive")
+		return nil, errors.New(
+			"kesagent: slots_per_kes_period must be positive",
+		)
 	}
 	// SlotLength > 0 is guaranteed above, so guard the KES-period-duration
 	// multiplication (SlotLength * SlotsPerKESPeriod) against int64 overflow.
@@ -151,7 +165,8 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	if cfg.SlotsPerKESPeriod > uint64(math.MaxInt64)/uint64(cfg.SlotLength) {
 		return nil, fmt.Errorf(
 			"kesagent: slot_length (%s) * slots_per_kes_period (%d) overflows the KES period duration",
-			cfg.SlotLength, cfg.SlotsPerKESPeriod,
+			cfg.SlotLength,
+			cfg.SlotsPerKESPeriod,
 		)
 	}
 	if cfg.MaxKESEvolutions == 0 {
@@ -182,7 +197,9 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 
 // kesPeriodDuration is the wall-clock length of one KES period.
 func (a *Agent) kesPeriodDuration() time.Duration {
-	return a.cfg.SlotLength * time.Duration(a.cfg.SlotsPerKESPeriod) // #nosec G115
+	return a.cfg.SlotLength * time.Duration(
+		a.cfg.SlotsPerKESPeriod,
+	) // #nosec G115
 }
 
 // currentKESPeriod computes the current absolute KES period from genesis
@@ -218,14 +235,18 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 		return nil, err
 	}
 	if !buf.Locked() {
-		a.logger.Warn("KES secret key buffer could not be locked in memory (mlock unavailable or refused); key material may be swappable to disk")
+		a.logger.Warn(
+			"KES secret key buffer could not be locked in memory (mlock unavailable or refused); key material may be swappable to disk",
+		)
 	}
 	if err := buf.Set(sk.Data); err != nil {
 		securemem.Wipe(sk.Data)
 		_ = buf.Close()
 		return nil, err
 	}
-	securemem.Wipe(sk.Data) // transient heap copy erased; material now only in buf
+	securemem.Wipe(
+		sk.Data,
+	) // transient heap copy erased; material now only in buf
 
 	ks := &keyState{depth: a.cfg.Depth, period: 0, buf: buf, vkey: vkey}
 
@@ -235,7 +256,11 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 	a.staged = ks
 	vkeyOut := make([]byte, len(vkey))
 	copy(vkeyOut, vkey)
-	a.logger.Info("generated staged KES key", "kes_vkey", hex.EncodeToString(vkey))
+	a.logger.Info(
+		"generated staged KES key",
+		"kes_vkey",
+		hex.EncodeToString(vkey),
+	)
 	return vkeyOut, nil
 }
 
@@ -304,7 +329,9 @@ func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 		// failure (see the buf.Set failure path); treat it the same as a
 		// guard refusal and restore the previous key.
 		a.active = oldActive
-		return nil, errors.New("kesagent: failed to evolve newly installed key to the current period")
+		return nil, errors.New(
+			"kesagent: failed to evolve newly installed key to the current period",
+		)
 	}
 	if err := a.guard.Authorize(hex.EncodeToString(ks.vkey), a.active.absPeriod()); err != nil {
 		// Roll back the install: keep serving the previous active key
@@ -488,7 +515,11 @@ func (a *Agent) evolveToLocked(targetAbs uint64) {
 		a.active.buf.Zeroize()
 		if err := storeEvolvedKey(a.active.buf, next.Data); err != nil {
 			securemem.Wipe(next.Data)
-			a.logger.Error("failed to store evolved KES key; discarding the key", "error", err)
+			a.logger.Error(
+				"failed to store evolved KES key; discarding the key",
+				"error",
+				err,
+			)
 			// The buffer was already zeroized above and next.Data failed to
 			// land, so a.active.period is stale relative to its now-zeroed
 			// buffer contents. Discard the key entirely rather than leaving
@@ -511,7 +542,8 @@ func (a *Agent) evolveToLocked(targetAbs uint64) {
 // activeAuthorizedLocked reports whether the active key's exact period passed
 // its most recent guard authorization. Caller holds a.mu.
 func (a *Agent) activeAuthorizedLocked() bool {
-	return a.active != nil && a.guardedSet && a.guardedPeriod == a.active.absPeriod()
+	return a.active != nil && a.guardedSet &&
+		a.guardedPeriod == a.active.absPeriod()
 }
 
 // buildKeyPushLocked builds a KeyPush for the current active key. Caller holds a.mu.
@@ -594,10 +626,14 @@ func (a *Agent) dropQueuedPushesBelowFloorLocked() {
 		select {
 		case kp := <-ch:
 			if kp.Period < floor {
-				a.logger.Warn("dropping queued KES key push below the guard floor",
-					"subscriber", id,
-					"push_period", kp.Period,
-					"floor", floor,
+				a.logger.Warn(
+					"dropping queued KES key push below the guard floor",
+					"subscriber",
+					id,
+					"push_period",
+					kp.Period,
+					"floor",
+					floor,
 				)
 				securemem.Wipe(kp.KESSignKey)
 				continue

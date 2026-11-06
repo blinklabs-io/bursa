@@ -40,13 +40,21 @@ func TestSetWalletReattachAcceptsEquivalentUnicodeForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Derive: %v", err)
 	}
-	s := NewService(newFakeChain(0, ""), &trackingKeystore{mnemonic: testMnemonic}, nil)
+	s := NewService(
+		newFakeChain(0, ""),
+		&trackingKeystore{mnemonic: testMnemonic},
+		nil,
+	)
 	got, err := s.SetWallet(fullWidth, "preview", "spend-password-1")
 	if err != nil {
 		t.Fatalf("SetWallet re-attach with equivalent form: %v", err)
 	}
 	if got.StakeAddress != want.StakeAddress {
-		t.Fatalf("stake address %q, want %q", got.StakeAddress, want.StakeAddress)
+		t.Fatalf(
+			"stake address %q, want %q",
+			got.StakeAddress,
+			want.StakeAddress,
+		)
 	}
 	if _, err := s.SetWallet(differentMnemonic, "preview", "spend-password-1"); err == nil {
 		t.Fatal("re-attach with a different mnemonic must still fail")

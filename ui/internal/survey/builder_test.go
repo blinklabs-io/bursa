@@ -32,13 +32,24 @@ type fakeBuilder struct {
 	err      error
 }
 
-func (b *fakeBuilder) WalletCredential(kind spend.SignerKind) ([28]byte, error) {
+func (b *fakeBuilder) WalletCredential(
+	kind spend.SignerKind,
+) ([28]byte, error) {
 	var h [28]byte
-	copy(h[:], rep(map[spend.SignerKind]byte{spend.SignerPayment: 0x91, spend.SignerStake: 0x92, spend.SignerDRep: 0x93}[kind], 28))
+	copy(
+		h[:],
+		rep(
+			map[spend.SignerKind]byte{spend.SignerPayment: 0x91, spend.SignerStake: 0x92, spend.SignerDRep: 0x93}[kind],
+			28,
+		),
+	)
 	return h, nil
 }
 
-func (b *fakeBuilder) BuildMetadata(_ context.Context, req spend.MetadataRequest) (spend.Preview, error) {
+func (b *fakeBuilder) BuildMetadata(
+	_ context.Context,
+	req spend.MetadataRequest,
+) (spend.Preview, error) {
 	if b.err != nil {
 		return spend.Preview{}, b.err
 	}
@@ -62,7 +73,17 @@ func (b *fakeBuilder) built(t *testing.T) (spend.MetadataRequest, Payload) {
 func newBuilderService(t *testing.T) (*Service, *fakeChain, *fakeBuilder) {
 	t.Helper()
 	f := newFakeChain()
-	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60, RoleDRep, RoleStakeholder, RoleKeyholder, RoleSPO)), credHex(1))
+	f.add(
+		t,
+		0xa1,
+		100,
+		0,
+		40,
+		defPayload(
+			simple(1, 60, RoleDRep, RoleStakeholder, RoleKeyholder, RoleSPO),
+		),
+		credHex(1),
+	)
 	svc := NewService(f, "preview")
 	b := &fakeBuilder{}
 	svc.SetBuilder(b)
@@ -86,17 +107,31 @@ func TestRespondBuildsALabel17ResponseSignedByTheRoleKey(t *testing.T) {
 		t.Run(string(rune('0'+role)), func(t *testing.T) {
 			t.Parallel()
 			svc, _, b := newBuilderService(t)
-			pv, err := svc.Respond(context.Background(), RespondRequest{Survey: surveyID(0xa1, 0), Role: role, Answers: answer(1)})
+			pv, err := svc.Respond(
+				context.Background(),
+				RespondRequest{
+					Survey:  surveyID(0xa1, 0),
+					Role:    role,
+					Answers: answer(1),
+				},
+			)
 			noErr(t, err)
 			equal(t, "pending-1", pv.PendingID)
 
 			req, p := b.built(t)
 			equal(t, Label, req.Label)
 			equal(t, tc.signer, req.Signer)
-			equal(t, [28]byte(cred(false, tc.cred).Hash), req.ExpectedSignerCredential)
+			equal(
+				t,
+				[28]byte(cred(false, tc.cred).Hash),
+				req.ExpectedSignerCredential,
+			)
 			equal(t, KindResponses, p.Kind)
 			equal(t, []Response{{
-				Survey: ref(0xa1, 0), Role: role, Credential: cred(false, tc.cred), Answers: answer(1),
+				Survey: ref(
+					0xa1,
+					0,
+				), Role: role, Credential: cred(false, tc.cred), Answers: answer(1),
 			}}, p.Responses)
 		})
 	}
@@ -128,7 +163,15 @@ func TestRespondRejectsWithoutBuilding(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			svc, f, b := newBuilderService(t)
-			f.add(t, 0xa2, 104, 0, 40, defPayload(simple(2, 60, RoleDRep)), credHex(2))
+			f.add(
+				t,
+				0xa2,
+				104,
+				0,
+				40,
+				defPayload(simple(2, 60, RoleDRep)),
+				credHex(2),
+			)
 			if tc.prepare != nil {
 				tc.prepare(t, f)
 			}
@@ -145,7 +188,10 @@ func TestRespondWithoutAWalletBuilder(t *testing.T) {
 	t.Parallel()
 	f := newFakeChain()
 	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
-	_, err := NewService(f, "preview").Respond(context.Background(), RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleDRep, Answers: answer(0)})
+	_, err := NewService(
+		f,
+		"preview",
+	).Respond(context.Background(), RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleDRep, Answers: answer(0)})
 	if !errors.Is(err, spend.ErrNoWallet) {
 		t.Fatalf("err = %v, want spend.ErrNoWallet", err)
 	}
@@ -155,7 +201,14 @@ func TestRespondPassesBuilderErrorsThrough(t *testing.T) {
 	t.Parallel()
 	svc, _, b := newBuilderService(t)
 	b.err = spend.ErrInsufficientFunds
-	_, err := svc.Respond(context.Background(), RespondRequest{Survey: surveyID(0xa1, 0), Role: RoleDRep, Answers: answer(0)})
+	_, err := svc.Respond(
+		context.Background(),
+		RespondRequest{
+			Survey:  surveyID(0xa1, 0),
+			Role:    RoleDRep,
+			Answers: answer(0),
+		},
+	)
 	if !errors.Is(err, spend.ErrInsufficientFunds) {
 		t.Fatalf("err = %v, want ErrInsufficientFunds", err)
 	}
@@ -166,7 +219,12 @@ func createRequest() CreateRequest {
 		Title: "Poll", Description: "Pick one", Roles: []Role{RoleDRep, RoleStakeholder}, EndEpoch: 55,
 		Questions: []Question{
 			{Kind: KindSingleChoice, Prompt: "q1", Options: []string{"a", "b"}},
-			{Kind: KindNumericRange, Prompt: "q2", Range: &Range{Min: 1, Max: 10}, Required: true},
+			{
+				Kind:     KindNumericRange,
+				Prompt:   "q2",
+				Range:    &Range{Min: 1, Max: 10},
+				Required: true,
+			},
 		},
 	}
 }
@@ -185,7 +243,10 @@ func TestCreateBuildsADefinitionOwnedByThePaymentKey(t *testing.T) {
 	equal(t, KindDefinitions, p.Kind)
 	equal(t, []Definition{{
 		Owner: cred(false, 0x91), Title: "Poll", Description: "Pick one",
-		Roles: []Role{RoleDRep, RoleStakeholder}, EndEpoch: 55, Questions: req.Questions,
+		Roles: []Role{
+			RoleDRep,
+			RoleStakeholder,
+		}, EndEpoch: 55, Questions: req.Questions,
 	}}, p.Definitions)
 }
 
@@ -238,7 +299,11 @@ func TestCreateHashesTheAnchorDocumentExactly(t *testing.T) {
 	_, p := b.built(t)
 
 	want := blake2b.Sum256([]byte(doc))
-	equal(t, &Anchor{URI: "https://example.test/survey.json", Hash: want}, p.Definitions[0].Anchor)
+	equal(
+		t,
+		&Anchor{URI: "https://example.test/survey.json", Hash: want},
+		p.Definitions[0].Anchor,
+	)
 
 	// One changed byte changes the hash.
 	svc, _, b = newBuilderService(t)
@@ -260,7 +325,10 @@ func TestCreateRejectsAHalfSpecifiedAnchor(t *testing.T) {
 			svc, _, b := newBuilderService(t)
 			req := createRequest()
 			mutate(&req)
-			if _, err := svc.Create(context.Background(), req); !errors.Is(err, ErrInvalid) {
+			if _, err := svc.Create(context.Background(), req); !errors.Is(
+				err,
+				ErrInvalid,
+			) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
 			}
 			equal(t, 0, len(b.requests))
@@ -277,7 +345,10 @@ func TestCancelBuildsACancellationForTheOwner(t *testing.T) {
 	b := &fakeBuilder{}
 	svc.SetBuilder(b)
 
-	_, err := svc.Cancel(context.Background(), CancelRequest{Survey: surveyID(0xa1, 0)})
+	_, err := svc.Cancel(
+		context.Background(),
+		CancelRequest{Survey: surveyID(0xa1, 0)},
+	)
 	noErr(t, err)
 	built, p := b.built(t)
 	equal(t, spend.SignerPayment, built.Signer)
@@ -315,7 +386,10 @@ func TestCancelRejectsWithoutBuilding(t *testing.T) {
 			svc := NewService(f, "preview")
 			b := &fakeBuilder{}
 			svc.SetBuilder(b)
-			_, err := svc.Cancel(context.Background(), CancelRequest{Survey: tc.id})
+			_, err := svc.Cancel(
+				context.Background(),
+				CancelRequest{Survey: tc.id},
+			)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -329,9 +403,33 @@ func TestSurveysOwnedByTheWalletAreMarkedOwned(t *testing.T) {
 	script := simple(0x91, 60)
 	script.Owner = cred(true, 0x91)
 	f := newFakeChain()
-	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(0x91, 60)), credHex(0x91)) // the fake wallet's payment key
-	f.add(t, 0xa2, 101, 0, 40, defPayload(simple(0x92, 60)), credHex(0x92)) // someone else
-	f.add(t, 0xa3, 102, 0, 40, defPayload(script), credHex(0x91))           // same hash, but a script: never verified
+	f.add(
+		t,
+		0xa1,
+		100,
+		0,
+		40,
+		defPayload(simple(0x91, 60)),
+		credHex(0x91),
+	) // the fake wallet's payment key
+	f.add(
+		t,
+		0xa2,
+		101,
+		0,
+		40,
+		defPayload(simple(0x92, 60)),
+		credHex(0x92),
+	) // someone else
+	f.add(
+		t,
+		0xa3,
+		102,
+		0,
+		40,
+		defPayload(script),
+		credHex(0x91),
+	) // same hash, but a script: never verified
 
 	svc := NewService(f, "preview")
 	list, err := svc.List(context.Background())

@@ -37,7 +37,10 @@ func LoopbackBindAddress(host string, port uint) (string, error) {
 		)
 	}
 	if !IsLoopbackListenAddress(trimmed) {
-		return "", fmt.Errorf("refusing listener on non-loopback address %q", host)
+		return "", fmt.Errorf(
+			"refusing listener on non-loopback address %q",
+			host,
+		)
 	}
 	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 		trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
@@ -88,7 +91,11 @@ func isSoftwareFileBackend(c config.SignerBackendConfig) bool {
 // explicitly opted in via allowInsecure (signer.allow_insecure_file_backend).
 // On a loopback address, or with the opt-in set, boot proceeds and only the
 // warning is returned.
-func CheckFileBackendGuard(backends []config.SignerBackendConfig, listenAddress string, allowInsecure bool) (string, error) {
+func CheckFileBackendGuard(
+	backends []config.SignerBackendConfig,
+	listenAddress string,
+	allowInsecure bool,
+) (string, error) {
 	var names []string
 	for _, c := range backends {
 		if isSoftwareFileBackend(c) {
@@ -107,6 +114,7 @@ func CheckFileBackendGuard(backends []config.SignerBackendConfig, listenAddress 
 	}
 	return warn, fmt.Errorf(
 		"refusing to start: software/file key backend(s) %v hold plaintext key material and signer.listen_address %q is not loopback; use a vault/sops backend or set signer.allow_insecure_file_backend: true to override (development only)",
-		names, listenAddress,
+		names,
+		listenAddress,
 	)
 }

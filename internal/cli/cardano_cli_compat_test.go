@@ -71,7 +71,12 @@ func TestPoolColdKeyFilesAcceptedByCardanoCLI(t *testing.T) {
 		"--verification-key-file", derivedVKeyFile,
 	)
 	output, err = cmd.CombinedOutput()
-	require.NoErrorf(t, err, "cardano-cli key verification-key failed: %s", output)
+	require.NoErrorf(
+		t,
+		err,
+		"cardano-cli key verification-key failed: %s",
+		output,
+	)
 	derived, err := os.ReadFile(derivedVKeyFile)
 	require.NoError(t, err)
 	var derivedEnvelope bursa.KeyFile
@@ -124,7 +129,12 @@ func TestBLSKeyFilesAcceptedByCardanoCLIDijkstra(t *testing.T) {
 		"--testnet-magic", "42",
 		"--out-file", certificate,
 	).CombinedOutput()
-	require.NoErrorf(t, err, "cardano-cli Dijkstra registration failed: %s", output)
+	require.NoErrorf(
+		t,
+		err,
+		"cardano-cli Dijkstra registration failed: %s",
+		output,
+	)
 
 	var registrationMaterial struct {
 		PublicKey       string `json:"publicKey"`

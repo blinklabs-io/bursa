@@ -238,7 +238,11 @@ func TestLoadWalletDir(t *testing.T) {
 	// Verify payment skey
 	pskey := keyMap["payment.skey"]
 	assert.NotNil(t, pskey)
-	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
+	assert.Equal(
+		t,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		pskey.Type,
+	)
 	assert.Len(t, pskey.SKey, 96)
 	assert.Len(t, pskey.VKey, 32)
 
@@ -684,11 +688,25 @@ func TestGetRootKeyFromMnemonicBytes(t *testing.T) {
 					pwBytes = []byte(password)
 				}
 				want := GetRootKey(wantEntropy, pwBytes)
-				got, err := GetRootKeyFromMnemonicBytes([]byte(mnemonic), password)
-				require.NoError(t, err,
-					"%d words: GetRootKeyFromMnemonicBytes(%q)", words, password)
-				assert.Equal(t, []byte(want), []byte(got),
-					"%d words: root key mismatch for password %q", words, password)
+				got, err := GetRootKeyFromMnemonicBytes(
+					[]byte(mnemonic),
+					password,
+				)
+				require.NoError(
+					t,
+					err,
+					"%d words: GetRootKeyFromMnemonicBytes(%q)",
+					words,
+					password,
+				)
+				assert.Equal(
+					t,
+					[]byte(want),
+					[]byte(got),
+					"%d words: root key mismatch for password %q",
+					words,
+					password,
+				)
 			}
 		}
 	})
@@ -1358,7 +1376,11 @@ func TestMultiSigKeyDerivation(t *testing.T) {
 
 	stakeSKey, err := GetMultiSigStakeSKey(stakeKey)
 	assert.NoError(t, err)
-	assert.Equal(t, "StakeExtendedSigningKeyShelley_ed25519_bip32", stakeSKey.Type)
+	assert.Equal(
+		t,
+		"StakeExtendedSigningKeyShelley_ed25519_bip32",
+		stakeSKey.Type,
+	)
 }
 
 func TestValidateScript(t *testing.T) {
@@ -1650,7 +1672,9 @@ func TestValidateScriptWithSignatures(t *testing.T) {
 		ValidateScript(
 			scriptSig,
 			message,
-			[]ScriptWitness{{Vkey: pub1, Signature: ed25519.Sign(priv1, otherMessage)}},
+			[]ScriptWitness{
+				{Vkey: pub1, Signature: ed25519.Sign(priv1, otherMessage)},
+			},
 			1000,
 			true,
 		),
@@ -1704,10 +1728,28 @@ func TestValidateScriptWithSignatures(t *testing.T) {
 	// Reusing one witness across repeated signature leaves is valid.
 	repeatedAll, err := NewScriptAll(scriptAll1, scriptAll1)
 	assert.NoError(t, err)
-	assert.True(t, ValidateScript(repeatedAll, message, []ScriptWitness{{Vkey: pub1, Signature: sig1}}, 1000, true))
+	assert.True(
+		t,
+		ValidateScript(
+			repeatedAll,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: sig1}},
+			1000,
+			true,
+		),
+	)
 	repeatedNOf, err := NewScriptNOf(2, scriptAll1, scriptAll1)
 	assert.NoError(t, err)
-	assert.True(t, ValidateScript(repeatedNOf, message, []ScriptWitness{{Vkey: pub1, Signature: sig1}}, 1000, true))
+	assert.True(
+		t,
+		ValidateScript(
+			repeatedNOf,
+			message,
+			[]ScriptWitness{{Vkey: pub1, Signature: sig1}},
+			1000,
+			true,
+		),
+	)
 
 	// Test ScriptNOf (2-of-3) with requireSignatures=true
 	scriptNOf1, err := NewScriptSig(keyHash1)
@@ -2578,9 +2620,20 @@ func TestCIP1853KeyFileGeneration(t *testing.T) {
 	assert.NotEmpty(t, extendedSkeyCbor)
 }
 
-func TestCreateOperationalCertificateRejectsInvalidColdSkeyLength(t *testing.T) {
-	_, err := CreateOperationalCertificate(make([]byte, ed25519.PublicKeySize), 0, 0, make([]byte, ed25519.SeedSize-1))
-	require.EqualError(t, err, "cold signing key must be 32 or 64 bytes, got 31")
+func TestCreateOperationalCertificateRejectsInvalidColdSkeyLength(
+	t *testing.T,
+) {
+	_, err := CreateOperationalCertificate(
+		make([]byte, ed25519.PublicKeySize),
+		0,
+		0,
+		make([]byte, ed25519.SeedSize-1),
+	)
+	require.EqualError(
+		t,
+		err,
+		"cold signing key must be 32 or 64 bytes, got 31",
+	)
 }
 
 func TestPoolColdKeyEnvelopeCompatibility(t *testing.T) {
@@ -3083,7 +3136,11 @@ func TestCIP1855PolicyKeyRoundTrip(t *testing.T) {
 	// Verify policy signing key
 	pskey := keyMap["policy.skey"]
 	assert.NotNil(t, pskey, "policy.skey should be loaded")
-	assert.Equal(t, "PaymentExtendedSigningKeyShelley_ed25519_bip32", pskey.Type)
+	assert.Equal(
+		t,
+		"PaymentExtendedSigningKeyShelley_ed25519_bip32",
+		pskey.Type,
+	)
 	assert.Len(t, pskey.SKey, 96, "Signing key should be 96 bytes")
 	assert.Len(t, pskey.VKey, 32, "Derived verification key should be 32 bytes")
 
@@ -3211,12 +3268,24 @@ func TestValidateScriptDepthLimit(t *testing.T) {
 
 	assert.True(
 		t,
-		ValidateScript(nestedScripts(maxScriptDepth, Script(leaf), all), nil, nil, 0, false),
+		ValidateScript(
+			nestedScripts(maxScriptDepth, Script(leaf), all),
+			nil,
+			nil,
+			0,
+			false,
+		),
 		"a leaf at exactly the depth limit must validate",
 	)
 	assert.False(
 		t,
-		ValidateScript(nestedScripts(maxScriptDepth+1, Script(leaf), all), nil, nil, 0, false),
+		ValidateScript(
+			nestedScripts(maxScriptDepth+1, Script(leaf), all),
+			nil,
+			nil,
+			0,
+			false,
+		),
 		"validation must reject scripts deeper than the depth limit",
 	)
 }

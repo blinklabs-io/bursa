@@ -120,13 +120,22 @@ func (a *App) SetContactsPersistenceEnabled(enabled bool) {
 // lean-node (history-expiry) profile (mobile passes true for a small on-disk
 // footprint). Calling Start on an already-started App returns an error.
 func (a *App) Start(dataDir, network string, lean bool) error {
-	return a.StartWithTimeout(dataDir, network, lean, defaultStartTimeout.Milliseconds())
+	return a.StartWithTimeout(
+		dataDir,
+		network,
+		lean,
+		defaultStartTimeout.Milliseconds(),
+	)
 }
 
 // StartWithTimeout is Start with a caller-supplied boot timeout in milliseconds.
 // A non-positive timeout uses the default. The boot work runs outside a.mu so
 // Port, Stop, and lifecycle kicks are not blocked while startup waits on I/O.
-func (a *App) StartWithTimeout(dataDir, network string, lean bool, timeoutMs int64) error {
+func (a *App) StartWithTimeout(
+	dataDir, network string,
+	lean bool,
+	timeoutMs int64,
+) error {
 	timeout := startTimeout(timeoutMs)
 
 	var (
@@ -224,7 +233,12 @@ func startTimeout(timeoutMs int64) time.Duration {
 	return time.Duration(timeoutMs) * time.Millisecond
 }
 
-func (a *App) finishStart(startID uint64, cancel context.CancelFunc, done chan struct{}, res startResult) error {
+func (a *App) finishStart(
+	startID uint64,
+	cancel context.CancelFunc,
+	done chan struct{},
+	res startResult,
+) error {
 	defer close(done)
 
 	a.mu.Lock()

@@ -46,7 +46,12 @@ func TestVRFKeyFilesAreCardanoCLICompatible(t *testing.T) {
 		require.NoError(t, err, name)
 		assert.Equal(t, "VrfSigningKey_PraosVRF", skey.Type, name)
 		assert.Equal(t, want, decodeCborBytes(t, skey.CborHex), name)
-		assert.Len(t, decodeCborBytes(t, skey.CborHex), vrf.SeedSize+vrf.PublicKeySize, name)
+		assert.Len(
+			t,
+			decodeCborBytes(t, skey.CborHex),
+			vrf.SeedSize+vrf.PublicKeySize,
+			name,
+		)
 
 		loaded, err := LoadKeyFromBytes(authoritativeEnvelopeJSON(t, skey))
 		require.NoError(t, err, name)

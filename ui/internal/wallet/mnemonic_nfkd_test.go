@@ -52,6 +52,10 @@ func TestDeriveFromMnemonicBytesFormInvariant(t *testing.T) {
 		t.Fatalf("DeriveFromMnemonicBytes(NFC): %v", err)
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("account differs between NFC and NFKD input:\n got %+v\nwant %+v", got, want)
+		t.Fatalf(
+			"account differs between NFC and NFKD input:\n got %+v\nwant %+v",
+			got,
+			want,
+		)
 	}
 }

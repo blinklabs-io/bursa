@@ -63,7 +63,11 @@ func TestWitnessTransaction_PlainStakeSigningKey(t *testing.T) {
 		t.Fatalf("WitnessTransaction: %v", err)
 	}
 	if hex.EncodeToString(wit.Vkey) != hex.EncodeToString(wantPub) {
-		t.Fatalf("witness vkey = %x, want plain public key %x", wit.Vkey, wantPub)
+		t.Fatalf(
+			"witness vkey = %x, want plain public key %x",
+			wit.Vkey,
+			wantPub,
+		)
 	}
 	txType, err := ledger.DetermineTransactionType(txBytes)
 	if err != nil {

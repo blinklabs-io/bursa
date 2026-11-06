@@ -36,8 +36,14 @@ const maxRPCMessageSize = 4 * maxEnvelopeSize
 
 type strictJSONCodec struct{}
 
-func (strictJSONCodec) Name() string                      { return "bursa-nitro-json" }
-func (strictJSONCodec) Marshal(value any) ([]byte, error) { return json.Marshal(value) }
+func (strictJSONCodec) Name() string { return "bursa-nitro-json" }
+
+func (strictJSONCodec) Marshal(
+	value any,
+) ([]byte, error) {
+	return json.Marshal(value)
+}
+
 func (strictJSONCodec) Unmarshal(data []byte, value any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -75,17 +81,24 @@ type RPCClientTLSConfig struct {
 
 func loadRPCKeyPair(certFile, keyFile string) (tls.Certificate, error) {
 	if certFile == "" || keyFile == "" {
-		return tls.Certificate{}, errors.New("RPC certificate and key files are required")
+		return tls.Certificate{}, errors.New(
+			"RPC certificate and key files are required",
+		)
 	}
 	info, err := os.Stat(keyFile)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("stat RPC private key: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return tls.Certificate{}, errors.New("RPC private key must be a regular file")
+		return tls.Certificate{}, errors.New(
+			"RPC private key must be a regular file",
+		)
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return tls.Certificate{}, fmt.Errorf("RPC private key mode %04o grants group or other access", info.Mode().Perm())
+		return tls.Certificate{}, fmt.Errorf(
+			"RPC private key mode %04o grants group or other access",
+			info.Mode().Perm(),
+		)
 	}
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -173,30 +186,47 @@ func NewRPCClient(conn grpc.ClientConnInterface) *rpcClient {
 	return &rpcClient{conn: conn}
 }
 
-func (c *rpcClient) Provision(ctx context.Context, req ProvisionRequest) (ProvisionResponse, error) {
+func (c *rpcClient) Provision(
+	ctx context.Context,
+	req ProvisionRequest,
+) (ProvisionResponse, error) {
 	var response ProvisionResponse
 	err := c.conn.Invoke(ctx, "/"+rpcServiceName+"/Provision", &req, &response)
 	return response, err
 }
 
-func (c *rpcClient) Reload(ctx context.Context, req ReloadRequest) (ReloadResponse, error) {
+func (c *rpcClient) Reload(
+	ctx context.Context,
+	req ReloadRequest,
+) (ReloadResponse, error) {
 	var response ReloadResponse
 	err := c.conn.Invoke(ctx, "/"+rpcServiceName+"/Reload", &req, &response)
 	return response, err
 }
 
 // Inventory implements backend.Enclave over gRPC.
-func (c *rpcClient) Inventory(ctx context.Context, nonce []byte) (backend.AttestedInventory, error) {
+func (c *rpcClient) Inventory(
+	ctx context.Context,
+	nonce []byte,
+) (backend.AttestedInventory, error) {
 	var response backend.AttestedInventory
-	err := c.conn.Invoke(ctx, "/"+rpcServiceName+"/Inventory", &InventoryRequest{
-		Version: Protocol,
-		Nonce:   bytes.Clone(nonce),
-	}, &response)
+	err := c.conn.Invoke(
+		ctx,
+		"/"+rpcServiceName+"/Inventory",
+		&InventoryRequest{
+			Version: Protocol,
+			Nonce:   bytes.Clone(nonce),
+		},
+		&response,
+	)
 	return response, err
 }
 
 // Sign implements backend.Enclave over gRPC.
-func (c *rpcClient) Sign(ctx context.Context, req backend.AttestedRequest) (backend.AttestedResponse, error) {
+func (c *rpcClient) Sign(
+	ctx context.Context,
+	req backend.AttestedRequest,
+) (backend.AttestedResponse, error) {
 	var response backend.AttestedResponse
 	err := c.conn.Invoke(ctx, "/"+rpcServiceName+"/Sign", &req, &response)
 	return response, err
@@ -216,8 +246,14 @@ var custodyServiceDesc = grpc.ServiceDesc{
 type custodyRPC interface {
 	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
 	Reload(context.Context, *ReloadRequest) (*ReloadResponse, error)
-	Inventory(context.Context, *InventoryRequest) (*backend.AttestedInventory, error)
-	Sign(context.Context, *backend.AttestedRequest) (*backend.AttestedResponse, error)
+	Inventory(
+		context.Context,
+		*InventoryRequest,
+	) (*backend.AttestedInventory, error)
+	Sign(
+		context.Context,
+		*backend.AttestedRequest,
+	) (*backend.AttestedResponse, error)
 }
 
 func invokeRPC(
@@ -232,48 +268,104 @@ func invokeRPC(
 	if interceptor == nil {
 		return call(rpc, ctx, request)
 	}
-	info := &grpc.UnaryServerInfo{Server: service, FullMethod: "/" + rpcServiceName + "/" + method}
-	return interceptor(ctx, request, info, func(ctx context.Context, request any) (any, error) {
-		return call(rpc, ctx, request)
-	})
+	info := &grpc.UnaryServerInfo{
+		Server:     service,
+		FullMethod: "/" + rpcServiceName + "/" + method,
+	}
+	return interceptor(
+		ctx,
+		request,
+		info,
+		func(ctx context.Context, request any) (any, error) {
+			return call(rpc, ctx, request)
+		},
+	)
 }
 
-func provisionHandler(service any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func provisionHandler(
+	service any,
+	ctx context.Context,
+	decode func(any) error,
+	interceptor grpc.UnaryServerInterceptor,
+) (any, error) {
 	request := new(ProvisionRequest)
 	if err := decode(request); err != nil {
 		return nil, err
 	}
-	return invokeRPC(service, ctx, request, "Provision", interceptor, func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
-		return rpc.Provision(ctx, request.(*ProvisionRequest))
-	})
+	return invokeRPC(
+		service,
+		ctx,
+		request,
+		"Provision",
+		interceptor,
+		func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
+			return rpc.Provision(ctx, request.(*ProvisionRequest))
+		},
+	)
 }
 
-func reloadHandler(service any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func reloadHandler(
+	service any,
+	ctx context.Context,
+	decode func(any) error,
+	interceptor grpc.UnaryServerInterceptor,
+) (any, error) {
 	request := new(ReloadRequest)
 	if err := decode(request); err != nil {
 		return nil, err
 	}
-	return invokeRPC(service, ctx, request, "Reload", interceptor, func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
-		return rpc.Reload(ctx, request.(*ReloadRequest))
-	})
+	return invokeRPC(
+		service,
+		ctx,
+		request,
+		"Reload",
+		interceptor,
+		func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
+			return rpc.Reload(ctx, request.(*ReloadRequest))
+		},
+	)
 }
 
-func inventoryHandler(service any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func inventoryHandler(
+	service any,
+	ctx context.Context,
+	decode func(any) error,
+	interceptor grpc.UnaryServerInterceptor,
+) (any, error) {
 	request := new(InventoryRequest)
 	if err := decode(request); err != nil {
 		return nil, err
 	}
-	return invokeRPC(service, ctx, request, "Inventory", interceptor, func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
-		return rpc.Inventory(ctx, request.(*InventoryRequest))
-	})
+	return invokeRPC(
+		service,
+		ctx,
+		request,
+		"Inventory",
+		interceptor,
+		func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
+			return rpc.Inventory(ctx, request.(*InventoryRequest))
+		},
+	)
 }
 
-func signHandler(service any, ctx context.Context, decode func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
+func signHandler(
+	service any,
+	ctx context.Context,
+	decode func(any) error,
+	interceptor grpc.UnaryServerInterceptor,
+) (any, error) {
 	request := new(backend.AttestedRequest)
 	if err := decode(request); err != nil {
 		return nil, err
 	}
-	return invokeRPC(service, ctx, request, "Sign", interceptor, func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
-		return rpc.Sign(ctx, request.(*backend.AttestedRequest))
-	})
+	return invokeRPC(
+		service,
+		ctx,
+		request,
+		"Sign",
+		interceptor,
+		func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
+			return rpc.Sign(ctx, request.(*backend.AttestedRequest))
+		},
+	)
 }

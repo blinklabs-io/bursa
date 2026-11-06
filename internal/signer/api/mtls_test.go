@@ -59,17 +59,32 @@ func makeCA(t *testing.T) certKey {
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		tmpl,
+		tmpl,
+		&key.PublicKey,
+		key,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cert, _ := x509.ParseCertificate(der)
-	return certKey{cert: cert, der: der, key: key, certPEM: pemBlock("CERTIFICATE", der)}
+	return certKey{
+		cert:    cert,
+		der:     der,
+		key:     key,
+		certPEM: pemBlock("CERTIFICATE", der),
+	}
 }
 
 // makeLeaf signs a leaf certificate with the given CA. mutate customizes the
 // template (SANs, CN, key usage).
-func makeLeaf(t *testing.T, ca certKey, mutate func(*x509.Certificate)) certKey {
+func makeLeaf(
+	t *testing.T,
+	ca certKey,
+	mutate func(*x509.Certificate),
+) certKey {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -80,10 +95,19 @@ func makeLeaf(t *testing.T, ca certKey, mutate func(*x509.Certificate)) certKey 
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
 	}
 	mutate(tmpl)
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		tmpl,
+		ca.cert,
+		&key.PublicKey,
+		ca.key,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +137,23 @@ func TestCallerFromCert(t *testing.T) {
 		cert *x509.Certificate
 		want string
 	}{
-		{"uri-san", &x509.Certificate{URIs: []*url.URL{u}, DNSNames: []string{"host.example"}, Subject: pkix.Name{CommonName: "cn"}}, "spiffe://example.org/client"},
-		{"dns-san", &x509.Certificate{DNSNames: []string{"host.example"}, Subject: pkix.Name{CommonName: "cn"}}, "host.example"},
+		{
+			"uri-san",
+			&x509.Certificate{
+				URIs:     []*url.URL{u},
+				DNSNames: []string{"host.example"},
+				Subject:  pkix.Name{CommonName: "cn"},
+			},
+			"spiffe://example.org/client",
+		},
+		{
+			"dns-san",
+			&x509.Certificate{
+				DNSNames: []string{"host.example"},
+				Subject:  pkix.Name{CommonName: "cn"},
+			},
+			"host.example",
+		},
 		{"cn", &x509.Certificate{Subject: pkix.Name{CommonName: "cn"}}, "cn"},
 		{"none", &x509.Certificate{}, ""},
 	}
@@ -133,7 +172,12 @@ func TestMTLSAuthenticator_NoCert(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil) // r.TLS == nil
 	caller, ok, err := a.Authenticate(req)
 	if ok || err != nil || caller != "" {
-		t.Fatalf("expected fall-through (ok=false), got caller=%q ok=%v err=%v", caller, ok, err)
+		t.Fatalf(
+			"expected fall-through (ok=false), got caller=%q ok=%v err=%v",
+			caller,
+			ok,
+			err,
+		)
 	}
 }
 
@@ -141,10 +185,16 @@ func TestMTLSAuthenticator_NoCert(t *testing.T) {
 func TestMTLSAuthenticator_NoIdentity(t *testing.T) {
 	a := NewMTLSAuthenticator()
 	req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{}}}}
+	req.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{}}},
+	}
 	_, ok, err := a.Authenticate(req)
 	if !ok || err == nil {
-		t.Fatalf("expected reject (ok=true,err!=nil), got ok=%v err=%v", ok, err)
+		t.Fatalf(
+			"expected reject (ok=true,err!=nil), got ok=%v err=%v",
+			ok,
+			err,
+		)
 	}
 }
 
@@ -188,7 +238,10 @@ func TestMTLSHandshake(t *testing.T) {
 
 	pool := x509.NewCertPool()
 	pool.AddCert(ca.cert)
-	serverTLSCert := tls.Certificate{Certificate: [][]byte{server.der}, PrivateKey: server.key}
+	serverTLSCert := tls.Certificate{
+		Certificate: [][]byte{server.der},
+		PrivateKey:  server.key,
+	}
 
 	// Handler records the caller resolved by the mTLS authenticator chain. The
 	// handler runs on a server goroutine and the test reads the result on its
@@ -196,17 +249,29 @@ func TestMTLSHandshake(t *testing.T) {
 	// variable (the TCP round-trip orders the two in wall-clock time, but that
 	// ordering is invisible to the Go memory model / race detector).
 	callers := make(chan string, 1)
-	h := AuthMiddleware([]Authenticator{NewMTLSAuthenticator()}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callers <- CallerFromContext(r.Context())
-		w.WriteHeader(http.StatusOK)
-	}))
+	h := AuthMiddleware(
+		[]Authenticator{NewMTLSAuthenticator()},
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callers <- CallerFromContext(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
 
-	srv := newTLSServer(t, serverTLSCert, pool, tls.RequireAndVerifyClientCert, h)
+	srv := newTLSServer(
+		t,
+		serverTLSCert,
+		pool,
+		tls.RequireAndVerifyClientCert,
+		h,
+	)
 	defer srv.Close()
 
 	// Trusted client cert -> 200, caller = CN.
 	t.Run("trusted-cert", func(t *testing.T) {
-		clientTLSCert := tls.Certificate{Certificate: [][]byte{client.der}, PrivateKey: client.key}
+		clientTLSCert := tls.Certificate{
+			Certificate: [][]byte{client.der},
+			PrivateKey:  client.key,
+		}
 		resp := doTLSGet(t, srv.addr, pool, &clientTLSCert)
 		if resp != http.StatusOK {
 			t.Fatalf("expected 200, got %d", resp)
@@ -231,8 +296,15 @@ func TestMTLSHandshake(t *testing.T) {
 	// Untrusted client cert (different CA) -> handshake failure.
 	t.Run("untrusted-cert", func(t *testing.T) {
 		otherCA := makeCA(t)
-		rogue := makeLeaf(t, otherCA, func(c *x509.Certificate) { c.Subject = pkix.Name{CommonName: "rogue"} })
-		rogueTLS := tls.Certificate{Certificate: [][]byte{rogue.der}, PrivateKey: rogue.key}
+		rogue := makeLeaf(
+			t,
+			otherCA,
+			func(c *x509.Certificate) { c.Subject = pkix.Name{CommonName: "rogue"} },
+		)
+		rogueTLS := tls.Certificate{
+			Certificate: [][]byte{rogue.der},
+			PrivateKey:  rogue.key,
+		}
 		if _, err := tlsGetErr(t, srv.addr, pool, &rogueTLS); err == nil {
 			t.Fatal("expected handshake failure with untrusted client cert")
 		}
@@ -248,7 +320,13 @@ type tlsServer struct {
 
 func (s *tlsServer) Close() { _ = s.srv.Close() }
 
-func newTLSServer(t *testing.T, cert tls.Certificate, clientCAs *x509.CertPool, auth tls.ClientAuthType, h http.Handler) *tlsServer {
+func newTLSServer(
+	t *testing.T,
+	cert tls.Certificate,
+	clientCAs *x509.CertPool,
+	auth tls.ClientAuthType,
+	h http.Handler,
+) *tlsServer {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -267,7 +345,12 @@ func newTLSServer(t *testing.T, cert tls.Certificate, clientCAs *x509.CertPool, 
 	return &tlsServer{ln: ln, addr: ln.Addr().String(), srv: srv}
 }
 
-func tlsGetErr(t *testing.T, addr string, roots *x509.CertPool, clientCert *tls.Certificate) (int, error) {
+func tlsGetErr(
+	t *testing.T,
+	addr string,
+	roots *x509.CertPool,
+	clientCert *tls.Certificate,
+) (int, error) {
 	t.Helper()
 	cfg := &tls.Config{RootCAs: roots, ServerName: "127.0.0.1"}
 	if clientCert != nil {
@@ -288,7 +371,12 @@ func tlsGetErr(t *testing.T, addr string, roots *x509.CertPool, clientCert *tls.
 	return resp.StatusCode, nil
 }
 
-func doTLSGet(t *testing.T, addr string, roots *x509.CertPool, clientCert *tls.Certificate) int {
+func doTLSGet(
+	t *testing.T,
+	addr string,
+	roots *x509.CertPool,
+	clientCert *tls.Certificate,
+) int {
 	t.Helper()
 	code, err := tlsGetErr(t, addr, roots, clientCert)
 	if err != nil {

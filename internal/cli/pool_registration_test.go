@@ -157,9 +157,18 @@ func TestRunCertPoolRegistration_RejectsInvalidRelays(t *testing.T) {
 		name   string
 		relays PoolRelayFlags
 	}{
-		{"address without port", PoolRelayFlags{Addresses: []string{"1.2.3.4"}}},
-		{"address not an ip", PoolRelayFlags{Addresses: []string{"example.com:3001"}}},
-		{"address port out of range", PoolRelayFlags{Addresses: []string{"1.2.3.4:70000"}}},
+		{
+			"address without port",
+			PoolRelayFlags{Addresses: []string{"1.2.3.4"}},
+		},
+		{
+			"address not an ip",
+			PoolRelayFlags{Addresses: []string{"example.com:3001"}},
+		},
+		{
+			"address port out of range",
+			PoolRelayFlags{Addresses: []string{"1.2.3.4:70000"}},
+		},
 		{"host bad port", PoolRelayFlags{Hosts: []string{"r.example.com:abc"}}},
 		{"empty host", PoolRelayFlags{Hosts: []string{":3001"}}},
 		{"empty multi host", PoolRelayFlags{MultiHosts: []string{""}}},

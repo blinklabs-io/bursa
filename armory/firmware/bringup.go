@@ -61,7 +61,9 @@ func (r *Report) Logf(format string, args ...any) {
 
 	// keep the bring-up output and the most recent lines
 	if len(r.lines) > maxReportLines {
-		r.lines = append(r.lines[:reportHead:reportHead], r.lines[len(r.lines)-(maxReportLines-reportHead):]...)
+		r.lines = append(
+			r.lines[:reportHead:reportHead],
+			r.lines[len(r.lines)-(maxReportLines-reportHead):]...)
 	}
 }
 
@@ -225,7 +227,11 @@ func testImported(r *Report, se *se050.SE050) bool {
 	}
 
 	if !bytes.Equal(pub, wantPub) {
-		r.Logf("  public key mismatch: se %x want %x", []byte(pub), []byte(wantPub))
+		r.Logf(
+			"  public key mismatch: se %x want %x",
+			[]byte(pub),
+			[]byte(wantPub),
+		)
 		return false
 	}
 
@@ -267,8 +273,15 @@ func runBringup(r *Report, s *signer, svc *device.Service) {
 		return
 	}
 
-	r.Logf("ATR: bwt %v ifsc %d mpot %v segt %v wut %v historical %q",
-		se.ATR.BWT, se.ATR.IFSC, se.ATR.MPOT, se.ATR.SEGT, se.ATR.WUT, se.ATR.Historical)
+	r.Logf(
+		"ATR: bwt %v ifsc %d mpot %v segt %v wut %v historical %q",
+		se.ATR.BWT,
+		se.ATR.IFSC,
+		se.ATR.MPOT,
+		se.ATR.SEGT,
+		se.ATR.WUT,
+		se.ATR.Historical,
+	)
 	r.Logf("applet: %s", se.Version)
 
 	if !se.Version.EdDSA() {

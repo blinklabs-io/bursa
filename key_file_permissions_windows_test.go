@@ -44,7 +44,14 @@ func writeBursaSecretKey(t *testing.T) string {
 func bursaCurrentUserSID(t *testing.T) string {
 	t.Helper()
 	var token windows.Token
-	require.NoError(t, windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token))
+	require.NoError(
+		t,
+		windows.OpenProcessToken(
+			windows.CurrentProcess(),
+			windows.TOKEN_QUERY,
+			&token,
+		),
+	)
 	defer token.Close()
 	user, err := token.GetTokenUser()
 	require.NoError(t, err)
@@ -76,7 +83,11 @@ func TestLoadSecretKeyFromFileWindowsChecksOpenHandle(t *testing.T) {
 
 func TestLoadSecretKeyFromFileWindowsAllowsOwner(t *testing.T) {
 	path := writeBursaSecretKey(t)
-	setBursaDACL(t, path, fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)))
+	setBursaDACL(
+		t,
+		path,
+		fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)),
+	)
 
 	_, err := LoadSecretKeyFromFile(path)
 	assert.NoError(t, err)
@@ -140,7 +151,11 @@ func TestAccessAllowedACEFormsWindows(t *testing.T) {
 			sddl := fmt.Sprintf("O:SYD:(%s;;GR;;;WD)", aceType)
 			sd, err := windows.SecurityDescriptorFromString(sddl)
 			require.NoError(t, err)
-			assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", sd), ErrInsecureFileMode)
+			assert.ErrorIs(
+				t,
+				checkOpenSecurityDescriptor("test.skey", sd),
+				ErrInsecureFileMode,
+			)
 		})
 	}
 }
@@ -157,5 +172,9 @@ func TestWindowsRejectsDifferentOwner(t *testing.T) {
 	sddl := fmt.Sprintf("O:SYD:P(A;;GA;;;%s)", bursaCurrentUserSID(t))
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	require.NoError(t, err)
-	assert.ErrorIs(t, checkOpenSecurityDescriptor("test.skey", descriptor), ErrInsecureFileMode)
+	assert.ErrorIs(
+		t,
+		checkOpenSecurityDescriptor("test.skey", descriptor),
+		ErrInsecureFileMode,
+	)
 }

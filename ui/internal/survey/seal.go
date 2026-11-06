@@ -56,7 +56,10 @@ func CurrentRound(now time.Time) uint64 {
 	if now.Unix() < quicknetGenesis {
 		return 1
 	}
-	return uint64(now.Unix()-quicknetGenesis)/uint64(quicknetPeriod/time.Second) + 1 //nolint:gosec // checked non-negative
+	elapsed := now.Unix() - quicknetGenesis
+	period := int64(quicknetPeriod / time.Second)
+	//nolint:gosec // checked non-negative
+	return uint64(elapsed)/uint64(period) + 1
 }
 
 func quicknetScheme() (*crypto.Scheme, kyber.Point, error) {
@@ -144,7 +147,11 @@ const maxPadding = 1 << 20
 // truncated.
 func answersPlaintext(answers []Answer, padding uint64) ([]byte, error) {
 	if padding > maxPadding {
-		return nil, invalidf("padding size %d exceeds %d bytes", padding, maxPadding)
+		return nil, invalidf(
+			"padding size %d exceeds %d bytes",
+			padding,
+			maxPadding,
+		)
 	}
 	items := make([]metadatum, len(answers))
 	for i, a := range answers {
@@ -192,7 +199,11 @@ func SealAnswers(answers []Answer, mode SubmissionMode) ([]byte, error) {
 // UnsealAnswers decrypts a sealed response with the beacon signature for the
 // mode's reveal round and reads the answers: the first CBOR item of the
 // plaintext, ignoring the zero padding after it.
-func UnsealAnswers(sealed []byte, mode SubmissionMode, beaconSig []byte) ([]Answer, error) {
+func UnsealAnswers(
+	sealed []byte,
+	mode SubmissionMode,
+	beaconSig []byte,
+) ([]Answer, error) {
 	if err := mode.checkQuicknet(); err != nil {
 		return nil, err
 	}
@@ -200,7 +211,12 @@ func UnsealAnswers(sealed []byte, mode SubmissionMode, beaconSig []byte) ([]Answ
 	if err != nil {
 		return nil, err
 	}
-	net := quicknetNetwork{scheme: scheme, pub: pub, round: mode.Round, sig: beaconSig}
+	net := quicknetNetwork{
+		scheme: scheme,
+		pub:    pub,
+		round:  mode.Round,
+		sig:    beaconSig,
+	}
 	var plaintext bytes.Buffer
 	if err := tlock.New(net).Strict().Decrypt(&plaintext, bytes.NewReader(sealed)); err != nil {
 		return nil, invalidf("unseal: %v", err)

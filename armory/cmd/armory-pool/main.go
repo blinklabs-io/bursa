@@ -81,7 +81,11 @@ func (c *client) post(path string, req, resp any) error {
 		return err
 	}
 
-	res, err := c.http.Post(c.base+path, "application/json", bytes.NewReader(body))
+	res, err := c.http.Post(
+		c.base+path,
+		"application/json",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return err
 	}
@@ -94,7 +98,12 @@ func (c *client) post(path string, req, resp any) error {
 	}
 
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("POST %s: %s: %s", path, res.Status, bytes.TrimSpace(b))
+		return fmt.Errorf(
+			"POST %s: %s: %s",
+			path,
+			res.Status,
+			bytes.TrimSpace(b),
+		)
 	}
 
 	return json.Unmarshal(b, resp)
@@ -125,8 +134,32 @@ func (s *session) inventory() (map[string]ed25519.PublicKey, error) {
 
 	var inv device.Inventory
 
-	if err = s.c.post("/v1/inventory", device.InventoryRequest{Nonce: nonce, Profile: s.profile}, &inv); err != nil {
-		return nil, err
+	req := device.InventoryRequest{Nonce: nonce, Profile: s.profile}
+
+	// a single-scope image answers an unauthenticated request; a multi image
+	// refuses it, and then the host key of the profile's scope signs it
+	if err = s.c.post("/v1/inventory", req, &inv); err != nil {
+		if s.hostKey == nil {
+			return nil, err
+		}
+
+		var ch device.ChallengeResponse
+
+		if cerr := s.c.post("/v1/challenge", struct{}{}, &ch); cerr != nil {
+			return nil, fmt.Errorf("%w; challenge: %w", err, cerr)
+		}
+
+		req.Challenge = ch.Challenge
+		req.HostKey = s.hostKey.Public().(ed25519.PublicKey)
+		req.HostSignature = ed25519.Sign(
+			s.hostKey,
+			device.InventoryRequestBinding(req),
+		)
+		inv = device.Inventory{}
+
+		if err = s.c.post("/v1/inventory", req, &inv); err != nil {
+			return nil, err
+		}
 	}
 
 	return verifyInventory(s.identity, nonce, inv)
@@ -244,14 +277,22 @@ func (s *session) witness(role, txFile, outFile string, out io.Writer) error {
 	return err
 }
 
-func (s *session) opcert(kesFile string, period uint64, chainArg, outFile string, out io.Writer) error {
+func (s *session) opcert(
+	kesFile string,
+	period uint64,
+	chainArg, outFile string,
+	out io.Writer,
+) error {
 	var chain uint64
 
 	if chainArg != "none" {
 		var err error
 
 		if chain, err = strconv.ParseUint(chainArg, 10, 64); err != nil {
-			return fmt.Errorf("invalid -chain-counter %q (a number or none)", chainArg)
+			return fmt.Errorf(
+				"invalid -chain-counter %q (a number or none)",
+				chainArg,
+			)
 		}
 	}
 
@@ -357,17 +398,45 @@ func run(args []string, stdout io.Writer) error {
 func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("armory-pool", flag.ContinueOnError)
 	base := fs.String("signer", "http://10.0.0.1", "armory-signer URL")
-	source := fs.String("source", "10.0.0.2", "local source address on the USB network")
-	identityHex := fs.String("identity", "", "device identity public key (hex), pinned")
-	profileName := fs.String("profile", "", "device profile holding the pool keys")
-	hostKeyFile := fs.String("host-key", "", "host signing key file authenticating signing requests")
+	source := fs.String(
+		"source",
+		"10.0.0.2",
+		"local source address on the USB network",
+	)
+	identityHex := fs.String(
+		"identity",
+		"",
+		"device identity public key (hex), pinned",
+	)
+	profileName := fs.String(
+		"profile",
+		"",
+		"device profile holding the pool keys",
+	)
+	hostKeyFile := fs.String(
+		"host-key",
+		"",
+		"host signing key file authenticating signing requests",
+	)
+	hostKeyDir := fs.String(
+		"host-key-dir",
+		"",
+		"directory of host signing keys, one <scope>.key per scope; the key of the profile's scope signs",
+	)
+	scopeFlag := fs.String(
+		"scope",
+		"",
+		"scope of the host key to pick from -host-key-dir when the profile does not name it; "+scopeHelp(),
+	)
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if fs.NArg() == 0 {
-		return errors.New("subcommand required: keys, witness, opcert, signlog, provision, wipe, reward-hex, pins-request, address, host-key")
+		return errors.New(
+			"subcommand required: keys, witness, opcert, signlog, provision, wipe, reward-hex, pins-request, address, host-key",
+		)
 	}
 
 	sub, rest := fs.Arg(0), fs.Args()[1:]
@@ -378,17 +447,40 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	connect := func() (*session, error) {
 		id, err := hex.DecodeString(*identityHex)
 		if err != nil || len(id) != ed25519.PublicKeySize {
-			return nil, errors.New("-identity must be the 32-byte identity public key in hex")
+			return nil, errors.New(
+				"-identity must be the 32-byte identity public key in hex",
+			)
 		}
 
 		if *profileName == "" && !profileOptional {
 			return nil, errors.New("-profile is required")
 		}
 
-		s := &session{c: newClient(*base, *source), identity: id, profile: *profileName}
+		s := &session{
+			c:        newClient(*base, *source),
+			identity: id,
+			profile:  *profileName,
+		}
 
-		if *hostKeyFile != "" {
+		switch {
+		case *hostKeyFile != "" && *hostKeyDir != "":
+			return nil, errors.New("-host-key and -host-key-dir are exclusive")
+		case *hostKeyFile != "":
 			if s.hostKey, err = readHostKey(*hostKeyFile); err != nil {
+				return nil, err
+			}
+		case *hostKeyDir != "":
+			scope := *scopeFlag
+			if scope == "" && *profileName != "" {
+				scope = profileScope(*profileName)
+			}
+
+			file, err := scopedHostKeyFile(*hostKeyDir, scope)
+			if err != nil {
+				return nil, err
+			}
+
+			if s.hostKey, err = readHostKey(file); err != nil {
 				return nil, err
 			}
 		}
@@ -398,8 +490,16 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 
 	switch sub {
 	case "keys":
-		outDir := sf.String("out-dir", "", "directory for pool-cold.vkey and owner.vkey")
-		network := sf.String("network", "preview", "network for the reward address")
+		outDir := sf.String(
+			"out-dir",
+			"",
+			"directory for pool-cold.vkey and owner.vkey",
+		)
+		network := sf.String(
+			"network",
+			"preview",
+			"network for the reward address",
+		)
 
 		if err := sf.Parse(rest); err != nil {
 			return err
@@ -437,7 +537,11 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	case "opcert":
 		kes := sf.String("kes-vkey", "", "KES verification key envelope")
 		period := sf.Uint64("kes-period", 0, "KES period")
-		chain := sf.String("chain-counter", "", "pool's on-chain opcert counter, or none")
+		chain := sf.String(
+			"chain-counter",
+			"",
+			"pool's on-chain opcert counter, or none",
+		)
 		out := sf.String("out", "", "certificate file to write")
 
 		if err := sf.Parse(rest); err != nil {
@@ -456,7 +560,11 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		return s.opcert(*kes, *period, *chain, *out, stdout)
 	case "signlog":
 		seq := sf.Int64("head-seq", -1, "expected number of the latest entry")
-		hash := sf.String("head-hash", "", "expected hash of the latest entry (hex)")
+		hash := sf.String(
+			"head-hash",
+			"",
+			"expected hash of the latest entry (hex)",
+		)
 
 		if err := sf.Parse(rest); err != nil {
 			return err
@@ -472,8 +580,12 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		if *seq != -1 || *hash != "" {
 			var err error
 
-			if wantHash, err = hex.DecodeString(*hash); err != nil || len(wantHash) != signlog.HashSize || *seq < 0 {
-				return errors.New("-head-seq and a 32-byte hex -head-hash must be given together")
+			if wantHash, err = hex.DecodeString(*hash); err != nil ||
+				len(wantHash) != signlog.HashSize ||
+				*seq < 0 {
+				return errors.New(
+					"-head-seq and a 32-byte hex -head-hash must be given together",
+				)
 			}
 		}
 
@@ -488,6 +600,11 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		return s.signLog(*seq, wantHash, stdout)
 	case "host-key":
 		out := sf.String("out", "", "host signing key file to create")
+		hostScope := sf.String(
+			"scope",
+			"",
+			"scope the key is registered for on a multi image; without it the printed request names none, as single-scope images take it; "+scopeHelp(),
+		)
 
 		if err := sf.Parse(rest); err != nil {
 			return err
@@ -497,19 +614,39 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 			return errors.New("-out is required")
 		}
 
-		return newHostKey(*out, stdout)
+		return newHostKey(*out, *hostScope, stdout)
 	case "provision", "wipe":
-		hk := sf.String("host-key", *hostKeyFile, "host signing key file authenticating the request")
+		hk := sf.String(
+			"host-key",
+			*hostKeyFile,
+			"host signing key file authenticating the request",
+		)
 
 		if err := sf.Parse(rest); err != nil {
 			return err
 		}
 
 		if sf.NArg() != 1 {
-			return fmt.Errorf("usage: %s [-host-key FILE] <route> < request.json", sub)
+			return fmt.Errorf(
+				"usage: %s [-host-key FILE] <route> < request.json",
+				sub,
+			)
 		}
 
-		return adminRequest(newClient(*base, *source), "/"+sub+"/"+sf.Arg(0), *hk, stdin, stdout)
+		route := "/" + sub + "/" + sf.Arg(0)
+
+		file, in, err := adminKeyFile(
+			route,
+			*hk,
+			*hostKeyDir,
+			*scopeFlag,
+			stdin,
+		)
+		if err != nil {
+			return err
+		}
+
+		return adminRequest(newClient(*base, *source), route, file, in, stdout)
 	case "reward-hex":
 		if len(rest) != 1 {
 			return errors.New("usage: reward-hex <stake_test1...>")
@@ -526,10 +663,18 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 	case "pins-request":
 		return pinsRequest(rest, stdout)
 	case "address":
-		payment := sf.String("payment-vkey", "", "payment verification key envelope")
+		payment := sf.String(
+			"payment-vkey",
+			"",
+			"payment verification key envelope",
+		)
 		stake := sf.String("stake-vkey", "", "stake verification key envelope")
 		typ := sf.String("type", "base", "base or reward")
-		network := sf.String("network", "preview", "preview, preprod, testnet or mainnet")
+		network := sf.String(
+			"network",
+			"preview",
+			"preview, preprod, testnet or mainnet",
+		)
 
 		if err := sf.Parse(rest); err != nil {
 			return err

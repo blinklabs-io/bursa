@@ -32,7 +32,9 @@ const (
 	coseCrvEd25519 = 6  // COSE curve: Ed25519
 )
 
-var errAddressDoesNotMatchSigningKey = errors.New("address does not match signing key")
+var errAddressDoesNotMatchSigningKey = errors.New(
+	"address does not match signing key",
+)
 
 func decodeHex(s string) ([]byte, error) {
 	out, err := hex.DecodeString(s)
@@ -186,7 +188,10 @@ func validateProtectedHeaders(protected []byte) error {
 func extractProtectedAddress(protected []byte) ([]byte, error) {
 	var m map[any]cbor.RawMessage
 	if _, err := cbor.Decode(protected, &m); err != nil {
-		return nil, fmt.Errorf("failed to decode COSE protected headers: %w", err)
+		return nil, fmt.Errorf(
+			"failed to decode COSE protected headers: %w",
+			err,
+		)
 	}
 	raw, ok := lookupCoseStringLabel(m, "address")
 	if !ok {
@@ -194,7 +199,10 @@ func extractProtectedAddress(protected []byte) ([]byte, error) {
 	}
 	var addr []byte
 	if _, err := cbor.Decode(raw, &addr); err != nil {
-		return nil, fmt.Errorf("failed to decode COSE protected address: %w", err)
+		return nil, fmt.Errorf(
+			"failed to decode COSE protected address: %w",
+			err,
+		)
 	}
 	return addr, nil
 }
@@ -289,7 +297,10 @@ func validateAddressForVKey(addrBytes, vkey []byte) error {
 
 // SignData signs payload per CIP-8/CIP-30 signData and returns the hex-encoded
 // COSE_Sign1 signature and the hex-encoded COSE_Key.
-func SignData(addr, payload []byte, lk *LoadedKey) (signatureHex, keyHex string, err error) {
+func SignData(
+	addr, payload []byte,
+	lk *LoadedKey,
+) (signatureHex, keyHex string, err error) {
 	if lk == nil {
 		return "", "", errors.New("signing key cannot be nil")
 	}
@@ -303,7 +314,10 @@ func SignData(addr, payload []byte, lk *LoadedKey) (signatureHex, keyHex string,
 // SignDataWith is SignData for a key that is not held in process: sign
 // receives the COSE Sig_structure bytes and returns a 64-byte Ed25519
 // signature by vkey.
-func SignDataWith(addr, payload, vkey []byte, sign func([]byte) ([]byte, error)) (signatureHex, keyHex string, err error) {
+func SignDataWith(
+	addr, payload, vkey []byte,
+	sign func([]byte) ([]byte, error),
+) (signatureHex, keyHex string, err error) {
 	if sign == nil {
 		return "", "", errors.New("sign function cannot be nil")
 	}
@@ -394,8 +408,15 @@ func extractCoseKeyPub(keyBytes []byte) ([]byte, error) {
 
 // VerifyData verifies a CIP-8/CIP-30 signData signature (hex COSE_Sign1) using
 // the public key from the supplied COSE_Key (hex), over the expected payload.
-func VerifyData(signatureHex, keyHex string, expectedPayload []byte) (bool, error) {
-	valid, _, err := VerifyDataWithAddress(signatureHex, keyHex, expectedPayload)
+func VerifyData(
+	signatureHex, keyHex string,
+	expectedPayload []byte,
+) (bool, error) {
+	valid, _, err := VerifyDataWithAddress(
+		signatureHex,
+		keyHex,
+		expectedPayload,
+	)
 	return valid, err
 }
 
@@ -442,7 +463,9 @@ func VerifyDataWithAddress(
 	}
 	if err := validateAddressForVKey(addrBytes, pub); err != nil {
 		if errors.Is(err, errAddressDoesNotMatchSigningKey) {
-			return false, "", errors.New("protected address does not match public key")
+			return false, "", errors.New(
+				"protected address does not match public key",
+			)
 		}
 		return false, "", err
 	}
@@ -462,9 +485,16 @@ func VerifyDataWithAddress(
 	if err != nil {
 		return false, address, err
 	}
-	toBeSigned, err := buildSigStructure(c.Protected, payloadToVerify(payload, hashed))
+	toBeSigned, err := buildSigStructure(
+		c.Protected,
+		payloadToVerify(payload, hashed),
+	)
 	if err != nil {
 		return false, address, err
 	}
-	return ed25519.Verify(ed25519.PublicKey(pub), toBeSigned, c.Signature), address, nil
+	return ed25519.Verify(
+		ed25519.PublicKey(pub),
+		toBeSigned,
+		c.Signature,
+	), address, nil
 }

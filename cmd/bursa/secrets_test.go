@@ -71,7 +71,11 @@ func TestDerivationCommandsOfferSecretFiles(t *testing.T) {
 	walk = func(c *cobra.Command) {
 		for _, name := range []string{"mnemonic", "password"} {
 			if c.Flags().Lookup(name) != nil {
-				t.Errorf("%s exposes secret value as --%s", c.CommandPath(), name)
+				t.Errorf(
+					"%s exposes secret value as --%s",
+					c.CommandPath(),
+					name,
+				)
 			}
 		}
 		for _, name := range []string{"mnemonic-file", "password-file"} {

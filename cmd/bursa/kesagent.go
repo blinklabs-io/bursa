@@ -65,7 +65,8 @@ drop-key, info.`,
 			os.Exit(runKesAgent(configFile))
 		},
 	}
-	cmd.Flags().StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
+	cmd.Flags().
+		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
 	return cmd
 }
 
@@ -98,16 +99,25 @@ func runKesAgent(configFile string) int {
 
 	kc := cfg.KESAgent
 	if kc.Mode != kesagent.ModeServeKey && kc.Mode != kesagent.ModeSign {
-		logger.Error("kes_agent.mode must be \"serve-key\" or \"sign\"", "mode", kc.Mode)
+		logger.Error(
+			"kes_agent.mode must be \"serve-key\" or \"sign\"",
+			"mode",
+			kc.Mode,
+		)
 		return 1
 	}
 	if kc.ServiceSocket == "" || kc.ControlSocket == "" {
-		logger.Error("kes_agent.service_socket and kes_agent.control_socket are required")
+		logger.Error(
+			"kes_agent.service_socket and kes_agent.control_socket are required",
+		)
 		return 1
 	}
 	if kc.ServiceSocket == kc.ControlSocket {
-		logger.Error("kes_agent.service_socket and kes_agent.control_socket must be different paths",
-			"path", kc.ServiceSocket)
+		logger.Error(
+			"kes_agent.service_socket and kes_agent.control_socket must be different paths",
+			"path",
+			kc.ServiceSocket,
+		)
 		return 1
 	}
 	if kc.SlotsPerKESPeriod == 0 {
@@ -115,7 +125,11 @@ func runKesAgent(configFile string) int {
 		return 1
 	}
 	if kc.SlotLength <= 0 {
-		logger.Error("kes_agent.slot_length must be positive", "slot_length", kc.SlotLength)
+		logger.Error(
+			"kes_agent.slot_length must be positive",
+			"slot_length",
+			kc.SlotLength,
+		)
 		return 1
 	}
 	systemStart, err := time.Parse(time.RFC3339, kc.SystemStart)
@@ -227,12 +241,17 @@ func runKesAgent(configFile string) int {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
 	defer stop()
 
 	if metricsSrv != nil {
 		go func() {
-			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := metricsSrv.ListenAndServe(); err != nil &&
+				!errors.Is(err, http.ErrServerClosed) {
 				logger.Error("metrics server exited", "error", err)
 			}
 		}()
@@ -264,7 +283,10 @@ func runKesAgent(configFile string) int {
 		logger.Info("shutdown signal received")
 	}
 	if metricsSrv != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(),
+			5*time.Second,
+		)
 		defer cancel()
 		_ = metricsSrv.Shutdown(shutdownCtx)
 	}
@@ -301,7 +323,9 @@ func listenAttestedKES(
 	}
 	clientCAs := x509.NewCertPool()
 	if !clientCAs.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("attested KES client CA contains no certificates")
+		return nil, errors.New(
+			"attested KES client CA contains no certificates",
+		)
 	}
 	ln, err := net.Listen("tcp", address)
 	if err != nil {
@@ -326,7 +350,9 @@ func loadColdVKey(hexStr, filePath string) ([]byte, error) {
 		return unwrapVKey(raw)
 	}
 	if filePath == "" {
-		return nil, errors.New("one of kes_agent.cold_vkey_hex or kes_agent.cold_vkey_file is required")
+		return nil, errors.New(
+			"one of kes_agent.cold_vkey_hex or kes_agent.cold_vkey_file is required",
+		)
 	}
 	fileBytes, err := os.ReadFile(filePath)
 	if err != nil {
@@ -374,7 +400,10 @@ func unwrapVKey(b []byte) ([]byte, error) {
 	}
 	var inner []byte
 	if _, err := cbor.Decode(b, &inner); err != nil {
-		return nil, fmt.Errorf("cold vkey is neither 32 raw bytes nor CBOR bytes: %w", err)
+		return nil, fmt.Errorf(
+			"cold vkey is neither 32 raw bytes nor CBOR bytes: %w",
+			err,
+		)
 	}
 	if len(inner) != 32 {
 		return nil, fmt.Errorf("cold vkey must be 32 bytes, got %d", len(inner))

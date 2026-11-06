@@ -45,21 +45,36 @@ func runCounterMonotonicity(t *testing.T, wm counterStore) {
 	if err := wm.CheckAndCommitCounter(ctx, key, scope, 5); err != nil {
 		t.Fatalf("first commit at 5: %v", err)
 	}
-	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok || v != 5 {
-		t.Fatalf("after first commit: got (v=%d, ok=%v, err=%v), want 5", v, ok, err)
+	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok ||
+		v != 5 {
+		t.Fatalf(
+			"after first commit: got (v=%d, ok=%v, err=%v), want 5",
+			v,
+			ok,
+			err,
+		)
 	}
 
 	// Same counter N -> regression.
-	if err := wm.CheckAndCommitCounter(ctx, key, scope, 5); !errors.Is(err, ErrCounterRegression) {
+	if err := wm.CheckAndCommitCounter(ctx, key, scope, 5); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
 		t.Fatalf("re-commit at 5: expected ErrCounterRegression, got %v", err)
 	}
 	// N-1 -> regression.
-	if err := wm.CheckAndCommitCounter(ctx, key, scope, 4); !errors.Is(err, ErrCounterRegression) {
+	if err := wm.CheckAndCommitCounter(ctx, key, scope, 4); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
 		t.Fatalf("commit at 4: expected ErrCounterRegression, got %v", err)
 	}
 	// Stored value unchanged after rejected commits.
 	if v, _, _ := wm.CounterFor(ctx, key, scope); v != 5 {
-		t.Fatalf("stored counter regressed to %d after rejected commits, want 5", v)
+		t.Fatalf(
+			"stored counter regressed to %d after rejected commits, want 5",
+			v,
+		)
 	}
 	// N+1 -> advances.
 	if err := wm.CheckAndCommitCounter(ctx, key, scope, 6); err != nil {
@@ -115,11 +130,20 @@ func runRaiseFloor(t *testing.T, wm counterStore) {
 	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
 		t.Fatalf("equal raise at 4: %v", err)
 	}
-	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 3); !errors.Is(err, ErrCounterRegression) {
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 3); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
 		t.Fatalf("raise at 3: expected ErrCounterRegression, got %v", err)
 	}
-	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok || v != 4 {
-		t.Fatalf("after rejected raise: got (v=%d, ok=%v, err=%v), want 4", v, ok, err)
+	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok ||
+		v != 4 {
+		t.Fatalf(
+			"after rejected raise: got (v=%d, ok=%v, err=%v), want 4",
+			v,
+			ok,
+			err,
+		)
 	}
 	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 7); err != nil {
 		t.Fatalf("raise at 7: %v", err)
@@ -146,14 +170,32 @@ func runRaiseFloorFrom(t *testing.T, wm counterStore, key backend.KeyHash) {
 		t.Fatalf("raise to 6: %v", err)
 	}
 	// a record below min refuses, as does a value below the record
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 9, 8); !errors.Is(err, ErrCounterRegression) {
-		t.Fatalf("raise to 9 from 6 with min 8: expected ErrCounterRegression, got %v", err)
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 9, 8); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
+		t.Fatalf(
+			"raise to 9 from 6 with min 8: expected ErrCounterRegression, got %v",
+			err,
+		)
 	}
-	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); !errors.Is(err, ErrCounterRegression) {
-		t.Fatalf("raise to 5 below 6: expected ErrCounterRegression, got %v", err)
+	if err := wm.CheckAndRaiseFloorFrom(ctx, key, scope, 5, 4); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
+		t.Fatalf(
+			"raise to 5 below 6: expected ErrCounterRegression, got %v",
+			err,
+		)
 	}
-	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok || v != 6 {
-		t.Fatalf("after refused raises: got (v=%d, ok=%v, err=%v), want 6", v, ok, err)
+	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok ||
+		v != 6 {
+		t.Fatalf(
+			"after refused raises: got (v=%d, ok=%v, err=%v), want 6",
+			v,
+			ok,
+			err,
+		)
 	}
 }
 
@@ -235,12 +277,19 @@ func TestSqliteWatermark_CounterPersistsAcrossReopen(t *testing.T) {
 	}
 	defer wm2.Close()
 
-	if v, ok, err := wm2.CounterFor(ctx, key, scope); err != nil || !ok || v != 42 {
+	if v, ok, err := wm2.CounterFor(ctx, key, scope); err != nil || !ok ||
+		v != 42 {
 		t.Fatalf("after reopen: got (v=%d, ok=%v, err=%v), want 42", v, ok, err)
 	}
 	// A repeat of the persisted counter must still be rejected.
-	if err := wm2.CheckAndCommitCounter(ctx, key, scope, 42); !errors.Is(err, ErrCounterRegression) {
-		t.Fatalf("re-commit 42 after reopen: expected ErrCounterRegression, got %v", err)
+	if err := wm2.CheckAndCommitCounter(ctx, key, scope, 42); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
+		t.Fatalf(
+			"re-commit 42 after reopen: expected ErrCounterRegression, got %v",
+			err,
+		)
 	}
 	// A higher counter still advances after reopen.
 	if err := wm2.CheckAndCommitCounter(ctx, key, scope, 43); err != nil {
@@ -307,7 +356,11 @@ func TestSqliteWatermark_CounterConcurrency(t *testing.T) {
 
 // runCheckAndCommitCounters covers the two-scope commit for one key: both
 // scopes written on success, and neither written when either check fails.
-func runCheckAndCommitCounters(t *testing.T, wm counterStore, key backend.KeyHash) {
+func runCheckAndCommitCounters(
+	t *testing.T,
+	wm counterStore,
+	key backend.KeyHash,
+) {
 	t.Helper()
 	ctx := context.Background()
 	const form, issued = "opcert-chain-floor", "opcert-chain-issued"
@@ -322,8 +375,13 @@ func runCheckAndCommitCounters(t *testing.T, wm counterStore, key backend.KeyHas
 	wantScope := func(err error, scope string) {
 		t.Helper()
 		var re *CounterRegressionError
-		if !errors.Is(err, ErrCounterRegression) || !errors.As(err, &re) || re.Scope != scope {
-			t.Fatalf("got %v, want ErrCounterRegression for scope %s", err, scope)
+		if !errors.Is(err, ErrCounterRegression) || !errors.As(err, &re) ||
+			re.Scope != scope {
+			t.Fatalf(
+				"got %v, want ErrCounterRegression for scope %s",
+				err,
+				scope,
+			)
 		}
 	}
 
@@ -346,7 +404,10 @@ func runCheckAndCommitCounters(t *testing.T, wm counterStore, key backend.KeyHas
 		CounterOp{Scope: issued, Value: 5, Kind: CounterStrict})
 	wantScope(err, issued)
 	if v, _ := get(form); v != 4 {
-		t.Fatalf("form = %d after issued-scope failure, want 4 (rolled back)", v)
+		t.Fatalf(
+			"form = %d after issued-scope failure, want 4 (rolled back)",
+			v,
+		)
 	}
 	if v, _ := get(issued); v != 5 {
 		t.Fatalf("issued = %d after issued-scope failure, want 5", v)
@@ -361,7 +422,10 @@ func runCheckAndCommitCounters(t *testing.T, wm counterStore, key backend.KeyHas
 		t.Fatalf("form = %d after form-scope failure, want 4", v)
 	}
 	if v, _ := get(issued); v != 5 {
-		t.Fatalf("issued = %d after form-scope failure, want 5 (not written)", v)
+		t.Fatalf(
+			"issued = %d after form-scope failure, want 5 (not written)",
+			v,
+		)
 	}
 
 	// a floor-from min above the stored issued value refuses that scope

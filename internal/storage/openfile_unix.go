@@ -30,19 +30,33 @@ const inspectWalletPathsByName = true
 // openWalletFileForRead walks the wallet path from stable directory
 // descriptors so replacing the wallet directory cannot redirect the read.
 func openWalletFileForRead(baseDir, name string) (*os.File, error) {
-	baseFD, err := unix.Open(baseDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	baseFD, err := unix.Open(
+		baseDir,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+		0,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer unix.Close(baseFD)
 
-	dirFD, err := unix.Openat(baseFD, "wallet-"+name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	dirFD, err := unix.Openat(
+		baseFD,
+		"wallet-"+name,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+		0,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer unix.Close(dirFD)
 
-	fd, err := unix.Openat(dirFD, filepath.Base("wallet.json"), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(
+		dirFD,
+		filepath.Base("wallet.json"),
+		unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC,
+		0,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +79,10 @@ func writeWalletFile(baseDir, name string, data []byte) error {
 	if err := ensureWalletDirectory(walletDir); err != nil {
 		return err
 	}
-	return bursa.WriteSecretKeyFile(filepath.Join(walletDir, "wallet.json"), data)
+	return bursa.WriteSecretKeyFile(
+		filepath.Join(walletDir, "wallet.json"),
+		data,
+	)
 }
 
 func deleteWallet(baseDir, name string) error {
@@ -82,7 +99,8 @@ func checkWalletFileMode(info os.FileInfo) error {
 	if mode := info.Mode().Perm(); mode&0o077 != 0 {
 		return fmt.Errorf(
 			"wallet file has mode %04o; group/other access is not permitted: %w",
-			mode, bursa.ErrInsecureFileMode,
+			mode,
+			bursa.ErrInsecureFileMode,
 		)
 	}
 	return nil

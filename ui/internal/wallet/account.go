@@ -42,7 +42,11 @@ func (a *Account) OwnedAddresses(discovered []string) []string {
 	if a == nil {
 		return nil
 	}
-	out := make([]string, 0, len(discovered)+len(a.ReceiveAddresses)+len(a.ChangeAddresses))
+	out := make(
+		[]string,
+		0,
+		len(discovered)+len(a.ReceiveAddresses)+len(a.ChangeAddresses),
+	)
 	seen := make(map[string]bool, cap(out))
 	add := func(addr string) {
 		if addr == "" || seen[addr] {
@@ -76,7 +80,10 @@ func (a *Account) filterOwnedAddresses(candidates []string) []string {
 }
 
 func (a *Account) ownedPaymentCredentials() map[string]bool {
-	owned := make(map[string]bool, len(a.ReceiveAddresses)+len(a.ChangeAddresses))
+	owned := make(
+		map[string]bool,
+		len(a.ReceiveAddresses)+len(a.ChangeAddresses),
+	)
 	for _, addr := range appendLocalAddresses(nil, a) {
 		if credential, ok := paymentCredentialID(addr); ok {
 			owned[credential] = true
@@ -130,9 +137,16 @@ func AccountXpubFromMnemonicBytes(mnemonic []byte) (string, error) {
 
 // AccountXpubForIndexFromMnemonicBytes returns the account-level extended public
 // key for the given CIP-1852 account index (m/1852'/1815'/<accountIndex>').
-func AccountXpubForIndexFromMnemonicBytes(mnemonic []byte, accountIndex uint32) (string, error) {
+func AccountXpubForIndexFromMnemonicBytes(
+	mnemonic []byte,
+	accountIndex uint32,
+) (string, error) {
 	if accountIndex >= hardenedKeyStart {
-		return "", fmt.Errorf("account index must be less than %d, got %d", hardenedKeyStart, accountIndex)
+		return "", fmt.Errorf(
+			"account index must be less than %d, got %d",
+			hardenedKeyStart,
+			accountIndex,
+		)
 	}
 	root, err := bursa.GetRootKeyFromMnemonicBytes(mnemonic, "")
 	if err != nil {
@@ -162,7 +176,11 @@ func Derive(mnemonic, network string, windowN int) (*Account, error) {
 // stake address plus windowN external receive addresses and windowN internal
 // change addresses (indices 0..windowN-1), all bound to that account's stake key
 // (role 2, index 0).
-func DeriveAccount(mnemonic, network string, accountIndex uint32, windowN int) (*Account, error) {
+func DeriveAccount(
+	mnemonic, network string,
+	accountIndex uint32,
+	windowN int,
+) (*Account, error) {
 	netID, err := validateDeriveInputs(network, windowN, accountIndex)
 	if err != nil {
 		return nil, err
@@ -175,12 +193,21 @@ func DeriveAccount(mnemonic, network string, accountIndex uint32, windowN int) (
 }
 
 // DeriveFromMnemonicBytes is the zeroable-byte variant of Derive (account 0).
-func DeriveFromMnemonicBytes(mnemonic []byte, network string, windowN int) (*Account, error) {
+func DeriveFromMnemonicBytes(
+	mnemonic []byte,
+	network string,
+	windowN int,
+) (*Account, error) {
 	return DeriveAccountFromMnemonicBytes(mnemonic, network, 0, windowN)
 }
 
 // DeriveAccountFromMnemonicBytes is the zeroable-byte variant of DeriveAccount.
-func DeriveAccountFromMnemonicBytes(mnemonic []byte, network string, accountIndex uint32, windowN int) (*Account, error) {
+func DeriveAccountFromMnemonicBytes(
+	mnemonic []byte,
+	network string,
+	accountIndex uint32,
+	windowN int,
+) (*Account, error) {
 	netID, err := validateDeriveInputs(network, windowN, accountIndex)
 	if err != nil {
 		return nil, err
@@ -192,12 +219,20 @@ func DeriveAccountFromMnemonicBytes(mnemonic []byte, network string, accountInde
 	return deriveFromRoot(root, network, netID, accountIndex, windowN)
 }
 
-func validateDeriveInputs(network string, windowN int, accountIndex uint32) (uint8, error) {
+func validateDeriveInputs(
+	network string,
+	windowN int,
+	accountIndex uint32,
+) (uint8, error) {
 	if windowN < 1 {
 		return 0, fmt.Errorf("windowN must be at least 1, got %d", windowN)
 	}
 	if accountIndex >= hardenedKeyStart {
-		return 0, fmt.Errorf("account index must be less than %d, got %d", hardenedKeyStart, accountIndex)
+		return 0, fmt.Errorf(
+			"account index must be less than %d, got %d",
+			hardenedKeyStart,
+			accountIndex,
+		)
 	}
 	netID, err := cardanonet.AddressNetworkID(network)
 	if err != nil {
@@ -206,7 +241,13 @@ func validateDeriveInputs(network string, windowN int, accountIndex uint32) (uin
 	return netID, nil
 }
 
-func deriveFromRoot(root bip32.XPrv, network string, netID uint8, accountIndex uint32, windowN int) (*Account, error) {
+func deriveFromRoot(
+	root bip32.XPrv,
+	network string,
+	netID uint8,
+	accountIndex uint32,
+	windowN int,
+) (*Account, error) {
 	defer zeroXPrv(root)
 	acctKey, err := bursa.GetAccountKey(root, accountIndex)
 	if err != nil {
@@ -229,19 +270,31 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, accountIndex u
 	defer zeroXPrv(drepKey)
 	drepHash := hex.EncodeToString(drepKey.Public().PublicKey().Hash())
 
-	stakeAddr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, netID, nil, stakeHash)
+	stakeAddr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		netID,
+		nil,
+		stakeHash,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("stake address: %w", err)
 	}
 
 	deriveAddr := func(chain uint32, i int) (string, error) {
-		idx := uint32(i) //nolint:gosec // i is bounded by the configured window size
+		idx := uint32( //nolint:gosec // i is bounded by the configured window size
+			i,
+		)
 		roleKey := acctKey.Derive(chain)
 		defer zeroXPrv(roleKey)
 		payKey := roleKey.Derive(idx)
 		defer zeroXPrv(payKey)
 		payHash := payKey.Public().PublicKey().Hash()
-		addr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeKeyKey, netID, payHash, stakeHash)
+		addr, err := lcommon.NewAddressFromParts(
+			lcommon.AddressTypeKeyKey,
+			netID,
+			payHash,
+			stakeHash,
+		)
 		if err != nil {
 			return "", err
 		}
@@ -288,7 +341,11 @@ func deriveFromRoot(root bip32.XPrv, network string, netID uint8, accountIndex u
 // The parent CIP-1852 account index is recorded on the returned Account. It
 // cannot be recovered from the xpub itself, but is needed later to build the
 // derivation paths a hardware device signs with.
-func DeriveFromAccountXpub(accountXpubBech32, network string, accountIndex uint32, windowN int) (*Account, error) {
+func DeriveFromAccountXpub(
+	accountXpubBech32, network string,
+	accountIndex uint32,
+	windowN int,
+) (*Account, error) {
 	netID, err := validateDeriveInputs(network, windowN, accountIndex)
 	if err != nil {
 		return nil, err
@@ -320,7 +377,12 @@ func DeriveFromAccountXpub(accountXpubBech32, network string, accountIndex uint3
 	}
 	drepHash := hex.EncodeToString(drepIndexXpub.PublicKey().Hash())
 
-	stakeAddr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, netID, nil, stakeHash)
+	stakeAddr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		netID,
+		nil,
+		stakeHash,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("stake address: %w", err)
 	}
@@ -332,12 +394,19 @@ func DeriveFromAccountXpub(accountXpubBech32, network string, accountIndex uint3
 		}
 		addresses := make([]string, 0, windowN)
 		for i := 0; i < windowN; i++ {
-			indexXpub, err := roleXpub.Derive(uint32(i)) //nolint:gosec // i is bounded by windowN < MaxInt32 in practice
+			indexXpub, err := roleXpub.Derive(
+				uint32(i),
+			) //nolint:gosec // i is bounded by windowN < MaxInt32 in practice
 			if err != nil {
 				return nil, fmt.Errorf("derive %s index %d: %w", label, i, err)
 			}
 			payHash := indexXpub.PublicKey().Hash()
-			addr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeKeyKey, netID, payHash, stakeHash)
+			addr, err := lcommon.NewAddressFromParts(
+				lcommon.AddressTypeKeyKey,
+				netID,
+				payHash,
+				stakeHash,
+			)
 			if err != nil {
 				return nil, fmt.Errorf("%s address %d: %w", label, i, err)
 			}
@@ -375,14 +444,18 @@ func parseAccountXpub(s string) (bip32.XPub, error) {
 		return nil, err
 	}
 	if hrp != "acct_xvk" && hrp != "root_xvk" {
-		return nil, errors.New("invalid HRP for account extended public key, expected acct_xvk or root_xvk")
+		return nil, errors.New(
+			"invalid HRP for account extended public key, expected acct_xvk or root_xvk",
+		)
 	}
 	converted, err := bech32.ConvertBits(decoded, 5, 8, false)
 	if err != nil {
 		return nil, err
 	}
 	if len(converted) != 64 {
-		return nil, errors.New("invalid length for account extended public key, expected 64 bytes")
+		return nil, errors.New(
+			"invalid length for account extended public key, expected 64 bytes",
+		)
 	}
 	return bip32.XPub(converted), nil
 }

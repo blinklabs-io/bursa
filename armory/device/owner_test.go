@@ -31,7 +31,11 @@ var ownerSeed = bytes.Repeat([]byte{0x51}, 32)
 
 // ownerBody is req as the JSON object a host sends, carrying ownerKey, which
 // may be malformed, as its owner_signing_key.
-func ownerBody(t *testing.T, req ProvisionRequest, ownerKey string) map[string]any {
+func ownerBody(
+	t *testing.T,
+	req ProvisionRequest,
+	ownerKey string,
+) map[string]any {
 	t.Helper()
 
 	b, err := json.Marshal(req)
@@ -62,7 +66,12 @@ func TestProvisionProfileImportsOwnerKey(t *testing.T) {
 
 	s, chip, logs := newLoggedService(t)
 
-	code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed))
+	code, body := post(
+		t,
+		s,
+		"/provision/profile",
+		ownerProfileRequest(t, ownerSeed),
+	)
 	if code != http.StatusOK {
 		t.Fatalf("provision: %d %s", code, body)
 	}
@@ -78,7 +87,10 @@ func TestProvisionProfileImportsOwnerKey(t *testing.T) {
 	}
 
 	p := profile.Profile{Slot: 0}
-	if pub, _ := chip.PublicKeyEd25519(p.OwnerKeyID()); !bytes.Equal(pub, want) {
+	if pub, _ := chip.PublicKeyEd25519(p.OwnerKeyID()); !bytes.Equal(
+		pub,
+		want,
+	) {
 		t.Fatal("chip owner key is not the imported key")
 	}
 
@@ -116,12 +128,28 @@ func TestProvisionProfileOwnerKeyNeverOverwrites(t *testing.T) {
 		_ = chip.GenerateEd25519(p.OwnerKeyID(), false)
 		before, _ := chip.PublicKeyEd25519(p.OwnerKeyID())
 
-		code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed))
-		if code == http.StatusOK || !strings.Contains(string(body), "owner key object already exists with a different key") {
-			t.Fatalf("got %d %s, want the different owner key refused", code, body)
+		code, body := post(
+			t,
+			s,
+			"/provision/profile",
+			ownerProfileRequest(t, ownerSeed),
+		)
+		if code == http.StatusOK ||
+			!strings.Contains(
+				string(body),
+				"owner key object already exists with a different key",
+			) {
+			t.Fatalf(
+				"got %d %s, want the different owner key refused",
+				code,
+				body,
+			)
 		}
 
-		if after, _ := chip.PublicKeyEd25519(p.OwnerKeyID()); !bytes.Equal(before, after) {
+		if after, _ := chip.PublicKeyEd25519(p.OwnerKeyID()); !bytes.Equal(
+			before,
+			after,
+		) {
 			t.Fatal("owner key was overwritten")
 		}
 
@@ -168,7 +196,12 @@ func TestProvisionProfileOwnerLostImportReply(t *testing.T) {
 	s, chip := newTestService(t)
 	chip.lostImportReply = true
 
-	code, body := post(t, s, "/provision/profile", ownerProfileRequest(t, ownerSeed))
+	code, body := post(
+		t,
+		s,
+		"/provision/profile",
+		ownerProfileRequest(t, ownerSeed),
+	)
 	if code != http.StatusOK {
 		t.Fatalf("got %d %s, want the stored owner key confirmed", code, body)
 	}
@@ -178,7 +211,10 @@ func TestProvisionProfileOwnerLostImportReply(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(resp.OwnerPublicKey, ed25519.NewKeyFromSeed(ownerSeed).Public().(ed25519.PublicKey)) {
+	if !bytes.Equal(
+		resp.OwnerPublicKey,
+		ed25519.NewKeyFromSeed(ownerSeed).Public().(ed25519.PublicKey),
+	) {
 		t.Fatal("response owner key is not the imported key")
 	}
 }
@@ -204,11 +240,15 @@ func TestProvisionProfileRefusalImportsNoOwnerKey(t *testing.T) {
 				t.Fatal("provisioned")
 			}
 
-			if ok, _ := chip.Exists(profile.Profile{Slot: req.Slot}.OwnerKeyID()); ok && req.Slot != 0 {
+			if ok, _ := chip.Exists(profile.Profile{Slot: req.Slot}.OwnerKeyID()); ok &&
+				req.Slot != 0 {
 				t.Fatal("owner key imported for a refused profile")
 			}
 
-			if pub, _ := chip.PublicKeyEd25519(profile.Profile{Slot: 0}.OwnerKeyID()); bytes.Equal(pub, ed25519.NewKeyFromSeed(ownerSeed).Public().(ed25519.PublicKey)) {
+			if pub, _ := chip.PublicKeyEd25519(profile.Profile{Slot: 0}.OwnerKeyID()); bytes.Equal(
+				pub,
+				ed25519.NewKeyFromSeed(ownerSeed).Public().(ed25519.PublicKey),
+			) {
 				t.Fatal("slot 0 owner key replaced")
 			}
 		})
@@ -247,7 +287,8 @@ func TestRequestStrictJSON(t *testing.T) {
 
 			s, chip := newTestService(t)
 			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, jsonRequest("/provision/profile", strings.NewReader(body)))
+			s.Handler().
+				ServeHTTP(w, jsonRequest("/provision/profile", strings.NewReader(body)))
 
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("got %d %s, want 400", w.Code, w.Body)

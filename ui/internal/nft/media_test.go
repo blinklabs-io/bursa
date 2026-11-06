@@ -107,10 +107,16 @@ func TestPNGResourceCostChargesCanvasPerTinyFrame(t *testing.T) {
 		_ = binary.Write(&chunk, binary.BigEndian, uint32(len(payload)))
 		chunk.WriteString("fcTL")
 		chunk.Write(payload)
-		_ = binary.Write(&chunk, binary.BigEndian, crc32.ChecksumIEEE(chunk.Bytes()[4:]))
+		_ = binary.Write(
+			&chunk,
+			binary.BigEndian,
+			crc32.ChecksumIEEE(chunk.Bytes()[4:]),
+		)
 		chunks = append(chunks, chunk.Bytes()...)
 	}
-	data = append(append(append([]byte(nil), data[:iend]...), chunks...), data[iend:]...)
+	data = append(
+		append(append([]byte(nil), data[:iend]...), chunks...),
+		data[iend:]...)
 	cost, err := pngResourceCost(data, canvasPixels)
 	if err != nil {
 		t.Fatalf("pngResourceCost: %v", err)
@@ -138,7 +144,27 @@ func TestWebPResourceCostRejectsAnimationTotalAndFrameAxis(t *testing.T) {
 	makeWebP := func(frameWidth, frameHeight uint32, frameCount int) []byte {
 		data := []byte{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P'}
 		// VP8X canvas is 1024 x 1024.
-		data = append(data, 'V', 'P', '8', 'X', 10, 0, 0, 0, 0x02, 0, 0, 0, 0xff, 3, 0, 0xff, 3, 0)
+		data = append(
+			data,
+			'V',
+			'P',
+			'8',
+			'X',
+			10,
+			0,
+			0,
+			0,
+			0x02,
+			0,
+			0,
+			0,
+			0xff,
+			3,
+			0,
+			0xff,
+			3,
+			0,
+		)
 		for range frameCount {
 			chunk := make([]byte, 16)
 			w := frameWidth - 1
@@ -155,19 +181,28 @@ func TestWebPResourceCostRejectsAnimationTotalAndFrameAxis(t *testing.T) {
 	t.Run("total frame cost", func(t *testing.T) {
 		err := validateImage(makeWebP(1024, 1024, 17))
 		if !errors.Is(err, ErrUnsafeImage) {
-			t.Fatalf("validateImage animated WebP = %v, want ErrUnsafeImage", err)
+			t.Fatalf(
+				"validateImage animated WebP = %v, want ErrUnsafeImage",
+				err,
+			)
 		}
 	})
 	t.Run("canvas charged per tiny frame", func(t *testing.T) {
 		err := validateImage(makeWebP(1, 1, 17))
 		if !errors.Is(err, ErrUnsafeImage) {
-			t.Fatalf("validateImage tiny-frame WebP = %v, want ErrUnsafeImage", err)
+			t.Fatalf(
+				"validateImage tiny-frame WebP = %v, want ErrUnsafeImage",
+				err,
+			)
 		}
 	})
 	t.Run("frame axis", func(t *testing.T) {
 		err := validateImage(makeWebP(maxImageDimension+1, 1, 1))
 		if !errors.Is(err, ErrUnsafeImage) {
-			t.Fatalf("validateImage wide WebP frame = %v, want ErrUnsafeImage", err)
+			t.Fatalf(
+				"validateImage wide WebP frame = %v, want ErrUnsafeImage",
+				err,
+			)
 		}
 	})
 }

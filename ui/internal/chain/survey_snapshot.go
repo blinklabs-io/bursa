@@ -38,10 +38,16 @@ type SurveyRoleClaim struct {
 // retrying: the mark snapshot is absent, incomplete, or does not belong to the
 // survey's end epoch. A snapshot that is still being written is not wrapped
 // in it.
-var ErrSurveySnapshotUnavailable = errors.New("survey role snapshot unavailable")
+var ErrSurveySnapshotUnavailable = errors.New(
+	"survey role snapshot unavailable",
+)
 
 func surveySnapshotUnavailable(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrSurveySnapshotUnavailable, fmt.Sprintf(format, args...))
+	return fmt.Errorf(
+		"%w: %s",
+		ErrSurveySnapshotUnavailable,
+		fmt.Sprintf(format, args...),
+	)
 }
 
 type surveySnapshot struct {
@@ -83,10 +89,14 @@ func (c *Client) SurveyRoleSnapshot(
 		return result, nil
 	}
 	if c.dingoDataDir == "" {
-		return nil, errors.New("survey role snapshot: Dingo metadata is not configured")
+		return nil, errors.New(
+			"survey role snapshot: Dingo metadata is not configured",
+		)
 	}
 	if endEpoch == math.MaxUint64 {
-		return nil, errors.New("survey role snapshot: end epoch overflows snapshot epoch")
+		return nil, errors.New(
+			"survey role snapshot: end epoch overflows snapshot epoch",
+		)
 	}
 	metadataPath := filepath.Join(c.dingoDataDir, "metadata.sqlite")
 	if _, err := os.Stat(metadataPath); err != nil {
@@ -144,9 +154,19 @@ func (c *Client) SurveyRoleSnapshot(
 		case SurveyRoleCC:
 			continue
 		case SurveyRoleStakeholder:
-			eligible, err = surveyStakeholderAtSnapshot(ctx, tx, snapshot, claim)
+			eligible, err = surveyStakeholderAtSnapshot(
+				ctx,
+				tx,
+				snapshot,
+				claim,
+			)
 		case SurveyRoleDRep:
-			eligible, err = surveyDRepAtSlot(ctx, tx, snapshot.capturedSlot, claim)
+			eligible, err = surveyDRepAtSlot(
+				ctx,
+				tx,
+				snapshot.capturedSlot,
+				claim,
+			)
 		case SurveyRoleSPO:
 			if claim.CredentialTag == 0 {
 				_, eligible = activePools[claim.Credential]
@@ -165,7 +185,11 @@ func (c *Client) SurveyRoleSnapshot(
 	return result, nil
 }
 
-func readSurveySnapshot(ctx context.Context, tx *sql.Tx, epoch uint64) (surveySnapshot, error) {
+func readSurveySnapshot(
+	ctx context.Context,
+	tx *sql.Tx,
+	epoch uint64,
+) (surveySnapshot, error) {
 	var snapshot surveySnapshot
 	snapshot.epoch = epoch
 	err := tx.QueryRowContext(ctx, `
@@ -183,14 +207,24 @@ WHERE snapshot.epoch = ? AND snapshot.snapshot_type = 'mark'
 		&snapshot.totalDelegators,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return surveySnapshot{}, surveySnapshotUnavailable("authoritative mark snapshot for epoch %d is missing", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable(
+			"authoritative mark snapshot for epoch %d is missing",
+			epoch,
+		)
 	}
 	if err != nil {
-		return surveySnapshot{}, fmt.Errorf("read survey role snapshot for epoch %d: %w", epoch, err)
+		return surveySnapshot{}, fmt.Errorf(
+			"read survey role snapshot for epoch %d: %w",
+			epoch,
+			err,
+		)
 	}
 	if snapshot.capturedSlot == math.MaxUint64 ||
 		snapshot.boundarySlot != snapshot.capturedSlot+1 {
-		return surveySnapshot{}, surveySnapshotUnavailable("epoch %d has invalid slot boundary", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable(
+			"epoch %d has invalid slot boundary",
+			epoch,
+		)
 	}
 	var epochID, startSlot, length int64
 	err = tx.QueryRowContext(ctx, `
@@ -200,21 +234,34 @@ WHERE start_slot <= ?
 ORDER BY start_slot DESC
 LIMIT 1`, snapshot.capturedSlot).Scan(&epochID, &startSlot, &length)
 	if errors.Is(err, sql.ErrNoRows) {
-		return surveySnapshot{}, surveySnapshotUnavailable("epoch %d has no containing epoch", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable(
+			"epoch %d has no containing epoch",
+			epoch,
+		)
 	}
 	if err != nil {
-		return surveySnapshot{}, fmt.Errorf("read survey snapshot epoch: %w", err)
+		return surveySnapshot{}, fmt.Errorf(
+			"read survey snapshot epoch: %w",
+			err,
+		)
 	}
 	if epochID < 0 || startSlot < 0 || length <= 0 ||
 		startSlot > math.MaxInt64-length ||
 		snapshot.capturedSlot >= uint64(startSlot+length) {
-		return surveySnapshot{}, surveySnapshotUnavailable("epoch %d has invalid containing epoch", epoch)
+		return surveySnapshot{}, surveySnapshotUnavailable(
+			"epoch %d has invalid containing epoch",
+			epoch,
+		)
 	}
 	snapshot.ledgerEpoch = uint64(epochID)
 	return snapshot, nil
 }
 
-func verifySurveyStakeSnapshot(ctx context.Context, tx *sql.Tx, snapshot surveySnapshot) error {
+func verifySurveyStakeSnapshot(
+	ctx context.Context,
+	tx *sql.Tx,
+	snapshot surveySnapshot,
+) error {
 	var raw string
 	err := tx.QueryRowContext(ctx, `
 SELECT value FROM sync_state
@@ -233,8 +280,12 @@ WHERE sync_key = 'dingo:stake-reward:stake-inputs-pending'`).Scan(&raw)
 			return fmt.Errorf("decode pending survey stake snapshots: %w", err)
 		}
 		for _, entry := range pending.Entries {
-			if entry.Epoch == snapshot.epoch && entry.BoundarySlot == snapshot.boundarySlot {
-				return fmt.Errorf("survey stake snapshot for epoch %d is still being written", snapshot.epoch)
+			if entry.Epoch == snapshot.epoch &&
+				entry.BoundarySlot == snapshot.boundarySlot {
+				return fmt.Errorf(
+					"survey stake snapshot for epoch %d is still being written",
+					snapshot.epoch,
+				)
 			}
 		}
 	}
@@ -249,10 +300,17 @@ WHERE epoch = ?`, snapshot.capturedSlot, snapshot.boundarySlot, snapshot.epoch).
 		&mismatched,
 	)
 	if err != nil {
-		return fmt.Errorf("verify survey stake snapshot for epoch %d: %w", snapshot.epoch, err)
+		return fmt.Errorf(
+			"verify survey stake snapshot for epoch %d: %w",
+			snapshot.epoch,
+			err,
+		)
 	}
 	if mismatched != 0 || count != snapshot.totalDelegators {
-		return surveySnapshotUnavailable("stake snapshot for epoch %d is incomplete", snapshot.epoch)
+		return surveySnapshotUnavailable(
+			"stake snapshot for epoch %d is incomplete",
+			snapshot.epoch,
+		)
 	}
 	return nil
 }
@@ -279,14 +337,19 @@ WHERE epoch = ? AND credential_tag = ? AND staking_key = ?`,
 	var eligible bool
 	for rows.Next() {
 		if found {
-			return false, errors.New("survey stakeholder snapshot contains duplicate credential state")
+			return false, errors.New(
+				"survey stakeholder snapshot contains duplicate credential state",
+			)
 		}
 		found = true
 		var stake string
 		var registered bool
 		var pool []byte
 		if err := rows.Scan(&stake, &registered, &pool); err != nil {
-			return false, fmt.Errorf("scan survey stakeholder snapshot: %w", err)
+			return false, fmt.Errorf(
+				"scan survey stakeholder snapshot: %w",
+				err,
+			)
 		}
 		amount, err := strconv.ParseUint(stake, 10, 64)
 		if err != nil {
@@ -318,7 +381,8 @@ func surveyDRepAtSlot(
 	if err != nil {
 		return false, err
 	}
-	return !deregistered || compareCertificatePosition(registration, deregistration) > 0, nil
+	return !deregistered ||
+		compareCertificatePosition(registration, deregistration) > 0, nil
 }
 
 func latestSurveyDRepEvent(
@@ -348,7 +412,10 @@ LIMIT 1`, claim.CredentialTag, claim.Credential[:], slot).Scan(
 		return certificatePosition{}, false, nil
 	}
 	if err != nil {
-		return certificatePosition{}, false, fmt.Errorf("read survey DRep snapshot: %w", err)
+		return certificatePosition{}, false, fmt.Errorf(
+			"read survey DRep snapshot: %w",
+			err,
+		)
 	}
 	return position, true, nil
 }
@@ -440,7 +507,10 @@ WHERE lrt.pool_id IS NULL
 			return nil, fmt.Errorf("scan survey SPO snapshot: %w", err)
 		}
 		if len(raw) != 28 {
-			return nil, fmt.Errorf("survey SPO snapshot contains a %d-byte pool hash", len(raw))
+			return nil, fmt.Errorf(
+				"survey SPO snapshot contains a %d-byte pool hash",
+				len(raw),
+			)
 		}
 		var hash [28]byte
 		copy(hash[:], raw)

@@ -27,12 +27,16 @@ import (
 )
 
 // ErrConflict indicates a different payload was already signed for (key, scope).
-var ErrConflict = errors.New("watermark conflict: divergent payload for the same key and scope")
+var ErrConflict = errors.New(
+	"watermark conflict: divergent payload for the same key and scope",
+)
 
 // ErrCounterRegression indicates a monotonic counter was not strictly greater
 // than the highest already recorded for (key, scope). It is the anti-double-sign
 // guard for operational-certificate issue counters.
-var ErrCounterRegression = errors.New("watermark conflict: counter is not strictly greater than the highest already signed")
+var ErrCounterRegression = errors.New(
+	"watermark conflict: counter is not strictly greater than the highest already signed",
+)
 
 const (
 	readinessProbeRecordKey   = "__bursa_readiness_probe__"
@@ -53,15 +57,30 @@ const (
 // Watermark records and guards signed payloads.
 type Watermark interface {
 	// Check returns ErrConflict if a different payload was recorded for (key, scope).
-	Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error
+	Check(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+		payload []byte,
+	) error
 	// CheckAndCommit atomically checks for a divergent payload and records this
 	// payload when no record exists. Enforce-mode callers must use this instead
 	// of a separate Check followed by Commit.
-	CheckAndCommit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error
+	CheckAndCommit(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+		payload []byte,
+	) error
 	// Commit records that payload was signed for (key, scope).
 	// Implementations must be first-writer-wins: a second Commit for the same
 	// (key, scope) with a different payload silently keeps the original record.
-	Commit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error
+	Commit(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+		payload []byte,
+	) error
 }
 
 // CounterWatermark guards a strictly-increasing per-(key, scope) counter, such
@@ -72,23 +91,42 @@ type Watermark interface {
 type CounterWatermark interface {
 	// CounterFor returns the highest counter recorded for (key, scope) and
 	// whether any record exists. It performs no mutation.
-	CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error)
+	CounterFor(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+	) (uint64, bool, error)
 	// CheckAndCommitCounter atomically records counter as the new highest for
 	// (key, scope) if and only if it is strictly greater than the highest already
 	// recorded (or none exists). It returns ErrCounterRegression, recording
 	// nothing, when counter is not strictly greater. The check and commit are a
 	// single atomic operation so that two concurrent callers with the same
 	// counter cannot both succeed.
-	CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error
+	CheckAndCommitCounter(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+		counter uint64,
+	) error
 	// CheckAndRaiseFloor atomically records value for (key, scope) if no
 	// record exists or value is at least the recorded one. It returns
 	// ErrCounterRegression, recording nothing, when value is lower. Equal
 	// values succeed, so a floor can be reported again unchanged.
-	CheckAndRaiseFloor(ctx context.Context, key backend.KeyHash, scope string, value uint64) error
+	CheckAndRaiseFloor(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+		value uint64,
+	) error
 	// CheckAndRaiseFloorFrom is CheckAndRaiseFloor that also refuses, with
 	// ErrCounterRegression, a recorded value below min: it records value if no
 	// record exists or min <= recorded <= value, in one atomic operation.
-	CheckAndRaiseFloorFrom(ctx context.Context, key backend.KeyHash, scope string, value, min uint64) error
+	CheckAndRaiseFloorFrom(
+		ctx context.Context,
+		key backend.KeyHash,
+		scope string,
+		value, min uint64,
+	) error
 	// CheckAndCommitCounters validates and records every op for key in one
 	// atomic operation: if any op's check fails, none is written. A failed
 	// check returns a *CounterRegressionError, which satisfies
@@ -97,7 +135,11 @@ type CounterWatermark interface {
 	// the first refused op in argument order is reported. Ops must name
 	// distinct scopes. The SQL stores lock rows in argument order, so callers
 	// must pass ops in one consistent order per scope set.
-	CheckAndCommitCounters(ctx context.Context, key backend.KeyHash, ops ...CounterOp) error
+	CheckAndCommitCounters(
+		ctx context.Context,
+		key backend.KeyHash,
+		ops ...CounterOp,
+	) error
 }
 
 // CounterOpKind selects the check a CounterOp applies to its scope.
@@ -151,7 +193,11 @@ func (e *CounterRegressionError) Error() string {
 	return fmt.Sprintf("%v (scope %q)", ErrCounterRegression, e.Scope)
 }
 
-func (e *CounterRegressionError) Is(target error) bool { return target == ErrCounterRegression }
+func (e *CounterRegressionError) Is(
+	target error,
+) bool {
+	return target == ErrCounterRegression
+}
 
 // validateCounterOps rejects an empty op list, an unknown kind and duplicate
 // scopes, which could not be checked and written atomically against one row.
@@ -209,7 +255,12 @@ var (
 	_ Pinger           = (*SqliteWatermark)(nil)
 )
 
-func recordKey(key backend.KeyHash, scope string) string { return key.String() + "|" + scope }
+func recordKey(
+	key backend.KeyHash,
+	scope string,
+) string {
+	return key.String() + "|" + scope
+}
 
 func digest(payload []byte) [32]byte { return sha256.Sum256(payload) }
 
@@ -246,16 +297,27 @@ func newMemWatermark(recordLimit int) *MemWatermark {
 	}
 }
 
-func (m *MemWatermark) Check(_ context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (m *MemWatermark) Check(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if prev, ok := m.records[recordKey(key, scope)]; ok && prev != digest(payload) {
+	if prev, ok := m.records[recordKey(key, scope)]; ok &&
+		prev != digest(payload) {
 		return ErrConflict
 	}
 	return nil
 }
 
-func (m *MemWatermark) CheckAndCommit(_ context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (m *MemWatermark) CheckAndCommit(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := recordKey(key, scope)
@@ -270,7 +332,12 @@ func (m *MemWatermark) CheckAndCommit(_ context.Context, key backend.KeyHash, sc
 	return nil
 }
 
-func (m *MemWatermark) Commit(_ context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (m *MemWatermark) Commit(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := recordKey(key, scope)
@@ -293,14 +360,23 @@ func (m *MemWatermark) commitRecord(k string, d [32]byte) {
 	m.records[k] = d
 }
 
-func (m *MemWatermark) CounterFor(_ context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+func (m *MemWatermark) CounterFor(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+) (uint64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	v, ok := m.counters[recordKey(key, scope)]
 	return v, ok, nil
 }
 
-func (m *MemWatermark) CheckAndCommitCounter(_ context.Context, key backend.KeyHash, scope string, counter uint64) error {
+func (m *MemWatermark) CheckAndCommitCounter(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+	counter uint64,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := recordKey(key, scope)
@@ -311,7 +387,11 @@ func (m *MemWatermark) CheckAndCommitCounter(_ context.Context, key backend.KeyH
 	return nil
 }
 
-func (m *MemWatermark) CheckAndCommitCounters(_ context.Context, key backend.KeyHash, ops ...CounterOp) error {
+func (m *MemWatermark) CheckAndCommitCounters(
+	_ context.Context,
+	key backend.KeyHash,
+	ops ...CounterOp,
+) error {
 	if err := validateCounterOps(ops); err != nil {
 		return err
 	}
@@ -329,7 +409,12 @@ func (m *MemWatermark) CheckAndCommitCounters(_ context.Context, key backend.Key
 	return nil
 }
 
-func (m *MemWatermark) CheckAndRaiseFloorFrom(_ context.Context, key backend.KeyHash, scope string, value, min uint64) error {
+func (m *MemWatermark) CheckAndRaiseFloorFrom(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+	value, min uint64,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := recordKey(key, scope)
@@ -340,7 +425,12 @@ func (m *MemWatermark) CheckAndRaiseFloorFrom(_ context.Context, key backend.Key
 	return nil
 }
 
-func (m *MemWatermark) CheckAndRaiseFloor(_ context.Context, key backend.KeyHash, scope string, value uint64) error {
+func (m *MemWatermark) CheckAndRaiseFloor(
+	_ context.Context,
+	key backend.KeyHash,
+	scope string,
+	value uint64,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := recordKey(key, scope)

@@ -27,7 +27,12 @@ func queryCommand() *cobra.Command {
 		Use:   "query",
 		Short: "Query the ledger state",
 	}
-	cmd.AddCommand(queryPoolCommand(), queryStakeAddressCommand(), queryUtxoCommand(), queryTipCommand())
+	cmd.AddCommand(
+		queryPoolCommand(),
+		queryStakeAddressCommand(),
+		queryUtxoCommand(),
+		queryTipCommand(),
+	)
 	return cmd
 }
 
@@ -46,8 +51,10 @@ func queryPoolCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
-	cmd.Flags().StringVar(&poolID, "pool-id", "", "Pool ID (bech32 pool1... or 56 hex)")
-	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	cmd.Flags().
+		StringVar(&poolID, "pool-id", "", "Pool ID (bech32 pool1... or 56 hex)")
+	cmd.Flags().
+		StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	_ = cmd.MarkFlagRequired("socket-path")
 	_ = cmd.MarkFlagRequired("network")
@@ -63,15 +70,18 @@ func queryStakeAddressCommand() *cobra.Command {
 		Short: "Query stake address information",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := cli.RunQueryStakeAddress(socketPath, network, address, outFile, timeout); err != nil {
-				logging.GetLogger().Error("failed to query stake address", "error", err)
+				logging.GetLogger().
+					Error("failed to query stake address", "error", err)
 				os.Exit(1)
 			}
 		},
 	}
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
-	cmd.Flags().StringVar(&address, "address", "", "Stake address (stake1... or stake_test1...)")
-	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	cmd.Flags().
+		StringVar(&address, "address", "", "Stake address (stake1... or stake_test1...)")
+	cmd.Flags().
+		StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	_ = cmd.MarkFlagRequired("socket-path")
 	_ = cmd.MarkFlagRequired("network")
@@ -95,7 +105,8 @@ func queryUtxoCommand() *cobra.Command {
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
 	cmd.Flags().StringVar(&address, "address", "", "Address")
-	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	cmd.Flags().
+		StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	_ = cmd.MarkFlagRequired("socket-path")
 	_ = cmd.MarkFlagRequired("network")
@@ -118,7 +129,8 @@ func queryTipCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "Path to node socket")
 	cmd.Flags().StringVar(&network, "network", "", "Network name or magic")
-	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
+	cmd.Flags().
+		StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	_ = cmd.MarkFlagRequired("socket-path")
 	_ = cmd.MarkFlagRequired("network")

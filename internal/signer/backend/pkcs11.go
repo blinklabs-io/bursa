@@ -73,7 +73,11 @@ func (k *pkcs11Key) Sign(ctx context.Context, digest []byte) ([]byte, error) {
 		return nil, fmt.Errorf("pkcs11 sign: %w", err)
 	}
 	if len(sig) != ed25519.SignatureSize {
-		return nil, fmt.Errorf("pkcs11 sign: expected %d-byte signature, got %d", ed25519.SignatureSize, len(sig))
+		return nil, fmt.Errorf(
+			"pkcs11 sign: expected %d-byte signature, got %d",
+			ed25519.SignatureSize,
+			len(sig),
+		)
 	}
 	return sig, nil
 }
@@ -129,7 +133,11 @@ func NewPKCS11Backend(cfg PKCS11Config) (Backend, error) {
 	}
 	for _, k := range cfg.Keys {
 		if !k.Type.Valid() {
-			return nil, fmt.Errorf("pkcs11 key %q: invalid key type %q", k.Label, k.Type)
+			return nil, fmt.Errorf(
+				"pkcs11 key %q: invalid key type %q",
+				k.Label,
+				k.Type,
+			)
 		}
 	}
 
@@ -166,7 +174,10 @@ func NewPKCS11Backend(cfg PKCS11Config) (Backend, error) {
 	}
 	if len(b.keys) == 0 {
 		_ = b.teardown(true, true)
-		return nil, fmt.Errorf("pkcs11 backend %q: no Ed25519 signing keys found on the token", cfg.Name)
+		return nil, fmt.Errorf(
+			"pkcs11 backend %q: no Ed25519 signing keys found on the token",
+			cfg.Name,
+		)
 	}
 	b.requests = make(chan pkcs11SignRequest, maxQueuedPKCS11Signs)
 	b.closing = make(chan struct{})
@@ -179,7 +190,11 @@ func NewPKCS11Backend(cfg PKCS11Config) (Backend, error) {
 // signWithSession queues one signing operation. The caller may stop waiting
 // when ctx is canceled; the worker still completes an already-started native
 // operation before it accepts another request or teardown runs.
-func (b *PKCS11Backend) signWithSession(ctx context.Context, priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
+func (b *PKCS11Backend) signWithSession(
+	ctx context.Context,
+	priv pkcs11.ObjectHandle,
+	msg []byte,
+) ([]byte, error) {
 	if ctx == nil {
 		return nil, errors.New("pkcs11 sign: nil context")
 	}
@@ -247,7 +262,10 @@ func (b *PKCS11Backend) signWorker() {
 
 // signNative is called only by signWorker. Keeping this operation in one
 // worker preserves the PKCS#11 session's non-reentrant SignInit+Sign pair.
-func (b *PKCS11Backend) signNative(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
+func (b *PKCS11Backend) signNative(
+	priv pkcs11.ObjectHandle,
+	msg []byte,
+) ([]byte, error) {
 	mech := []*pkcs11.Mechanism{pkcs11.NewMechanism(ckmEDDSA, nil)}
 	if err := b.ctx.SignInit(b.session, mech, priv); err != nil {
 		return nil, fmt.Errorf("sign init: %w", err)
@@ -259,7 +277,10 @@ func (b *PKCS11Backend) signNative(priv pkcs11.ObjectHandle, msg []byte) ([]byte
 	return sig, nil
 }
 
-func (b *PKCS11Backend) signOperation(priv pkcs11.ObjectHandle, msg []byte) ([]byte, error) {
+func (b *PKCS11Backend) signOperation(
+	priv pkcs11.ObjectHandle,
+	msg []byte,
+) ([]byte, error) {
 	if b.nativeSign != nil {
 		return b.nativeSign(priv, msg)
 	}
@@ -280,10 +301,14 @@ func (b *PKCS11Backend) loadKeys(cfg PKCS11Config) error {
 		return fmt.Errorf("pkcs11 enumerate private keys: %w", err)
 	}
 	for _, priv := range privs {
-		attrs, err := b.ctx.GetAttributeValue(b.session, priv, []*pkcs11.Attribute{
-			pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
-			pkcs11.NewAttribute(pkcs11.CKA_LABEL, nil),
-		})
+		attrs, err := b.ctx.GetAttributeValue(
+			b.session,
+			priv,
+			[]*pkcs11.Attribute{
+				pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
+				pkcs11.NewAttribute(pkcs11.CKA_LABEL, nil),
+			},
+		)
 		if err != nil {
 			return fmt.Errorf("pkcs11 read private key attributes: %w", err)
 		}
@@ -336,7 +361,10 @@ func selectSlot(p *pkcs11.Ctx, cfg PKCS11Config) (uint, error) {
 				return s, nil
 			}
 		}
-		return 0, fmt.Errorf("pkcs11: slot %d not found or has no token", *cfg.Slot)
+		return 0, fmt.Errorf(
+			"pkcs11: slot %d not found or has no token",
+			*cfg.Slot,
+		)
 	}
 	for _, s := range slots {
 		ti, err := p.GetTokenInfo(s)
@@ -351,7 +379,11 @@ func selectSlot(p *pkcs11.Ctx, cfg PKCS11Config) (uint, error) {
 }
 
 // findEdwardsObjects returns all CKK_EC_EDWARDS objects of the given class.
-func findEdwardsObjects(p *pkcs11.Ctx, session pkcs11.SessionHandle, class uint) ([]pkcs11.ObjectHandle, error) {
+func findEdwardsObjects(
+	p *pkcs11.Ctx,
+	session pkcs11.SessionHandle,
+	class uint,
+) ([]pkcs11.ObjectHandle, error) {
 	tmpl := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, class),
 		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, uint(ckkECEdwards)),
@@ -389,7 +421,11 @@ var errAmbiguousPublicKey = errors.New("ambiguous public key match for CKA_ID")
 // if more than one public key object shares the CKA_ID: silently picking one
 // could bind the private key to the wrong public key, corrupting KeyHash
 // registration and producing signatures that fail verification.
-func publicKeyForID(p *pkcs11.Ctx, session pkcs11.SessionHandle, id []byte) ([]byte, error) {
+func publicKeyForID(
+	p *pkcs11.Ctx,
+	session pkcs11.SessionHandle,
+	id []byte,
+) ([]byte, error) {
 	tmpl := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
 		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, uint(ckkECEdwards)),
@@ -421,7 +457,12 @@ func publicKeyForID(p *pkcs11.Ctx, session pkcs11.SessionHandle, id []byte) ([]b
 		return nil, errors.New("no matching public key object")
 	}
 	if len(objs) > 1 {
-		return nil, fmt.Errorf("%w %x: %d matching objects", errAmbiguousPublicKey, id, len(objs))
+		return nil, fmt.Errorf(
+			"%w %x: %d matching objects",
+			errAmbiguousPublicKey,
+			id,
+			len(objs),
+		)
 	}
 	attrs, err := p.GetAttributeValue(session, objs[0], []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_EC_POINT, nil),
@@ -437,18 +478,25 @@ func publicKeyForID(p *pkcs11.Ctx, session pkcs11.SessionHandle, id []byte) ([]b
 // raw key (0x04 0x20 || key); some tokens return the raw 32 bytes.
 func edwardsPublicKey(ecPoint []byte) ([]byte, error) {
 	var raw []byte
-	if _, err := asn1.Unmarshal(ecPoint, &raw); err == nil && len(raw) == ed25519.PublicKeySize {
+	if _, err := asn1.Unmarshal(ecPoint, &raw); err == nil &&
+		len(raw) == ed25519.PublicKeySize {
 		return raw, nil
 	}
 	if len(ecPoint) == ed25519.PublicKeySize {
 		return ecPoint, nil
 	}
-	return nil, fmt.Errorf("unexpected EC_POINT encoding (%d bytes)", len(ecPoint))
+	return nil, fmt.Errorf(
+		"unexpected EC_POINT encoding (%d bytes)",
+		len(ecPoint),
+	)
 }
 
 func (b *PKCS11Backend) Name() string { return b.name }
 
-func (b *PKCS11Backend) GetKey(_ context.Context, hash KeyHash) (KeyRef, error) {
+func (b *PKCS11Backend) GetKey(
+	_ context.Context,
+	hash KeyHash,
+) (KeyRef, error) {
 	k, ok := b.keys[hash]
 	if !ok {
 		return nil, ErrKeyNotFound

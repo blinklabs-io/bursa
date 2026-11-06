@@ -44,9 +44,12 @@ func TestOpenFirstDevicePreservesPermissionError(t *testing.T) {
 	}
 	for name, failures := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := openFirstDevice(func(dev string) (transport.TPMCloser, error) {
-				return nil, failures[dev]
-			}, linuxTPMDevices)
+			_, err := openFirstDevice(
+				func(dev string) (transport.TPMCloser, error) {
+					return nil, failures[dev]
+				},
+				linuxTPMDevices,
+			)
 			if err == nil {
 				t.Fatal("openFirstDevice should error when every device fails")
 			}
@@ -54,10 +57,17 @@ func TestOpenFirstDevicePreservesPermissionError(t *testing.T) {
 				t.Fatalf("error must wrap ErrUnavailable, got %v", err)
 			}
 			if !errors.Is(err, fs.ErrPermission) {
-				t.Fatalf("permission error must survive the probe loop, got %v", err)
+				t.Fatalf(
+					"permission error must survive the probe loop, got %v",
+					err,
+				)
 			}
 			if got := reasonFor(err); !strings.Contains(got, "tss group") {
-				t.Fatalf("reasonFor(%v) = %q, want tss group guidance", err, got)
+				t.Fatalf(
+					"reasonFor(%v) = %q, want tss group guidance",
+					err,
+					got,
+				)
 			}
 		})
 	}
@@ -84,7 +94,10 @@ func TestOpenFirstDeviceReturnsFirstSuccess(t *testing.T) {
 		return stub, nil
 	}, linuxTPMDevices)
 	if err != nil {
-		t.Fatalf("openFirstDevice = %v, want fallback success on /dev/tpm0", err)
+		t.Fatalf(
+			"openFirstDevice = %v, want fallback success on /dev/tpm0",
+			err,
+		)
 	}
 	if tp != stub {
 		t.Fatal("openFirstDevice should return the opened transport")

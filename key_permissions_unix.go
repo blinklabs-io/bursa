@@ -24,13 +24,19 @@ import (
 func checkOpenFilePermissions(file *os.File) error {
 	info, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to stat secret key file %q: %w", file.Name(), err)
+		return fmt.Errorf(
+			"failed to stat secret key file %q: %w",
+			file.Name(),
+			err,
+		)
 	}
 	mode := info.Mode().Perm()
 	if mode&0o077 != 0 {
 		return fmt.Errorf(
 			"secret key file %q has mode %04o; group/other access is not permitted: %w",
-			file.Name(), mode, ErrInsecureFileMode,
+			file.Name(),
+			mode,
+			ErrInsecureFileMode,
 		)
 	}
 	return nil

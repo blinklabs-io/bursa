@@ -140,7 +140,13 @@ func TestRunKeyPoolOwner_RejectsSameKeyPaths(t *testing.T) {
 	path := filepath.Join(dir, "owner.skey")
 
 	err := RunKeyPoolOwner(
-		testKeyMnemonic, "", "", path, filepath.Join(dir, ".", "owner.skey"), 0, 0,
+		testKeyMnemonic,
+		"",
+		"",
+		path,
+		filepath.Join(dir, ".", "owner.skey"),
+		0,
+		0,
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "same file")
@@ -162,12 +168,25 @@ func TestRunKeyPoolOwner_RejectsEquivalentKeyPaths(t *testing.T) {
 		"relative and absolute": filepath.Join(dir, "owner.skey"),
 		"symlinked directory":   filepath.Join(link, "owner.skey"),
 	} {
-		err := RunKeyPoolOwner(testKeyMnemonic, "", "", "owner.skey", vkey, 0, 0)
+		err := RunKeyPoolOwner(
+			testKeyMnemonic,
+			"",
+			"",
+			"owner.skey",
+			vkey,
+			0,
+			0,
+		)
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), "same file", name)
 
 		_, statErr := os.Stat(filepath.Join(dir, "owner.skey"))
-		assert.True(t, os.IsNotExist(statErr), "%s: no key file is written", name)
+		assert.True(
+			t,
+			os.IsNotExist(statErr),
+			"%s: no key file is written",
+			name,
+		)
 	}
 }
 

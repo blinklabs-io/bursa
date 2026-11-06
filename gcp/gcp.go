@@ -41,10 +41,15 @@ var secretIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // ValidateWalletSecretPrefix validates the namespace used for GCP wallets.
 func ValidateWalletSecretPrefix(prefix string) error {
 	if prefix == "" {
-		return errors.New("gcp secret prefix is required for gcp wallet storage")
+		return errors.New(
+			"gcp secret prefix is required for gcp wallet storage",
+		)
 	}
-	if len(prefix) >= maxSecretIDLength || !secretIDPattern.MatchString(prefix) {
-		return errors.New("gcp secret prefix must contain only letters, numbers, hyphens, or underscores and leave room for a wallet name")
+	if len(prefix) >= maxSecretIDLength ||
+		!secretIDPattern.MatchString(prefix) {
+		return errors.New(
+			"gcp secret prefix must contain only letters, numbers, hyphens, or underscores and leave room for a wallet name",
+		)
 	}
 	return nil
 }
@@ -54,7 +59,9 @@ func walletSecretID(prefix, name string) (string, error) {
 		return "", err
 	}
 	if name == "" || !secretIDPattern.MatchString(name) {
-		return "", errors.New("gcp wallet name must contain only letters, numbers, hyphens, or underscores")
+		return "", errors.New(
+			"gcp wallet name must contain only letters, numbers, hyphens, or underscores",
+		)
 	}
 	secretID := prefix + name
 	if len(secretID) > maxSecretIDLength {
@@ -128,7 +135,10 @@ func ListGoogleWallets(
 		if err != nil {
 			return nil, err
 		}
-		secretID := strings.TrimPrefix(secret.GetName(), req.GetParent()+"/secrets/")
+		secretID := strings.TrimPrefix(
+			secret.GetName(),
+			req.GetParent()+"/secrets/",
+		)
 		if !strings.HasPrefix(secretID, cfg.Google.Prefix) {
 			continue
 		}
@@ -300,7 +310,11 @@ type secretAdmin interface {
 
 // ensureSecret creates the named secret when it does not exist. Any lookup
 // error other than not-found is returned, since the secret's state is unknown.
-func ensureSecret(ctx context.Context, c secretAdmin, project, secretID string) error {
+func ensureSecret(
+	ctx context.Context,
+	c secretAdmin,
+	project, secretID string,
+) error {
 	_, err := c.GetSecret(ctx, &secretmanager.GetSecretRequest{
 		Name: fmt.Sprintf("projects/%s/secrets/%s", project, secretID),
 	})
@@ -355,7 +369,11 @@ func (g *GoogleWallet) Save(ctx context.Context) error {
 
 	// send it
 	addRequest := &secretmanager.AddSecretVersionRequest{
-		Parent: fmt.Sprintf("projects/%s/secrets/%s", cfg.Google.Project, secretID),
+		Parent: fmt.Sprintf(
+			"projects/%s/secrets/%s",
+			cfg.Google.Project,
+			secretID,
+		),
 		Payload: &secretmanager.SecretPayload{
 			Data: encryptData,
 		},

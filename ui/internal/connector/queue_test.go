@@ -12,8 +12,16 @@ import (
 )
 
 func TestQueueSubmitApprove(t *testing.T) {
-	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
-	req, err := q.Submit("https://a.io", "signTx", json.RawMessage(`{"tx":"00"}`))
+	q := NewQueue(
+		time.Now,
+		func() (string, error) { return "req1", nil },
+		time.Second,
+	)
+	req, err := q.Submit(
+		"https://a.io",
+		"signTx",
+		json.RawMessage(`{"tx":"00"}`),
+	)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -31,7 +39,11 @@ func TestQueueSubmitApprove(t *testing.T) {
 }
 
 func TestQueueTimeout(t *testing.T) {
-	q := NewQueue(time.Now, func() (string, error) { return "r", nil }, 10*time.Millisecond)
+	q := NewQueue(
+		time.Now,
+		func() (string, error) { return "r", nil },
+		10*time.Millisecond,
+	)
 	if _, err := q.Submit("https://a.io", "enable", nil); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -60,7 +72,11 @@ func TestDrainDecision(t *testing.T) {
 }
 
 func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
-	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
+	q := NewQueue(
+		time.Now,
+		func() (string, error) { return "req1", nil },
+		time.Second,
+	)
 	req, err := q.Submit("https://a.io", "signTx", nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
@@ -80,7 +96,10 @@ func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
 	}
 
 	if err := q.Decide(req.ID, Decision{Approved: false}); err != ErrAlreadyDecided {
-		t.Fatalf("duplicate Decide after consumed decision = %v, want ErrAlreadyDecided", err)
+		t.Fatalf(
+			"duplicate Decide after consumed decision = %v, want ErrAlreadyDecided",
+			err,
+		)
 	}
 }
 
@@ -118,7 +137,11 @@ func TestQueueNotificationsCoalesceToAuthoritativeSnapshot(t *testing.T) {
 }
 
 func TestQueueNotifiesWhenRequestExpires(t *testing.T) {
-	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, 10*time.Millisecond)
+	q := NewQueue(
+		time.Now,
+		func() (string, error) { return "req1", nil },
+		10*time.Millisecond,
+	)
 	ch, unsubscribe := q.Subscribe()
 	defer unsubscribe()
 	if _, err := q.Submit("https://a.io", "enable", nil); err != nil {
@@ -126,7 +149,10 @@ func TestQueueNotifiesWhenRequestExpires(t *testing.T) {
 	}
 	<-ch // added snapshot
 
-	if _, err := q.Await(context.Background(), "req1"); !errors.Is(err, ErrTimeout) {
+	if _, err := q.Await(context.Background(), "req1"); !errors.Is(
+		err,
+		ErrTimeout,
+	) {
 		t.Fatalf("Await error = %v, want ErrTimeout", err)
 	}
 	select {
@@ -151,8 +177,14 @@ func TestQueueBoundsPendingRequests(t *testing.T) {
 				t.Fatalf("Submit %d: %v", i, err)
 			}
 		}
-		if _, err := q.Submit("https://a.io", "enable", nil); !errors.Is(err, ErrQueueFull) {
-			t.Fatalf("excess per-origin Submit error = %v, want ErrQueueFull", err)
+		if _, err := q.Submit("https://a.io", "enable", nil); !errors.Is(
+			err,
+			ErrQueueFull,
+		) {
+			t.Fatalf(
+				"excess per-origin Submit error = %v, want ErrQueueFull",
+				err,
+			)
 		}
 	})
 
@@ -168,18 +200,29 @@ func TestQueueBoundsPendingRequests(t *testing.T) {
 				t.Fatalf("Submit %d: %v", i, err)
 			}
 		}
-		if _, err := q.Submit("https://overflow.example", "enable", nil); !errors.Is(err, ErrQueueFull) {
+		if _, err := q.Submit("https://overflow.example", "enable", nil); !errors.Is(
+			err,
+			ErrQueueFull,
+		) {
 			t.Fatalf("excess global Submit error = %v, want ErrQueueFull", err)
 		}
 	})
 }
 
 func TestQueueReservationIsHiddenUntilPublished(t *testing.T) {
-	q := NewQueue(time.Now, func() (string, error) { return "req1", nil }, time.Second)
+	q := NewQueue(
+		time.Now,
+		func() (string, error) { return "req1", nil },
+		time.Second,
+	)
 	notifications, unsubscribe := q.Subscribe()
 	defer unsubscribe()
 
-	req, err := q.reserve("https://a.io", "signTx", json.RawMessage(`{"tx":"00"}`))
+	req, err := q.reserve(
+		"https://a.io",
+		"signTx",
+		json.RawMessage(`{"tx":"00"}`),
+	)
 	if err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
@@ -191,7 +234,10 @@ func TestQueueReservationIsHiddenUntilPublished(t *testing.T) {
 		t.Fatal("reservation notified approval clients")
 	default:
 	}
-	if err := q.Decide(req.ID, Decision{Approved: true}); !errors.Is(err, ErrUnknownRequest) {
+	if err := q.Decide(req.ID, Decision{Approved: true}); !errors.Is(
+		err,
+		ErrUnknownRequest,
+	) {
 		t.Fatalf("Decide reserved request = %v, want ErrUnknownRequest", err)
 	}
 
@@ -201,7 +247,11 @@ func TestQueueReservationIsHiddenUntilPublished(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 	if published.Effects == nil || published.Effects.Fee != effects.Fee {
-		t.Fatalf("published effects = %+v, want %+v", published.Effects, effects)
+		t.Fatalf(
+			"published effects = %+v, want %+v",
+			published.Effects,
+			effects,
+		)
 	}
 	select {
 	case <-notifications:
@@ -225,7 +275,10 @@ func TestQueueReservationsCountTowardExistingLimits(t *testing.T) {
 				t.Fatalf("reserve %d: %v", i, err)
 			}
 		}
-		if _, err := q.reserve("https://a.io", "signTx", nil); !errors.Is(err, ErrQueueFull) {
+		if _, err := q.reserve("https://a.io", "signTx", nil); !errors.Is(
+			err,
+			ErrQueueFull,
+		) {
 			t.Fatalf("excess reservation = %v, want ErrQueueFull", err)
 		}
 	})
@@ -242,7 +295,10 @@ func TestQueueReservationsCountTowardExistingLimits(t *testing.T) {
 				t.Fatalf("reserve %d: %v", i, err)
 			}
 		}
-		if _, err := q.reserve("https://overflow.example", "signTx", nil); !errors.Is(err, ErrQueueFull) {
+		if _, err := q.reserve("https://overflow.example", "signTx", nil); !errors.Is(
+			err,
+			ErrQueueFull,
+		) {
 			t.Fatalf("excess reservation = %v, want ErrQueueFull", err)
 		}
 	})
@@ -277,12 +333,19 @@ func TestQueueGlobalBoundIgnoresDecidedWaiters(t *testing.T) {
 		t.Fatalf("Decide: %v", err)
 	}
 	if got := len(q.Pending()); got != maxPendingRequests-1 {
-		t.Fatalf("pending after one decision = %d, want %d", got, maxPendingRequests-1)
+		t.Fatalf(
+			"pending after one decision = %d, want %d",
+			got,
+			maxPendingRequests-1,
+		)
 	}
 
 	// A fresh Submit must now be accepted: only maxPendingRequests-1 requests
 	// are actually pending.
 	if _, err := q.Submit("https://fresh.example", "enable", nil); err != nil {
-		t.Fatalf("Submit after decision = %v, want success (decided waiter must not count)", err)
+		t.Fatalf(
+			"Submit after decision = %v, want success (decided waiter must not count)",
+			err,
+		)
 	}
 }

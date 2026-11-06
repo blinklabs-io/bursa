@@ -73,7 +73,10 @@ func TestDirSecretSource_ListAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if want := []string{"a.json", "b.json", "c.json"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"a.json", "b.json", "c.json"}; !reflect.DeepEqual(
+		names,
+		want,
+	) {
 		t.Fatalf("List = %v, want %v", names, want)
 	}
 	for _, n := range names {
@@ -103,7 +106,11 @@ func TestDirSecretSource_GetRejectsPaths(t *testing.T) {
 
 func TestDirSecretSource_GetRejectsOversized(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "big.json"), bytes.Repeat([]byte{'x'}, maxDirSecretSize+1))
+	writeFile(
+		t,
+		filepath.Join(dir, "big.json"),
+		bytes.Repeat([]byte{'x'}, maxDirSecretSize+1),
+	)
 	src, err := NewDirSecretSource(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -147,11 +154,18 @@ func TestBuildBackends_SopsDir(t *testing.T) {
 		seed,
 	)
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "otg@prime-testnet.skey.json"), ageEncrypted(t, envelope))
+	writeFile(
+		t,
+		filepath.Join(dir, "otg@prime-testnet.skey.json"),
+		ageEncrypted(t, envelope),
+	)
 
-	backends, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "cold", Type: "sops", Path: dir},
-	})
+	backends, err := BuildBackends(
+		context.Background(),
+		[]config.SignerBackendConfig{
+			{Name: "cold", Type: "sops", Path: dir},
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildBackends: %v", err)
 	}
@@ -171,14 +185,19 @@ func TestBuildBackends_SopsDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.Write(pub)
-	if poolID := hex.EncodeToString(h.Sum(nil)); keys[0].Hash().String() != poolID {
+	if poolID := hex.EncodeToString(h.Sum(nil)); keys[0].Hash().
+		String() !=
+		poolID {
 		t.Fatalf("key hash %s, want pool ID %s", keys[0].Hash(), poolID)
 	}
 }
 
 func TestBuildBackends_SopsDirRejectsNonKey(t *testing.T) {
 	envelope := `{"type":"NodeOperationalCertificateIssueCounter","description":"Next certificate issue number: 9","cborHex":"82095820` +
-		strings.Repeat("00", 32) + `"}`
+		strings.Repeat(
+			"00",
+			32,
+		) + `"}`
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "counter.json"), ageEncrypted(t, envelope))
 	if _, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
@@ -200,7 +219,12 @@ func TestBuildBackends_SopsDirEmpty(t *testing.T) {
 
 func TestBuildBackends_SopsPathAndPrefix(t *testing.T) {
 	_, err := BuildBackends(context.Background(), []config.SignerBackendConfig{
-		{Name: "cold", Type: "sops", Path: t.TempDir(), SecretPrefix: "signer-"},
+		{
+			Name:         "cold",
+			Type:         "sops",
+			Path:         t.TempDir(),
+			SecretPrefix: "signer-",
+		},
 	})
 	if !errors.Is(err, errSopsSourceConflict) {
 		t.Fatalf("expected the path/secret_prefix conflict, got %v", err)
@@ -238,7 +262,8 @@ func TestDirSecretSource_CancelledContext(t *testing.T) {
 	if names, err := src.List(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("List = %v, %v; want context.Canceled", names, err)
 	}
-	if data, err := src.Get(ctx, "a.json"); !errors.Is(err, context.Canceled) || data != nil {
+	if data, err := src.Get(ctx, "a.json"); !errors.Is(err, context.Canceled) ||
+		data != nil {
 		t.Fatalf("Get = %q, %v; want context.Canceled", data, err)
 	}
 }

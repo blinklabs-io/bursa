@@ -36,10 +36,17 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 	// Remove a stale socket if present (only if it is a socket).
 	if fi, err := os.Stat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
-			return nil, fmt.Errorf("kesagent: refusing to remove non-socket %q", path)
+			return nil, fmt.Errorf(
+				"kesagent: refusing to remove non-socket %q",
+				path,
+			)
 		}
 		if err := os.Remove(path); err != nil {
-			return nil, fmt.Errorf("kesagent: remove stale socket %q: %w", path, err)
+			return nil, fmt.Errorf(
+				"kesagent: remove stale socket %q: %w",
+				path,
+				err,
+			)
 		}
 	}
 	// net.Listen creates the socket under the process umask, so its requested
@@ -79,7 +86,10 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 		)
 	}
 	if fallbackLn == nil {
-		return nil, fmt.Errorf("kesagent: listen %q: no listener produced", path)
+		return nil, fmt.Errorf(
+			"kesagent: listen %q: no listener produced",
+			path,
+		)
 	}
 	// The umask only bounds the birth mode; apply the requested mode explicitly
 	// (it may be more restrictive, and non-unix builds have no umask at all).
@@ -96,7 +106,11 @@ func ListenUnix(path string, mode os.FileMode) (net.Listener, error) {
 func listenStaged(path string, mode os.FileMode) (net.Listener, error) {
 	stagingDir, err := os.MkdirTemp(filepath.Dir(path), ".kes-sock-")
 	if err != nil {
-		return nil, fmt.Errorf("kesagent: create socket staging dir for %q: %w", path, err)
+		return nil, fmt.Errorf(
+			"kesagent: create socket staging dir for %q: %w",
+			path,
+			err,
+		)
 	}
 	defer func() { _ = os.RemoveAll(stagingDir) }()
 	stagingPath := filepath.Join(stagingDir, "s")

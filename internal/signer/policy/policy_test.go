@@ -37,7 +37,11 @@ func mustHash(t *testing.T, s string) backend.KeyHash {
 const hashA = "00000000000000000000000000000000000000000000000000000001"
 
 func TestEngine_PolicyFor(t *testing.T) {
-	e, err := NewEngine([]KeyPolicy{{Hash: hashA, Backend: "software", AllowedRequests: []string{"tx"}}})
+	e, err := NewEngine(
+		[]KeyPolicy{
+			{Hash: hashA, Backend: "software", AllowedRequests: []string{"tx"}},
+		},
+	)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
@@ -77,14 +81,20 @@ func TestEvaluateTx_DenyNoPolicy(t *testing.T) {
 }
 
 func TestEvaluateTx_DenyNilInspection(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
 	if e.EvaluateTx(h, nil).Allow {
 		t.Fatalf("expected deny for nil inspection")
 	}
 }
 
 func TestEvaluateTx_DenyRequestTypeNotAllowed(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"cip8"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"cip8"}, Tx: &TxPolicy{}},
+	)
 	if e.EvaluateTx(h, &bursa.TxInspection{}).Allow {
 		t.Fatalf("expected deny: tx not in allowed_requests")
 	}
@@ -93,13 +103,19 @@ func TestEvaluateTx_DenyRequestTypeNotAllowed(t *testing.T) {
 func TestEvaluateTx_MaxOutputAda(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
-		Tx:              &TxPolicy{MaxOutputAda: 100}, // 100 ADA = 100_000_000 lovelace
+		Tx: &TxPolicy{
+			MaxOutputAda: 100,
+		}, // 100 ADA = 100_000_000 lovelace
 	})
-	over := &bursa.TxInspection{Outputs: []bursa.TxOutput{{Address: "addr1xyz", Lovelace: "100000001"}}}
+	over := &bursa.TxInspection{
+		Outputs: []bursa.TxOutput{{Address: "addr1xyz", Lovelace: "100000001"}},
+	}
 	if e.EvaluateTx(h, over).Allow {
 		t.Fatalf("expected deny: output exceeds max_output_ada")
 	}
-	ok := &bursa.TxInspection{Outputs: []bursa.TxOutput{{Address: "addr1xyz", Lovelace: "100000000"}}}
+	ok := &bursa.TxInspection{
+		Outputs: []bursa.TxOutput{{Address: "addr1xyz", Lovelace: "100000000"}},
+	}
 	if !e.EvaluateTx(h, ok).Allow {
 		t.Fatalf("expected allow at exactly max")
 	}
@@ -110,14 +126,19 @@ func TestEvaluateTx_OutputAllowlist(t *testing.T) {
 		AllowedRequests: []string{"tx"},
 		Tx:              &TxPolicy{AllowedOutputs: []string{"addr1good"}},
 	})
-	bad := &bursa.TxInspection{Outputs: []bursa.TxOutput{{Address: "addr1bad", Lovelace: "1"}}}
+	bad := &bursa.TxInspection{
+		Outputs: []bursa.TxOutput{{Address: "addr1bad", Lovelace: "1"}},
+	}
 	if e.EvaluateTx(h, bad).Allow {
 		t.Fatalf("expected deny: output not in allowlist")
 	}
 }
 
 func TestEvaluateTx_CertsMintWithdrawals(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
 	if e.EvaluateTx(h, &bursa.TxInspection{CertificateCount: 1}).Allow {
 		t.Fatalf("expected deny: certs not allowed")
 	}
@@ -132,23 +153,54 @@ func TestEvaluateTx_CertsMintWithdrawals(t *testing.T) {
 func TestEvaluateTx_NetworkAndValidity(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
-		Tx:              &TxPolicy{Networks: []string{"mainnet"}, RequireValidityUpperBound: true},
+		Tx: &TxPolicy{
+			Networks:                  []string{"mainnet"},
+			RequireValidityUpperBound: true,
+		},
 	})
 	// testnet output address -> deny
-	d := e.EvaluateTx(h, &bursa.TxInspection{TTL: 1, Outputs: []bursa.TxOutput{{Address: "addr_test1abc", Lovelace: "1"}}})
+	d := e.EvaluateTx(
+		h,
+		&bursa.TxInspection{
+			TTL: 1,
+			Outputs: []bursa.TxOutput{
+				{Address: "addr_test1abc", Lovelace: "1"},
+			},
+		},
+	)
 	if d.Allow {
 		t.Fatalf("expected deny: testnet address on mainnet-only policy")
 	}
 	// mainnet, but no TTL -> deny
-	if e.EvaluateTx(h, &bursa.TxInspection{TTL: 0, Outputs: []bursa.TxOutput{{Address: "addr1abc", Lovelace: "1"}}}).Allow {
+	if e.EvaluateTx(
+		h,
+		&bursa.TxInspection{
+			TTL:     0,
+			Outputs: []bursa.TxOutput{{Address: "addr1abc", Lovelace: "1"}},
+		},
+	).Allow {
 		t.Fatalf("expected deny: missing validity upper bound")
 	}
 	// mainnet + TTL -> allow
-	if !e.EvaluateTx(h, &bursa.TxInspection{TTL: 5, Outputs: []bursa.TxOutput{{Address: "addr1abc", Lovelace: "1"}}}).Allow {
+	if !e.EvaluateTx(
+		h,
+		&bursa.TxInspection{
+			TTL:     5,
+			Outputs: []bursa.TxOutput{{Address: "addr1abc", Lovelace: "1"}},
+		},
+	).Allow {
 		t.Fatalf("expected allow")
 	}
 	// Unknown address format must not be treated as mainnet.
-	if e.EvaluateTx(h, &bursa.TxInspection{TTL: 5, Outputs: []bursa.TxOutput{{Address: "not-an-address", Lovelace: "1"}}}).Allow {
+	if e.EvaluateTx(
+		h,
+		&bursa.TxInspection{
+			TTL: 5,
+			Outputs: []bursa.TxOutput{
+				{Address: "not-an-address", Lovelace: "1"},
+			},
+		},
+	).Allow {
 		t.Fatalf("expected deny: unknown address network")
 	}
 }
@@ -166,7 +218,9 @@ func TestNewEngine_RejectsDuplicateHash(t *testing.T) {
 func TestEvaluateTx_MaxTotalOutAda(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
-		Tx:              &TxPolicy{MaxTotalOutAda: 50}, // 50 ADA = 50_000_000 lovelace
+		Tx: &TxPolicy{
+			MaxTotalOutAda: 50,
+		}, // 50 ADA = 50_000_000 lovelace
 	})
 	// Two outputs of 30 ADA each = 60 ADA total → deny
 	over := &bursa.TxInspection{Outputs: []bursa.TxOutput{
@@ -188,7 +242,9 @@ func TestEvaluateTx_MaxTotalOutAda(t *testing.T) {
 func TestEvaluateTx_FeeCountsTowardTotal(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
-		Tx:              &TxPolicy{MaxTotalOutAda: 10}, // 10 ADA = 10_000_000 lovelace
+		Tx: &TxPolicy{
+			MaxTotalOutAda: 10,
+		}, // 10 ADA = 10_000_000 lovelace
 	})
 	// A single 1-ADA change output passes the lovelace-output checks, but the
 	// fee carries away the rest: outputs (1) + fee (9.000001) > 10 ADA → deny.
@@ -210,7 +266,9 @@ func TestEvaluateTx_FeeCountsTowardTotal(t *testing.T) {
 	}
 }
 
-func TestEvaluateTx_MaxTotalOutAdaFailsClosedOnUnresolvedValueEffects(t *testing.T) {
+func TestEvaluateTx_MaxTotalOutAdaFailsClosedOnUnresolvedValueEffects(
+	t *testing.T,
+) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
 		Tx: &TxPolicy{
@@ -252,8 +310,10 @@ func TestEvaluateTx_MaxTotalOutAdaIncludesValueEffects(t *testing.T) {
 	}
 	e, h := engineWith(t, base)
 	insp := &bursa.TxInspection{
-		Fee:                             "1000000",
-		Outputs:                         []bursa.TxOutput{{Address: "addr1a", Lovelace: "2000000"}},
+		Fee: "1000000",
+		Outputs: []bursa.TxOutput{
+			{Address: "addr1a", Lovelace: "2000000"},
+		},
 		CertificateCount:                1,
 		CertificateDepositTotal:         "3000000",
 		CertificateRefundTotal:          "900000000",
@@ -262,11 +322,16 @@ func TestEvaluateTx_MaxTotalOutAdaIncludesValueEffects(t *testing.T) {
 		TreasuryDonationLovelace:        "4000000",
 	}
 	if decision := e.EvaluateTx(h, insp); !decision.Allow {
-		t.Fatalf("expected exact 10 ADA value out to be allowed: %s", decision.Reason)
+		t.Fatalf(
+			"expected exact 10 ADA value out to be allowed: %s",
+			decision.Reason,
+		)
 	}
 	insp.TreasuryDonationLovelace = "4000001"
 	if decision := e.EvaluateTx(h, insp); decision.Allow {
-		t.Fatal("expected outputs, fee, certificate deposit, and donation over cap to be denied")
+		t.Fatal(
+			"expected outputs, fee, certificate deposit, and donation over cap to be denied",
+		)
 	}
 }
 
@@ -279,7 +344,12 @@ func TestEvaluateTx_CallerMaxTotalOutAdaIncludesValueEffects(t *testing.T) {
 			AllowTreasury:     true,
 		},
 	}
-	e, h := buildEngineWithOverride(t, base, "bob", &CallerTxOverride{MaxTotalOutAda: 5})
+	e, h := buildEngineWithOverride(
+		t,
+		base,
+		"bob",
+		&CallerTxOverride{MaxTotalOutAda: 5},
+	)
 	insp := &bursa.TxInspection{
 		CertificateCount:                1,
 		CertificateDepositTotal:         "3000000",
@@ -289,10 +359,15 @@ func TestEvaluateTx_CallerMaxTotalOutAdaIncludesValueEffects(t *testing.T) {
 		TreasuryDonationLovelace:        "2000001",
 	}
 	if decision := e.EvaluateTx(h, insp, WithCaller("bob")); decision.Allow {
-		t.Fatal("expected caller total-value override to include deposits and donation")
+		t.Fatal(
+			"expected caller total-value override to include deposits and donation",
+		)
 	}
 	if decision := e.EvaluateTx(h, insp, WithCaller("alice")); !decision.Allow {
-		t.Fatalf("expected base policy to allow the same value effects: %s", decision.Reason)
+		t.Fatalf(
+			"expected base policy to allow the same value effects: %s",
+			decision.Reason,
+		)
 	}
 }
 
@@ -305,17 +380,24 @@ func TestEvaluateTx_MaxTotalOutAdaIncludesProposalDeposits(t *testing.T) {
 		},
 	})
 	insp := &bursa.TxInspection{
-		Fee:                    "1000000",
-		Outputs:                []bursa.TxOutput{{Address: "addr1a", Lovelace: "1000000"}},
+		Fee: "1000000",
+		Outputs: []bursa.TxOutput{
+			{Address: "addr1a", Lovelace: "1000000"},
+		},
 		ProposalProcedureCount: 1,
 		ProposalDepositTotal:   "8000001",
 	}
 	if decision := e.EvaluateTx(h, insp); decision.Allow {
-		t.Fatal("expected governance proposal deposit over total-value cap to be denied")
+		t.Fatal(
+			"expected governance proposal deposit over total-value cap to be denied",
+		)
 	}
 	insp.ProposalDepositTotal = "8000000"
 	if decision := e.EvaluateTx(h, insp); !decision.Allow {
-		t.Fatalf("expected proposal deposit at total-value cap to be allowed: %s", decision.Reason)
+		t.Fatalf(
+			"expected proposal deposit at total-value cap to be allowed: %s",
+			decision.Reason,
+		)
 	}
 	insp.ProposalDepositTotal = ""
 	if decision := e.EvaluateTx(h, insp); decision.Allow {
@@ -367,10 +449,16 @@ func TestEvaluateTx_CollateralPath(t *testing.T) {
 		t.Fatalf("InspectTransaction: %v", err)
 	}
 	if !insp.IsValid {
-		t.Fatal("fixture must exercise collateral policy while is_valid is true")
+		t.Fatal(
+			"fixture must exercise collateral policy while is_valid is true",
+		)
 	}
 	if len(insp.CollateralInputs) != wantCollateralInputs {
-		t.Fatalf("collateral input count = %d, want %d", len(insp.CollateralInputs), wantCollateralInputs)
+		t.Fatalf(
+			"collateral input count = %d, want %d",
+			len(insp.CollateralInputs),
+			wantCollateralInputs,
+		)
 	}
 	if insp.CollateralReturn == nil {
 		t.Fatal("missing collateral return")
@@ -391,14 +479,23 @@ func TestEvaluateTx_CollateralPath(t *testing.T) {
 	if decision.Allow {
 		t.Fatal("expected collateral forfeiture above max_fee_ada to be denied")
 	}
-	if !strings.Contains(decision.Reason, "collateral total collateral 3000000 exceeds max_fee_ada") {
+	if !strings.Contains(
+		decision.Reason,
+		"collateral total collateral 3000000 exceeds max_fee_ada",
+	) {
 		t.Fatalf("unexpected denial reason: %q", decision.Reason)
 	}
 }
 
 func TestEvaluateTx_CollateralRequiresTotal(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
-	decision := e.EvaluateTx(h, &bursa.TxInspection{CollateralInputs: []bursa.TxInput{{}}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
+	decision := e.EvaluateTx(
+		h,
+		&bursa.TxInspection{CollateralInputs: []bursa.TxInput{{}}},
+	)
 	if decision.Allow {
 		t.Fatal("expected collateral without total_collateral to be denied")
 	}
@@ -416,8 +513,11 @@ func TestEvaluateTx_CollateralReturnUsesOutputPolicy(t *testing.T) {
 	})
 	insp := &bursa.TxInspection{
 		CollateralInputs: []bursa.TxInput{{}},
-		CollateralReturn: &bursa.TxOutput{Address: "addr1bad", Lovelace: "1000000"},
-		TotalCollateral:  "1000000",
+		CollateralReturn: &bursa.TxOutput{
+			Address:  "addr1bad",
+			Lovelace: "1000000",
+		},
+		TotalCollateral: "1000000",
 	}
 	if e.EvaluateTx(h, insp).Allow {
 		t.Fatal("expected disallowed collateral return address to be denied")
@@ -425,13 +525,18 @@ func TestEvaluateTx_CollateralReturnUsesOutputPolicy(t *testing.T) {
 
 	insp.CollateralReturn.Address = "addr1good"
 	if decision := e.EvaluateTx(h, insp); !decision.Allow {
-		t.Fatalf("expected bounded collateral path to be allowed: %s", decision.Reason)
+		t.Fatalf(
+			"expected bounded collateral path to be allowed: %s",
+			decision.Reason,
+		)
 	}
 
 	insp.CollateralReturn.Lovelace = "2000000"
 	insp.TotalCollateral = "2000000"
 	if e.EvaluateTx(h, insp).Allow {
-		t.Fatal("expected collateral return plus forfeiture above max_total_out_ada to be denied")
+		t.Fatal(
+			"expected collateral return plus forfeiture above max_total_out_ada to be denied",
+		)
 	}
 
 	insp.TotalCollateral = "1000000"
@@ -448,7 +553,10 @@ func TestEvaluateTx_CollateralReturnUsesOutputPolicy(t *testing.T) {
 }
 
 func TestEvaluateTx_UnparseableFeeDenied(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
 	if e.EvaluateTx(h, &bursa.TxInspection{Fee: "not-a-number"}).Allow {
 		t.Fatalf("expected deny: unparseable fee must fail closed")
 	}
@@ -459,7 +567,10 @@ func TestEvaluateTx_MultiAssetDeniedByDefault(t *testing.T) {
 		{Address: "addr1a", Lovelace: "1000000", HasAssets: true},
 	}}
 	// Default policy: native-asset movement must be denied.
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
 	if e.EvaluateTx(h, withAssets).Allow {
 		t.Fatalf("expected deny: native assets not allowed by default")
 	}
@@ -474,7 +585,10 @@ func TestEvaluateTx_MultiAssetDeniedByDefault(t *testing.T) {
 }
 
 func TestEvaluateTx_GovernanceDeniedByDefault(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
 	if e.EvaluateTx(h, &bursa.TxInspection{VotingProcedureCount: 1}).Allow {
 		t.Fatalf("expected deny: voting procedures not allowed by default")
 	}
@@ -490,21 +604,30 @@ func TestEvaluateTx_GovernanceDeniedByDefault(t *testing.T) {
 		AllowedRequests: []string{"tx"},
 		Tx:              &TxPolicy{AllowVotes: true},
 	})
-	if !eVote.EvaluateTx(hVote, &bursa.TxInspection{VotingProcedureCount: 1}).Allow {
+	if !eVote.EvaluateTx(
+		hVote,
+		&bursa.TxInspection{VotingProcedureCount: 1},
+	).Allow {
 		t.Fatalf("expected allow: allow_votes opts in")
 	}
 	eProp, hProp := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
 		Tx:              &TxPolicy{AllowProposals: true},
 	})
-	if !eProp.EvaluateTx(hProp, &bursa.TxInspection{ProposalProcedureCount: 1}).Allow {
+	if !eProp.EvaluateTx(
+		hProp,
+		&bursa.TxInspection{ProposalProcedureCount: 1},
+	).Allow {
 		t.Fatalf("expected allow: allow_proposals opts in")
 	}
 	eTreas, hTreas := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
 		Tx:              &TxPolicy{AllowTreasury: true},
 	})
-	if !eTreas.EvaluateTx(hTreas, &bursa.TxInspection{HasTreasuryDonation: true}).Allow {
+	if !eTreas.EvaluateTx(
+		hTreas,
+		&bursa.TxInspection{HasTreasuryDonation: true},
+	).Allow {
 		t.Fatalf("expected allow: allow_treasury opts in")
 	}
 }
@@ -522,7 +645,10 @@ func TestEvaluateTx_DenyNilTxPolicy(t *testing.T) {
 func TestEvaluateCIP8(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"cip8"},
-		CIP8:            &CIP8Policy{MaxPayloadBytes: 16, RequireAddressMatch: true},
+		CIP8: &CIP8Policy{
+			MaxPayloadBytes:     16,
+			RequireAddressMatch: true,
+		},
 	})
 	if e.EvaluateCIP8(h, 32, true).Allow {
 		t.Fatalf("expected deny: payload too large")
@@ -534,7 +660,10 @@ func TestEvaluateCIP8(t *testing.T) {
 		t.Fatalf("expected allow")
 	}
 	// key with cip8 not allowed
-	e2, h2 := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, CIP8: &CIP8Policy{}})
+	e2, h2 := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, CIP8: &CIP8Policy{}},
+	)
 	if e2.EvaluateCIP8(h2, 1, true).Allow {
 		t.Fatalf("expected deny: cip8 not in allowed_requests")
 	}
@@ -560,5 +689,67 @@ func TestEvaluateOpCert(t *testing.T) {
 	e3, h3 := engineWith(t, KeyPolicy{AllowedRequests: []string{"opcert"}})
 	if !e3.EvaluateOpCert(h3).Allow {
 		t.Fatalf("expected allow when opcert is in allowed_requests")
+	}
+}
+
+func TestEngine_BackendPin(t *testing.T) {
+	t.Parallel()
+	insp := &bursa.TxInspection{}
+	cases := []struct {
+		name    string
+		pin     string
+		opts    []EvalOption
+		allowed bool
+	}{
+		{"match", "vault-prod", []EvalOption{WithBackend("vault-prod")}, true},
+		{"mismatch", "vault-prod", []EvalOption{WithBackend("software")}, false},
+		{"mismatch against empty resolved name", "vault-prod", []EvalOption{WithBackend("")}, false},
+		{"empty pin accepts any backend", "", []EvalOption{WithBackend("software")}, true},
+		{"option omitted denies a pinned key", "vault-prod", nil, false},
+		{"option omitted with no pin allows", "", nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e, h := engineWith(t, KeyPolicy{
+				Backend:         tc.pin,
+				AllowedRequests: []string{"tx", "opcert", "cip8"},
+				Tx:              &TxPolicy{},
+				CIP8:            &CIP8Policy{},
+			})
+			got := map[string]Decision{
+				"tx":     e.EvaluateTx(h, insp, tc.opts...),
+				"opcert": e.EvaluateOpCert(h, tc.opts...),
+				"cip8":   e.EvaluateCIP8(h, 1, true, tc.opts...),
+			}
+			for kind, d := range got {
+				if d.Allow != tc.allowed {
+					t.Errorf("%s: Allow=%v reason=%q, want Allow=%v", kind, d.Allow, d.Reason, tc.allowed)
+				}
+				if !tc.allowed && !strings.Contains(d.Reason, "backend") {
+					t.Errorf("%s: reason does not name the backend: %q", kind, d.Reason)
+				}
+			}
+		})
+	}
+}
+
+func TestEngine_BackendPinStillRequiresAllowedRequests(t *testing.T) {
+	t.Parallel()
+	e, h := engineWith(t, KeyPolicy{
+		Backend: "vault-prod",
+		Tx:      &TxPolicy{},
+		CIP8:    &CIP8Policy{},
+	})
+	opts := []EvalOption{WithBackend("vault-prod")}
+	got := map[string]Decision{
+		"tx":     e.EvaluateTx(h, &bursa.TxInspection{}, opts...),
+		"opcert": e.EvaluateOpCert(h, opts...),
+		"cip8":   e.EvaluateCIP8(h, 1, true, opts...),
+	}
+	for kind, d := range got {
+		if d.Allow {
+			t.Errorf("%s: a matching backend allowed a request kind absent from allowed_requests", kind)
+		}
 	}
 }

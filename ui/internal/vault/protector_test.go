@@ -67,7 +67,10 @@ func TestPasswordProtectorWrongPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
-	if _, err := p.Unwrap(blob, "wrong-vault-password"); !errors.Is(err, ErrWrongPassword) {
+	if _, err := p.Unwrap(blob, "wrong-vault-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("Unwrap wrong password = %v, want ErrWrongPassword", err)
 	}
 }
@@ -82,6 +85,9 @@ func TestPasswordProtectorRejectsWrongVEKLength(t *testing.T) {
 func TestPasswordProtectorAlwaysAvailable(t *testing.T) {
 	ok, reason := testProtector(t).Available()
 	if !ok {
-		t.Fatalf("password protector should always be available, reason=%q", reason)
+		t.Fatalf(
+			"password protector should always be available, reason=%q",
+			reason,
+		)
 	}
 }

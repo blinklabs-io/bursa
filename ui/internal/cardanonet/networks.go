@@ -14,11 +14,31 @@ type network struct {
 }
 
 var supportedNetworks = []network{
-	{name: "preview", addressNetworkID: lcommon.AddressNetworkTestnet, protocolMagic: 2},
-	{name: "preprod", addressNetworkID: lcommon.AddressNetworkTestnet, protocolMagic: 1},
-	{name: "mainnet", addressNetworkID: lcommon.AddressNetworkMainnet, protocolMagic: 764824073},
-	{name: "musashi", addressNetworkID: lcommon.AddressNetworkTestnet, protocolMagic: 164},
-	{name: "dijkstra", addressNetworkID: lcommon.AddressNetworkTestnet, protocolMagic: 6},
+	{
+		name:             "preview",
+		addressNetworkID: lcommon.AddressNetworkTestnet,
+		protocolMagic:    2,
+	},
+	{
+		name:             "preprod",
+		addressNetworkID: lcommon.AddressNetworkTestnet,
+		protocolMagic:    1,
+	},
+	{
+		name:             "mainnet",
+		addressNetworkID: lcommon.AddressNetworkMainnet,
+		protocolMagic:    764824073,
+	},
+	{
+		name:             "musashi",
+		addressNetworkID: lcommon.AddressNetworkTestnet,
+		protocolMagic:    164,
+	},
+	{
+		name:             "dijkstra",
+		addressNetworkID: lcommon.AddressNetworkTestnet,
+		protocolMagic:    6,
+	},
 }
 
 // SupportedNetworks returns the UI-supported Cardano networks in display order.
@@ -40,7 +60,11 @@ func ValidNetwork(name string) bool {
 func AddressNetworkID(name string) (uint8, error) {
 	n, ok := lookup(name)
 	if !ok {
-		return 0, fmt.Errorf("unknown network %q: must be one of %s", name, SupportedNetworks())
+		return 0, fmt.Errorf(
+			"unknown network %q: must be one of %s",
+			name,
+			SupportedNetworks(),
+		)
 	}
 	return n.addressNetworkID, nil
 }
@@ -49,7 +73,11 @@ func AddressNetworkID(name string) (uint8, error) {
 func ProtocolMagic(name string) (uint32, error) {
 	n, ok := lookup(name)
 	if !ok {
-		return 0, fmt.Errorf("unknown network %q: must be one of %s", name, SupportedNetworks())
+		return 0, fmt.Errorf(
+			"unknown network %q: must be one of %s",
+			name,
+			SupportedNetworks(),
+		)
 	}
 	return n.protocolMagic, nil
 }

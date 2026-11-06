@@ -24,7 +24,9 @@ import (
 
 const insecureRemoteTargetMsg = "requires hostname-verified TLS"
 
-func TestValidatePostgresWatermarkConfigAllowsLocalOrVerifiedTargets(t *testing.T) {
+func TestValidatePostgresWatermarkConfigAllowsLocalOrVerifiedTargets(
+	t *testing.T,
+) {
 	tests := map[string]string{
 		"unix socket":              "host=/var/run/postgresql dbname=wm sslmode=disable",
 		"localhost plaintext":      "postgres://u@localhost/wm?sslmode=disable",
@@ -46,13 +48,19 @@ func TestValidatePostgresWatermarkConfigAllowsLocalOrVerifiedTargets(t *testing.
 				t.Fatalf("ParseConfig(%q): %v", dsn, err)
 			}
 			if err := validatePostgresWatermarkConfig(cfg.ConnConfig); err != nil {
-				t.Fatalf("validatePostgresWatermarkConfig(%q) = %v, want nil", dsn, err)
+				t.Fatalf(
+					"validatePostgresWatermarkConfig(%q) = %v, want nil",
+					dsn,
+					err,
+				)
 			}
 		})
 	}
 }
 
-func TestValidatePostgresWatermarkConfigRejectsUnverifiedRemoteTargets(t *testing.T) {
+func TestValidatePostgresWatermarkConfigRejectsUnverifiedRemoteTargets(
+	t *testing.T,
+) {
 	tests := map[string]string{
 		"default sslmode (prefer)": "postgres://u@db.example.com/wm",
 		"disable":                  "postgres://u@db.example.com/wm?sslmode=disable",
@@ -73,7 +81,8 @@ func TestValidatePostgresWatermarkConfigRejectsUnverifiedRemoteTargets(t *testin
 				t.Fatalf("ParseConfig(%q): %v", dsn, err)
 			}
 			err = validatePostgresWatermarkConfig(cfg.ConnConfig)
-			if err == nil || !strings.Contains(err.Error(), insecureRemoteTargetMsg) {
+			if err == nil ||
+				!strings.Contains(err.Error(), insecureRemoteTargetMsg) {
 				t.Fatalf(
 					"validatePostgresWatermarkConfig(%q) = %v, want %q error",
 					dsn, err, insecureRemoteTargetMsg,
@@ -83,7 +92,9 @@ func TestValidatePostgresWatermarkConfigRejectsUnverifiedRemoteTargets(t *testin
 	}
 }
 
-func TestNewPostgresWatermarkRejectsUnverifiedRemoteBeforeConnecting(t *testing.T) {
+func TestNewPostgresWatermarkRejectsUnverifiedRemoteBeforeConnecting(
+	t *testing.T,
+) {
 	// The .invalid TLD never resolves, so a connection attempt would surface a
 	// lookup error instead of the TLS policy error asserted here.
 	dsn := "postgres://u@db.example.invalid/wm?sslmode=require&connect_timeout=1"
@@ -92,6 +103,11 @@ func TestNewPostgresWatermarkRejectsUnverifiedRemoteBeforeConnecting(t *testing.
 		wm.Close()
 	}
 	if err == nil || !strings.Contains(err.Error(), insecureRemoteTargetMsg) {
-		t.Fatalf("NewPostgresWatermark(%q) = %v, want %q error", dsn, err, insecureRemoteTargetMsg)
+		t.Fatalf(
+			"NewPostgresWatermark(%q) = %v, want %q error",
+			dsn,
+			err,
+			insecureRemoteTargetMsg,
+		)
 	}
 }

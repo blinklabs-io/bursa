@@ -41,10 +41,12 @@ func signDataCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().StringVar(&address, "address", "", "Hex-encoded address bytes for the protected header")
+	cmd.Flags().
+		StringVar(&address, "address", "", "Hex-encoded address bytes for the protected header")
 	cmd.Flags().StringVar(&payload, "payload", "", "Payload as UTF-8 text")
 	cmd.Flags().StringVar(&payloadHex, "payload-hex", "", "Payload as hex")
-	cmd.Flags().StringVar(&signingKeyFile, "signing-key-file", "", "Signing key file")
+	cmd.Flags().
+		StringVar(&signingKeyFile, "signing-key-file", "", "Signing key file")
 	_ = cmd.MarkFlagRequired("address")
 	_ = cmd.MarkFlagRequired("signing-key-file")
 	cmd.MarkFlagsMutuallyExclusive("payload", "payload-hex")
@@ -64,10 +66,13 @@ func signVerifyCommand() *cobra.Command {
 			}
 		},
 	}
-	cmd.Flags().StringVar(&signature, "signature", "", "Hex COSE_Sign1 signature")
+	cmd.Flags().
+		StringVar(&signature, "signature", "", "Hex COSE_Sign1 signature")
 	cmd.Flags().StringVar(&key, "key", "", "Hex COSE_Key")
-	cmd.Flags().StringVar(&payload, "payload", "", "Expected payload as UTF-8 text")
-	cmd.Flags().StringVar(&payloadHex, "payload-hex", "", "Expected payload as hex")
+	cmd.Flags().
+		StringVar(&payload, "payload", "", "Expected payload as UTF-8 text")
+	cmd.Flags().
+		StringVar(&payloadHex, "payload-hex", "", "Expected payload as hex")
 	_ = cmd.MarkFlagRequired("signature")
 	_ = cmd.MarkFlagRequired("key")
 	cmd.MarkFlagsMutuallyExclusive("payload", "payload-hex")

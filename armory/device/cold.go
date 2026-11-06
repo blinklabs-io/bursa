@@ -102,7 +102,8 @@ func unescapeHexDigits(src []byte) ([]byte, error) {
 		}
 
 		// a hex digit is \u0030-\u0039, \u0041-\u0046 or \u0061-\u0066
-		if i+6 > len(src) || src[i+1] != 'u' || src[i+2] != '0' || src[i+3] != '0' {
+		if i+6 > len(src) || src[i+1] != 'u' || src[i+2] != '0' ||
+			src[i+3] != '0' {
 			return out, errMalformedKey
 		}
 
@@ -156,7 +157,8 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, req any) error {
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest))
 		dec.DisallowUnknownFields()
 
-		if err := dec.Decode(req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
+		if err := dec.Decode(req); err != nil ||
+			dec.Decode(&struct{}{}) != io.EOF {
 			return errMalformedRequest
 		}
 
@@ -204,7 +206,10 @@ func refuseUnknownFields(body []byte, req any) error {
 	names := jsonNames(reflect.TypeOf(req).Elem(), nil)
 
 	for key := range keys {
-		if !slices.ContainsFunc(names, func(name string) bool { return strings.EqualFold(name, key) }) {
+		if !slices.ContainsFunc(
+			names,
+			func(name string) bool { return strings.EqualFold(name, key) },
+		) {
 			return errMalformedRequest
 		}
 	}
@@ -268,7 +273,9 @@ func coldResponse(id uint32, pub []byte) ColdResponse {
 func (s *Service) importCold(id uint32, seed []byte) (ColdResponse, error) {
 	pub, err := s.importKey(id, seed)
 	if errors.Is(err, errKeyExists) {
-		return ColdResponse{}, errors.New("cold key object already exists with a different key")
+		return ColdResponse{}, errors.New(
+			"cold key object already exists with a different key",
+		)
 	} else if err != nil {
 		return ColdResponse{}, err
 	}

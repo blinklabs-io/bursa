@@ -41,7 +41,10 @@ func TestIntegration_SignRealTx(t *testing.T) {
 
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv)}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv)},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
@@ -64,7 +67,12 @@ func TestIntegration_SignRealTx(t *testing.T) {
 		Cardano:   operation.BursaCardano{},
 	})
 
-	res, perr, err := c.SignTx(context.Background(), []byte(hex.EncodeToString(cbor)), "", []string{h.String()})
+	res, perr, err := c.SignTx(
+		context.Background(),
+		[]byte(hex.EncodeToString(cbor)),
+		"",
+		[]string{h.String()},
+	)
 	if err != nil {
 		t.Fatalf("SignTx: %v", err)
 	}
@@ -99,7 +107,11 @@ func TestIntegration_SignRealTx(t *testing.T) {
 	for _, w := range witnesses.Vkey() {
 		if hex.EncodeToString(w.Vkey) == hex.EncodeToString(pub) {
 			found = true
-			if !ed25519.Verify(ed25519.PublicKey(w.Vkey), txidBytes, w.Signature) {
+			if !ed25519.Verify(
+				ed25519.PublicKey(w.Vkey),
+				txidBytes,
+				w.Signature,
+			) {
 				t.Fatalf("witness signature does not verify against txid")
 			}
 		}

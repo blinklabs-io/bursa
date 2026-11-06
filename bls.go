@@ -48,7 +48,9 @@ func validateBLSPublicKey(public []byte) error {
 		return errors.New("invalid BLS public key")
 	}
 	var point bls12381.G2Affine
-	if n, err := point.SetBytes(public); err != nil || n != len(public) || !point.IsInSubGroup() || point.IsInfinity() {
+	if n, err := point.SetBytes(public); err != nil || n != len(public) ||
+		!point.IsInSubGroup() ||
+		point.IsInfinity() {
 		return errors.New("invalid BLS public key")
 	}
 	return nil
@@ -76,7 +78,10 @@ func NewBLSKey() (*BLSKey, error) {
 // not passphrases or importing an existing serialized secret key.
 func NewBLSKeyFromIKM(ikm []byte) (*BLSKey, error) {
 	if len(ikm) < BLSSecretKeySize {
-		return nil, fmt.Errorf("BLS keygen input must be at least %d bytes", BLSSecretKeySize)
+		return nil, fmt.Errorf(
+			"BLS keygen input must be at least %d bytes",
+			BLSSecretKeySize,
+		)
 	}
 	secret, err := blsKeyGen(ikm)
 	if err != nil {
@@ -106,25 +111,37 @@ func NewBLSKeyFromIKM(ikm []byte) (*BLSKey, error) {
 	}
 	key := &BLSKey{SecretKey: secret, PublicKey: public, PossessionProof: proof}
 	if !key.VerifyPossessionProof() {
-		return nil, errors.New("generated BLS possession proof failed verification")
+		return nil, errors.New(
+			"generated BLS possession proof failed verification",
+		)
 	}
 	return key, nil
 }
 
 // VerifyPossessionProof verifies the proof against this key's public key.
 func (k *BLSKey) VerifyPossessionProof() bool {
-	if k == nil || len(k.PublicKey) != BLSPublicKeySize || len(k.PossessionProof) != BLSPossessionProofSize {
+	if k == nil || len(k.PublicKey) != BLSPublicKeySize ||
+		len(k.PossessionProof) != BLSPossessionProofSize {
 		return false
 	}
 	var pk bls12381.G2Affine
-	if n, err := pk.SetBytes(k.PublicKey); err != nil || n != len(k.PublicKey) || !pk.IsInSubGroup() || pk.IsInfinity() {
+	if n, err := pk.SetBytes(k.PublicKey); err != nil ||
+		n != len(k.PublicKey) ||
+		!pk.IsInSubGroup() ||
+		pk.IsInfinity() {
 		return false
 	}
 	var proof bls12381.G1Affine
-	if n, err := proof.SetBytes(k.PossessionProof); err != nil || n != len(k.PossessionProof) || !proof.IsInSubGroup() || proof.IsInfinity() {
+	if n, err := proof.SetBytes(k.PossessionProof); err != nil ||
+		n != len(k.PossessionProof) ||
+		!proof.IsInSubGroup() ||
+		proof.IsInfinity() {
 		return false
 	}
-	hashPoint, err := bls12381.HashToG1(k.PublicKey, []byte(BLSProofOfPossessionDST))
+	hashPoint, err := bls12381.HashToG1(
+		k.PublicKey,
+		[]byte(BLSProofOfPossessionDST),
+	)
 	if err != nil {
 		return false
 	}
@@ -208,7 +225,11 @@ func decodeBLSSigningKey(cborData []byte) ([]byte, []byte, error) {
 	var publicAffine bls12381.G2Affine
 	publicAffine.FromJacobian(&publicPoint)
 	publicBytes := publicAffine.Bytes()
-	return append([]byte(nil), secret...), append([]byte(nil), publicBytes[:]...), nil
+	return append(
+			[]byte(nil),
+			secret...), append(
+			[]byte(nil),
+			publicBytes[:]...), nil
 }
 
 func decodeBLSVerificationKey(cborData []byte) ([]byte, error) {

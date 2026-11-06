@@ -99,7 +99,11 @@ func decodeHead(b []byte) (h signlog.Head, err error) {
 func (s *HeadStore) Load() (signlog.Head, error) {
 	ok, err := s.objs.Exists(s.id)
 	if err != nil {
-		return signlog.Head{}, fmt.Errorf("chipstore: head object %#08x: %w", s.id, err)
+		return signlog.Head{}, fmt.Errorf(
+			"chipstore: head object %#08x: %w",
+			s.id,
+			err,
+		)
 	}
 
 	if !ok {
@@ -108,7 +112,11 @@ func (s *HeadStore) Load() (signlog.Head, error) {
 
 	b, err := s.objs.ReadBinary(s.id)
 	if err != nil {
-		return signlog.Head{}, fmt.Errorf("chipstore: read head object %#08x: %w", s.id, err)
+		return signlog.Head{}, fmt.Errorf(
+			"chipstore: read head object %#08x: %w",
+			s.id,
+			err,
+		)
 	}
 
 	return decodeHead(b)
@@ -124,11 +132,18 @@ func (s *HeadStore) Store(h signlog.Head) error {
 
 	got, err := s.objs.ReadBinary(s.id)
 	if err != nil {
-		return fmt.Errorf("chipstore: read back head object %#08x: %w", s.id, err)
+		return fmt.Errorf(
+			"chipstore: read back head object %#08x: %w",
+			s.id,
+			err,
+		)
 	}
 
 	if !bytes.Equal(got, b) {
-		return fmt.Errorf("%w: read back differs from what was written", ErrHeadObject)
+		return fmt.Errorf(
+			"%w: read back differs from what was written",
+			ErrHeadObject,
+		)
 	}
 
 	return nil
@@ -167,7 +182,11 @@ func NewIdentity(keys Keys, id uint32) (*Identity, error) {
 
 	pub, err := keys.PublicKeyEd25519(id)
 	if err != nil {
-		return nil, fmt.Errorf("chipstore: read identity key %#08x: %w", id, err)
+		return nil, fmt.Errorf(
+			"chipstore: read identity key %#08x: %w",
+			id,
+			err,
+		)
 	}
 
 	if len(pub) != ed25519.PublicKeySize {
@@ -197,7 +216,9 @@ func (i *Identity) Sign(msg []byte) ([]byte, error) {
 	}
 
 	if !ed25519.Verify(i.pub, msg, sig) {
-		return nil, errors.New("chipstore: identity signature does not verify under the identity key")
+		return nil, errors.New(
+			"chipstore: identity signature does not verify under the identity key",
+		)
 	}
 
 	return sig, nil

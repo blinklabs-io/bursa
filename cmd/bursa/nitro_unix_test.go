@@ -39,7 +39,8 @@ func TestListenPrivateUnixNeverPublishesPermissiveMode(t *testing.T) {
 					return
 				default:
 				}
-				if info, err := os.Lstat(path); err == nil && info.Mode().Perm()&0o077 != 0 {
+				if info, err := os.Lstat(path); err == nil &&
+					info.Mode().Perm()&0o077 != 0 {
 					select {
 					case permissive <- info.Mode().Perm():
 					default:

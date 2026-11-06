@@ -93,7 +93,13 @@ var rawDecoder, _ = cbor.DecOptions{
 // Evaluate decides whether role may sign body under profile p. The era is
 // chosen by the caller, never inferred. The returned error names the rule
 // that refused the body.
-func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Decision, error) {
+func Evaluate(
+	p profile.Profile,
+	k Keys,
+	role Role,
+	era uint,
+	body []byte,
+) (Decision, error) {
 	if era != ledger.TxTypeConway && era != ledger.TxTypeDijkstra {
 		return Decision{}, fmt.Errorf("policy: unsupported era %d", era)
 	}
@@ -118,7 +124,10 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 		}
 
 		if b[0]>>4 < byronAddressType && b[0]&0x0f != p.NetworkID {
-			return Decision{}, fmt.Errorf("policy: output %d is on another network", i)
+			return Decision{}, fmt.Errorf(
+				"policy: output %d is on another network",
+				i,
+			)
 		}
 	}
 
@@ -137,7 +146,10 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 
 		if _, ok := c.(*common.PoolRegistrationCertificate); ok {
 			if registrations++; registrations > 1 {
-				return Decision{}, fmt.Errorf("policy: certificate %d: a second pool registration in one body", i)
+				return Decision{}, fmt.Errorf(
+					"policy: certificate %d: a second pool registration in one body",
+					i,
+				)
 			}
 		}
 
@@ -147,8 +159,11 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 	}
 
 	for voter, procs := range tx.VotingProcedures() {
-		if voter.Type != common.VoterTypeStakingPoolKeyHash || voter.Hash != k.Pool {
-			return Decision{}, errors.New("policy: vote by a voter other than this pool")
+		if voter.Type != common.VoterTypeStakingPoolKeyHash ||
+			voter.Hash != k.Pool {
+			return Decision{}, errors.New(
+				"policy: vote by a voter other than this pool",
+			)
 		}
 
 		voted = true
@@ -157,9 +172,13 @@ func Evaluate(p profile.Profile, k Keys, role Role, era uint, body []byte) (Deci
 
 	switch {
 	case role == RoleCold && !poolCert && !voted:
-		return Decision{}, errors.New("policy: nothing for the cold key to authorize")
+		return Decision{}, errors.New(
+			"policy: nothing for the cold key to authorize",
+		)
 	case role == RoleOwner && !ownerCert:
-		return Decision{}, errors.New("policy: nothing for the owner key to authorize")
+		return Decision{}, errors.New(
+			"policy: nothing for the owner key to authorize",
+		)
 	case role < RoleCold || role > RoleOwner:
 		return Decision{}, fmt.Errorf("policy: unknown role %d", role)
 	}
@@ -262,9 +281,15 @@ func decodeUint(raw cbor.RawMessage) (uint64, error) {
 
 // checkCert allows only certificates for this pool and its owner. It reports
 // whether the certificate needs the cold key or the owner key.
-func checkCert(p profile.Profile, k Keys, era uint, c common.Certificate) (summary string, pool, owner bool, err error) {
+func checkCert(
+	p profile.Profile,
+	k Keys,
+	era uint,
+	c common.Certificate,
+) (summary string, pool, owner bool, err error) {
 	ownerCred := func(cred common.Credential) bool {
-		return cred.CredType == common.CredentialTypeAddrKeyHash && [28]byte(cred.Credential) == k.Owner
+		return cred.CredType == common.CredentialTypeAddrKeyHash &&
+			[28]byte(cred.Credential) == k.Owner
 	}
 
 	switch c := c.(type) {
@@ -343,24 +368,34 @@ func checkCert(p profile.Profile, k Keys, era uint, c common.Certificate) (summa
 // checkRewardAccount requires the registration's reward account to be the
 // one pinned in the profile at provisioning, credential type and network
 // included.
-func checkRewardAccount(p profile.Profile, c *common.PoolRegistrationCertificate) error {
+func checkRewardAccount(
+	p profile.Profile,
+	c *common.PoolRegistrationCertificate,
+) error {
 	want, ok := p.RewardAddress()
 
 	if !ok {
-		return errors.New("profile has no reward account; pool registration refused")
+		return errors.New(
+			"profile has no reward account; pool registration refused",
+		)
 	}
 
 	network, known := c.RewardAccountNetworkId()
 	cred := c.RewardAccountCredential()
 
-	if !known || network > 0x0f || cred.CredType > common.CredentialTypeScriptHash {
+	if !known || network > 0x0f ||
+		cred.CredType > common.CredentialTypeScriptHash {
 		return errors.New("pool registration reward account is malformed")
 	}
 
-	got := append([]byte{0xe0 | byte(cred.CredType)<<4 | byte(network)}, cred.Credential[:]...)
+	got := append(
+		[]byte{0xe0 | byte(cred.CredType)<<4 | byte(network)},
+		cred.Credential[:]...)
 
 	if !bytes.Equal(got, want) {
-		return errors.New("pool registration reward account is not the profile's reward account")
+		return errors.New(
+			"pool registration reward account is not the profile's reward account",
+		)
 	}
 
 	return nil
@@ -372,7 +407,9 @@ func checkRewardAccount(p profile.Profile, c *common.PoolRegistrationCertificate
 // exactly.
 func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 	if [32]byte(c.VrfKeyHash) != pins.VRFKeyHash {
-		return errors.New("pool registration VRF key hash is not the pinned one")
+		return errors.New(
+			"pool registration VRF key hash is not the pinned one",
+		)
 	}
 
 	if pins.PinRelays {
@@ -382,14 +419,22 @@ func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 	}
 
 	if c.Pledge < pins.PledgeMin || c.Pledge > pins.PledgeMax {
-		return fmt.Errorf("pool registration pledge %d outside the pinned bounds", c.Pledge)
+		return fmt.Errorf(
+			"pool registration pledge %d outside the pinned bounds",
+			c.Pledge,
+		)
 	}
 
 	if c.Cost > pins.CostMax {
-		return fmt.Errorf("pool registration cost %d above the pinned maximum", c.Cost)
+		return fmt.Errorf(
+			"pool registration cost %d above the pinned maximum",
+			c.Cost,
+		)
 	}
 
-	max := new(big.Rat).SetFrac(new(big.Int).SetUint64(pins.MarginMaxNum), new(big.Int).SetUint64(pins.MarginMaxDen))
+	max := new(
+		big.Rat,
+	).SetFrac(new(big.Int).SetUint64(pins.MarginMaxNum), new(big.Int).SetUint64(pins.MarginMaxDen))
 
 	if c.Margin.Rat == nil || c.Margin.Cmp(max) > 0 {
 		return errors.New("pool registration margin above the pinned maximum")
@@ -400,14 +445,21 @@ func checkPins(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
 
 // checkPinnedRelays requires a registration's metadata hash, or its absence,
 // relays, in order, and metadata URL to be the pinned ones.
-func checkPinnedRelays(pins profile.Pins, c *common.PoolRegistrationCertificate) error {
+func checkPinnedRelays(
+	pins profile.Pins,
+	c *common.PoolRegistrationCertificate,
+) error {
 	switch {
 	case pins.MetadataHash == nil && c.PoolMetadata != nil:
 		return errors.New("pool registration carries metadata, none is pinned")
 	case pins.MetadataHash != nil && c.PoolMetadata == nil:
-		return errors.New("pool registration has no metadata, a metadata hash is pinned")
+		return errors.New(
+			"pool registration has no metadata, a metadata hash is pinned",
+		)
 	case pins.MetadataHash != nil && !bytes.Equal(c.PoolMetadata.Hash, pins.MetadataHash[:]):
-		return errors.New("pool registration metadata hash is not the pinned one")
+		return errors.New(
+			"pool registration metadata hash is not the pinned one",
+		)
 	}
 
 	var url *string
@@ -421,7 +473,9 @@ func checkPinnedRelays(pins profile.Pins, c *common.PoolRegistrationCertificate)
 	}
 
 	if d != pins.RelaysDigest {
-		return errors.New("pool registration relays or metadata URL are not the pinned ones")
+		return errors.New(
+			"pool registration relays or metadata URL are not the pinned ones",
+		)
 	}
 
 	return nil
@@ -432,7 +486,10 @@ func checkPinnedRelays(pins profile.Pins, c *common.PoolRegistrationCertificate)
 // its ledger encoding and in registration order, url null without metadata.
 // The device and armory-pool both compute it here from decoded values, so a
 // registration matches however its builder laid out the bytes.
-func RelaysDigest(relays []common.PoolRelay, metadataURL *string) ([profile.RelaysDigestSize]byte, error) {
+func RelaysDigest(
+	relays []common.PoolRelay,
+	metadataURL *string,
+) ([profile.RelaysDigestSize]byte, error) {
 	var d [profile.RelaysDigestSize]byte
 
 	if relays == nil {

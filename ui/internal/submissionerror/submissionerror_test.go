@@ -30,7 +30,11 @@ func TestWrapPreservesSentinelsAndCause(t *testing.T) {
 				t.Fatalf("Wrap(%v) = %v, want %v only", tc.cause, got, tc.want)
 			}
 			if !errors.Is(got, tc.cause) {
-				t.Fatalf("Wrap(%v) = %v, want original cause preserved", tc.cause, got)
+				t.Fatalf(
+					"Wrap(%v) = %v, want original cause preserved",
+					tc.cause,
+					got,
+				)
 			}
 		})
 	}

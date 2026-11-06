@@ -39,7 +39,11 @@ type fakeSurveys struct {
 	reveal  survey.RevealRequest
 }
 
-func (f *fakeSurveys) List(context.Context) ([]survey.Summary, error) { return f.list, f.err }
+func (f *fakeSurveys) List(
+	context.Context,
+) ([]survey.Summary, error) {
+	return f.list, f.err
+}
 func (f *fakeSurveys) Get(_ context.Context, id string) (survey.Detail, error) {
 	if f.err != nil {
 		return survey.Detail{}, f.err
@@ -49,22 +53,34 @@ func (f *fakeSurveys) Get(_ context.Context, id string) (survey.Detail, error) {
 	return d, nil
 }
 
-func (f *fakeSurveys) Respond(_ context.Context, r survey.RespondRequest) (spend.Preview, error) {
+func (f *fakeSurveys) Respond(
+	_ context.Context,
+	r survey.RespondRequest,
+) (spend.Preview, error) {
 	f.respond = r
 	return spend.Preview{PendingID: "p-respond"}, f.err
 }
 
-func (f *fakeSurveys) Create(_ context.Context, r survey.CreateRequest) (spend.Preview, error) {
+func (f *fakeSurveys) Create(
+	_ context.Context,
+	r survey.CreateRequest,
+) (spend.Preview, error) {
 	f.create = r
 	return spend.Preview{PendingID: "p-create"}, f.err
 }
 
-func (f *fakeSurveys) Cancel(_ context.Context, r survey.CancelRequest) (spend.Preview, error) {
+func (f *fakeSurveys) Cancel(
+	_ context.Context,
+	r survey.CancelRequest,
+) (spend.Preview, error) {
 	f.cancel = r
 	return spend.Preview{PendingID: "p-cancel"}, f.err
 }
 
-func (f *fakeSurveys) Reveal(_ context.Context, r survey.RevealRequest) (survey.Detail, error) {
+func (f *fakeSurveys) Reveal(
+	_ context.Context,
+	r survey.RevealRequest,
+) (survey.Detail, error) {
 	f.reveal = r
 	return survey.Detail{Summary: survey.Summary{ID: r.Survey}}, f.err
 }
@@ -74,11 +90,27 @@ func surveyHandler(st Statuser, sv Surveys) http.Handler {
 	if sv != nil {
 		opts = append(opts, WithSurveys(sv))
 	}
-	return NewHandler(testSessionToken, st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{}, nil,
-		&fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(), opts...)
+	return NewHandler(
+		testSessionToken,
+		st,
+		&fakeVault{},
+		&fakeWallet{},
+		&fakeSpender{},
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
+		opts...)
 }
 
-func serveSurveyReq(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+func serveSurveyReq(
+	h http.Handler,
+	method, path, body string,
+) *httptest.ResponseRecorder {
 	var rdr io.Reader
 	if body != "" {
 		rdr = strings.NewReader(body)
@@ -97,7 +129,10 @@ func sampleSurveys(n int) []survey.Summary {
 			status = "closed"
 		}
 		out[i] = survey.Summary{
-			ID: fmt.Sprintf("%064x:0", i), Title: fmt.Sprintf("Survey %d", i), Description: "about cats",
+			ID: fmt.Sprintf(
+				"%064x:0",
+				i,
+			), Title: fmt.Sprintf("Survey %d", i), Description: "about cats",
 			Status: status, LinkedActions: []string{},
 		}
 	}
@@ -127,13 +162,15 @@ func TestSurveyListPagesFiltersAndSearches(t *testing.T) {
 		t.Fatalf("unfiltered = %+v", all)
 	}
 	page := get("?count=3&page=3")
-	if page.Total != 7 || len(page.Surveys) != 1 || page.Page != 3 || page.Count != 3 {
+	if page.Total != 7 || len(page.Surveys) != 1 || page.Page != 3 ||
+		page.Count != 3 {
 		t.Fatalf("page 3 of 3 = %+v", page)
 	}
 	if open := get("?status=open"); open.Total != 4 {
 		t.Fatalf("status=open total = %d, want 4", open.Total)
 	}
-	if byTitle := get("?q=survey%205"); byTitle.Total != 1 || byTitle.Surveys[0].Title != "Survey 5" {
+	if byTitle := get("?q=survey%205"); byTitle.Total != 1 ||
+		byTitle.Surveys[0].Title != "Survey 5" {
 		t.Fatalf("q=survey 5 = %+v", byTitle)
 	}
 	if byBody := get("?q=CATS&status=closed"); byBody.Total != 3 {
@@ -153,10 +190,12 @@ func TestSurveyListLinkedFilter(t *testing.T) {
 
 	rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys?linked=true", "")
 	var resp surveyListResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || rec.Code != http.StatusOK {
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil ||
+		rec.Code != http.StatusOK {
 		t.Fatalf("GET linked = %d %s", rec.Code, rec.Body.String())
 	}
-	if resp.Total != 2 || resp.Surveys[0].ID != list[1].ID || resp.Surveys[1].ID != list[4].ID {
+	if resp.Total != 2 || resp.Surveys[0].ID != list[1].ID ||
+		resp.Surveys[1].ID != list[4].ID {
 		t.Fatalf("linked = %+v", resp)
 	}
 }
@@ -170,7 +209,8 @@ func TestSurveyListWhileStillIndexing(t *testing.T) {
 	})
 	rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys", "")
 	var resp surveyListResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || rec.Code != http.StatusOK {
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil ||
+		rec.Code != http.StatusOK {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
 	if !resp.Partial || resp.Total != 1 || len(resp.Surveys) != 1 {
@@ -180,7 +220,9 @@ func TestSurveyListWhileStillIndexing(t *testing.T) {
 
 func TestSurveyGet(t *testing.T) {
 	t.Parallel()
-	fs := &fakeSurveys{detail: survey.Detail{Definition: survey.Definition{Title: "T"}}}
+	fs := &fakeSurveys{
+		detail: survey.Detail{Definition: survey.Definition{Title: "T"}},
+	}
 	h := surveyHandler(readyStatuser(), fs)
 	// The web client escapes the colon in "<tx hash>:<index>"; the handler sees
 	// the unescaped id.
@@ -189,7 +231,9 @@ func TestSurveyGet(t *testing.T) {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
 	}
 	var got survey.Detail
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.ID != "abc:1" || got.Definition.Title != "T" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil ||
+		got.ID != "abc:1" ||
+		got.Definition.Title != "T" {
 		t.Fatalf("detail = %+v, err %v", got, err)
 	}
 
@@ -204,32 +248,55 @@ func TestSurveyBuildRoutes(t *testing.T) {
 	fs := &fakeSurveys{}
 	h := surveyHandler(readyStatuser(), fs)
 
-	rec := serveSurveyReq(h, http.MethodPost, "/wallet/surveys/respond",
-		`{"survey":"abc:0","role":0,"answers":[{"kind":1,"question":0,"choice":1},{"kind":4,"question":1,"number":"9223372036854775807"},{"kind":0,"question":2,"custom_cbor":"826178182a"}]}`)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pending_id":"p-respond"`) {
+	rec := serveSurveyReq(
+		h,
+		http.MethodPost,
+		"/wallet/surveys/respond",
+		`{"survey":"abc:0","role":0,"answers":[{"kind":1,"question":0,"choice":1},{"kind":4,"question":1,"number":"9223372036854775807"},{"kind":0,"question":2,"custom_cbor":"826178182a"}]}`,
+	)
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"pending_id":"p-respond"`) {
 		t.Fatalf("respond = %d %s", rec.Code, rec.Body.String())
 	}
 	if fs.respond.Survey != "abc:0" || fs.respond.Role != survey.RoleDRep ||
-		len(fs.respond.Answers) != 3 || fs.respond.Answers[0].Choice != 1 || fs.respond.Answers[0].Kind != survey.KindSingleChoice ||
+		len(
+			fs.respond.Answers,
+		) != 3 || fs.respond.Answers[0].Choice != 1 || fs.respond.Answers[0].Kind != survey.KindSingleChoice ||
 		fs.respond.Answers[1].Number != 9223372036854775807 || fs.respond.Answers[1].Kind != survey.KindNumericRange ||
 		fs.respond.Answers[2].Custom == nil || fs.respond.Answers[2].Custom.TypeName() != "list" {
 		t.Fatalf("respond request = %+v", fs.respond)
 	}
 
-	rec = serveSurveyReq(h, http.MethodPost, "/wallet/surveys/create",
-		`{"title":"T","description":"D","roles":[0,3],"end_epoch":9,"questions":[{"kind":0,"prompt":"c","anchor":{"uri":"ipfs://schema","hash":"abababababababababababababababababababababababababababababababab"}},{"kind":1,"prompt":"p","options":["a","b"]},{"kind":4,"prompt":"n","range":{"min":"-9223372036854775808","max":"9223372036854775807","step":"18446744073709551615"}}]}`)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pending_id":"p-create"`) {
+	rec = serveSurveyReq(
+		h,
+		http.MethodPost,
+		"/wallet/surveys/create",
+		`{"title":"T","description":"D","roles":[0,3],"end_epoch":9,"questions":[{"kind":0,"prompt":"c","anchor":{"uri":"ipfs://schema","hash":"abababababababababababababababababababababababababababababababab"}},{"kind":1,"prompt":"p","options":["a","b"]},{"kind":4,"prompt":"n","range":{"min":"-9223372036854775808","max":"9223372036854775807","step":"18446744073709551615"}}]}`,
+	)
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"pending_id":"p-create"`) {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
 	}
-	if fs.create.Title != "T" || fs.create.EndEpoch != 9 || len(fs.create.Questions) != 3 || fs.create.Questions[0].Anchor == nil ||
-		fs.create.Questions[0].Anchor.URI != "ipfs://schema" || fs.create.Questions[1].Options[1] != "b" ||
-		fs.create.Questions[2].Range == nil || fs.create.Questions[2].Range.Min != -9223372036854775808 ||
-		fs.create.Questions[2].Range.Max != 9223372036854775807 || fs.create.Questions[2].Range.Step != 18446744073709551615 {
+	if fs.create.Title != "T" || fs.create.EndEpoch != 9 ||
+		len(fs.create.Questions) != 3 ||
+		fs.create.Questions[0].Anchor == nil ||
+		fs.create.Questions[0].Anchor.URI != "ipfs://schema" ||
+		fs.create.Questions[1].Options[1] != "b" ||
+		fs.create.Questions[2].Range == nil ||
+		fs.create.Questions[2].Range.Min != -9223372036854775808 ||
+		fs.create.Questions[2].Range.Max != 9223372036854775807 ||
+		fs.create.Questions[2].Range.Step != 18446744073709551615 {
 		t.Fatalf("create request = %+v", fs.create)
 	}
 
-	rec = serveSurveyReq(h, http.MethodPost, "/wallet/surveys/cancel", `{"survey":"abc:0"}`)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"pending_id":"p-cancel"`) {
+	rec = serveSurveyReq(
+		h,
+		http.MethodPost,
+		"/wallet/surveys/cancel",
+		`{"survey":"abc:0"}`,
+	)
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"pending_id":"p-cancel"`) {
 		t.Fatalf("cancel = %d %s", rec.Code, rec.Body.String())
 	}
 	if fs.cancel.Survey != "abc:0" {
@@ -242,12 +309,19 @@ func TestSurveyRevealRoute(t *testing.T) {
 	fs := &fakeSurveys{}
 	h := surveyHandler(readyStatuser(), fs)
 
-	rec := serveSurveyReq(h, http.MethodPost, "/wallet/surveys/abc:0/reveal", `{"consent":true,"beacon":"ab"}`)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"abc:0"`) {
+	rec := serveSurveyReq(
+		h,
+		http.MethodPost,
+		"/wallet/surveys/abc:0/reveal",
+		`{"consent":true,"beacon":"ab"}`,
+	)
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"id":"abc:0"`) {
 		t.Fatalf("reveal = %d %s", rec.Code, rec.Body.String())
 	}
 	// The survey comes from the path, not the body.
-	if fs.reveal.Survey != "abc:0" || !fs.reveal.Consent || fs.reveal.Beacon != "ab" {
+	if fs.reveal.Survey != "abc:0" || !fs.reveal.Consent ||
+		fs.reveal.Beacon != "ab" {
 		t.Fatalf("reveal request = %+v", fs.reveal)
 	}
 
@@ -267,7 +341,9 @@ func TestSurveyRevealRoute(t *testing.T) {
 
 	// Revealing reads the node and, with consent, a relay; it is not a spend, so
 	// a syncing node is enough.
-	syncing := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
+	syncing := fakeStatuser{
+		s: supervisor.Status{State: supervisor.StateSyncing},
+	}
 	h = surveyHandler(syncing, &fakeSurveys{})
 	if rec := serveSurveyReq(h, http.MethodPost, "/wallet/surveys/abc:0/reveal", `{}`); rec.Code != http.StatusOK {
 		t.Fatalf("reveal while syncing = %d", rec.Code)
@@ -293,9 +369,19 @@ func TestSurveyBuildRouteErrors(t *testing.T) {
 			t.Run(name+"/"+route, func(t *testing.T) {
 				t.Parallel()
 				h := surveyHandler(readyStatuser(), &fakeSurveys{err: tc.err})
-				rec := serveSurveyReq(h, http.MethodPost, "/wallet/surveys/"+route, tc.body)
+				rec := serveSurveyReq(
+					h,
+					http.MethodPost,
+					"/wallet/surveys/"+route,
+					tc.body,
+				)
 				if rec.Code != tc.want {
-					t.Fatalf("status = %d, want %d (%s)", rec.Code, tc.want, rec.Body.String())
+					t.Fatalf(
+						"status = %d, want %d (%s)",
+						rec.Code,
+						tc.want,
+						rec.Body.String(),
+					)
 				}
 			})
 		}
@@ -304,7 +390,9 @@ func TestSurveyBuildRouteErrors(t *testing.T) {
 
 func TestSurveyRoutesFollowNodeReadiness(t *testing.T) {
 	t.Parallel()
-	syncing := fakeStatuser{s: supervisor.Status{State: supervisor.StateSyncing}}
+	syncing := fakeStatuser{
+		s: supervisor.Status{State: supervisor.StateSyncing},
+	}
 	h := surveyHandler(syncing, &fakeSurveys{list: sampleSurveys(1)})
 
 	// Reads are served while syncing; spends need a fully synced node.
@@ -317,7 +405,9 @@ func TestSurveyRoutesFollowNodeReadiness(t *testing.T) {
 		}
 	}
 
-	stopped := fakeStatuser{s: supervisor.Status{State: supervisor.StateStopped}}
+	stopped := fakeStatuser{
+		s: supervisor.Status{State: supervisor.StateStopped},
+	}
 	h = surveyHandler(stopped, &fakeSurveys{})
 	if rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys", ""); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("list while stopped = %d, want 503", rec.Code)
@@ -362,16 +452,28 @@ func TestSurveyRoutesRejectForeignOrigins(t *testing.T) {
 			if route.method == http.MethodGet && name == "missing origin" {
 				continue // a same-host GET needs no Origin
 			}
-			req := localReq(route.method, route.path, strings.NewReader(`{"consent":true}`))
+			req := localReq(
+				route.method,
+				route.path,
+				strings.NewReader(`{"consent":true}`),
+			)
 			setup(req)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 			if rec.Code != http.StatusForbidden {
-				t.Errorf("%s %s (%s) = %d, want 403", route.method, route.path, name, rec.Code)
+				t.Errorf(
+					"%s %s (%s) = %d, want 403",
+					route.method,
+					route.path,
+					name,
+					rec.Code,
+				)
 			}
 		}
 	}
-	if fs.respond.Survey != "" || fs.create.Title != "" || fs.cancel.Survey != "" || fs.reveal.Survey != "" {
+	if fs.respond.Survey != "" || fs.create.Title != "" ||
+		fs.cancel.Survey != "" ||
+		fs.reveal.Survey != "" {
 		t.Fatal("a rejected request reached the survey service")
 	}
 }

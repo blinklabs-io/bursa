@@ -19,9 +19,13 @@ import (
 	"math"
 )
 
-var errBelowFloor = errors.New("chain counter below the recorded on-chain counter")
+var errBelowFloor = errors.New(
+	"chain counter below the recorded on-chain counter",
+)
 
-var errAboveIssued = errors.New("chain counter above the last counter the device issued")
+var errAboveIssued = errors.New(
+	"chain counter above the last counter the device issued",
+)
 
 // nextOpCert picks the opcert issue number from the on-chain counter chain:
 // the last counter seen in a block the pool forged, 0 if none. A header's
@@ -33,7 +37,11 @@ var errAboveIssued = errors.New("chain counter above the last counter the device
 // counter above it is refused: it would yield an opcert the ledger rejects and
 // push the floor above every counter it accepts. Unset, as on a record from
 // before the field, there is no bound until the first opcert-next sets it.
-func nextOpCert(floor uint64, floorSet bool, lastIssued, chain uint64) (issue uint64, newFloor uint64, err error) {
+func nextOpCert(
+	floor uint64,
+	floorSet bool,
+	lastIssued, chain uint64,
+) (issue uint64, newFloor uint64, err error) {
 	if floorSet && chain < floor {
 		return 0, 0, errBelowFloor
 	}

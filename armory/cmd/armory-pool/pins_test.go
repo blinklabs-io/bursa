@@ -62,7 +62,12 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 	// the digest is the one the device computes from a registration naming
 	// those relays and that URL
 	digest := registrationDigest(t, []any{
-		[]any{uint64(0), uint64(3001), []byte{1, 2, 3, 4}, net.ParseIP("2001:db8::1").To16()},
+		[]any{
+			uint64(0),
+			uint64(3001),
+			[]byte{1, 2, 3, 4},
+			net.ParseIP("2001:db8::1").To16(),
+		},
 		[]any{uint64(1), uint64(3002), "relay.example"},
 		[]any{uint64(2), "_cardano._tcp.example"},
 	}, "https://example.test/p.json")
@@ -80,7 +85,11 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 	// the device accepts the printed bytes unchanged
 	r := newRig(t)
 
-	res, err := http.Post(r.srv.URL+"/provision/pins", "application/json", bytes.NewReader(printed))
+	res, err := http.Post(
+		r.srv.URL+"/provision/pins",
+		"application/json",
+		bytes.NewReader(printed),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +102,8 @@ func TestPinsRequestPrintsProvisioningBody(t *testing.T) {
 		t.Fatalf("device refused the printed request: %s", res.Status)
 	}
 
-	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil || !reflect.DeepEqual(resp.Pins, want) {
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil ||
+		!reflect.DeepEqual(resp.Pins, want) {
 		t.Errorf("device response %+v, %v", resp, err)
 	}
 }
@@ -134,7 +144,13 @@ func TestPinsRequestRefusesBadInput(t *testing.T) {
 		"pins-request", "-profile", "p", "-vrf-key-hash", vrf, "-pledge-max", "5", "-margin-max", "1/10",
 	}
 
-	withMeta := append(append([]string{}, ok...), "-metadata-hash", strings.Repeat("22", 32), "-metadata-url", "https://example.test/p.json")
+	withMeta := append(
+		append([]string{}, ok...),
+		"-metadata-hash",
+		strings.Repeat("22", 32),
+		"-metadata-url",
+		"https://example.test/p.json",
+	)
 
 	for _, args := range [][]string{ok, withMeta, append(append([]string{}, ok...), "-relay", "[::1]:1", "-relay", "srv:x.example")} {
 		if err := run(args, &bytes.Buffer{}); err != nil {
@@ -199,7 +215,11 @@ func TestPinsRequestUnpinnedRelays(t *testing.T) {
 
 	r := newRig(t)
 
-	res, err := http.Post(r.srv.URL+"/provision/pins", "application/json", bytes.NewReader(printed))
+	res, err := http.Post(
+		r.srv.URL+"/provision/pins",
+		"application/json",
+		bytes.NewReader(printed),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

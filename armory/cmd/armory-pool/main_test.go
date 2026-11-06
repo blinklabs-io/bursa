@@ -114,7 +114,12 @@ type rig struct {
 	srv      *httptest.Server
 }
 
-func devicePost(t *testing.T, srv *httptest.Server, path string, req, resp any) {
+func devicePost(
+	t *testing.T,
+	srv *httptest.Server,
+	path string,
+	req, resp any,
+) {
 	t.Helper()
 
 	b, _ := json.Marshal(req)
@@ -151,10 +156,12 @@ func newRig(t *testing.T) *rig {
 
 	// the device answers only to its own address, not the loopback one
 	dev := svc.Handler()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = device.Address
-		dev.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Host = device.Address
+			dev.ServeHTTP(w, r)
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	var id device.IdentityResponse
@@ -178,7 +185,11 @@ func newRig(t *testing.T) *rig {
 	pool, _ := hex.DecodeString(cold.PublicKey)
 
 	return &rig{
-		s:        &session{c: newClient(srv.URL, ""), identity: id.PublicKey, profile: profile},
+		s: &session{
+			c:        newClient(srv.URL, ""),
+			identity: id.PublicKey,
+			profile:  profile,
+		},
 		identity: id.PublicKey, pool: pool, owner: prov.OwnerPublicKey, srv: srv,
 	}
 }
@@ -219,7 +230,11 @@ func txEnvelope(t *testing.T, dir string, body []byte) string {
 	return p
 }
 
-func retirement(pool [28]byte) []any { return []any{uint64(4), pool[:], uint64(900)} }
+func retirement(
+	pool [28]byte,
+) []any {
+	return []any{uint64(4), pool[:], uint64(900)}
+}
 
 func TestKeys(t *testing.T) {
 	t.Parallel()
@@ -277,9 +292,16 @@ func TestKeys(t *testing.T) {
 		}
 	}
 
-	hrp, data, err := fromBech32(strings.TrimPrefix(lines[1], "pool id bech32 "))
+	hrp, data, err := fromBech32(
+		strings.TrimPrefix(lines[1], "pool id bech32 "),
+	)
 	if err != nil || hrp != "pool" || !bytes.Equal(data, pool[:]) {
-		t.Errorf("pool bech32 does not decode to the pool id: %s %x %v", hrp, data, err)
+		t.Errorf(
+			"pool bech32 does not decode to the pool id: %s %x %v",
+			hrp,
+			data,
+			err,
+		)
 	}
 
 	// the reward address the device profile pins is the owner's, which is
@@ -318,9 +340,16 @@ func TestVerifyInventoryRefusals(t *testing.T) {
 	k1, k2 := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
 
 	signed := func(version string, keys []device.KeyInfo, n []byte) device.Inventory {
-		return device.Inventory{Version: version, Keys: keys, Attestation: ed25519.Sign(priv, device.InventoryBinding(n, keys))}
+		return device.Inventory{
+			Version:     version,
+			Keys:        keys,
+			Attestation: ed25519.Sign(priv, device.InventoryBinding(n, keys)),
+		}
 	}
-	both := []device.KeyInfo{{Role: "pool", PublicKey: k1}, {Role: "stake", PublicKey: k2}}
+	both := []device.KeyInfo{
+		{Role: "pool", PublicKey: k1},
+		{Role: "stake", PublicKey: k2},
+	}
 
 	if _, err := verifyInventory(id, nonce, signed(device.Protocol, both, nonce)); err != nil {
 		t.Fatalf("valid inventory refused: %v", err)
@@ -362,7 +391,8 @@ func TestWitness(t *testing.T) {
 	b, _ := os.ReadFile(out)
 
 	env, raw, err := readEnvelope(b)
-	if err != nil || env.Type != "TxWitness ConwayEra" || env.Description != "Detached vkey witness" {
+	if err != nil || env.Type != "TxWitness ConwayEra" ||
+		env.Description != "Detached vkey witness" {
 		t.Fatalf("envelope %+v %v", env, err)
 	}
 
@@ -380,12 +410,23 @@ func TestWitness(t *testing.T) {
 	hash := blake2b.Sum256(body)
 
 	if !bytes.Equal(vkey, r.pool) || !ed25519.Verify(vkey, hash[:], sig) {
-		t.Fatal("witness is not the pool key's signature over blake2b-256(body)")
+		t.Fatal(
+			"witness is not the pool key's signature over blake2b-256(body)",
+		)
 	}
 
 	// the owner key is selected by role
-	ownerBody := conwayBody([]any{uint64(11), []any{uint64(0), func() []byte { h := hash224(r.owner); return h[:] }()},
-		func() []byte { h := hash224(r.pool); return h[:] }(), uint64(2_000_000)})
+	ownerBody := conwayBody(
+		[]any{
+			uint64(11),
+			[]any{
+				uint64(0),
+				func() []byte { h := hash224(r.owner); return h[:] }(),
+			},
+			func() []byte { h := hash224(r.pool); return h[:] }(),
+			uint64(2_000_000),
+		},
+	)
 
 	if err = r.s.witness("stake", txEnvelope(t, dir, ownerBody), filepath.Join(dir, "owner.witness"), io.Discard); err != nil {
 		t.Fatal(err)
@@ -400,7 +441,12 @@ func TestWitnessRefusal(t *testing.T) {
 	out := filepath.Join(dir, "pool.witness")
 
 	// a retirement of another pool is refused by the device policy
-	err := r.s.witness("pool", txEnvelope(t, dir, conwayBody(retirement([28]byte{1}))), out, io.Discard)
+	err := r.s.witness(
+		"pool",
+		txEnvelope(t, dir, conwayBody(retirement([28]byte{1}))),
+		out,
+		io.Discard,
+	)
 	if err == nil || !strings.Contains(err.Error(), "device refused") {
 		t.Fatalf("err = %v, want a device refusal", err)
 	}
@@ -465,7 +511,10 @@ func TestCheckTxBodyRefusals(t *testing.T) {
 
 		return device.SignResponse{
 			Version: device.ProtocolSummary, Nonce: nonce, Signature: sig, Summary: "fee=1",
-			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig, "fee=1")),
+			BindingSignature: ed25519.Sign(
+				priv,
+				device.ResponseBinding(req, sig, "fee=1"),
+			),
 		}
 	}
 
@@ -530,7 +579,8 @@ func TestOpCert(t *testing.T) {
 	b, _ := os.ReadFile(cert)
 
 	env, raw, err := readEnvelope(b)
-	if err != nil || env.Type != "NodeOperationalCertificate" || env.Description != "Operational Certificate" {
+	if err != nil || env.Type != "NodeOperationalCertificate" ||
+		env.Description != "Operational Certificate" {
 		t.Fatalf("envelope %+v %v", env, err)
 	}
 
@@ -553,8 +603,10 @@ func TestOpCert(t *testing.T) {
 	signable := binary.BigEndian.AppendUint64(bytes.Clone(kes), 4)
 	signable = binary.BigEndian.AppendUint64(signable, 7)
 
-	if !bytes.Equal(oc.Body.KES, kes) || oc.Body.Issue != 4 || oc.Body.Period != 7 ||
-		!bytes.Equal(oc.Cold, r.pool) || !ed25519.Verify(r.pool, signable, oc.Body.Sig) {
+	if !bytes.Equal(oc.Body.KES, kes) || oc.Body.Issue != 4 ||
+		oc.Body.Period != 7 ||
+		!bytes.Equal(oc.Cold, r.pool) ||
+		!ed25519.Verify(r.pool, signable, oc.Body.Sig) {
 		t.Fatalf("certificate %+v", oc)
 	}
 
@@ -579,12 +631,16 @@ func TestCheckOpCertIssueCounter(t *testing.T) {
 
 		return device.SignResponse{
 			Version: device.Protocol, Nonce: nonce, Signature: sig, IssueCounter: issue,
-			BindingSignature: ed25519.Sign(priv, device.ResponseBinding(req, sig, "")),
+			BindingSignature: ed25519.Sign(
+				priv,
+				device.ResponseBinding(req, sig, ""),
+			),
 		}
 	}
 	u := func(v uint64) *uint64 { return &v }
 
-	if _, issue, err := checkOpCert(req, resp(u(6), 6), pub, 5, 11); err != nil || issue != 6 {
+	if _, issue, err := checkOpCert(req, resp(u(6), 6), pub, 5, 11); err != nil ||
+		issue != 6 {
 		t.Fatalf("valid response: %d %v", issue, err)
 	}
 
@@ -602,7 +658,9 @@ func TestCheckOpCertIssueCounter(t *testing.T) {
 
 // goldenBody is a Conway body retiring pool 0x01 x28, as `bursa tx witness`
 // signed it.
-var goldenBody, _ = hex.DecodeString("a40081825820000000000000000000000000000000000000000000000000000000000000000000018182581d60c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c31a004c4b40021a00030d4004818304581c01010101010101010101010101010101010101010101010101010101190384")
+var goldenBody, _ = hex.DecodeString(
+	"a40081825820000000000000000000000000000000000000000000000000000000000000000000018182581d60c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c31a004c4b40021a00030d4004818304581c01010101010101010101010101010101010101010101010101010101190384",
+)
 
 const goldenWitness = `{
     "type": "TxWitness ConwayEra",
@@ -639,7 +697,11 @@ func TestWitnessMatchesBursaFormat(t *testing.T) {
 	}
 
 	if got := string(marshalEnvelope(witnessType, witnessDesc, wit)); got != goldenWitness {
-		t.Fatalf("witness file differs from bursa tx witness:\n%s\nwant\n%s", got, goldenWitness)
+		t.Fatalf(
+			"witness file differs from bursa tx witness:\n%s\nwant\n%s",
+			got,
+			goldenWitness,
+		)
 	}
 }
 
@@ -657,7 +719,11 @@ func TestOpCertMatchesBursaFormat(t *testing.T) {
 	}
 
 	if got := string(marshalOpCertEnvelope(raw)); got != goldenOpCert {
-		t.Fatalf("op cert file differs from bursa cert op-cert:\n%s\nwant\n%s", got, goldenOpCert)
+		t.Fatalf(
+			"op cert file differs from bursa cert op-cert:\n%s\nwant\n%s",
+			got,
+			goldenOpCert,
+		)
 	}
 }
 
@@ -677,7 +743,15 @@ func TestAddressMatchesBursa(t *testing.T) {
 
 		return p
 	}
-	payment, stake := write("payment.vkey", paymentVkeyType, 0x11), write("stake.vkey", stakeVkeyType, 0x22)
+	payment, stake := write(
+		"payment.vkey",
+		paymentVkeyType,
+		0x11,
+	), write(
+		"stake.vkey",
+		stakeVkeyType,
+		0x22,
+	)
 
 	for _, c := range []struct{ typ, network, want string }{
 		{"base", "preview", "addr_test1qzx0qqs06evy77cnpk6u5q3fc50exjpp5t4s0swl2ykc4j33xvvd6k63kqmky78w3u4d8rxlj3ndfqlxpscjg2ykf7hsj0nzkg"},
@@ -691,7 +765,13 @@ func TestAddressMatchesBursa(t *testing.T) {
 		}
 
 		if out.String() != c.want+"\n" {
-			t.Errorf("%s %s = %q, want %q", c.typ, c.network, out.String(), c.want)
+			t.Errorf(
+				"%s %s = %q, want %q",
+				c.typ,
+				c.network,
+				out.String(),
+				c.want,
+			)
 		}
 	}
 

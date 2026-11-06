@@ -22,7 +22,10 @@ const maxProxyBody = 1 << 20
 
 type enclaveAPI interface {
 	Inventory(context.Context, []byte) (backend.AttestedInventory, error)
-	Sign(context.Context, backend.AttestedRequest) (backend.AttestedResponse, error)
+	Sign(
+		context.Context,
+		backend.AttestedRequest,
+	) (backend.AttestedResponse, error)
 }
 
 // ProxyHandler translates the existing attested-signer HTTP contract to the
@@ -75,7 +78,11 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		response, err := p.enclave.Inventory(r.Context(), request.Nonce)
 		if err != nil {
-			http.Error(w, "enclave inventory unavailable", http.StatusBadGateway)
+			http.Error(
+				w,
+				"enclave inventory unavailable",
+				http.StatusBadGateway,
+			)
 			return
 		}
 		writeJSON(w, response)

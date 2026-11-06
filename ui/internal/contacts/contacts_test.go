@@ -37,7 +37,12 @@ func validAddr(t *testing.T, seed byte) string {
 	t.Helper()
 	hash := make([]byte, lcommon.AddressHashSize)
 	hash[0] = seed
-	addr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeNoneKey, lcommon.AddressNetworkTestnet, nil, hash)
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeNoneKey,
+		lcommon.AddressNetworkTestnet,
+		nil,
+		hash,
+	)
 	if err != nil {
 		t.Fatalf("build test address: %v", err)
 	}
@@ -65,7 +70,10 @@ func TestPersistenceDisabledStoreRefusesMutations(t *testing.T) {
 	if !errors.Is(err, ErrPersistenceUnavailable) {
 		t.Fatalf("Upsert error = %v, want ErrPersistenceUnavailable", err)
 	}
-	if err := s.Delete("contact-id"); !errors.Is(err, ErrPersistenceUnavailable) {
+	if err := s.Delete("contact-id"); !errors.Is(
+		err,
+		ErrPersistenceUnavailable,
+	) {
 		t.Fatalf("Delete error = %v, want ErrPersistenceUnavailable", err)
 	}
 }
@@ -114,7 +122,9 @@ func TestLoadRejectsNewerVersion(t *testing.T) {
 		t.Fatalf("seed future-version file: %v", err)
 	}
 	if _, err := Load(path); err == nil {
-		t.Fatal("Load should reject a contacts file with a newer version than supported")
+		t.Fatal(
+			"Load should reject a contacts file with a newer version than supported",
+		)
 	}
 }
 
@@ -268,7 +278,9 @@ func TestLoadOrEmptyToleratesNewerVersion(t *testing.T) {
 	}
 	s, warn := LoadOrEmpty(path)
 	if warn == nil {
-		t.Fatal("LoadOrEmpty should return the underlying error as a warning for a newer-version file")
+		t.Fatal(
+			"LoadOrEmpty should return the underlying error as a warning for a newer-version file",
+		)
 	}
 	if got := s.List(); len(got) != 0 {
 		t.Fatalf("List() = %v, want empty store on a newer-version file", got)
@@ -294,7 +306,9 @@ func TestLoadOrEmptyToleratesInvalidPersistedData(t *testing.T) {
 	}
 	s, warn := LoadOrEmpty(path)
 	if warn == nil {
-		t.Fatal("LoadOrEmpty should return the underlying error as a warning for invalid persisted data")
+		t.Fatal(
+			"LoadOrEmpty should return the underlying error as a warning for invalid persisted data",
+		)
 	}
 	if got := s.List(); len(got) != 0 {
 		t.Fatalf("List() = %v, want empty store on invalid persisted data", got)
@@ -310,7 +324,9 @@ func TestUpsertCreateGeneratesIDPersistsAndReloads(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	addr := validAddr(t, 1)
-	entry, err := s.Upsert(Entry{Name: "  Alice  ", Address: addr, Note: " friend "})
+	entry, err := s.Upsert(
+		Entry{Name: "  Alice  ", Address: addr, Note: " friend "},
+	)
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
@@ -350,7 +366,10 @@ func TestUpsertRequiresName(t *testing.T) {
 	}
 	_, err = s.Upsert(Entry{Name: "   ", Address: validAddr(t, 2)})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert with blank name error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert with blank name error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if len(s.List()) != 0 {
 		t.Fatal("a rejected Upsert must not persist anything")
@@ -364,7 +383,10 @@ func TestUpsertRequiresValidAddress(t *testing.T) {
 	}
 	_, err = s.Upsert(Entry{Name: "Bob", Address: "not-a-real-address"})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert with invalid address error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert with invalid address error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if len(s.List()) != 0 {
 		t.Fatal("a rejected Upsert must not persist anything")
@@ -378,7 +400,10 @@ func TestUpsertRequiresAddress(t *testing.T) {
 	}
 	_, err = s.Upsert(Entry{Name: "Bob", Address: "   "})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert with blank address error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert with blank address error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 }
 
@@ -397,20 +422,31 @@ func TestUpsertUpdateExistingByID(t *testing.T) {
 	}
 
 	addr2 := validAddr(t, 4)
-	updated, err := s.Upsert(Entry{ID: created.ID, Name: "Carol Updated", Address: addr2, Note: "n2"})
+	updated, err := s.Upsert(
+		Entry{
+			ID:      created.ID,
+			Name:    "Carol Updated",
+			Address: addr2,
+			Note:    "n2",
+		},
+	)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if updated.ID != created.ID {
 		t.Fatalf("update changed ID: got %q, want %q", updated.ID, created.ID)
 	}
-	if updated.Name != "Carol Updated" || updated.Address != addr2 || updated.Note != "n2" {
+	if updated.Name != "Carol Updated" || updated.Address != addr2 ||
+		updated.Note != "n2" {
 		t.Fatalf("update did not apply: %+v", updated)
 	}
 
 	all := s.List()
 	if len(all) != 1 {
-		t.Fatalf("List() = %v, want exactly 1 entry after update (no duplicate)", all)
+		t.Fatalf(
+			"List() = %v, want exactly 1 entry after update (no duplicate)",
+			all,
+		)
 	}
 
 	reloaded, err := Load(path)
@@ -427,7 +463,9 @@ func TestUpsertUpdateUnknownIDReturnsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	_, err = s.Upsert(Entry{ID: "does-not-exist", Name: "Dave", Address: validAddr(t, 5)})
+	_, err = s.Upsert(
+		Entry{ID: "does-not-exist", Name: "Dave", Address: validAddr(t, 5)},
+	)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Upsert with unknown ID error = %v, want ErrNotFound", err)
 	}
@@ -547,7 +585,9 @@ func TestListReturnsCopyNotInternalSlice(t *testing.T) {
 	got[0].Name = "mutated"
 	got2 := s.List()
 	if got2[0].Name == "mutated" {
-		t.Fatal("List() leaked internal storage — mutation via one snapshot affected another")
+		t.Fatal(
+			"List() leaked internal storage — mutation via one snapshot affected another",
+		)
 	}
 }
 
@@ -562,7 +602,10 @@ func TestUpsertRollsBackOnPersistError(t *testing.T) {
 		t.Fatal("Upsert should fail when the contacts directory is missing")
 	}
 	if got := s.List(); len(got) != 1 || got[0] != existing {
-		t.Fatalf("failed Upsert must leave the in-memory store unchanged, got %v", got)
+		t.Fatalf(
+			"failed Upsert must leave the in-memory store unchanged, got %v",
+			got,
+		)
 	}
 }
 
@@ -578,13 +621,19 @@ func TestUpsertRejectsOversizedName(t *testing.T) {
 	longName := strings.Repeat("a", maxNameLen+1)
 	_, err = s.Upsert(Entry{Name: longName, Address: validAddr(t, 20)})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert with oversized name error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert with oversized name error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if len(s.List()) != 0 {
 		t.Fatal("a rejected Upsert must not persist anything")
 	}
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Fatalf("a rejected Upsert must not create a contacts file, stat err = %v", statErr)
+		t.Fatalf(
+			"a rejected Upsert must not create a contacts file, stat err = %v",
+			statErr,
+		)
 	}
 }
 
@@ -598,16 +647,24 @@ func TestUpsertRejectsOversizedNote(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	longNote := strings.Repeat("n", maxNoteLen+1)
-	_, err = s.Upsert(Entry{Name: "Zed", Address: validAddr(t, 21), Note: longNote})
+	_, err = s.Upsert(
+		Entry{Name: "Zed", Address: validAddr(t, 21), Note: longNote},
+	)
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert with oversized note error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert with oversized note error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if len(s.List()) != 0 {
 		t.Fatal("a rejected Upsert must not persist anything")
 	}
 	// The store must remain loadable: no half-valid/unloadable file was written.
 	if _, err := Load(path); err != nil {
-		t.Fatalf("contacts file became unloadable after a rejected Upsert: %v", err)
+		t.Fatalf(
+			"contacts file became unloadable after a rejected Upsert: %v",
+			err,
+		)
 	}
 }
 
@@ -622,7 +679,10 @@ func TestUpsertRejectsOversizedAddress(t *testing.T) {
 	longAddr := strings.Repeat("a", maxAddressLen+1)
 	_, err = s.Upsert(Entry{Name: "Zed", Address: longAddr})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert with oversized address error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert with oversized address error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 }
 
@@ -644,13 +704,23 @@ func TestUpsertRejectsWhenAddressBookFull(t *testing.T) {
 
 	_, err := s.Upsert(Entry{Name: "Overflow", Address: validAddr(t, 250)})
 	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Upsert beyond maxEntries error = %v, want ErrInvalidRequest", err)
+		t.Fatalf(
+			"Upsert beyond maxEntries error = %v, want ErrInvalidRequest",
+			err,
+		)
 	}
 	if got := s.List(); len(got) != maxEntries {
-		t.Fatalf("List() = %d entries, want %d (overflow must not persist)", len(got), maxEntries)
+		t.Fatalf(
+			"List() = %d entries, want %d (overflow must not persist)",
+			len(got),
+			maxEntries,
+		)
 	}
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Fatalf("a rejected Upsert must not create a contacts file, stat err = %v", statErr)
+		t.Fatalf(
+			"a rejected Upsert must not create a contacts file, stat err = %v",
+			statErr,
+		)
 	}
 }
 
@@ -669,7 +739,9 @@ func TestUpsertRejectsWhenAddressBookFullAllowsUpdate(t *testing.T) {
 	}
 	s := &Store{path: path, d: data{Version: contactsVersion, Entries: entries}}
 
-	updated, err := s.Upsert(Entry{ID: "id-0", Name: "Updated", Address: validAddr(t, 251)})
+	updated, err := s.Upsert(
+		Entry{ID: "id-0", Name: "Updated", Address: validAddr(t, 251)},
+	)
 	if err != nil {
 		t.Fatalf("update at full capacity should succeed: %v", err)
 	}
@@ -695,17 +767,25 @@ func TestWriteLockedRejectsOversizedBlob(t *testing.T) {
 		Address: validAddr(t, 30),
 		Note:    strings.Repeat("x", maxContactsLen),
 	}
-	s := &Store{path: path, d: data{Version: contactsVersion, Entries: []Entry{huge}}}
+	s := &Store{
+		path: path,
+		d:    data{Version: contactsVersion, Entries: []Entry{huge}},
+	}
 
 	committed, err := s.writeLocked()
 	if err == nil {
 		t.Fatal("writeLocked should reject a blob larger than maxContactsLen")
 	}
 	if committed {
-		t.Fatal("writeLocked must not report committed when it refuses to write")
+		t.Fatal(
+			"writeLocked must not report committed when it refuses to write",
+		)
 	}
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Fatalf("writeLocked must not create the target file when it refuses to write, stat err = %v", statErr)
+		t.Fatalf(
+			"writeLocked must not create the target file when it refuses to write, stat err = %v",
+			statErr,
+		)
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, ".contacts-*.tmp"))
 	if len(matches) != 0 {
@@ -726,17 +806,30 @@ func TestUpsertRollsBackWhenWriteWouldExceedMaxContactsLen(t *testing.T) {
 		Address: validAddr(t, 40),
 		Note:    strings.Repeat("z", maxContactsLen-256),
 	}
-	s := &Store{path: path, d: data{Version: contactsVersion, Entries: []Entry{legacy}}}
+	s := &Store{
+		path: path,
+		d:    data{Version: contactsVersion, Entries: []Entry{legacy}},
+	}
 
-	_, err := s.Upsert(Entry{Name: "One More", Address: validAddr(t, 41), Note: "small note"})
+	_, err := s.Upsert(
+		Entry{Name: "One More", Address: validAddr(t, 41), Note: "small note"},
+	)
 	if err == nil {
-		t.Fatal("Upsert should fail when the resulting file would exceed maxContactsLen")
+		t.Fatal(
+			"Upsert should fail when the resulting file would exceed maxContactsLen",
+		)
 	}
 	if got := s.List(); len(got) != 1 || got[0] != legacy {
-		t.Fatalf("failed Upsert must leave the in-memory store unchanged, got %v", got)
+		t.Fatalf(
+			"failed Upsert must leave the in-memory store unchanged, got %v",
+			got,
+		)
 	}
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Fatalf("failed Upsert must not create a contacts file, stat err = %v", statErr)
+		t.Fatalf(
+			"failed Upsert must not create a contacts file, stat err = %v",
+			statErr,
+		)
 	}
 }
 
@@ -866,6 +959,9 @@ func TestDeleteRollsBackOnPersistError(t *testing.T) {
 		t.Fatal("Delete should fail when the contacts directory has vanished")
 	}
 	if got := s.List(); len(got) != 1 || got[0].ID != e.ID {
-		t.Fatalf("failed Delete must leave the in-memory store unchanged, got %v", got)
+		t.Fatalf(
+			"failed Delete must leave the in-memory store unchanged, got %v",
+			got,
+		)
 	}
 }

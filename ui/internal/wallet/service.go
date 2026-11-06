@@ -19,11 +19,17 @@ type chainQuerier interface {
 	Account(ctx context.Context, stakeAddr string) (chain.AccountInfo, error)
 	AccountAddresses(ctx context.Context, stakeAddr string) ([]string, error)
 	AddressUTxOs(ctx context.Context, addr string) ([]chain.UTxO, error)
-	AddressTransactions(ctx context.Context, addr string) ([]chain.AddressTx, error)
+	AddressTransactions(
+		ctx context.Context,
+		addr string,
+	) ([]chain.AddressTx, error)
 	Transaction(ctx context.Context, hash string) (chain.TxInfo, error)
 	TransactionUTxOs(ctx context.Context, hash string) (chain.TxUTxOs, error)
 	LatestBlock(ctx context.Context) (chain.BlockTip, error)
-	AccountRewards(ctx context.Context, stakeAddr string) ([]chain.Reward, error)
+	AccountRewards(
+		ctx context.Context,
+		stakeAddr string,
+	) ([]chain.Reward, error)
 }
 
 // AddressView is the receive-address view: the derived window, the chain-seen
@@ -111,7 +117,10 @@ func cloneStringSlice(in []string) []string {
 }
 
 // SetWallet derives and stores the active account (windowN receive addresses).
-func (s *Service) SetWallet(mnemonic, network string, windowN int) (*Account, error) {
+func (s *Service) SetWallet(
+	mnemonic, network string,
+	windowN int,
+) (*Account, error) {
 	acct, err := Derive(mnemonic, network, windowN)
 	if err != nil {
 		return nil, err
@@ -188,7 +197,10 @@ func (s *Service) LocalAddresses() (AddressView, error) {
 // scanAddresses returns addresses whose payment credentials the wallet can
 // prove it controls. The node's stake-account index is only a discovery aid:
 // sharing a stake credential does not confer control over a payment credential.
-func (s *Service) scanAddresses(ctx context.Context, acct *Account) ([]string, error) {
+func (s *Service) scanAddresses(
+	ctx context.Context,
+	acct *Account,
+) ([]string, error) {
 	// A script (multi-signature) account has no stake credential, so there is
 	// no account to discover addresses under — its addresses are exactly the
 	// script address it was created with. Asking the node to resolve an empty
@@ -218,7 +230,10 @@ func (s *Service) Balance(ctx context.Context) (Balance, error) {
 // independent of the currently bound one. It backs the multi-account listing,
 // which shows a per-account balance summary without rebinding the service. A nil
 // account is treated as "no wallet".
-func (s *Service) BalanceForAccount(ctx context.Context, acct *Account) (Balance, error) {
+func (s *Service) BalanceForAccount(
+	ctx context.Context,
+	acct *Account,
+) (Balance, error) {
 	if acct == nil {
 		return Balance{}, ErrNoWallet
 	}
@@ -318,7 +333,11 @@ func (s *Service) Transactions(ctx context.Context) ([]Tx, error) {
 	return merged, nil
 }
 
-func (s *Service) enrichTxs(ctx context.Context, txs []Tx, mine map[string]bool) error {
+func (s *Service) enrichTxs(
+	ctx context.Context,
+	txs []Tx,
+	mine map[string]bool,
+) error {
 	workers := maxConcurrentTxEnrichments
 	if len(txs) < workers {
 		workers = len(txs)
@@ -374,7 +393,11 @@ send:
 // node no longer has a record of (e.g. pruned under the lean-node
 // history-expiry setting) is left with its basic fields only — set by the
 // caller before enrichTx runs — rather than failing the whole history.
-func (s *Service) enrichTx(ctx context.Context, tx *Tx, mine map[string]bool) error {
+func (s *Service) enrichTx(
+	ctx context.Context,
+	tx *Tx,
+	mine map[string]bool,
+) error {
 	info, err := s.chain.Transaction(ctx, tx.TxHash)
 	if errors.Is(err, chain.ErrNotFound) {
 		return nil
@@ -394,7 +417,11 @@ func (s *Service) enrichTx(ctx context.Context, tx *Tx, mine map[string]bool) er
 	if err != nil {
 		return err
 	}
-	direction, netLovelace, deltas, err := computeTxDelta(utxos.Inputs, utxos.Outputs, mine)
+	direction, netLovelace, deltas, err := computeTxDelta(
+		utxos.Inputs,
+		utxos.Outputs,
+		mine,
+	)
 	if err != nil {
 		return err
 	}
@@ -408,7 +435,10 @@ func (s *Service) enrichTx(ctx context.Context, tx *Tx, mine map[string]bool) er
 // enriched summary (direction/net-amount/fee/confirmations) plus the full
 // input/output breakdown, each entry marked as belonging to the active
 // wallet's own addresses or not. Node-only, like Transactions.
-func (s *Service) TransactionDetail(ctx context.Context, hash string) (TxDetail, error) {
+func (s *Service) TransactionDetail(
+	ctx context.Context,
+	hash string,
+) (TxDetail, error) {
 	acct, err := s.currentAccount()
 	if err != nil {
 		return TxDetail{}, err
@@ -457,7 +487,11 @@ func (s *Service) TransactionDetail(ctx context.Context, hash string) (TxDetail,
 		}, nil
 	}
 
-	direction, netLovelace, deltas, err := computeTxDelta(utxos.Inputs, utxos.Outputs, mine)
+	direction, netLovelace, deltas, err := computeTxDelta(
+		utxos.Inputs,
+		utxos.Outputs,
+		mine,
+	)
 	if err != nil {
 		return TxDetail{}, err
 	}

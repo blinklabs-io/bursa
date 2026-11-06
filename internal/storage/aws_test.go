@@ -113,7 +113,10 @@ func (f *fakeSecrets) ListSecrets(
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		out.SecretList = append(out.SecretList, smtypes.SecretListEntry{Name: &name})
+		out.SecretList = append(
+			out.SecretList,
+			smtypes.SecretListEntry{Name: &name},
+		)
 	}
 	return out, nil
 }
@@ -215,7 +218,10 @@ func TestNewStoreAWSBackendRequiresPrefix(t *testing.T) {
 func TestNewStoreRejectsUnknownBackendWithGCPConfigured(t *testing.T) {
 	store, err := NewStore(&config.Config{
 		Storage: config.StorageConfig{Backend: "awss"},
-		Google:  config.GoogleConfig{Project: "project", ResourceId: "resource"},
+		Google: config.GoogleConfig{
+			Project:    "project",
+			ResourceId: "resource",
+		},
 	})
 	require.Nil(t, store)
 	require.ErrorContains(t, err, `unsupported storage backend "awss"`)
@@ -223,7 +229,11 @@ func TestNewStoreRejectsUnknownBackendWithGCPConfigured(t *testing.T) {
 
 func TestNewStoreUsesGCPForLegacyConfiguration(t *testing.T) {
 	store, err := NewStore(&config.Config{
-		Google: config.GoogleConfig{Project: "project", ResourceId: "resource", Prefix: "pre-"},
+		Google: config.GoogleConfig{
+			Project:    "project",
+			ResourceId: "resource",
+			Prefix:     "pre-",
+		},
 	})
 	require.NoError(t, err)
 	require.IsType(t, (*GCPStore)(nil), store)
@@ -281,7 +291,9 @@ func TestAWSStoreListWalletNamesDoesNotLoadWalletContents(t *testing.T) {
 		return errors.New("wallet contents were loaded")
 	}
 
-	names, err := (&AWSStore{client: fake, prefix: "pre-"}).ListWalletNames(context.Background())
+	names, err := (&AWSStore{client: fake, prefix: "pre-"}).ListWalletNames(
+		context.Background(),
+	)
 	require.NoError(t, err)
 	require.Equal(t, []string{"one"}, names)
 }

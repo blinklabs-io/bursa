@@ -70,9 +70,16 @@ func run() error {
 	logger := slog.New(slog.NewTextHandler(logDst, nil))
 
 	// Mithril fast-sync is on by default; BURSA_SYNC=genesis opts out.
-	mithrilEnabled := !strings.EqualFold(envOr("BURSA_SYNC", "mithril"), "genesis")
+	mithrilEnabled := !strings.EqualFold(
+		envOr("BURSA_SYNC", "mithril"),
+		"genesis",
+	)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
 	defer stop()
 
 	// Boot the shared wallet stack (supervisor + node + chain + api + embedded
@@ -122,10 +129,17 @@ func parseNetwork(args []string, out io.Writer) (string, error) {
 		return "", err
 	}
 	if fs.NArg() > 0 {
-		return "", fmt.Errorf("unexpected argument %q: pass the network as -n <name>", fs.Arg(0))
+		return "", fmt.Errorf(
+			"unexpected argument %q: pass the network as -n <name>",
+			fs.Arg(0),
+		)
 	}
 	if !cardanonet.ValidNetwork(network) {
-		return "", fmt.Errorf("unknown network %q: must be one of %s", network, cardanonet.SupportedNetworks())
+		return "", fmt.Errorf(
+			"unknown network %q: must be one of %s",
+			network,
+			cardanonet.SupportedNetworks(),
+		)
 	}
 	return network, nil
 }
@@ -141,7 +155,11 @@ func openLogFile(dataDir string) (string, *os.File) {
 		return "", nil
 	}
 	path := filepath.Join(logDir, "bursa-wallet.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G703: same dataDir, restricted to the fixed network registry
+	f, err := os.OpenFile( //nolint:gosec // G703: same dataDir, restricted to the fixed network registry
+		path,
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0o600,
+	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bursa-wallet: could not open log file:", err)
 		return "", nil

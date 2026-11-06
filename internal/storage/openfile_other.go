@@ -54,7 +54,10 @@ func writeWalletFile(baseDir, name string, data []byte) error {
 	if err := ensureWalletDirectory(walletDir); err != nil {
 		return err
 	}
-	return bursa.WriteSecretKeyFile(filepath.Join(walletDir, "wallet.json"), data)
+	return bursa.WriteSecretKeyFile(
+		filepath.Join(walletDir, "wallet.json"),
+		data,
+	)
 }
 
 func deleteWallet(baseDir, name string) error {

@@ -47,11 +47,18 @@ func newACLServerNoAuth(t *testing.T) (*Server, backend.KeyHash) {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
-	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	pol := policy.KeyPolicy{
+		Hash:            h.String(),
+		AllowedRequests: []string{"tx"},
+		Tx:              &policy.TxPolicy{},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	coord := signer.New(signer.Deps{
 		Resolver:  backend.NewResolver(b),
@@ -67,27 +74,48 @@ func newACLServerNoAuth(t *testing.T) (*Server, backend.KeyHash) {
 // newACLServer builds a tx-signable server whose ACL grants only "alice" the
 // test key. It attaches mTLS and request-signing authenticators registering
 // "alice" and "bob" so ACL enforcement can be checked per caller source.
-func newACLServer(t *testing.T) (*Server, backend.KeyHash, map[string]ed25519.PrivateKey) {
+func newACLServer(
+	t *testing.T,
+) (*Server, backend.KeyHash, map[string]ed25519.PrivateKey) {
 	t.Helper()
 	srv, h := newACLServerNoAuth(t)
 
 	alicePub, alicePriv, _ := ed25519.GenerateKey(rand.Reader)
 	bobPub, bobPriv, _ := ed25519.GenerateKey(rand.Reader)
 	srv.SetRequestSigningAuthenticator(NewRequestSigningAuthenticator(
-		map[string]ed25519.PublicKey{"alice": alicePub, "bob": bobPub}, 60*time.Second))
+		map[string]ed25519.PublicKey{
+			"alice": alicePub,
+			"bob":   bobPub,
+		},
+		60*time.Second,
+	))
 	srv.SetMTLSAuthenticator(NewMTLSAuthenticator())
 
-	return srv, h, map[string]ed25519.PrivateKey{"alice": alicePriv, "bob": bobPriv}
+	return srv, h, map[string]ed25519.PrivateKey{
+		"alice": alicePriv,
+		"bob":   bobPriv,
+	}
 }
 
 func certWithCN(cn string) *tls.ConnectionState {
-	return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{CommonName: cn}}}}
+	return &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{
+			{Subject: pkix.Name{CommonName: cn}},
+		},
+	}
 }
 
 // signTxBody returns the /v1/sign body for a tx signed by the test key.
 func signTxBody(t *testing.T, h backend.KeyHash) []byte {
 	t.Helper()
-	body, err := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{h.String()}})
+	body, err := json.Marshal(
+		SignRequest{
+			Type:    "tx",
+			Cbor:    ambiguousBabbageTxHex,
+			Era:     "babbage",
+			Signers: []string{h.String()},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,22 +130,38 @@ func TestACL_MTLSCaller(t *testing.T) {
 	body := signTxBody(t, h)
 
 	t.Run("alice allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		req.TLS = certWithCN("alice")
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
-			t.Fatalf("expected 200 for alice, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 200 for alice, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 
 	t.Run("bob denied by ACL", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		req.TLS = certWithCN("bob")
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusForbidden {
-			t.Fatalf("expected 403 for bob, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 403 for bob, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 }
@@ -132,9 +176,22 @@ func TestACL_RequestSigningCaller(t *testing.T) {
 	send := func(caller, nonce string) int {
 		bodyHash := sha256.Sum256(body)
 		tsStr := strconv.FormatInt(time.Now().Unix(), 10)
-		canonical := strings.Join([]string{http.MethodPost, "/v1/sign", hex.EncodeToString(bodyHash[:]), tsStr, nonce}, "|")
+		canonical := strings.Join(
+			[]string{
+				http.MethodPost,
+				"/v1/sign",
+				hex.EncodeToString(bodyHash[:]),
+				tsStr,
+				nonce,
+			},
+			"|",
+		)
 		sig := ed25519.Sign(keys[caller], []byte(canonical))
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		req.Header.Set(HeaderKey, caller)
 		req.Header.Set(HeaderTimestamp, tsStr)
 		req.Header.Set(HeaderNonce, nonce)
@@ -175,9 +232,22 @@ func TestAuthChain_MTLSPrecedence(t *testing.T) {
 	// "alice" (allowed). mTLS precedence -> alice -> 200.
 	bodyHash := sha256.Sum256(body)
 	tsStr := strconv.FormatInt(time.Now().Unix(), 10)
-	canonical := strings.Join([]string{http.MethodPost, "/v1/sign", hex.EncodeToString(bodyHash[:]), tsStr, "p1"}, "|")
+	canonical := strings.Join(
+		[]string{
+			http.MethodPost,
+			"/v1/sign",
+			hex.EncodeToString(bodyHash[:]),
+			tsStr,
+			"p1",
+		},
+		"|",
+	)
 	sig := ed25519.Sign(keys["bob"], []byte(canonical))
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req.Header.Set(HeaderKey, "bob")
 	req.Header.Set(HeaderTimestamp, tsStr)
 	req.Header.Set(HeaderNonce, "p1")
@@ -186,7 +256,11 @@ func TestAuthChain_MTLSPrecedence(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("expected mTLS identity (alice) to win -> 200, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"expected mTLS identity (alice) to win -> 200, got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 }
 
@@ -203,9 +277,22 @@ func TestAuthChain_NoDowngrade(t *testing.T) {
 
 	bodyHash := sha256.Sum256(body)
 	tsStr := strconv.FormatInt(time.Now().Unix(), 10)
-	canonical := strings.Join([]string{http.MethodPost, "/v1/sign", hex.EncodeToString(bodyHash[:]), tsStr, "nd1"}, "|")
+	canonical := strings.Join(
+		[]string{
+			http.MethodPost,
+			"/v1/sign",
+			hex.EncodeToString(bodyHash[:]),
+			tsStr,
+			"nd1",
+		},
+		"|",
+	)
 	sig := ed25519.Sign(keys["alice"], []byte(canonical))
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req.Header.Set(HeaderKey, "alice")
 	req.Header.Set(HeaderTimestamp, tsStr)
 	req.Header.Set(HeaderNonce, "nd1")
@@ -216,7 +303,11 @@ func TestAuthChain_NoDowngrade(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 (no downgrade past invalid mTLS credential), got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"expected 401 (no downgrade past invalid mTLS credential), got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 }
 
@@ -235,11 +326,19 @@ func TestHandler_AuthenticatorRegisteredAfterHandlerCall(t *testing.T) {
 	srv.SetMTLSAuthenticator(NewMTLSAuthenticator())
 
 	body := signTxBody(t, h)
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req.TLS = certWithCN("alice")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 (mTLS authenticator set after Handler() must still apply), got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"expected 200 (mTLS authenticator set after Handler() must still apply), got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 }

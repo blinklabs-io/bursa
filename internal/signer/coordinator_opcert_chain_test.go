@@ -27,14 +27,23 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-func verifyChainOpCert(t *testing.T, res *OpCertResult, kes []byte, issue, period uint64) {
+func verifyChainOpCert(
+	t *testing.T,
+	res *OpCertResult,
+	kes []byte,
+	issue, period uint64,
+) {
 	t.Helper()
 	if res == nil || res.IssueCounter != issue {
 		t.Fatalf("result %+v, want issue counter %d", res, issue)
 	}
 	pub, _ := hex.DecodeString(res.ColdVKeyHex)
 	sig, _ := hex.DecodeString(res.SignatureHex)
-	if !ed25519.Verify(pub, lcommon.OpCertSignableBytes(kes, issue, period), sig) {
+	if !ed25519.Verify(
+		pub,
+		lcommon.OpCertSignableBytes(kes, issue, period),
+		sig,
+	) {
 		t.Fatalf("signature does not verify for issue %d", issue)
 	}
 }
@@ -43,7 +52,12 @@ func verifyChainOpCert(t *testing.T, res *OpCertResult, kes []byte, issue, perio
 // pool that has not forged since gets the same number again.
 func TestSignOpCertFromChain(t *testing.T) {
 	k := newFakeKey(t)
-	c, _ := newOpCertCoordinator(t, k, watermark.NewMemWatermark(), watermark.ModeEnforce)
+	c, _ := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeEnforce,
+	)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
@@ -60,8 +74,15 @@ func TestSignOpCertFromChain(t *testing.T) {
 	}
 	verifyChainOpCert(t, res, kes, 5, 101)
 
-	if res, code, err := c.SignOpCertFromChain(ctx, kes, 3, 102, k.hash.String()); err == nil || code != CodeConflict || res != nil {
-		t.Fatalf("chain 3 after 4: want CodeConflict, got (res=%v, code=%s, err=%v)", res, code, err)
+	if res, code, err := c.SignOpCertFromChain(ctx, kes, 3, 102, k.hash.String()); err == nil ||
+		code != CodeConflict ||
+		res != nil {
+		t.Fatalf(
+			"chain 3 after 4: want CodeConflict, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 
 	res, code, err = c.SignOpCertFromChain(ctx, kes, 5, 103, k.hash.String())
@@ -70,8 +91,13 @@ func TestSignOpCertFromChain(t *testing.T) {
 	}
 	verifyChainOpCert(t, res, kes, 6, 103)
 
-	if _, code, err := c.SignOpCertFromChain(ctx, kes, math.MaxUint64, 104, k.hash.String()); err == nil || code != CodeBadRequest {
-		t.Fatalf("chain MaxUint64: want CodeBadRequest, got (code=%s, err=%v)", code, err)
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, math.MaxUint64, 104, k.hash.String()); err == nil ||
+		code != CodeBadRequest {
+		t.Fatalf(
+			"chain MaxUint64: want CodeBadRequest, got (code=%s, err=%v)",
+			code,
+			err,
+		)
 	}
 }
 
@@ -79,7 +105,12 @@ func TestSignOpCertFromChain(t *testing.T) {
 // strictly increasing counter are separate records.
 func TestSignOpCertFromChain_LegacyUnchanged(t *testing.T) {
 	k := newFakeKey(t)
-	c, _ := newOpCertCoordinator(t, k, watermark.NewMemWatermark(), watermark.ModeEnforce)
+	c, _ := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeEnforce,
+	)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
@@ -89,8 +120,13 @@ func TestSignOpCertFromChain_LegacyUnchanged(t *testing.T) {
 	if _, code, err := c.SignOpCertFromChain(ctx, kes, 4, 100, k.hash.String()); err != nil {
 		t.Fatalf("chain 4 after legacy 5: %v (code=%s)", err, code)
 	}
-	if _, code, err := c.SignOpCert(ctx, kes, 5, 101, k.hash.String()); err == nil || code != CodeConflict {
-		t.Fatalf("legacy 5 repeat: want CodeConflict, got (code=%s, err=%v)", code, err)
+	if _, code, err := c.SignOpCert(ctx, kes, 5, 101, k.hash.String()); err == nil ||
+		code != CodeConflict {
+		t.Fatalf(
+			"legacy 5 repeat: want CodeConflict, got (code=%s, err=%v)",
+			code,
+			err,
+		)
 	}
 	res, _, err := c.SignOpCert(ctx, kes, 6, 102, k.hash.String())
 	if err != nil || res.IssueCounter != 6 {
@@ -113,7 +149,13 @@ func TestSignOpCertFromChain_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res, _, err := c.SignOpCertFromChain(ctx, kes, 9, 100, k.hash.String())
+			res, _, err := c.SignOpCertFromChain(
+				ctx,
+				kes,
+				9,
+				100,
+				k.hash.String(),
+			)
 			if err == nil && res.IssueCounter != 10 {
 				t.Errorf("issue %d, want 10", res.IssueCounter)
 			}
@@ -147,8 +189,15 @@ func TestSignOpCertFromChain_AboveIssued(t *testing.T) {
 		t.Fatalf("chain 4: %v (code=%s)", err, code)
 	}
 	// issued 5: chain 6 cannot have been forged
-	if res, code, err := c.SignOpCertFromChain(ctx, kes, 6, 101, k.hash.String()); err == nil || code != CodeConflict || res != nil {
-		t.Fatalf("chain 6 after issuing 5: want CodeConflict, got (res=%v, code=%s, err=%v)", res, code, err)
+	if res, code, err := c.SignOpCertFromChain(ctx, kes, 6, 101, k.hash.String()); err == nil ||
+		code != CodeConflict ||
+		res != nil {
+		t.Fatalf(
+			"chain 6 after issuing 5: want CodeConflict, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 	if v, _, _ := wm.CounterFor(ctx, k.hash, opcertChainFloorScope); v != 4 {
 		t.Fatalf("floor = %d after a refused raise, want 4", v)
@@ -162,8 +211,13 @@ func TestSignOpCertFromChain_AboveIssued(t *testing.T) {
 	if _, code, err := c.SignOpCertFromChain(ctx, kes, 6, 103, k.hash.String()); err != nil {
 		t.Fatalf("chain 6 after issuing 6: %v (code=%s)", err, code)
 	}
-	if _, code, err := c.SignOpCertFromChain(ctx, kes, 8, 104, k.hash.String()); err == nil || code != CodeConflict {
-		t.Fatalf("chain 8 after issuing 7: want CodeConflict, got (code=%s, err=%v)", code, err)
+	if _, code, err := c.SignOpCertFromChain(ctx, kes, 8, 104, k.hash.String()); err == nil ||
+		code != CodeConflict {
+		t.Fatalf(
+			"chain 8 after issuing 7: want CodeConflict, got (code=%s, err=%v)",
+			code,
+			err,
+		)
 	}
 }
 
@@ -259,7 +313,13 @@ func TestSignOpCert_AtOrBelowChainIssued(t *testing.T) {
 	}
 	for _, n := range []uint64{9, 5} {
 		if _, code, err := c.SignOpCert(ctx, kes, n, 101, k.hash.String()); code != CodeConflict {
-			t.Fatalf("issue %d after issuing 9: code=%s err=%v, want %s", n, code, err, CodeConflict)
+			t.Fatalf(
+				"issue %d after issuing 9: code=%s err=%v, want %s",
+				n,
+				code,
+				err,
+				CodeConflict,
+			)
 		}
 	}
 	res, code, err := c.SignOpCert(ctx, kes, 10, 101, k.hash.String())
@@ -283,7 +343,12 @@ func TestSignOpCertFromChain_BelowIssued(t *testing.T) {
 		t.Fatalf("issue 10: %v (code=%s)", err, code)
 	}
 	if _, code, err := c.SignOpCertFromChain(ctx, kes, 8, 101, k.hash.String()); code != CodeConflict {
-		t.Fatalf("chain 8 after issuing 10: code=%s err=%v, want %s", code, err, CodeConflict)
+		t.Fatalf(
+			"chain 8 after issuing 10: code=%s err=%v, want %s",
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 	if v, ok, _ := wm.CounterFor(ctx, k.hash, opcertChainFloorScope); ok {
 		t.Fatalf("floor = %d after a refused request, want none", v)
@@ -317,14 +382,20 @@ func TestSignOpCert_BelowIssuedWarn(t *testing.T) {
 		t.Fatalf("issued = %d, want 9", v)
 	}
 	if v, ok, _ := wm.CounterFor(ctx, k.hash, opcertCounterScope); ok {
-		t.Fatalf("issue counter record = %d after a warned request, want none", v)
+		t.Fatalf(
+			"issue counter record = %d after a warned request, want none",
+			v,
+		)
 	}
 }
 
 // newPausingOpCert returns a coordinator whose first issued-record lookup
 // blocks until release is closed, so a second request can complete between
 // the paused request's pre-sign checks and its commit.
-func newPausingOpCert(t *testing.T, mode watermark.Mode) (*Coordinator, *pausingCounterWatermark, *fakeKey) {
+func newPausingOpCert(
+	t *testing.T,
+	mode watermark.Mode,
+) (*Coordinator, *pausingCounterWatermark, *fakeKey) {
 	t.Helper()
 	k := newFakeKey(t)
 	pw := &pausingCounterWatermark{
@@ -362,7 +433,13 @@ func TestSignOpCert_ConcurrentChainIssued(t *testing.T) {
 	close(pw.release)
 	wg.Wait()
 	if code != CodeConflict || err == nil || res != nil {
-		t.Fatalf("issue 9 racing chain 8: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+		t.Fatalf(
+			"issue 9 racing chain 8: res=%v code=%s err=%v, want no signature and %s",
+			res,
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 }
 
@@ -382,7 +459,13 @@ func TestSignOpCertFromChain_ConcurrentIssueAbove(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		res, code, err = c.SignOpCertFromChain(ctx, kes, 8, 100, k.hash.String())
+		res, code, err = c.SignOpCertFromChain(
+			ctx,
+			kes,
+			8,
+			100,
+			k.hash.String(),
+		)
 	}()
 	<-pw.paused
 	if _, icode, err := c.SignOpCert(ctx, kes, 10, 101, k.hash.String()); err != nil {
@@ -391,7 +474,13 @@ func TestSignOpCertFromChain_ConcurrentIssueAbove(t *testing.T) {
 	close(pw.release)
 	wg.Wait()
 	if code != CodeConflict || err == nil || res != nil {
-		t.Fatalf("chain 8 racing issue 10: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+		t.Fatalf(
+			"chain 8 racing issue 10: res=%v code=%s err=%v, want no signature and %s",
+			res,
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 }
 
@@ -412,7 +501,13 @@ func TestSignOpCertFromChain_ConcurrentFirstIssueBelow(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		res, code, err = c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
+		res, code, err = c.SignOpCertFromChain(
+			ctx,
+			kes,
+			20,
+			100,
+			k.hash.String(),
+		)
 	}()
 	<-pw.paused
 	if _, icode, ierr := c.SignOpCert(ctx, kes, 5, 101, k.hash.String()); ierr != nil {
@@ -421,7 +516,13 @@ func TestSignOpCertFromChain_ConcurrentFirstIssueBelow(t *testing.T) {
 	close(pw.release)
 	wg.Wait()
 	if code != CodeConflict || err == nil || res != nil {
-		t.Fatalf("chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+		t.Fatalf(
+			"chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s",
+			res,
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 }
 
@@ -448,7 +549,11 @@ func TestSignOpCertFromChain_BelowIssuedWarnKeepsFloor(t *testing.T) {
 // raceOpCert runs first against a pausing store, lets second complete while
 // first is paused after its pre-sign checks, then releases first and returns
 // its outcome.
-func raceOpCert(t *testing.T, pw *pausingCounterWatermark, first, second func() (*OpCertResult, ErrorCode, error)) (*OpCertResult, ErrorCode, error) {
+func raceOpCert(
+	t *testing.T,
+	pw *pausingCounterWatermark,
+	first, second func() (*OpCertResult, ErrorCode, error),
+) (*OpCertResult, ErrorCode, error) {
 	t.Helper()
 	var (
 		wg   sync.WaitGroup
@@ -472,10 +577,22 @@ func raceOpCert(t *testing.T, pw *pausingCounterWatermark, first, second func() 
 	return res, code, err
 }
 
-func requireNoRecord(t *testing.T, pw *pausingCounterWatermark, k *fakeKey, scope string) {
+func requireNoRecord(
+	t *testing.T,
+	pw *pausingCounterWatermark,
+	k *fakeKey,
+	scope string,
+) {
 	t.Helper()
-	if v, ok, err := pw.counter.CounterFor(context.Background(), k.hash, scope); err != nil || ok {
-		t.Fatalf("%s record = (%d, %v, %v) after a refused request, want none", scope, v, ok, err)
+	if v, ok, err := pw.counter.CounterFor(context.Background(), k.hash, scope); err != nil ||
+		ok {
+		t.Fatalf(
+			"%s record = (%d, %v, %v) after a refused request, want none",
+			scope,
+			v,
+			ok,
+			err,
+		)
 	}
 }
 
@@ -487,39 +604,71 @@ func TestSignOpCert_ConcurrentChainIssuedLeavesNoIssueRecord(t *testing.T) {
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
-	res, code, err := raceOpCert(t, pw,
+	res, code, err := raceOpCert(
+		t,
+		pw,
 		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 9, 100, k.hash.String()) },
 		func() (*OpCertResult, ErrorCode, error) {
 			return c.SignOpCertFromChain(ctx, kes, 8, 101, k.hash.String())
-		})
+		},
+	)
 	if code != CodeConflict || err == nil || res != nil {
-		t.Fatalf("issue 9 racing chain 8: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+		t.Fatalf(
+			"issue 9 racing chain 8: res=%v code=%s err=%v, want no signature and %s",
+			res,
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 	requireNoRecord(t, pw, k, opcertCounterScope)
-	if res, code, err := c.SignOpCert(ctx, kes, 10, 102, k.hash.String()); err != nil || res == nil {
-		t.Fatalf("issue 10 after the refused request: res=%v code=%s err=%v", res, code, err)
+	if res, code, err := c.SignOpCert(ctx, kes, 10, 102, k.hash.String()); err != nil ||
+		res == nil {
+		t.Fatalf(
+			"issue 10 after the refused request: res=%v code=%s err=%v",
+			res,
+			code,
+			err,
+		)
 	}
 }
 
 // A chain_counter request refused at the issued record must not leave its
 // floor behind: a floor above the issued record locks out every renewal.
-func TestSignOpCertFromChain_ConcurrentFirstIssueBelowLeavesNoFloor(t *testing.T) {
+func TestSignOpCertFromChain_ConcurrentFirstIssueBelowLeavesNoFloor(
+	t *testing.T,
+) {
 	t.Parallel()
 	c, pw, k := newPausingOpCert(t, watermark.ModeEnforce)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
-	res, code, err := raceOpCert(t, pw,
+	res, code, err := raceOpCert(
+		t,
+		pw,
 		func() (*OpCertResult, ErrorCode, error) {
 			return c.SignOpCertFromChain(ctx, kes, 20, 100, k.hash.String())
 		},
-		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 5, 101, k.hash.String()) })
+		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 5, 101, k.hash.String()) },
+	)
 	if code != CodeConflict || err == nil || res != nil {
-		t.Fatalf("chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+		t.Fatalf(
+			"chain 20 racing issue 5: res=%v code=%s err=%v, want no signature and %s",
+			res,
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 	requireNoRecord(t, pw, k, opcertChainFloorScope)
-	if res, code, err := c.SignOpCertFromChain(ctx, kes, 5, 102, k.hash.String()); err != nil || res == nil {
-		t.Fatalf("chain 5 after the refused request: res=%v code=%s err=%v", res, code, err)
+	if res, code, err := c.SignOpCertFromChain(ctx, kes, 5, 102, k.hash.String()); err != nil ||
+		res == nil {
+		t.Fatalf(
+			"chain 5 after the refused request: res=%v code=%s err=%v",
+			res,
+			code,
+			err,
+		)
 	}
 }
 
@@ -529,13 +678,22 @@ func TestSignOpCertFromChain_ConcurrentIssueAboveLeavesNoFloor(t *testing.T) {
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
-	res, code, err := raceOpCert(t, pw,
+	res, code, err := raceOpCert(
+		t,
+		pw,
 		func() (*OpCertResult, ErrorCode, error) {
 			return c.SignOpCertFromChain(ctx, kes, 8, 100, k.hash.String())
 		},
-		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 10, 101, k.hash.String()) })
+		func() (*OpCertResult, ErrorCode, error) { return c.SignOpCert(ctx, kes, 10, 101, k.hash.String()) },
+	)
 	if code != CodeConflict || err == nil || res != nil {
-		t.Fatalf("chain 8 racing issue 10: res=%v code=%s err=%v, want no signature and %s", res, code, err, CodeConflict)
+		t.Fatalf(
+			"chain 8 racing issue 10: res=%v code=%s err=%v, want no signature and %s",
+			res,
+			code,
+			err,
+			CodeConflict,
+		)
 	}
 	requireNoRecord(t, pw, k, opcertChainFloorScope)
 }

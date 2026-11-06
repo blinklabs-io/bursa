@@ -40,9 +40,20 @@ func newAuthSalt() ([]byte, error) {
 
 func authValue(password string, salt []byte) ([]byte, error) {
 	if len(salt) != authSaltLen {
-		return nil, fmt.Errorf("tpm: auth salt must be %d bytes, got %d", authSaltLen, len(salt))
+		return nil, fmt.Errorf(
+			"tpm: auth salt must be %d bytes, got %d",
+			authSaltLen,
+			len(salt),
+		)
 	}
-	auth, err := scrypt.Key([]byte(password), salt, authScryptN, authScryptR, authScryptP, authKeyLen)
+	auth, err := scrypt.Key(
+		[]byte(password),
+		salt,
+		authScryptN,
+		authScryptR,
+		authScryptP,
+		authKeyLen,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("tpm: derive auth value: %w", err)
 	}

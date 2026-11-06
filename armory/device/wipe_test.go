@@ -64,7 +64,9 @@ func identityHex(t *testing.T, s *Service) string {
 
 func plant(c *fakeChip, ids ...uint32) {
 	for i, id := range ids {
-		c.keys[id] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{byte(0x40 + i)}, 32))
+		c.keys[id] = ed25519.NewKeyFromSeed(
+			bytes.Repeat([]byte{byte(0x40 + i)}, 32),
+		)
 	}
 }
 
@@ -91,7 +93,14 @@ func TestWipeRoutesOnlyInWipeHandler(t *testing.T) {
 	} {
 		for _, path := range []string{"/wipe/objects", "/wipe/profile", "/wipe/device", "/wipe/signlog"} {
 			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte("{}"))))
+			h.ServeHTTP(
+				w,
+				httptest.NewRequest(
+					http.MethodPost,
+					path,
+					bytes.NewReader([]byte("{}")),
+				),
+			)
 
 			if w.Code != http.StatusNotFound {
 				t.Errorf("%s handler serves %s: %d", name, path, w.Code)
@@ -113,7 +122,17 @@ func TestWipeDeviceDeletesEveryArmoryObject(t *testing.T) {
 	registerHostKey(t, s, hostPub(testHostKey))
 
 	last := profile.Profile{Slot: profile.MaxSlot}
-	plant(chip, 0x20e50001, 0x20e50008, 0x20e5000f, coldKeyLast, last.OwnerKeyID(), 0x20e50200, 0x20e50210, 0x20e5021f)
+	plant(
+		chip,
+		0x20e50001,
+		0x20e50008,
+		0x20e5000f,
+		coldKeyLast,
+		last.OwnerKeyID(),
+		0x20e50200,
+		0x20e50210,
+		0x20e5021f,
+	)
 	chip.bins[last.RecordID()] = []byte("unreadable")
 	chip.bins[profile.SignLogHeadID] = []byte("head")
 	plant(chip, outsideIDs...)
@@ -128,7 +147,12 @@ func TestWipeDeviceDeletesEveryArmoryObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code, body = wipePost(t, s, "/wipe/device", WipeDeviceRequest{IdentityPublicKey: id})
+	code, body = wipePost(
+		t,
+		s,
+		"/wipe/device",
+		WipeDeviceRequest{IdentityPublicKey: id},
+	)
 	if code != http.StatusOK {
 		t.Fatalf("wipe: %d %s", code, body)
 	}
@@ -223,7 +247,12 @@ func TestWipeDeviceRetriesAfterFailure(t *testing.T) {
 
 	chip.deletes, chip.failDeleteAfter = 0, 2
 
-	code, body := wipePost(t, s, "/wipe/device", WipeDeviceRequest{IdentityPublicKey: id})
+	code, body := wipePost(
+		t,
+		s,
+		"/wipe/device",
+		WipeDeviceRequest{IdentityPublicKey: id},
+	)
 	if code == http.StatusOK {
 		t.Fatal("wipe reported success after a failed delete")
 	}
@@ -265,7 +294,12 @@ func TestWipeProfileFreesItsSlot(t *testing.T) {
 	gone, kept := s.profiles["otg@preview"], s.profiles["keep@preview"]
 	chip.bins[profile.SignLogHeadID] = []byte("head")
 
-	code, body := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: "otg@preview"})
+	code, body := wipePost(
+		t,
+		s,
+		"/wipe/profile",
+		WipeProfileRequest{IdentityPublicKey: id, Profile: "otg@preview"},
+	)
 	if code != http.StatusOK {
 		t.Fatalf("wipe profile: %d %s", code, body)
 	}
@@ -321,7 +355,8 @@ func TestWipeProfileRetriesAfterFailure(t *testing.T) {
 		t.Fatalf("retry: %d %s", code, body)
 	}
 
-	if left := objectIDs(chip); left[p.RecordID()] || left[p.ColdKeyID] || left[p.OwnerKeyID()] {
+	if left := objectIDs(chip); left[p.RecordID()] || left[p.ColdKeyID] ||
+		left[p.OwnerKeyID()] {
 		t.Fatalf("profile objects left after retry: %v", left)
 	}
 }
@@ -361,7 +396,9 @@ func TestWipeProfileRefusesForeignColdKey(t *testing.T) {
 	}
 
 	if code, _ := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: p.Name}); code == http.StatusOK {
-		t.Error("wipe accepted a record naming an object outside the cold key range")
+		t.Error(
+			"wipe accepted a record naming an object outside the cold key range",
+		)
 	}
 
 	left := objectIDs(chip)
@@ -402,8 +439,16 @@ func TestWipeProfileRefusesWhileRecordUnreadable(t *testing.T) {
 func TestWipeProfileKeepsSharedColdKey(t *testing.T) {
 	s, chip := newTestService(t)
 	id := identityHex(t, s)
-	gone := profile.Profile{Name: "gone@preview", Slot: 0, ColdKeyID: testColdID}
-	kept := profile.Profile{Name: "kept@preview", Slot: 1, ColdKeyID: testColdID}
+	gone := profile.Profile{
+		Name:      "gone@preview",
+		Slot:      0,
+		ColdKeyID: testColdID,
+	}
+	kept := profile.Profile{
+		Name:      "kept@preview",
+		Slot:      1,
+		ColdKeyID: testColdID,
+	}
 	storeRecord(t, chip, gone)
 	storeRecord(t, chip, kept)
 
@@ -434,10 +479,18 @@ func TestWipeProfileRefusesMisplacedRecord(t *testing.T) {
 	s, chip := newTestService(t)
 	id := identityHex(t, s)
 	plant(chip, freeColdID)
-	other := profile.Profile{Name: "other@preview", Slot: 1, ColdKeyID: freeColdID}
+	other := profile.Profile{
+		Name:      "other@preview",
+		Slot:      1,
+		ColdKeyID: freeColdID,
+	}
 	storeRecord(t, chip, other)
 
-	moved := profile.Profile{Name: "moved@preview", Slot: 1, ColdKeyID: testColdID}
+	moved := profile.Profile{
+		Name:      "moved@preview",
+		Slot:      1,
+		ColdKeyID: testColdID,
+	}
 	rec, err := profile.Encode(moved)
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +506,10 @@ func TestWipeProfileRefusesMisplacedRecord(t *testing.T) {
 
 	for _, name := range []string{moved.Name, other.Name} {
 		if code, _ := wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: name}); code == http.StatusOK {
-			t.Errorf("%s: wipe accepted while a record names another slot", name)
+			t.Errorf(
+				"%s: wipe accepted while a record names another slot",
+				name,
+			)
 		}
 	}
 
@@ -467,8 +523,16 @@ func TestWipeProfileRefusesMisplacedRecord(t *testing.T) {
 func TestWipeProfileRefusesDuplicateNames(t *testing.T) {
 	s, chip := newTestService(t)
 	id := identityHex(t, s)
-	first := profile.Profile{Name: "twin@preview", Slot: 0, ColdKeyID: testColdID}
-	second := profile.Profile{Name: "twin@preview", Slot: 1, ColdKeyID: testColdID}
+	first := profile.Profile{
+		Name:      "twin@preview",
+		Slot:      0,
+		ColdKeyID: testColdID,
+	}
+	second := profile.Profile{
+		Name:      "twin@preview",
+		Slot:      1,
+		ColdKeyID: testColdID,
+	}
 	storeRecord(t, chip, first)
 	storeRecord(t, chip, second)
 
@@ -507,7 +571,12 @@ func TestWipeSignLogDeletesOnlyTheHead(t *testing.T) {
 		t.Fatalf("refused requests deleted objects: %d, want %d", got, before)
 	}
 
-	code, body := wipePost(t, s, "/wipe/signlog", WipeDeviceRequest{IdentityPublicKey: id})
+	code, body := wipePost(
+		t,
+		s,
+		"/wipe/signlog",
+		WipeDeviceRequest{IdentityPublicKey: id},
+	)
 	if code != http.StatusOK {
 		t.Fatalf("wipe signlog: %d %s", code, body)
 	}
@@ -531,7 +600,12 @@ func TestWipeSignLogDeletesOnlyTheHead(t *testing.T) {
 	}
 
 	// a device with no head deletes nothing and succeeds, so a retry is safe
-	code, body = wipePost(t, s, "/wipe/signlog", WipeDeviceRequest{IdentityPublicKey: id})
+	code, body = wipePost(
+		t,
+		s,
+		"/wipe/signlog",
+		WipeDeviceRequest{IdentityPublicKey: id},
+	)
 	if code != http.StatusOK || strings.Contains(string(body), "0x20e50022") {
 		t.Errorf("retry: %d %s", code, body)
 	}
@@ -553,7 +627,10 @@ func TestWipeDeviceClearsBadRecords(t *testing.T) {
 		t.Fatalf("wipe device: %d %s", code, body)
 	}
 
-	cold := ColdRequest{ColdKeyID: testColdID, SigningKey: hexKey("5820" + strings.Repeat("11", 32))}
+	cold := ColdRequest{
+		ColdKeyID:  testColdID,
+		SigningKey: hexKey("5820" + strings.Repeat("11", 32)),
+	}
 	if code, body := post(t, s, RouteProvisionCold, cold); code != http.StatusOK {
 		t.Fatalf("cold key after device wipe: %d %s", code, body)
 	}

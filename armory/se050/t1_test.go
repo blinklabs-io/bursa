@@ -119,8 +119,10 @@ func TestParseATR(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if atr.BWT != time.Second || atr.IFSC != 0xfe || atr.MPOT != time.Millisecond ||
-		atr.SEGT != 100*time.Microsecond || atr.WUT != 0 {
+	if atr.BWT != time.Second || atr.IFSC != 0xfe ||
+		atr.MPOT != time.Millisecond ||
+		atr.SEGT != 100*time.Microsecond ||
+		atr.WUT != 0 {
 		t.Fatalf("unexpected ATR %+v", atr)
 	}
 
@@ -140,7 +142,9 @@ func TestParseATRTruncated(t *testing.T) {
 }
 
 func TestSoftResetAppliesATRTimings(t *testing.T) {
-	bus := &fakeBus{reads: [][]byte{seFrame(sSoftResetResponse, mustHex(t, testATR))}}
+	bus := &fakeBus{
+		reads: [][]byte{seFrame(sSoftResetResponse, mustHex(t, testATR))},
+	}
 	t1 := newTestT1(bus)
 	t1.sendSeq = 1
 
@@ -148,8 +152,14 @@ func TestSoftResetAppliesATRTimings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if t1.sendSeq != 0 || t1.bwt != time.Second || t1.segt != 100*time.Microsecond {
-		t.Fatalf("timings not applied: seq %d bwt %v segt %v", t1.sendSeq, t1.bwt, t1.segt)
+	if t1.sendSeq != 0 || t1.bwt != time.Second ||
+		t1.segt != 100*time.Microsecond {
+		t.Fatalf(
+			"timings not applied: seq %d bwt %v segt %v",
+			t1.sendSeq,
+			t1.bwt,
+			t1.segt,
+		)
 	}
 }
 
@@ -167,7 +177,10 @@ func TestTransceiveSingleBlock(t *testing.T) {
 		t.Fatalf("response = % x", res)
 	}
 
-	if want := frame(0x00, []byte{0x80, 0x04, 0x00, 0x20, 0x00}); !bytes.Equal(bus.writes[0], want) {
+	if want := frame(0x00, []byte{0x80, 0x04, 0x00, 0x20, 0x00}); !bytes.Equal(
+		bus.writes[0],
+		want,
+	) {
 		t.Fatalf("frame = % x, want % x", bus.writes[0], want)
 	}
 
@@ -192,7 +205,8 @@ func TestTransceiveChainedCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(bus.writes) != 2 || bus.writes[0][2] != maxFrameData || bus.writes[1][2] != 10 {
+	if len(bus.writes) != 2 || bus.writes[0][2] != maxFrameData ||
+		bus.writes[1][2] != 10 {
 		t.Fatalf("unexpected chaining: %d frames", len(bus.writes))
 	}
 }
@@ -202,9 +216,15 @@ func TestTransceiveChainedResponse(t *testing.T) {
 	bus.onWrite = func(f []byte) {
 		switch f[1] {
 		case 0x00: // command
-			bus.reads = append(bus.reads, seFrame(iBlockMore, []byte{0x01, 0x02}))
+			bus.reads = append(
+				bus.reads,
+				seFrame(iBlockMore, []byte{0x01, 0x02}),
+			)
 		case rBlock | rBlockSeq: // host requests block with seq 1
-			bus.reads = append(bus.reads, seFrame(iBlockSeq, []byte{0x90, 0x00}))
+			bus.reads = append(
+				bus.reads,
+				seFrame(iBlockSeq, []byte{0x90, 0x00}),
+			)
 		}
 	}
 
@@ -229,7 +249,10 @@ func TestTransceiveAnswersWTX(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := frame(sWTXResponse, []byte{0x02}); !bytes.Equal(bus.writes[1], want) {
+	if want := frame(sWTXResponse, []byte{0x02}); !bytes.Equal(
+		bus.writes[1],
+		want,
+	) {
 		t.Fatalf("WTX response = % x, want % x", bus.writes[1], want)
 	}
 }
@@ -269,7 +292,8 @@ func TestTransceiveRetransmitsOnBadCRC(t *testing.T) {
 	}
 
 	// R-block expecting SE sequence 0, CRC error
-	if want := frame(rBlock|0x01, nil); len(bus.writes) != 2 || !bytes.Equal(bus.writes[1], want) {
+	if want := frame(rBlock|0x01, nil); len(bus.writes) != 2 ||
+		!bytes.Equal(bus.writes[1], want) {
 		t.Fatalf("writes % x, want R(err) % x", bus.writes, want)
 	}
 }
@@ -292,7 +316,9 @@ func TestTransceiveResendsOnSERBlock(t *testing.T) {
 func TestTransceiveResyncAfterRetries(t *testing.T) {
 	good := seFrame(0x00, []byte{0x90, 0x00})
 	bad := corrupt(good)
-	bus := &fakeBus{reads: [][]byte{bad, bad, bad, seFrame(sResyncResponse, nil), good}}
+	bus := &fakeBus{
+		reads: [][]byte{bad, bad, bad, seFrame(sResyncResponse, nil), good},
+	}
 	t1 := newTestT1(bus)
 	t1.sendSeq, t1.recvSeq = 1, 1
 
@@ -306,12 +332,18 @@ func TestTransceiveResyncAfterRetries(t *testing.T) {
 	}
 
 	// I(1), R(err), R(err), S(RESYNCH), I(0)
-	if len(bus.writes) != 5 || !bytes.Equal(bus.writes[3], frame(sResyncRequest, nil)) || bus.writes[4][1] != 0x00 {
+	if len(bus.writes) != 5 ||
+		!bytes.Equal(bus.writes[3], frame(sResyncRequest, nil)) ||
+		bus.writes[4][1] != 0x00 {
 		t.Fatalf("writes % x", bus.writes)
 	}
 
 	if t1.sendSeq != 1 || t1.recvSeq != 1 {
-		t.Fatalf("sequence after resync exchange: send %d recv %d", t1.sendSeq, t1.recvSeq)
+		t.Fatalf(
+			"sequence after resync exchange: send %d recv %d",
+			t1.sendSeq,
+			t1.recvSeq,
+		)
 	}
 }
 
@@ -330,7 +362,15 @@ func TestSendSeqNotToggledWithoutAck(t *testing.T) {
 func TestTransceiveRejectsWrongSESequence(t *testing.T) {
 	// an I-block with sequence 1 when 0 is expected is never accepted
 	wrong := seFrame(iBlockSeq, []byte{0x90, 0x00})
-	bus := &fakeBus{reads: [][]byte{wrong, wrong, wrong, seFrame(sResyncResponse, nil), seFrame(0x00, []byte{0x90, 0x00})}}
+	bus := &fakeBus{
+		reads: [][]byte{
+			wrong,
+			wrong,
+			wrong,
+			seFrame(sResyncResponse, nil),
+			seFrame(0x00, []byte{0x90, 0x00}),
+		},
+	}
 
 	if _, err := newTestT1(bus).Transceive([]byte{0x00}); err != nil {
 		t.Fatal(err)
@@ -347,13 +387,17 @@ func TestReopenResetsAndSelects(t *testing.T) {
 	se := &SE050{t1: newTestT1(bus)}
 	se.t1.sendSeq, se.t1.recvSeq = 1, 1
 
-	bus.reads = [][]byte{seFrame(sSoftResetResponse, mustHex(t, testATR)), seFrame(0x00, version)}
+	bus.reads = [][]byte{
+		seFrame(sSoftResetResponse, mustHex(t, testATR)),
+		seFrame(0x00, version),
+	}
 
 	if err := se.Reopen(); err != nil {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(bus.writes[0], frame(sSoftResetRequest, nil)) || bus.writes[1][1] != 0x00 {
+	if !bytes.Equal(bus.writes[0], frame(sSoftResetRequest, nil)) ||
+		bus.writes[1][1] != 0x00 {
 		t.Fatalf("writes % x", bus.writes)
 	}
 

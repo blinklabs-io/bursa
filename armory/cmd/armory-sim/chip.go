@@ -54,7 +54,12 @@ var (
 // openChip loads the chip state from path, or starts an empty chip if the
 // file does not exist yet.
 func openChip(path string) (*fileChip, error) {
-	c := &fileChip{path: path, keys: map[uint32][]byte{}, bins: map[uint32][]byte{}, transient: map[uint32]bool{}}
+	c := &fileChip{
+		path:      path,
+		keys:      map[uint32][]byte{},
+		bins:      map[uint32][]byte{},
+		transient: map[uint32]bool{},
+	}
 
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -90,7 +95,10 @@ func openChip(path string) (*fileChip, error) {
 		}
 
 		if _, ok := c.keys[id]; ok {
-			return nil, fmt.Errorf("chip state: object %s is both a key and a binary", k)
+			return nil, fmt.Errorf(
+				"chip state: object %s is both a key and a binary",
+				k,
+			)
 		}
 
 		c.bins[id] = v

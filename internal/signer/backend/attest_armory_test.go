@@ -27,7 +27,10 @@ func TestArmoryVerifier(t *testing.T) {
 	stake, _, _ := ed25519.GenerateKey(nil)
 
 	nonce := []byte("0123456789abcdef0123456789abcdef")
-	keys := []AttestedKeyInfo{{Role: KeyTypePool, PublicKey: pool}, {Role: KeyTypeStake, PublicKey: stake}}
+	keys := []AttestedKeyInfo{
+		{Role: KeyTypePool, PublicKey: pool},
+		{Role: KeyTypeStake, PublicKey: stake},
+	}
 	binding := InventoryBinding(nonce, keys)
 
 	v, err := NewArmoryVerifier(identity)

@@ -34,7 +34,12 @@ func newNetworkService(t *testing.T, network uint8) (*Service, *fakeChip) {
 	t.Helper()
 
 	chip := newFakeChip()
-	p := profile.Profile{Name: "otg@preview", NetworkID: 0, Slot: 1, ColdKeyID: 0x20e50011}
+	p := profile.Profile{
+		Name:      "otg@preview",
+		NetworkID: 0,
+		Slot:      1,
+		ColdKeyID: 0x20e50011,
+	}
 	rec, err := profile.Encode(p)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +64,11 @@ func TestFixedNetworkServesItsOwnProfiles(t *testing.T) {
 	s, _ := newNetworkService(t, 0)
 
 	if code, body := post(t, s, "/v1/inventory", InventoryRequest{Nonce: nonce(1), Profile: "otg@preview"}); code != http.StatusOK {
-		t.Fatalf("testnet profile not served on a testnet build: %d %s", code, body)
+		t.Fatalf(
+			"testnet profile not served on a testnet build: %d %s",
+			code,
+			body,
+		)
 	}
 }
 
@@ -127,7 +136,12 @@ func newChainService(t *testing.T, chain, name string) *Service {
 	t.Helper()
 
 	chip := newFakeChip()
-	p := profile.Profile{Name: name, NetworkID: 1, Slot: 1, ColdKeyID: 0x20e50011}
+	p := profile.Profile{
+		Name:      name,
+		NetworkID: 1,
+		Slot:      1,
+		ColdKeyID: 0x20e50011,
+	}
 	rec, err := profile.Encode(p)
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +204,10 @@ func TestFixedNetworkProvisionsItsOwnNetwork(t *testing.T) {
 	if code, body := post(t, s, "/provision/profile", ProvisionRequest{
 		Name: "new@preview", NetworkID: 0, Slot: 2, ColdKeyID: spareColdID,
 	}); code != http.StatusOK {
-		t.Fatalf("testnet profile not provisioned on a testnet build: %d %s", code, body)
+		t.Fatalf(
+			"testnet profile not provisioned on a testnet build: %d %s",
+			code,
+			body,
+		)
 	}
 }

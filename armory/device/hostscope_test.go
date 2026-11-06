@@ -28,7 +28,12 @@ import (
 
 // imageOn returns the service a firmware image fixed to network and chain
 // runs on chip; images for different networks share one device.
-func imageOn(t *testing.T, chip *fakeChip, network uint8, chain string) *Service {
+func imageOn(
+	t *testing.T,
+	chip *fakeChip,
+	network uint8,
+	chain string,
+) *Service {
 	t.Helper()
 
 	s := New(&sync.Mutex{}, t.Logf)
@@ -56,7 +61,12 @@ func authAs(t *testing.T, s *Service, k ed25519.PrivateKey) error {
 
 	binding := []byte("binding")
 
-	return s.authenticateHost(hostPub(k), ed25519.Sign(k, binding), c.Challenge, binding)
+	return s.authenticateHost(
+		hostPub(k),
+		ed25519.Sign(k, binding),
+		c.Challenge,
+		binding,
+	)
 }
 
 func listed(resp HostKeyResponse, k ed25519.PrivateKey) bool {
@@ -85,7 +95,10 @@ func TestHostKeyIsScopedToImageNetwork(t *testing.T) {
 
 	mainnet := imageOn(t, chip, 1, "")
 
-	if err := authAs(t, mainnet, testnetKey); !errors.Is(err, errHostAuthMissing) {
+	if err := authAs(t, mainnet, testnetKey); !errors.Is(
+		err,
+		errHostAuthMissing,
+	) {
 		t.Fatalf("mainnet image trusts a testnet host key: %v", err)
 	}
 
@@ -97,15 +110,23 @@ func TestHostKeyIsScopedToImageNetwork(t *testing.T) {
 		t.Fatalf("mainnet image refuses its own host key: %v", err)
 	}
 
-	if err := authAs(t, mainnet, testnetKey); !errors.Is(err, errHostKeyUnknown) {
+	if err := authAs(t, mainnet, testnetKey); !errors.Is(
+		err,
+		errHostKeyUnknown,
+	) {
 		t.Fatalf("mainnet image trusts a testnet host key: %v", err)
 	}
 
-	if _, err := mainnet.revokeHostKey(HostKeyRequest{PublicKey: hostPub(testnetKey)}); !errors.Is(err, errHostKeyUnknown) {
+	if _, err := mainnet.revokeHostKey(HostKeyRequest{PublicKey: hostPub(testnetKey)}); !errors.Is(
+		err,
+		errHostKeyUnknown,
+	) {
 		t.Fatalf("mainnet image revoked a testnet host key: %v", err)
 	}
 
-	resp, err := mainnet.addHostKey(HostKeyRequest{PublicKey: hostPub(mainnetKey)})
+	resp, err := mainnet.addHostKey(
+		HostKeyRequest{PublicKey: hostPub(mainnetKey)},
+	)
 	if err != nil || !listed(resp, mainnetKey) || listed(resp, testnetKey) {
 		t.Fatalf("mainnet image list: %v %v", resp, err)
 	}
@@ -117,15 +138,23 @@ func TestHostKeyIsScopedToImageNetwork(t *testing.T) {
 		t.Fatalf("testnet image lost its host key: %v", err)
 	}
 
-	if err := authAs(t, testnet, mainnetKey); !errors.Is(err, errHostKeyUnknown) {
+	if err := authAs(t, testnet, mainnetKey); !errors.Is(
+		err,
+		errHostKeyUnknown,
+	) {
 		t.Fatalf("testnet image trusts a mainnet host key: %v", err)
 	}
 
-	if _, err := testnet.revokeHostKey(HostKeyRequest{PublicKey: hostPub(mainnetKey)}); !errors.Is(err, errHostKeyUnknown) {
+	if _, err := testnet.revokeHostKey(HostKeyRequest{PublicKey: hostPub(mainnetKey)}); !errors.Is(
+		err,
+		errHostKeyUnknown,
+	) {
 		t.Fatalf("testnet image revoked a mainnet host key: %v", err)
 	}
 
-	resp, err = testnet.addHostKey(HostKeyRequest{PublicKey: hostPub(testnetKey)})
+	resp, err = testnet.addHostKey(
+		HostKeyRequest{PublicKey: hostPub(testnetKey)},
+	)
 	if err != nil || listed(resp, mainnetKey) {
 		t.Fatalf("testnet image lists a mainnet host key: %v %v", resp, err)
 	}
@@ -181,7 +210,10 @@ func TestLegacyHostKeyListScope(t *testing.T) {
 		t.Fatalf("testnet image refuses a legacy host key: %v", err)
 	}
 
-	if err := authAs(t, imageOn(t, chip, 1, ""), k); !errors.Is(err, errHostAuthMissing) {
+	if err := authAs(t, imageOn(t, chip, 1, ""), k); !errors.Is(
+		err,
+		errHostAuthMissing,
+	) {
 		t.Fatalf("mainnet image trusts a legacy host key: %v", err)
 	}
 
@@ -196,7 +228,10 @@ func TestLegacyHostKeyListScope(t *testing.T) {
 		t.Fatalf("legacy host key lost after a rewrite: %v", err)
 	}
 
-	if err := authAs(t, imageOn(t, chip, 1, ""), k); !errors.Is(err, errHostAuthMissing) {
+	if err := authAs(t, imageOn(t, chip, 1, ""), k); !errors.Is(
+		err,
+		errHostAuthMissing,
+	) {
 		t.Fatalf("rewrite promoted a legacy host key to mainnet: %v", err)
 	}
 }
@@ -251,7 +286,10 @@ func TestOtherScopeHostKeyStillRequiresAuth(t *testing.T) {
 	}
 
 	testnet := imageOn(t, chip, 0, "")
-	if err := testnet.authenticateHost(nil, nil, nil, []byte("binding")); !errors.Is(err, errHostKeyUnknown) {
+	if err := testnet.authenticateHost(nil, nil, nil, []byte("binding")); !errors.Is(
+		err,
+		errHostKeyUnknown,
+	) {
 		t.Fatalf("testnet image accepted an unauthenticated request: %v", err)
 	}
 
@@ -280,7 +318,10 @@ func TestUnknownHostKeyScopeRefusesSigning(t *testing.T) {
 	list[ed25519.PublicKeySize] = 2
 	chip.bins[hostKeysID] = list
 
-	if err := authAs(t, imageOn(t, chip, 0, ""), k); !errors.Is(err, errHostKeysBad) {
+	if err := authAs(t, imageOn(t, chip, 0, ""), k); !errors.Is(
+		err,
+		errHostKeysBad,
+	) {
 		t.Fatalf("unknown scope kind accepted: %v", err)
 	}
 }
@@ -302,7 +343,10 @@ func TestUnknownHostKeyScopeInEmptySlotRefusesSigning(t *testing.T) {
 	list[hostEntrySize+ed25519.PublicKeySize] = 2
 	chip.bins[hostKeysID] = list
 
-	if err := authAs(t, imageOn(t, chip, 0, ""), k); !errors.Is(err, errHostKeysBad) {
+	if err := authAs(t, imageOn(t, chip, 0, ""), k); !errors.Is(
+		err,
+		errHostKeysBad,
+	) {
 		t.Fatalf("unknown scope kind in an empty slot accepted: %v", err)
 	}
 }

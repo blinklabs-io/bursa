@@ -42,7 +42,14 @@ func TestSigningHandlerServesNoProvisioning(t *testing.T) {
 	h := s.SigningHandler()
 
 	// any other path, including future provisioning endpoints, is not served
-	others := append([]string{"/provision", "/provision/other", "/v1/provision/reward", "/v1/other", "/reset"},
+	others := append(
+		[]string{
+			"/provision",
+			"/provision/other",
+			"/v1/provision/reward",
+			"/v1/other",
+			"/reset",
+		},
 		provisioningPaths...)
 
 	for _, path := range others {

@@ -516,7 +516,9 @@ func TestSign(t *testing.T) {
 	}
 
 	// Verify with derived key
-	child := xprv.Derive(HardenedIndex(1852)).Derive(HardenedIndex(1815)).Derive(HardenedIndex(0))
+	child := xprv.Derive(HardenedIndex(1852)).
+		Derive(HardenedIndex(1815)).
+		Derive(HardenedIndex(0))
 	childPub := ed25519.PublicKey(child.PublicKey())
 	childSig := child.Sign(msg)
 	if !ed25519.Verify(childPub, msg, childSig) {
@@ -609,7 +611,9 @@ func TestLenientBech32Decode(t *testing.T) {
 		t.Fatalf("LenientBech32Decode failed on uppercase long string: %v", err)
 	}
 	if hrpUpperLong != "addr_vk" || !bytes.Equal(dataUpperLong, longData) {
-		t.Error("uppercase long encoding should preserve the decoded HRP and data")
+		t.Error(
+			"uppercase long encoding should preserve the decoded HRP and data",
+		)
 	}
 
 	// Test uppercase Bech32 string (should work with case-insensitive decoding)
@@ -636,7 +640,10 @@ func TestLenientBech32DecodeRejectsMixedCaseLongEncoding(t *testing.T) {
 		t.Fatalf("bech32.Encode: %v", err)
 	}
 	if len(encoded) <= 90 {
-		t.Fatalf("test encoding must use the lenient path, got length %d", len(encoded))
+		t.Fatalf(
+			"test encoding must use the lenient path, got length %d",
+			len(encoded),
+		)
 	}
 
 	mixed := []byte(encoded)
@@ -656,7 +663,10 @@ func TestLenientBech32DecodeRejectsMixedCaseLongEncoding(t *testing.T) {
 // Uses the same zero-entropy test vector already used by TestCardanoWalletVectors.
 func testAccountXPrv(t *testing.T) XPrv {
 	t.Helper()
-	entropy := make([]byte, 32) // 32 bytes of zeros — same as TestCardanoWalletVectors
+	entropy := make(
+		[]byte,
+		32,
+	) // 32 bytes of zeros — same as TestCardanoWalletVectors
 	root := FromBip39Entropy(entropy, []byte{})
 	return root.
 		Derive(HardenedIndex(1852)).
@@ -680,7 +690,10 @@ func TestXPubDeriveMatchesXPrvPublic(t *testing.T) {
 			t.Fatalf("index %d: XPub.Derive pubkey %x != XPrv.Derive pubkey %x",
 				i, childPubViaPub.PublicKey(), childPubViaPrv)
 		}
-		if !bytes.Equal(childPubViaPub.ChainCode(), childPrv.Public().ChainCode()) {
+		if !bytes.Equal(
+			childPubViaPub.ChainCode(),
+			childPrv.Public().ChainCode(),
+		) {
 			t.Fatalf("index %d: chain code mismatch: got %x, want %x",
 				i, childPubViaPub.ChainCode(), childPrv.Public().ChainCode())
 		}
@@ -711,7 +724,11 @@ func TestCIP3IcarusTestVectors(t *testing.T) {
 	rootKey := FromBip39Entropy(entropy, []byte{})
 	actual := hex.EncodeToString(rootKey)
 	if actual != expectedNoPass {
-		t.Errorf("CIP-3 Icarus (no passphrase) mismatch:\ngot:  %s\nwant: %s", actual, expectedNoPass)
+		t.Errorf(
+			"CIP-3 Icarus (no passphrase) mismatch:\ngot:  %s\nwant: %s",
+			actual,
+			expectedNoPass,
+		)
 	}
 
 	// Test with passphrase "foo"
@@ -719,15 +736,25 @@ func TestCIP3IcarusTestVectors(t *testing.T) {
 	rootKeyFoo := FromBip39Entropy(entropy, []byte("foo"))
 	actualFoo := hex.EncodeToString(rootKeyFoo)
 	if actualFoo != expectedWithPass {
-		t.Errorf("CIP-3 Icarus (passphrase 'foo') mismatch:\ngot:  %s\nwant: %s", actualFoo, expectedWithPass)
+		t.Errorf(
+			"CIP-3 Icarus (passphrase 'foo') mismatch:\ngot:  %s\nwant: %s",
+			actualFoo,
+			expectedWithPass,
+		)
 	}
 
 	// Verify clamping properties
 	if (rootKey[0] & 0b0000_0111) != 0 {
-		t.Errorf("kL not clamped: first byte low bits should be clear, got %08b", rootKey[0])
+		t.Errorf(
+			"kL not clamped: first byte low bits should be clear, got %08b",
+			rootKey[0],
+		)
 	}
 	if (rootKey[31] & 0b1110_0000) != 0b0100_0000 {
-		t.Errorf("kL not clamped: byte 31 high bits should be 010xxxxx, got %08b", rootKey[31])
+		t.Errorf(
+			"kL not clamped: byte 31 high bits should be 010xxxxx, got %08b",
+			rootKey[31],
+		)
 	}
 }
 
@@ -741,7 +768,10 @@ func TestLenientBech32DecodeRejectsInvalidVectors(t *testing.T) {
 		t.Fatalf("bech32.Encode: %v", err)
 	}
 	if len(longEncoded) <= 90 {
-		t.Fatalf("vector must exceed the bounded decoder limit, got %d", len(longEncoded))
+		t.Fatalf(
+			"vector must exceed the bounded decoder limit, got %d",
+			len(longEncoded),
+		)
 	}
 	shortEncoded, err := bech32.Encode("addr_vk", long[:20])
 	if err != nil {
@@ -758,15 +788,17 @@ func TestLenientBech32DecodeRejectsInvalidVectors(t *testing.T) {
 	}
 
 	vectors := map[string]string{
-		"long bad checksum":           flipLast(longEncoded),
-		"long truncated checksum":     longEncoded[:len(longEncoded)-3],
-		"long no data part":           strings.Repeat("a", 91) + "1",
-		"short bad checksum":          flipLast(shortEncoded),
-		"empty":                       "",
-		"separator only":              "1",
-		"checksum shorter than 6":     "addr_vk1qqqqq",
-		"hrp missing":                 "1qqqqqqqqqqqq",
-		"long mixed case":             longEncoded[:5] + strings.ToUpper(longEncoded[5:6]) + longEncoded[6:],
+		"long bad checksum":       flipLast(longEncoded),
+		"long truncated checksum": longEncoded[:len(longEncoded)-3],
+		"long no data part":       strings.Repeat("a", 91) + "1",
+		"short bad checksum":      flipLast(shortEncoded),
+		"empty":                   "",
+		"separator only":          "1",
+		"checksum shorter than 6": "addr_vk1qqqqq",
+		"hrp missing":             "1qqqqqqqqqqqq",
+		"long mixed case": longEncoded[:5] + strings.ToUpper(
+			longEncoded[5:6],
+		) + longEncoded[6:],
 		"long invalid data character": longEncoded[:len(longEncoded)-8] + "b" + longEncoded[len(longEncoded)-7:],
 	}
 	for name, vector := range vectors {

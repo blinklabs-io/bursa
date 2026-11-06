@@ -22,7 +22,11 @@ type fakeVault struct {
 	swallowAdd bool // accept the add but do not record it, simulating a silent loss
 }
 
-func (f *fakeVault) AddScriptWallet(id, name, network string, s ScriptWallet, _ string) error {
+func (f *fakeVault) AddScriptWallet(
+	id, name, network string,
+	s ScriptWallet,
+	_ string,
+) error {
 	if f.addErr != nil {
 		return f.addErr
 	}
@@ -79,13 +83,33 @@ func twoAccounts() []Account {
 				{KeyHashHex: strings.Repeat("a", 56)},
 				{KeyHashHex: strings.Repeat("c", 56)},
 			}},
-			ScriptCBOR:    scriptCBORFor(Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: strings.Repeat("a", 56)}, {KeyHashHex: strings.Repeat("c", 56)}}}),
+			ScriptCBOR: scriptCBORFor(
+				Policy{
+					Threshold: 2,
+					Participants: []Participant{
+						{KeyHashHex: strings.Repeat("a", 56)},
+						{KeyHashHex: strings.Repeat("c", 56)},
+					},
+				},
+			),
 			ScriptAddress: "addr1_script_one",
 		},
 		{
 			ID: "b", Label: "Ops", Network: "mainnet",
-			Policy:        Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: strings.Repeat("b", 56)}}},
-			ScriptCBOR:    scriptCBORFor(Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: strings.Repeat("b", 56)}}}),
+			Policy: Policy{
+				Threshold: 1,
+				Participants: []Participant{
+					{KeyHashHex: strings.Repeat("b", 56)},
+				},
+			},
+			ScriptCBOR: scriptCBORFor(
+				Policy{
+					Threshold: 1,
+					Participants: []Participant{
+						{KeyHashHex: strings.Repeat("b", 56)},
+					},
+				},
+			),
 			ScriptAddress: "addr1_script_two",
 		},
 	}
@@ -133,7 +157,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 	if n != 0 || len(v.added) != 2 {
-		t.Fatalf("second run added %d (total %d), want 0 (total 2)", n, len(v.added))
+		t.Fatalf(
+			"second run added %d (total %d), want 0 (total 2)",
+			n,
+			len(v.added),
+		)
 	}
 
 	// And if the file reappears (a restored backup, a downgrade), already-present
@@ -144,7 +172,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		t.Fatalf("third migrate: %v", err)
 	}
 	if n != 0 || len(v.added) != 2 {
-		t.Fatalf("re-migrate added %d (total %d), want 0 (total 2)", n, len(v.added))
+		t.Fatalf(
+			"re-migrate added %d (total %d), want 0 (total 2)",
+			n,
+			len(v.added),
+		)
 	}
 }
 
@@ -169,7 +201,9 @@ func TestMigrateKeepsTheFileWhenVerificationFails(t *testing.T) {
 
 	_, err := MigrateStoreToVault(path, v, "vault-pw")
 	if err == nil {
-		t.Fatal("expected an error when the accounts are not in the vault afterwards")
+		t.Fatal(
+			"expected an error when the accounts are not in the vault afterwards",
+		)
 	}
 	if !strings.Contains(err.Error(), "refusing to remove") {
 		t.Fatalf("error should say why the file was kept, got: %v", err)
@@ -243,7 +277,10 @@ func TestMigrateRejectsDistinctIDsSharingAnAddress(t *testing.T) {
 		t.Fatal("migration must reject distinct IDs sharing a script address")
 	}
 	if len(v.added) != 0 {
-		t.Fatalf("preflight must not partially write distinct identities: got %d", len(v.added))
+		t.Fatalf(
+			"preflight must not partially write distinct identities: got %d",
+			len(v.added),
+		)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("legacy store must survive a conflicting migration: %v", err)
@@ -254,15 +291,25 @@ func TestMigrateRejectsVaultIdentityCollision(t *testing.T) {
 	accounts := twoAccounts()
 	path := writeStore(t, accounts)
 	v := &fakeVault{
-		added:    []ScriptWallet{{ScriptCBOR: accounts[0].ScriptCBOR, ScriptAddress: accounts[0].ScriptAddress}},
-		addedIDs: []string{"other-id"}, addedNames: []string{"Other"}, addedNets: []string{"mainnet"},
+		added: []ScriptWallet{
+			{
+				ScriptCBOR:    accounts[0].ScriptCBOR,
+				ScriptAddress: accounts[0].ScriptAddress,
+			},
+		},
+		addedIDs: []string{
+			"other-id",
+		}, addedNames: []string{"Other"}, addedNets: []string{"mainnet"},
 	}
 
 	if _, err := MigrateStoreToVault(path, v, "vault-pw"); err == nil {
 		t.Fatal("migration must reject a vault identity collision")
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("legacy store must survive a vault identity collision: %v", err)
+		t.Fatalf(
+			"legacy store must survive a vault identity collision: %v",
+			err,
+		)
 	}
 }
 

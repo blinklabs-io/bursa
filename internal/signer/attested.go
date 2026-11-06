@@ -38,7 +38,10 @@ const attestedLoadTimeout = 60 * time.Second
 
 // buildNitroBackend wires an AWS Nitro Enclaves custody backend. Boot fails if
 // attestation does not succeed: an unattested enclave serves no keys.
-func buildNitroBackend(ctx context.Context, c config.SignerBackendConfig) (backend.Backend, error) {
+func buildNitroBackend(
+	ctx context.Context,
+	c config.SignerBackendConfig,
+) (backend.Backend, error) {
 	if c.RootCAFile == "" {
 		return nil, errors.New("nitro backend requires root_ca_file")
 	}
@@ -63,7 +66,10 @@ func buildNitroBackend(ctx context.Context, c config.SignerBackendConfig) (backe
 
 // buildConfidentialSpaceBackend wires a GCP Confidential Space custody
 // backend, with the same fail-closed boot as buildNitroBackend.
-func buildConfidentialSpaceBackend(ctx context.Context, c config.SignerBackendConfig) (backend.Backend, error) {
+func buildConfidentialSpaceBackend(
+	ctx context.Context,
+	c config.SignerBackendConfig,
+) (backend.Backend, error) {
 	jwksURL := c.JWKSURL
 	if jwksURL == "" {
 		jwksURL = backend.ConfidentialSpaceJWKSURL
@@ -77,7 +83,8 @@ func buildConfidentialSpaceBackend(ctx context.Context, c config.SignerBackendCo
 	}
 	verifier, err := backend.NewConfidentialSpaceVerifier(
 		func(ctx context.Context) (jose.JSONWebKeySet, error) { return fetchJWKS(ctx, jwksURL) },
-		c.Audience, c.ImageDigest,
+		c.Audience,
+		c.ImageDigest,
 	)
 	if err != nil {
 		return nil, err
@@ -88,7 +95,10 @@ func buildConfidentialSpaceBackend(ctx context.Context, c config.SignerBackendCo
 // buildArmoryBackend wires a USB armory custody backend. The device answers
 // for one profile and signs its inventory with an identity key pinned here,
 // with the same fail-closed boot as buildNitroBackend.
-func buildArmoryBackend(ctx context.Context, c config.SignerBackendConfig) (backend.Backend, error) {
+func buildArmoryBackend(
+	ctx context.Context,
+	c config.SignerBackendConfig,
+) (backend.Backend, error) {
 	if c.IdentityPublicKey == "" {
 		return nil, errors.New("armory backend requires identity_public_key")
 	}
@@ -139,16 +149,25 @@ func readArmoryHostKey(path string) (ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("not a text envelope: %w", err)
 	}
 	if env.Type != armoryHostKeyType {
-		return nil, fmt.Errorf("envelope type %q, want %q", env.Type, armoryHostKeyType)
+		return nil, fmt.Errorf(
+			"envelope type %q, want %q",
+			env.Type,
+			armoryHostKeyType,
+		)
 	}
 	raw, err := hex.DecodeString(env.CborHex)
-	if err != nil || len(raw) != 2+ed25519.SeedSize || raw[0] != 0x58 || raw[1] != ed25519.SeedSize {
+	if err != nil || len(raw) != 2+ed25519.SeedSize || raw[0] != 0x58 ||
+		raw[1] != ed25519.SeedSize {
 		return nil, errors.New("cborHex is not a 32-byte seed")
 	}
 	return ed25519.NewKeyFromSeed(raw[2:]), nil
 }
 
-func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, verifier backend.AttestationVerifier) (backend.Backend, error) {
+func loadAttestedBackend(
+	ctx context.Context,
+	c config.SignerBackendConfig,
+	verifier backend.AttestationVerifier,
+) (backend.Backend, error) {
 	if c.Address == "" {
 		return nil, fmt.Errorf("%s backend requires address", c.Type)
 	}
@@ -179,12 +198,18 @@ func loadAttestedBackend(ctx context.Context, c config.SignerBackendConfig, veri
 	return loadAttestedEnclave(ctx, c, enclave, verifier)
 }
 
-func loadAttestedEnclave(ctx context.Context, c config.SignerBackendConfig, enclave backend.Enclave, verifier backend.AttestationVerifier) (backend.Backend, error) {
+func loadAttestedEnclave(
+	ctx context.Context,
+	c config.SignerBackendConfig,
+	enclave backend.Enclave,
+	verifier backend.AttestationVerifier,
+) (backend.Backend, error) {
 	mode, err := backend.ParseAttestedProtocolMode(c.Protocol)
 	if err != nil {
 		return nil, err
 	}
-	b := backend.NewProfiledAttestedBackend(c.Name, c.Profile, enclave, verifier).WithProtocolMode(mode)
+	b := backend.NewProfiledAttestedBackend(c.Name, c.Profile, enclave, verifier).
+		WithProtocolMode(mode)
 	loadCtx, cancel := context.WithTimeout(ctx, attestedLoadTimeout)
 	defer cancel()
 	if err := b.Load(loadCtx); err != nil {
@@ -195,13 +220,16 @@ func loadAttestedEnclave(ctx context.Context, c config.SignerBackendConfig, encl
 
 // errJWKSURLPolicy is returned for a JWKS location that is neither HTTPS nor
 // loopback HTTP.
-var errJWKSURLPolicy = errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+var errJWKSURLPolicy = errors.New(
+	"jwks_url must use https; plain http is allowed only for loopback addresses",
+)
 
 // checkJWKSURL applies the JWKS location policy. Keys fetched over cleartext
 // could be substituted in transit, which would let a forged attestation token
 // verify.
 func checkJWKSURL(u *url.URL) error {
-	if u.Scheme != "https" && (u.Scheme != "http" || !backend.IsLoopbackHost(u.Hostname())) {
+	if u.Scheme != "https" &&
+		(u.Scheme != "http" || !backend.IsLoopbackHost(u.Hostname())) {
 		return errJWKSURLPolicy
 	}
 	return nil

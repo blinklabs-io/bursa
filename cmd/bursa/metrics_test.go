@@ -30,7 +30,11 @@ func TestNewMetricsHTTPServerRequiresLoopback(t *testing.T) {
 				ListenPort:    8081,
 			})
 			if err == nil {
-				t.Fatalf("newMetricsHTTPServer(%q) returned server %v without an error", address, server)
+				t.Fatalf(
+					"newMetricsHTTPServer(%q) returned server %v without an error",
+					address,
+					server,
+				)
 			}
 		})
 	}
@@ -44,7 +48,11 @@ func TestNewMetricsHTTPServerRejectsAddressWithPort(t *testing.T) {
 				ListenPort:    8081,
 			})
 			if err == nil {
-				t.Fatalf("newMetricsHTTPServer(%q) returned server %v without an error", address, server)
+				t.Fatalf(
+					"newMetricsHTTPServer(%q) returned server %v without an error",
+					address,
+					server,
+				)
 			}
 		})
 	}
@@ -65,7 +73,11 @@ func TestNewMetricsHTTPServerServesLoopbackMetrics(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("GET /metrics status = %d, want %d", response.Code, http.StatusOK)
+		t.Fatalf(
+			"GET /metrics status = %d, want %d",
+			response.Code,
+			http.StatusOK,
+		)
 	}
 }
 
@@ -80,17 +92,25 @@ func TestNewMetricsHTTPServerFormatsIPv6(t *testing.T) {
 				t.Fatalf("newMetricsHTTPServer: %v", err)
 			}
 			if server == nil {
-				t.Fatal("newMetricsHTTPServer returned nil server for a non-zero port")
+				t.Fatal(
+					"newMetricsHTTPServer returned nil server for a non-zero port",
+				)
 			}
 			if server.Addr != "[::1]:8081" {
-				t.Fatalf("metrics address = %q, want %q", server.Addr, "[::1]:8081")
+				t.Fatalf(
+					"metrics address = %q, want %q",
+					server.Addr,
+					"[::1]:8081",
+				)
 			}
 		})
 	}
 }
 
 func TestNewMetricsHTTPServerDisabled(t *testing.T) {
-	server, err := newMetricsHTTPServer(config.MetricsConfig{ListenAddress: "0.0.0.0"})
+	server, err := newMetricsHTTPServer(
+		config.MetricsConfig{ListenAddress: "0.0.0.0"},
+	)
 	if err != nil {
 		t.Fatalf("disabled metrics listener: %v", err)
 	}

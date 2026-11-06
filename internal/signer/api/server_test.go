@@ -40,11 +40,32 @@ import (
 type fakeCardano struct{ pub ed25519.PublicKey }
 
 func (fakeCardano) Inspect([]byte, uint) (*bursa.TxInspection, error) {
-	return &bursa.TxInspection{TxId: "deadbeef", TTL: 1, Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}}}, nil
+	return &bursa.TxInspection{
+		TxId:    "deadbeef",
+		TTL:     1,
+		Outputs: []bursa.TxOutput{{Address: "addr1ok", Lovelace: "1"}},
+	}, nil
 }
-func (fakeCardano) Operations([]byte, uint) (policy.TxOps, error) { return policy.TxOps{}, nil }
-func (fakeCardano) TxID([]byte, uint) ([]byte, error)             { return make([]byte, 32), nil }
-func (fakeCardano) Assemble([]byte, uint, []lcommon.VkeyWitness) ([]byte, error) {
+
+func (fakeCardano) Operations(
+	[]byte,
+	uint,
+) (policy.TxOps, error) {
+	return policy.TxOps{}, nil
+}
+
+func (fakeCardano) TxID(
+	[]byte,
+	uint,
+) ([]byte, error) {
+	return make([]byte, 32), nil
+}
+
+func (fakeCardano) Assemble(
+	[]byte,
+	uint,
+	[]lcommon.VkeyWitness,
+) ([]byte, error) {
 	return []byte{0x9}, nil
 }
 
@@ -53,12 +74,18 @@ type countingCardano struct {
 	calls int
 }
 
-func (c *countingCardano) Inspect(tx []byte, txType uint) (*bursa.TxInspection, error) {
+func (c *countingCardano) Inspect(
+	tx []byte,
+	txType uint,
+) (*bursa.TxInspection, error) {
 	c.calls++
 	return c.fakeCardano.Inspect(tx, txType)
 }
 
-func (c *countingCardano) Operations(tx []byte, txType uint) (policy.TxOps, error) {
+func (c *countingCardano) Operations(
+	tx []byte,
+	txType uint,
+) (policy.TxOps, error) {
 	c.calls++
 	return c.fakeCardano.Operations(tx, txType)
 }
@@ -68,7 +95,11 @@ func (c *countingCardano) TxID(tx []byte, txType uint) ([]byte, error) {
 	return c.fakeCardano.TxID(tx, txType)
 }
 
-func (c *countingCardano) Assemble(tx []byte, txType uint, wits []lcommon.VkeyWitness) ([]byte, error) {
+func (c *countingCardano) Assemble(
+	tx []byte,
+	txType uint,
+	wits []lcommon.VkeyWitness,
+) ([]byte, error) {
 	c.calls++
 	return c.fakeCardano.Assemble(tx, txType, wits)
 }
@@ -77,11 +108,18 @@ func newTestServer(t *testing.T) (*Server, backend.KeyHash) {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
-	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	pol := policy.KeyPolicy{
+		Hash:            h.String(),
+		AllowedRequests: []string{"tx"},
+		Tx:              &policy.TxPolicy{},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	coord := signer.New(signer.Deps{
 		Resolver:  backend.NewResolver(b),
@@ -89,18 +127,33 @@ func newTestServer(t *testing.T) (*Server, backend.KeyHash) {
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	return NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil }), h
+	return NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		nil,
+		func(string) (string, error) { return "tester", nil },
+	), h
 }
 
-func newCountingTestServer(t *testing.T) (*Server, backend.KeyHash, *countingCardano) {
+func newCountingTestServer(
+	t *testing.T,
+) (*Server, backend.KeyHash, *countingCardano) {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
-	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	pol := policy.KeyPolicy{
+		Hash:            h.String(),
+		AllowedRequests: []string{"tx"},
+		Tx:              &policy.TxPolicy{},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	card := &countingCardano{fakeCardano: fakeCardano{pub: pub}}
 	coord := signer.New(signer.Deps{
@@ -109,13 +162,30 @@ func newCountingTestServer(t *testing.T) (*Server, backend.KeyHash, *countingCar
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   card,
 	})
-	return NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil }), h, card
+	return NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		nil,
+		func(string) (string, error) { return "tester", nil },
+	), h, card
 }
 
 func TestHandleSignTx(t *testing.T) {
 	srv, h := newTestServer(t)
-	body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{h.String()}})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	body, _ := json.Marshal(
+		SignRequest{
+			Type:    "tx",
+			Cbor:    ambiguousBabbageTxHex,
+			Era:     "babbage",
+			Signers: []string{h.String()},
+		},
+	)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req = req.WithContext(context.Background())
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
@@ -131,7 +201,9 @@ func TestHandleSignTx(t *testing.T) {
 	}
 }
 
-func TestHandleSignTxRejectsInvalidSignerListsBeforeCoordinatorWork(t *testing.T) {
+func TestHandleSignTxRejectsInvalidSignerListsBeforeCoordinatorWork(
+	t *testing.T,
+) {
 	tests := []struct {
 		name        string
 		signers     func(t *testing.T, h backend.KeyHash) []string
@@ -190,7 +262,11 @@ func TestHandleSignTxRejectsInvalidSignerListsBeforeCoordinatorWork(t *testing.T
 			if err != nil {
 				t.Fatalf("Marshal: %v", err)
 			}
-			req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/sign",
+				bytes.NewReader(body),
+			)
 			rr := httptest.NewRecorder()
 
 			srv.handleSign(rr, req)
@@ -199,7 +275,10 @@ func TestHandleSignTxRejectsInvalidSignerListsBeforeCoordinatorWork(t *testing.T
 				t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
 			}
 			if card.calls != 0 {
-				t.Fatalf("coordinator Cardano work calls = %d, want 0", card.calls)
+				t.Fatalf(
+					"coordinator Cardano work calls = %d, want 0",
+					card.calls,
+				)
 			}
 			var resp map[string]json.RawMessage
 			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
@@ -221,9 +300,15 @@ func TestHandleSignTxRejectsInvalidSignerListsBeforeCoordinatorWork(t *testing.T
 
 func TestHandleSign_BodyTooLarge(t *testing.T) {
 	srv, _ := newTestServer(t)
-	body := append([]byte(`{"type":"tx","cbor":"`), bytes.Repeat([]byte("a"), 1<<20)...)
+	body := append(
+		[]byte(`{"type":"tx","cbor":"`),
+		bytes.Repeat([]byte("a"), 1<<20)...)
 	body = append(body, []byte(`"}`)...)
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	rr := httptest.NewRecorder()
 
 	srv.handleSign(rr, req)
@@ -250,8 +335,16 @@ func TestHandleListKeys(t *testing.T) {
 // 4xx reasons (denied, not_found) and replaces only 5xx reasons.
 func TestMaskSignerErrors_PerEntry(t *testing.T) {
 	input := []signer.SignerError{
-		{Signer: "a", Code: signer.CodeDenied, Reason: "no policy configured for key a"},
-		{Signer: "b", Code: signer.CodeBackend, Reason: "remote signing failed: connection refused"},
+		{
+			Signer: "a",
+			Code:   signer.CodeDenied,
+			Reason: "no policy configured for key a",
+		},
+		{
+			Signer: "b",
+			Code:   signer.CodeBackend,
+			Reason: "remote signing failed: connection refused",
+		},
 		{Signer: "c", Code: signer.CodeNotFound, Reason: "key not found"},
 	}
 	got := maskSignerErrors(input)
@@ -264,7 +357,11 @@ func TestMaskSignerErrors_PerEntry(t *testing.T) {
 	}
 	// CodeBackend (502) — reason must be replaced.
 	if got[1].Reason != "backend error" {
-		t.Errorf("backend reason should be masked to %q; got %q", "backend error", got[1].Reason)
+		t.Errorf(
+			"backend reason should be masked to %q; got %q",
+			"backend error",
+			got[1].Reason,
+		)
 	}
 	// CodeNotFound (404) — reason must survive unmasked.
 	if got[2].Reason != input[2].Reason {
@@ -290,7 +387,11 @@ func TestHandleSignTx_DeniedReasonSurvives(t *testing.T) {
 		Era:     "babbage",
 		Signers: []string{unknownHash.String()},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req = req.WithContext(context.Background())
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
@@ -308,7 +409,10 @@ func TestHandleSignTx_DeniedReasonSurvives(t *testing.T) {
 	}
 	// The not_found reason must NOT be masked to "backend error".
 	if resp.Errors[0].Reason == "backend error" {
-		t.Errorf("4xx (not_found) reason should not be masked; got %q", resp.Errors[0].Reason)
+		t.Errorf(
+			"4xx (not_found) reason should not be masked; got %q",
+			resp.Errors[0].Reason,
+		)
 	}
 	if resp.Errors[0].Reason == "" {
 		t.Errorf("not_found reason should be non-empty")
@@ -341,7 +445,11 @@ func TestHandleGetKey(t *testing.T) {
 	t.Run("unknown valid-format hash returns 404", func(t *testing.T) {
 		// All-zeros hash has valid format but is not registered.
 		zeroHash := backend.KeyHash{}
-		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+zeroHash.String(), nil)
+		req := httptest.NewRequest(
+			http.MethodGet,
+			"/v1/keys/"+zeroHash.String(),
+			nil,
+		)
 		req.Header.Set("Authorization", "Bearer x")
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
@@ -354,11 +462,18 @@ func TestHandleGetKey(t *testing.T) {
 // newOpCertServer builds a server whose cold key allows the given request
 // types. It returns the server, the cold key hash, and the cold public key so
 // tests can verify produced signatures.
-func newOpCertServer(t *testing.T, allowedRequests []string, acl *CallerACL) (*Server, backend.KeyHash, ed25519.PublicKey) {
+func newOpCertServer(
+	t *testing.T,
+	allowedRequests []string,
+	acl *CallerACL,
+) (*Server, backend.KeyHash, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePool)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePool,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
@@ -373,7 +488,13 @@ func newOpCertServer(t *testing.T, allowedRequests []string, acl *CallerACL) (*S
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+	srv := NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		acl,
+		func(string) (string, error) { return "tester", nil },
+	)
 	return srv, h, pub
 }
 
@@ -393,7 +514,11 @@ func TestHandleSignOpCert_Valid(t *testing.T) {
 		IssueCounter: issueCounter,
 		KesPeriod:    kesPeriod,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req = req.WithContext(context.Background())
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
@@ -416,7 +541,11 @@ func TestHandleSignOpCert_Valid(t *testing.T) {
 		t.Fatalf("signature not hex: %v", err)
 	}
 	if len(sig) != ed25519.SignatureSize {
-		t.Fatalf("expected %d-byte signature, got %d", ed25519.SignatureSize, len(sig))
+		t.Fatalf(
+			"expected %d-byte signature, got %d",
+			ed25519.SignatureSize,
+			len(sig),
+		)
 	}
 	// The signature must verify over the canonical OCertSignable bytes.
 	signable := lcommon.OpCertSignableBytes(kesVkey, issueCounter, kesPeriod)
@@ -448,7 +577,14 @@ func TestHandleSignOpCert_ChainCounter(t *testing.T) {
 			KesPeriod:    kesPeriod,
 		})
 		rr := httptest.NewRecorder()
-		srv.handleSign(rr, httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body)))
+		srv.handleSign(
+			rr,
+			httptest.NewRequest(
+				http.MethodPost,
+				"/v1/sign",
+				bytes.NewReader(body),
+			),
+		)
 		return rr
 	}
 
@@ -464,15 +600,27 @@ func TestHandleSignOpCert_ChainCounter(t *testing.T) {
 		t.Fatalf("issue_counter = %d, want 7", resp.IssueCounter)
 	}
 	sig, _ := hex.DecodeString(resp.Signature)
-	if !ed25519.Verify(coldPub, lcommon.OpCertSignableBytes(kesVkey, 7, kesPeriod), sig) {
+	if !ed25519.Verify(
+		coldPub,
+		lcommon.OpCertSignableBytes(kesVkey, 7, kesPeriod),
+		sig,
+	) {
 		t.Fatal("signature does not verify over issue 7")
 	}
 
 	if rr := post(6); rr.Code != http.StatusOK {
-		t.Fatalf("reissue at chain 6: expected 200, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"reissue at chain 6: expected 200, got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 	if rr := post(5); rr.Code != http.StatusConflict {
-		t.Fatalf("chain 5 after 6: expected 409, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"chain 5 after 6: expected 409, got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 }
 
@@ -482,8 +630,14 @@ func TestHandleSignOpCert_MalformedInput(t *testing.T) {
 	srv, h, _ := newOpCertServer(t, []string{"opcert"}, nil)
 
 	t.Run("non-hex kes_vkey", func(t *testing.T) {
-		body, _ := json.Marshal(SignRequest{Type: "opcert", Key: h.String(), KesVkey: "zzzz"})
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		body, _ := json.Marshal(
+			SignRequest{Type: "opcert", Key: h.String(), KesVkey: "zzzz"},
+		)
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		rr := httptest.NewRecorder()
 		srv.handleSign(rr, req)
 		if rr.Code != http.StatusBadRequest {
@@ -497,11 +651,19 @@ func TestHandleSignOpCert_MalformedInput(t *testing.T) {
 			Key:     h.String(),
 			KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x01}, 16)),
 		})
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		rr := httptest.NewRecorder()
 		srv.handleSign(rr, req)
 		if rr.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for short KES vkey, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 400 for short KES vkey, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 
@@ -511,11 +673,19 @@ func TestHandleSignOpCert_MalformedInput(t *testing.T) {
 			Key:     "nothex",
 			KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x01}, 32)),
 		})
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		rr := httptest.NewRecorder()
 		srv.handleSign(rr, req)
 		if rr.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for invalid key id, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 400 for invalid key id, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 }
@@ -531,11 +701,19 @@ func TestHandleSignOpCert_PolicyDenied(t *testing.T) {
 		Key:     h.String(),
 		KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x02}, 32)),
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for policy denial, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"expected 403 for policy denial, got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 }
 
@@ -546,11 +724,17 @@ func TestHandleSignOpCert_ACLDenied(t *testing.T) {
 	// cold key hash.
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePool)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePool,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
-	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"opcert"}}
+	pol := policy.KeyPolicy{
+		Hash:            h.String(),
+		AllowedRequests: []string{"opcert"},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	coord := signer.New(signer.Deps{
 		Resolver:  backend.NewResolver(b),
@@ -559,7 +743,13 @@ func TestHandleSignOpCert_ACLDenied(t *testing.T) {
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
 	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
-	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+	srv := NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		acl,
+		func(string) (string, error) { return "tester", nil },
+	)
 
 	body, _ := json.Marshal(SignRequest{
 		Type:    "opcert",
@@ -568,22 +758,38 @@ func TestHandleSignOpCert_ACLDenied(t *testing.T) {
 	})
 
 	t.Run("bob denied", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		req = withCaller(req, "bob")
 		rr := httptest.NewRecorder()
 		srv.handleSign(rr, req)
 		if rr.Code != http.StatusForbidden {
-			t.Fatalf("expected 403 for bob, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 403 for bob, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 
 	t.Run("alice allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
 		req = withCaller(req, "alice")
 		rr := httptest.NewRecorder()
 		srv.handleSign(rr, req)
 		if rr.Code != http.StatusOK {
-			t.Fatalf("expected 200 for alice, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 200 for alice, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 }
@@ -622,11 +828,19 @@ func gatherDenyACL(t *testing.T, g prometheus.Gatherer) float64 {
 func TestCallerACLEnforcement(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
-	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx", "cip8"}, Tx: &policy.TxPolicy{}, CIP8: &policy.CIP8Policy{}}
+	pol := policy.KeyPolicy{
+		Hash:            h.String(),
+		AllowedRequests: []string{"tx", "cip8"},
+		Tx:              &policy.TxPolicy{},
+		CIP8:            &policy.CIP8Policy{},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	coord := signer.New(signer.Deps{
 		Resolver:  backend.NewResolver(b),
@@ -641,79 +855,138 @@ func TestCallerACLEnforcement(t *testing.T) {
 
 	// ACL: only "alice" may use the test key; "bob" is unlisted.
 	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
-	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+	srv := NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		acl,
+		func(string) (string, error) { return "tester", nil },
+	)
 
-	t.Run("bob: sign tx returns 403 with denied signer error and increments deny_total", func(t *testing.T) {
-		before := gatherDenyACL(t, metricsReg)
-		body, _ := json.Marshal(SignRequest{Type: "tx", Cbor: ambiguousBabbageTxHex, Era: "babbage", Signers: []string{h.String()}})
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
-		req = withCaller(req, "bob")
-		rr := httptest.NewRecorder()
-		srv.handleSign(rr, req)
-		if rr.Code != http.StatusForbidden {
-			t.Fatalf("expected 403 for bob, got %d: %s", rr.Code, rr.Body.String())
-		}
-		var resp SignTxResponse
-		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if len(resp.Errors) == 0 || resp.Errors[0].Code != signer.CodeDenied {
-			t.Fatalf("expected denied signer error, got %+v", resp.Errors)
-		}
-		after := gatherDenyACL(t, metricsReg)
-		if delta := after - before; delta != 1 {
-			t.Fatalf("expected deny_total{reason=acl} to increase by 1, got delta %v", delta)
-		}
-	})
+	t.Run(
+		"bob: sign tx returns 403 with denied signer error and increments deny_total",
+		func(t *testing.T) {
+			before := gatherDenyACL(t, metricsReg)
+			body, _ := json.Marshal(
+				SignRequest{
+					Type:    "tx",
+					Cbor:    ambiguousBabbageTxHex,
+					Era:     "babbage",
+					Signers: []string{h.String()},
+				},
+			)
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/sign",
+				bytes.NewReader(body),
+			)
+			req = withCaller(req, "bob")
+			rr := httptest.NewRecorder()
+			srv.handleSign(rr, req)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf(
+					"expected 403 for bob, got %d: %s",
+					rr.Code,
+					rr.Body.String(),
+				)
+			}
+			var resp SignTxResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(resp.Errors) == 0 ||
+				resp.Errors[0].Code != signer.CodeDenied {
+				t.Fatalf("expected denied signer error, got %+v", resp.Errors)
+			}
+			after := gatherDenyACL(t, metricsReg)
+			if delta := after - before; delta != 1 {
+				t.Fatalf(
+					"expected deny_total{reason=acl} to increase by 1, got delta %v",
+					delta,
+				)
+			}
+		},
+	)
 
-	t.Run("bob: cip8 sign returns 403 and increments deny_total", func(t *testing.T) {
-		before := gatherDenyACL(t, metricsReg)
-		body, _ := json.Marshal(SignRequest{
-			Type:    "cip8",
-			Payload: "abcd",
-			Address: "addr1q8gg9j5vkzsgz4dz3gfr4kz0f2nwzrqq0yfktqmwwpmaprkl43c7c4d9rg9rmk6z03rl4xt9gjtywtx0m09flxmqzq46ugh",
-			Key:     h.String(),
-		})
-		req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
-		req = withCaller(req, "bob")
-		rr := httptest.NewRecorder()
-		srv.handleSign(rr, req)
-		if rr.Code != http.StatusForbidden {
-			t.Fatalf("expected 403 for bob cip8, got %d: %s", rr.Code, rr.Body.String())
-		}
-		after := gatherDenyACL(t, metricsReg)
-		if delta := after - before; delta != 1 {
-			t.Fatalf("expected deny_total{reason=acl} to increase by 1, got delta %v", delta)
-		}
-	})
+	t.Run(
+		"bob: cip8 sign returns 403 and increments deny_total",
+		func(t *testing.T) {
+			before := gatherDenyACL(t, metricsReg)
+			body, _ := json.Marshal(SignRequest{
+				Type:    "cip8",
+				Payload: "abcd",
+				Address: "addr1q8gg9j5vkzsgz4dz3gfr4kz0f2nwzrqq0yfktqmwwpmaprkl43c7c4d9rg9rmk6z03rl4xt9gjtywtx0m09flxmqzq46ugh",
+				Key:     h.String(),
+			})
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/sign",
+				bytes.NewReader(body),
+			)
+			req = withCaller(req, "bob")
+			rr := httptest.NewRecorder()
+			srv.handleSign(rr, req)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf(
+					"expected 403 for bob cip8, got %d: %s",
+					rr.Code,
+					rr.Body.String(),
+				)
+			}
+			after := gatherDenyACL(t, metricsReg)
+			if delta := after - before; delta != 1 {
+				t.Fatalf(
+					"expected deny_total{reason=acl} to increase by 1, got delta %v",
+					delta,
+				)
+			}
+		},
+	)
 
-	t.Run("bob: list keys returns empty list (view filter, not counted)", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
-		req = withCaller(req, "bob")
-		rr := httptest.NewRecorder()
-		srv.handleListKeys(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rr.Code)
-		}
-		var keys []KeyInfo
-		if err := json.Unmarshal(rr.Body.Bytes(), &keys); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if len(keys) != 0 {
-			t.Fatalf("expected empty key list for bob, got %d keys", len(keys))
-		}
-	})
+	t.Run(
+		"bob: list keys returns empty list (view filter, not counted)",
+		func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
+			req = withCaller(req, "bob")
+			rr := httptest.NewRecorder()
+			srv.handleListKeys(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rr.Code)
+			}
+			var keys []KeyInfo
+			if err := json.Unmarshal(rr.Body.Bytes(), &keys); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(keys) != 0 {
+				t.Fatalf(
+					"expected empty key list for bob, got %d keys",
+					len(keys),
+				)
+			}
+		},
+	)
 
-	t.Run("bob: get key by hash returns 404 (no existence oracle)", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
-		req.SetPathValue("hash", h.String())
-		req = withCaller(req, "bob")
-		rr := httptest.NewRecorder()
-		srv.handleGetKey(rr, req)
-		if rr.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 for bob on key detail, got %d: %s", rr.Code, rr.Body.String())
-		}
-	})
+	t.Run(
+		"bob: get key by hash returns 404 (no existence oracle)",
+		func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/v1/keys/"+h.String(),
+				nil,
+			)
+			req.SetPathValue("hash", h.String())
+			req = withCaller(req, "bob")
+			rr := httptest.NewRecorder()
+			srv.handleGetKey(rr, req)
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf(
+					"expected 404 for bob on key detail, got %d: %s",
+					rr.Code,
+					rr.Body.String(),
+				)
+			}
+		},
+	)
 
 	t.Run("alice: list keys returns the key", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/keys", nil)
@@ -739,7 +1012,11 @@ func TestCallerACLEnforcement(t *testing.T) {
 		rr := httptest.NewRecorder()
 		srv.handleGetKey(rr, req)
 		if rr.Code != http.StatusOK {
-			t.Fatalf("expected 200 for alice on key detail, got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf(
+				"expected 200 for alice on key detail, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
 		}
 	})
 }
@@ -750,11 +1027,18 @@ func TestCallerACLEnforcement(t *testing.T) {
 func TestCallerACL_PartialAllow(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
-	pol := policy.KeyPolicy{Hash: h.String(), AllowedRequests: []string{"tx"}, Tx: &policy.TxPolicy{}}
+	pol := policy.KeyPolicy{
+		Hash:            h.String(),
+		AllowedRequests: []string{"tx"},
+		Tx:              &policy.TxPolicy{},
+	}
 	eng, _ := policy.NewEngine([]policy.KeyPolicy{pol})
 	coord := signer.New(signer.Deps{
 		Resolver:  backend.NewResolver(b),
@@ -771,7 +1055,13 @@ func TestCallerACL_PartialAllow(t *testing.T) {
 
 	// ACL: alice may use h but NOT deniedHash.
 	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
-	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+	srv := NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		acl,
+		func(string) (string, error) { return "tester", nil },
+	)
 
 	body, _ := json.Marshal(SignRequest{
 		Type:    "tx",
@@ -779,26 +1069,45 @@ func TestCallerACL_PartialAllow(t *testing.T) {
 		Era:     "babbage",
 		Signers: []string{h.String(), deniedHash.String()},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req = withCaller(req, "alice")
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
 
 	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 for partial allow, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"expected 200 for partial allow, got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 	var resp SignTxResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(resp.Witnesses) != 1 {
-		t.Fatalf("expected exactly 1 witness for the allowed signer, got %d", len(resp.Witnesses))
+		t.Fatalf(
+			"expected exactly 1 witness for the allowed signer, got %d",
+			len(resp.Witnesses),
+		)
 	}
 	if len(resp.Errors) != 1 {
-		t.Fatalf("expected exactly 1 error for the denied signer, got %d: %+v", len(resp.Errors), resp.Errors)
+		t.Fatalf(
+			"expected exactly 1 error for the denied signer, got %d: %+v",
+			len(resp.Errors),
+			resp.Errors,
+		)
 	}
 	if resp.Errors[0].Code != signer.CodeDenied {
-		t.Fatalf("expected denied error code, got %q: %+v", resp.Errors[0].Code, resp.Errors[0])
+		t.Fatalf(
+			"expected denied error code, got %q: %+v",
+			resp.Errors[0].Code,
+			resp.Errors[0],
+		)
 	}
 	if resp.Errors[0].Reason != "caller is not authorized for this key" {
 		t.Fatalf("unexpected deny reason: %q", resp.Errors[0].Reason)
@@ -832,7 +1141,13 @@ func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
 	deniedHash[1] = 0xad
 
 	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {allowedMissing}})
-	srv := NewServer(coord, backend.NewResolver(b), eng, acl, func(string) (string, error) { return "tester", nil })
+	srv := NewServer(
+		coord,
+		backend.NewResolver(b),
+		eng,
+		acl,
+		func(string) (string, error) { return "tester", nil },
+	)
 
 	body, _ := json.Marshal(SignRequest{
 		Type:    "tx",
@@ -840,13 +1155,21 @@ func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
 		Era:     "babbage",
 		Signers: []string{allowedMissing.String(), deniedHash.String()},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
 	req = withCaller(req, "alice")
 	rr := httptest.NewRecorder()
 	srv.handleSign(rr, req)
 
 	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 from coordinator not_found, got %d: %s", rr.Code, rr.Body.String())
+		t.Fatalf(
+			"expected 404 from coordinator not_found, got %d: %s",
+			rr.Code,
+			rr.Body.String(),
+		)
 	}
 	var resp SignTxResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
@@ -863,7 +1186,10 @@ func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
 		}
 	}
 	if !sawDenied || !sawNotFound {
-		t.Fatalf("expected both denied and not_found errors in body, got %+v", resp.Errors)
+		t.Fatalf(
+			"expected both denied and not_found errors in body, got %+v",
+			resp.Errors,
+		)
 	}
 }
 
@@ -873,7 +1199,10 @@ func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
 func TestGetKey_PolicySummary(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	b := backend.NewSoftwareBackend("software")
-	h, err := b.AddKey(&bursa.LoadedKey{SKey: []byte(priv), VKey: pub}, backend.KeyTypePayment)
+	h, err := b.AddKey(
+		&bursa.LoadedKey{SKey: []byte(priv), VKey: pub},
+		backend.KeyTypePayment,
+	)
 	if err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
@@ -893,7 +1222,13 @@ func TestGetKey_PolicySummary(t *testing.T) {
 			Watermark: watermark.NewMemWatermark(),
 			Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 		})
-		srv := NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil })
+		srv := NewServer(
+			coord,
+			backend.NewResolver(b),
+			eng,
+			nil,
+			func(string) (string, error) { return "tester", nil },
+		)
 		handler := srv.Handler()
 
 		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
@@ -910,48 +1245,71 @@ func TestGetKey_PolicySummary(t *testing.T) {
 		if info.Policy == nil {
 			t.Fatal("expected non-nil policy summary")
 		}
-		if len(info.Policy.AllowedRequests) != 1 || info.Policy.AllowedRequests[0] != "tx" {
-			t.Errorf("expected AllowedRequests=[tx], got %v", info.Policy.AllowedRequests)
+		if len(info.Policy.AllowedRequests) != 1 ||
+			info.Policy.AllowedRequests[0] != "tx" {
+			t.Errorf(
+				"expected AllowedRequests=[tx], got %v",
+				info.Policy.AllowedRequests,
+			)
 		}
 		if info.Policy.Tx == nil {
 			t.Fatal("expected non-nil Tx policy")
 		}
 		if info.Policy.Tx.MaxOutputAda != 5000 {
-			t.Errorf("expected MaxOutputAda=5000, got %d", info.Policy.Tx.MaxOutputAda)
+			t.Errorf(
+				"expected MaxOutputAda=5000, got %d",
+				info.Policy.Tx.MaxOutputAda,
+			)
 		}
 		if info.Policy.CIP8 != nil {
 			t.Errorf("expected nil CIP8 policy, got %+v", info.Policy.CIP8)
 		}
 	})
 
-	t.Run("key without policy entry returns null policy (deny-by-default)", func(t *testing.T) {
-		// Engine has no entry for h — deny-by-default.
-		eng, err := policy.NewEngine([]policy.KeyPolicy{})
-		if err != nil {
-			t.Fatalf("NewEngine: %v", err)
-		}
-		coord := signer.New(signer.Deps{
-			Resolver:  backend.NewResolver(b),
-			Policy:    eng,
-			Watermark: watermark.NewMemWatermark(),
-			Cardano:   operation.Cardano(fakeCardano{pub: pub}),
-		})
-		srv := NewServer(coord, backend.NewResolver(b), eng, nil, func(string) (string, error) { return "tester", nil })
-		handler := srv.Handler()
+	t.Run(
+		"key without policy entry returns null policy (deny-by-default)",
+		func(t *testing.T) {
+			// Engine has no entry for h — deny-by-default.
+			eng, err := policy.NewEngine([]policy.KeyPolicy{})
+			if err != nil {
+				t.Fatalf("NewEngine: %v", err)
+			}
+			coord := signer.New(signer.Deps{
+				Resolver:  backend.NewResolver(b),
+				Policy:    eng,
+				Watermark: watermark.NewMemWatermark(),
+				Cardano:   operation.Cardano(fakeCardano{pub: pub}),
+			})
+			srv := NewServer(
+				coord,
+				backend.NewResolver(b),
+				eng,
+				nil,
+				func(string) (string, error) { return "tester", nil },
+			)
+			handler := srv.Handler()
 
-		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String(), nil)
-		req.Header.Set("Authorization", "Bearer x")
-		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
-		}
-		var info KeyInfo
-		if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if info.Policy != nil {
-			t.Errorf("expected nil policy for key with no policy entry, got %+v", info.Policy)
-		}
-	})
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/v1/keys/"+h.String(),
+				nil,
+			)
+			req.Header.Set("Authorization", "Bearer x")
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+			}
+			var info KeyInfo
+			if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if info.Policy != nil {
+				t.Errorf(
+					"expected nil policy for key with no policy entry, got %+v",
+					info.Policy,
+				)
+			}
+		},
+	)
 }

@@ -30,7 +30,13 @@ import (
 // seed blob so the migration is exercised with seeds present. seal must be the
 // same primitive the Vault under test uses (the cheap test KDF) so the produced
 // blobs decrypt.
-func writeFormat1Vault(t *testing.T, path string, seal keystore.Sealer, idx *index, seeds map[string]keystore.Container) {
+func writeFormat1Vault(
+	t *testing.T,
+	path string,
+	seal keystore.Sealer,
+	idx *index,
+	seeds map[string]keystore.Container,
+) {
 	t.Helper()
 	plain, err := json.Marshal(idx)
 	if err != nil {
@@ -68,7 +74,11 @@ func writeFormat1Vault(t *testing.T, path string, seal keystore.Sealer, idx *ind
 
 // sealSeed seals a mnemonic under a spend password into a Container, mirroring
 // how the vault stores a seed, for building a format-1 fixture with a wallet.
-func sealSeed(t *testing.T, seal keystore.Sealer, mnemonic, spendPassword string) keystore.Container {
+func sealSeed(
+	t *testing.T,
+	seal keystore.Sealer,
+	mnemonic, spendPassword string,
+) keystore.Container {
 	t.Helper()
 	blob, err := seal([]byte(mnemonic), spendPassword)
 	if err != nil {
@@ -128,7 +138,10 @@ func TestFormat1VaultUnlocksAndUpgrades(t *testing.T) {
 		t.Fatalf("Unlock format-1 vault: %v", err)
 	}
 	if len(wallets) != 1 || wallets[0].ID != id {
-		t.Fatalf("format-1 unlock wallets = %+v, want the single legacy wallet", wallets)
+		t.Fatalf(
+			"format-1 unlock wallets = %+v, want the single legacy wallet",
+			wallets,
+		)
 	}
 
 	// (2) Unlock upgraded the file in place to format 2 with a key section.
@@ -159,7 +172,10 @@ func TestFormat1VaultUnlocksAndUpgrades(t *testing.T) {
 		t.Fatalf("Unlock after upgrade: %v", err)
 	}
 	if len(wallets2) != 1 || wallets2[0].ID != id {
-		t.Fatalf("post-upgrade wallets = %+v, want the single legacy wallet", wallets2)
+		t.Fatalf(
+			"post-upgrade wallets = %+v, want the single legacy wallet",
+			wallets2,
+		)
 	}
 
 	// (4) The seed still decrypts under its own spend password (seeds were not
@@ -199,7 +215,10 @@ func TestFormat1VaultWrongPasswordFails(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if string(probe["format"]) != "1" {
-		t.Fatalf("format after failed unlock = %s, want 1 (unchanged)", probe["format"])
+		t.Fatalf(
+			"format after failed unlock = %s, want 1 (unchanged)",
+			probe["format"],
+		)
 	}
 }
 
@@ -237,7 +256,14 @@ func TestFormat2WithoutWalletCountUnlocksReadOnly(t *testing.T) {
 	if err := v1.Create(vaultPw); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	meta, err := v1.AddWallet("main", mnemonicA, "preview", vaultPw, spendPwA, window)
+	meta, err := v1.AddWallet(
+		"main",
+		mnemonicA,
+		"preview",
+		vaultPw,
+		spendPwA,
+		window,
+	)
 	if err != nil {
 		t.Fatalf("AddWallet: %v", err)
 	}

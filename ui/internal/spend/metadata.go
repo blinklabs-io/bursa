@@ -68,24 +68,40 @@ func walletCredential(acct *wallet.Account, kind SignerKind) ([28]byte, error) {
 	switch kind {
 	case SignerPayment:
 		switch addr.Type() {
-		case lcommon.AddressTypeKeyKey, lcommon.AddressTypeKeyScript, lcommon.AddressTypeKeyPointer, lcommon.AddressTypeKeyNone:
+		case lcommon.AddressTypeKeyKey,
+			lcommon.AddressTypeKeyScript,
+			lcommon.AddressTypeKeyPointer,
+			lcommon.AddressTypeKeyNone:
 			return addr.PaymentKeyHash(), nil
 		}
-		return [28]byte{}, fmt.Errorf("%w: wallet payment credential is not a key", ErrInvalidRequest)
+		return [28]byte{}, fmt.Errorf(
+			"%w: wallet payment credential is not a key",
+			ErrInvalidRequest,
+		)
 	case SignerStake:
 		switch addr.Type() {
 		case lcommon.AddressTypeKeyKey, lcommon.AddressTypeScriptKey:
 			return addr.StakeKeyHash(), nil
 		}
-		return [28]byte{}, fmt.Errorf("%w: wallet has no stake key", ErrInvalidRequest)
+		return [28]byte{}, fmt.Errorf(
+			"%w: wallet has no stake key",
+			ErrInvalidRequest,
+		)
 	case SignerDRep:
 		drep, err := drepFromHex(acct.DRepKeyHash)
 		if err != nil {
-			return [28]byte{}, fmt.Errorf("%w: wallet has no DRep key", ErrInvalidRequest)
+			return [28]byte{}, fmt.Errorf(
+				"%w: wallet has no DRep key",
+				ErrInvalidRequest,
+			)
 		}
 		return [28]byte(drep.Credential), nil
 	}
-	return [28]byte{}, fmt.Errorf("%w: unknown signer kind %q", ErrInvalidRequest, kind)
+	return [28]byte{}, fmt.Errorf(
+		"%w: unknown signer kind %q",
+		ErrInvalidRequest,
+		kind,
+	)
 }
 
 // BuildMetadata builds a metadata-only transaction for preview and later
@@ -95,13 +111,19 @@ func walletCredential(acct *wallet.Account, kind SignerKind) ([28]byte, error) {
 // The pending transaction is software-signed only: hardware devices are shown
 // the structured fields of a body and never the auxiliary data it commits to,
 // so HardwareSignRequest keeps rejecting such a body.
-func (s *Service) BuildMetadata(ctx context.Context, req MetadataRequest) (Preview, error) {
+func (s *Service) BuildMetadata(
+	ctx context.Context,
+	req MetadataRequest,
+) (Preview, error) {
 	walletID, acct, gen := s.currentBinding()
 	if acct == nil {
 		return Preview{}, ErrNoWallet
 	}
 	if req.Value == nil {
-		return Preview{}, fmt.Errorf("%w: metadata value required", ErrInvalidRequest)
+		return Preview{}, fmt.Errorf(
+			"%w: metadata value required",
+			ErrInvalidRequest,
+		)
 	}
 	credential, err := walletCredential(acct, req.Signer)
 	if err != nil {
@@ -111,10 +133,16 @@ func (s *Service) BuildMetadata(ctx context.Context, req MetadataRequest) (Previ
 		return Preview{}, ErrWalletChanged
 	}
 
-	a, utxoAddr, err := s.completeWithSigners(ctx, acct, []lcommon.Blake2b224{credential},
+	a, utxoAddr, err := s.completeWithSigners(
+		ctx,
+		acct,
+		[]lcommon.Blake2b224{credential},
 		func(next *apollo.Apollo) (*apollo.Apollo, error) {
-			return next.SetShelleyMetadata(map[uint64]any{req.Label: req.Value}), nil
-		})
+			return next.SetShelleyMetadata(
+				map[uint64]any{req.Label: req.Value},
+			), nil
+		},
+	)
 	if err != nil {
 		return Preview{}, err
 	}
