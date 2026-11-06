@@ -477,3 +477,30 @@ func TestOpCertNextRefusesNumberBelowLastIssued(t *testing.T) {
 	// the pool forges with the explicitly issued 6: renewal still works
 	requireIssued(t, w, nextRequest(w, 2, 6, 60), 7)
 }
+
+// Explicit issues 0, 1 and 2 at period 30, then chain 0 (which selects issue
+// 1) at a lower period: refused, and issue 2 and its period stay recorded.
+func TestOpCertNextChainZeroAfterExplicitThree(t *testing.T) {
+	t.Parallel()
+	w := cloudWorkload(t, &memoryStore{}, &memoryCounterObject{})
+	for i := range 3 {
+		payload := lcommon.OpCertSignableBytes(
+			bytes.Repeat([]byte{0x23}, 32), uint64(i), 30,
+		)
+		resp, err := w.Sign(t.Context(), backend.AttestedRequest{
+			Version: backend.AttestedProtocol,
+			Purpose: backend.PurposeOpCert,
+			KeyHash: w.hash.String(),
+			Role:    backend.KeyTypePool,
+			Nonce:   bytes.Repeat([]byte{byte(10 + i)}, 32),
+			Payload: payload,
+		})
+		if err != nil || resp.Error != "" {
+			t.Fatalf("explicit issue %d: %+v err=%v", i, resp, err)
+		}
+	}
+	requireRefused(t, w, nextRequest(w, 1, 0, 20), refusalBackdated)
+	// issue 2 is still the last issued: a lower period for it is refused
+	requireRefused(t, w, nextRequest(w, 2, 1, 20), refusalBackdated)
+	requireIssued(t, w, nextRequest(w, 3, 1, 30), 2)
+}
