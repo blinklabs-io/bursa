@@ -119,10 +119,7 @@ func confidentialSpaceCommand() *cobra.Command {
 					counter, err := confidentialspace.NewProfiledCloudCounterStore(
 						ctx,
 						counterBucket,
-						confidentialspace.ProfileCounterObject(
-							counterObject,
-							profile,
-						),
+						counterObject,
 						profile,
 						wifCredentials,
 					)
@@ -191,11 +188,11 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringVar(&counterBucket, "counter-bucket", "", "Cloud Storage bucket for the pool issue counter")
 	cmd.Flags().
-		StringVar(&counterObject, "counter-object", "", "Cloud Storage object for the pool issue counter")
+		StringVar(&counterObject, "counter-object", "", "Cloud Storage object for the pool issue counter; with --profile, the base name of each profile's counter object")
 	cmd.Flags().
-		StringArrayVar(&profiles, "profile", nil, "serve the key under this profile, repeatable; counter state moves to <counter-object>/profiles/<profile> and requests without a profile are refused")
+		StringArrayVar(&profiles, "profile", nil, "serve the key under this profile, repeatable; each profile has its own counter object <counter-object>/profiles/<profile>, which does not take over the --counter-object state, and requests without a profile are refused")
 	cmd.Flags().
-		BoolVar(&createProfiles, "create-profile-counters", false, "create the counter state of a --profile that has none yet, for the start that adds a profile")
+		BoolVar(&createProfiles, "create-profile-counters", false, "create the missing counter object of a --profile, for the one start that adds a profile; a deleted counter object is recreated empty too")
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().

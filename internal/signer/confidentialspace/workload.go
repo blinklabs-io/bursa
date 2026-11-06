@@ -94,10 +94,11 @@ type Config struct {
 	Store    EnvelopeStore
 	Counter  CounterStore
 	// Profiles serves the key under each named profile, every one with its
-	// own counter store. Exclusive with Counter.
+	// own counter store bound to that profile, as NewProfiledCloudCounterStore
+	// returns. Exclusive with Counter.
 	Profiles map[string]CounterStore
 	// CreateProfileCounters lets a start create the counter state of a
-	// profile that has none yet.
+	// profile that has none yet. It requires Profiles.
 	CreateProfileCounters bool
 }
 
@@ -206,6 +207,12 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	}, nil
 }
 
+// profileBoundCounter is a counter store that reports the profile whose
+// state it holds, "" for the unprofiled state.
+type profileBoundCounter interface {
+	counterProfile() string
+}
+
 // serviceCounters returns the counter store of every profile the workload
 // serves: the single unprofiled store, or the configured profiles, never both.
 func serviceCounters(cfg Config) (map[string]CounterStore, error) {
@@ -213,6 +220,17 @@ func serviceCounters(cfg Config) (map[string]CounterStore, error) {
 		if cfg.Counter == nil {
 			return nil, errors.New(
 				"confidential space workload requires token, KMS, envelope, and counter providers",
+			)
+		}
+		if cfg.CreateProfileCounters {
+			return nil, errors.New(
+				"profile counter creation requires profiles",
+			)
+		}
+		if bound, ok := cfg.Counter.(profileBoundCounter); ok &&
+			bound.counterProfile() != "" {
+			return nil, errors.New(
+				"the unprofiled counter store holds a profile's state",
 			)
 		}
 		return map[string]CounterStore{"": cfg.Counter}, nil
@@ -229,6 +247,13 @@ func serviceCounters(cfg Config) (map[string]CounterStore, error) {
 		}
 		if store == nil {
 			return nil, fmt.Errorf("profile %q has no counter store", name)
+		}
+		bound, ok := store.(profileBoundCounter)
+		if !ok || bound.counterProfile() != name {
+			return nil, fmt.Errorf(
+				"counter store of profile %q is not bound to that profile",
+				name,
+			)
 		}
 		counters[name] = store
 	}

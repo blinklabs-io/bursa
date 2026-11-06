@@ -101,6 +101,12 @@ type CloudCounterStore struct {
 	profile string
 }
 
+// counterProfile is the profile whose state the store holds, "" for the
+// unprofiled state.
+func (s *CloudCounterStore) counterProfile() string {
+	return s.profile
+}
+
 // Prepare binds the counter object to key. A missing object is created only
 // while the wrapped key identity is being created.
 func (s *CloudCounterStore) Prepare(
@@ -143,14 +149,21 @@ func NewCloudCounterStore(
 	return newCloudCounterStore(ctx, bucket, object, "", credentialFile)
 }
 
-// ProfileCounterObject is the name of the counter object of profile under
+// errCounterLocationRequired refuses a counter store without a bucket or an
+// object name.
+var errCounterLocationRequired = errors.New(
+	"counter bucket and object are required",
+)
+
+// profileCounterObject is the name of the counter object of profile under
 // the base counter object name.
-func ProfileCounterObject(object, profile string) string {
+func profileCounterObject(object, profile string) string {
 	return object + "/profiles/" + profile
 }
 
 // NewProfiledCloudCounterStore is NewCloudCounterStore for the state of one
-// profile. The object records the profile, and is refused for any other.
+// profile, held in the object profileCounterObject(object, profile). The
+// object records the profile, and is refused for any other.
 func NewProfiledCloudCounterStore(
 	ctx context.Context,
 	bucket, object, profile, credentialFile string,
@@ -158,7 +171,16 @@ func NewProfiledCloudCounterStore(
 	if err := ValidateProfile(profile); err != nil {
 		return nil, err
 	}
-	return newCloudCounterStore(ctx, bucket, object, profile, credentialFile)
+	if strings.TrimSpace(object) == "" {
+		return nil, errCounterLocationRequired
+	}
+	return newCloudCounterStore(
+		ctx,
+		bucket,
+		profileCounterObject(object, profile),
+		profile,
+		credentialFile,
+	)
 }
 
 func newCloudCounterStore(
@@ -166,7 +188,7 @@ func newCloudCounterStore(
 	bucket, object, profile, credentialFile string,
 ) (*CloudCounterStore, error) {
 	if strings.TrimSpace(bucket) == "" || strings.TrimSpace(object) == "" {
-		return nil, errors.New("counter bucket and object are required")
+		return nil, errCounterLocationRequired
 	}
 	if err := validateWIFCredentials(credentialFile); err != nil {
 		return nil, err

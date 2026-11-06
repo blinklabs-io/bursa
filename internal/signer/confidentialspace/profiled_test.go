@@ -435,25 +435,38 @@ func TestProfiledConfigValidation(t *testing.T) {
 			Wrapper: &testWrapper{},
 		}
 	}
+	// bound is a counter store bound to profile, so each case is refused by
+	// its own rule rather than by the store binding.
+	bound := func(profile string) CounterStore {
+		return &CloudCounterStore{
+			object:  &memoryCounterObject{},
+			profile: profile,
+		}
+	}
+	long := strings.Repeat("p", 33)
 	for name, mutate := range map[string]func(*Config){
 		"counter and profiles": func(c *Config) {
 			c.Counter = &memoryStore{}
-			c.Profiles = map[string]CounterStore{"p": &memoryStore{}}
+			c.Profiles = map[string]CounterStore{"p": bound("p")}
 		},
 		"empty profile name": func(c *Config) {
-			c.Profiles = map[string]CounterStore{"": &memoryStore{}}
+			c.Profiles = map[string]CounterStore{"": bound("")}
 		},
 		"nil profile counter": func(c *Config) {
 			c.Profiles = map[string]CounterStore{"p": nil}
 		},
 		"no counter": func(c *Config) {},
 		"profile name longer than armory allows": func(c *Config) {
-			c.Profiles = map[string]CounterStore{
-				strings.Repeat("p", 33): &memoryStore{},
-			}
+			c.Profiles = map[string]CounterStore{long: bound(long)}
 		},
 		"profile name with a slash": func(c *Config) {
-			c.Profiles = map[string]CounterStore{"pool/mainnet": &memoryStore{}}
+			c.Profiles = map[string]CounterStore{
+				"pool/mainnet": bound("pool/mainnet"),
+			}
+		},
+		"profile counter creation without profiles": func(c *Config) {
+			c.Counter = &memoryStore{}
+			c.CreateProfileCounters = true
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -708,5 +721,68 @@ func TestProxyProfileSwapIsRefused(t *testing.T) {
 	if _, _, err := strip.SignOpCertNext(t.Context(), kes, 0, 100); err == nil ||
 		errors.Is(err, backend.ErrInvalidSignature) {
 		t.Fatalf("stripped profile: err = %v, want an enclave refusal", err)
+	}
+}
+
+// A profile's counter store must hold that profile's state: a store bound to
+// one profile must not serve another, and the unprofiled counter must not be
+// a profile's store.
+func TestProfileCounterStoreMustBeBoundToItsProfile(t *testing.T) {
+	t.Parallel()
+	for name, configure := range map[string]func(*Config, CounterStore){
+		"one store under two profiles": func(c *Config, s CounterStore) {
+			c.Profiles = map[string]CounterStore{
+				profileMainnet: s,
+				profilePreview: s,
+			}
+		},
+		"store under another profile": func(c *Config, s CounterStore) {
+			c.Profiles = map[string]CounterStore{profilePreview: s}
+		},
+		"profile store as the unprofiled counter": func(c *Config, s CounterStore) {
+			c.Counter = s
+		},
+		"store bound to no profile": func(c *Config, _ CounterStore) {
+			c.Profiles = map[string]CounterStore{profileMainnet: &memoryStore{}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			obj := &memoryCounterObject{}
+			cfg := Config{
+				Audience: "https://signer.example/pool",
+				KMSKey:   testKMSKey,
+				Tokens:   &testTokens{},
+				Wrapper:  &testWrapper{},
+				Store:    &memoryStore{},
+			}
+			configure(&cfg, &CloudCounterStore{object: obj, profile: profileMainnet})
+			if w, err := New(t.Context(), cfg); err == nil {
+				_ = w.Close()
+				t.Fatal("New accepted the configuration")
+			}
+			if obj.data != nil {
+				t.Fatal("refused configuration wrote the counter")
+			}
+		})
+	}
+}
+
+// The profile counter object is derived from --counter-object, so an empty
+// base name is refused rather than composed into "/profiles/<profile>".
+func TestProfiledCounterStoreNeedsBaseObject(t *testing.T) {
+	t.Parallel()
+	for _, base := range []string{"", "  "} {
+		_, err := NewProfiledCloudCounterStore(
+			t.Context(), "bucket", base, profileMainnet, "",
+		)
+		if !errors.Is(err, errCounterLocationRequired) {
+			t.Errorf("base %q: err = %v, want the missing object refusal", base, err)
+		}
+	}
+	if got, want := profileCounterObject(
+		"pool-cold/counter.json", profileMainnet,
+	), "pool-cold/counter.json/profiles/pool@mainnet"; got != want {
+		t.Fatalf("profile counter object = %q, want %q", got, want)
 	}
 }
