@@ -88,8 +88,18 @@ func TestLoadSecretKeyFromFileWindowsAllowsOwner(t *testing.T) {
 		path,
 		fmt.Sprintf("D:P(A;;GA;;;%s)", bursaCurrentUserSID(t)),
 	)
+	// An elevated process's default owner is BUILTIN\Administrators, which
+	// the policy rejects, so make the current user the owner explicitly.
+	owner, err := windows.StringToSid(bursaCurrentUserSID(t))
+	require.NoError(t, err)
+	require.NoError(t, windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION,
+		owner, nil, nil, nil,
+	))
 
-	_, err := LoadSecretKeyFromFile(path)
+	_, err = LoadSecretKeyFromFile(path)
 	assert.NoError(t, err)
 }
 
@@ -176,5 +186,22 @@ func TestWindowsRejectsDifferentOwner(t *testing.T) {
 		t,
 		checkOpenSecurityDescriptor("test.skey", descriptor),
 		ErrInsecureFileMode,
+	)
+}
+
+// SDDL writes the built-in local Administrator as "LA" rather than its SID, so
+// that account's own owner-only DACL must pass without depending on which
+// account runs the test.
+func TestCheckSecurityDescriptorAcceptsTheUserSDDLAlias(t *testing.T) {
+	descriptor, err := windows.SecurityDescriptorFromString(
+		"O:LAD:P(A;;GA;;;LA)",
+	)
+	require.NoError(t, err)
+	require.Contains(t, descriptor.String(), ";;;LA)")
+	owner, _, err := descriptor.Owner()
+	require.NoError(t, err)
+	assert.NoError(
+		t,
+		checkSecurityDescriptorForUser("alias", descriptor, owner.String()),
 	)
 }

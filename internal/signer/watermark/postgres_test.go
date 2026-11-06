@@ -205,6 +205,11 @@ func TestPostgres_RaiseFloor(t *testing.T) {
 	}
 }
 
+func TestPostgres_CommitCountersFloorFrom(t *testing.T) {
+	// the CI database is shared across runs, so each run uses a fresh key
+	runCommitCountersFloorFrom(t, newTestPG(t, testPGDSN(t)), randKey(t))
+}
+
 func TestPostgres_CounterPerKeyIsolation(t *testing.T) {
 	dsn := testPGDSN(t)
 	wm := newTestPG(t, dsn)
@@ -478,4 +483,10 @@ func TestPostgres_PingHonorsCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Ping canceled context: want context.Canceled, got %v", err)
 	}
+}
+
+func TestPostgres_CheckAndCommitCounters(t *testing.T) {
+	t.Parallel()
+	// the CI database is shared across runs, so each run uses a fresh key
+	runCheckAndCommitCounters(t, newTestPG(t, testPGDSN(t)), randKey(t))
 }

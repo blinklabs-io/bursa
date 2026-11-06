@@ -358,3 +358,71 @@ func (s *PostgresWatermark) CheckAndRaiseFloor(
 	}
 	return nil
 }
+
+// postgresCounterUpsert returns the guarded upsert for op and its extra
+// arguments. The guards and "C" collation match the single-scope methods.
+func postgresCounterUpsert(op CounterOp) (string, []any) {
+	var guard string
+	var extra []any
+	switch op.Kind {
+	case CounterFloor:
+		guard = `(EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")`
+	case CounterFloorFrom:
+		guard = `(EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")
+		   AND (signer_counter_watermark.counter COLLATE "C") >= ($3 COLLATE "C")`
+		extra = []any{counterEncode(op.Min)}
+	case CounterStrict:
+		guard = `(EXCLUDED.counter COLLATE "C") > (signer_counter_watermark.counter COLLATE "C")`
+	default:
+		guard = `false`
+	}
+	return `INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
+		 ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
+		 WHERE ` + guard + `
+		 RETURNING counter`, extra
+}
+
+// CheckAndCommitCounters applies every op's guarded upsert in one
+// transaction and rolls back on the first refusal. Each upsert locks its row
+// until commit, and ops run in argument order, so concurrent callers serialize
+// per row.
+func (s *PostgresWatermark) CheckAndCommitCounters(
+	ctx context.Context,
+	key backend.KeyHash,
+	ops ...CounterOp,
+) error {
+	if err := validateCounterOps(ops); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("counter watermark begin: %w", err)
+	}
+	committed := false
+	defer func(base context.Context) {
+		if committed {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(base, time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}(context.WithoutCancel(ctx))
+	for _, op := range ops {
+		q, extra := postgresCounterUpsert(op)
+		want := counterEncode(op.Value)
+		var have string
+		err := tx.QueryRow(ctx, q, append([]any{recordKey(key, op.Scope), want}, extra...)...).
+			Scan(&have)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && have != want) {
+			return &CounterRegressionError{Scope: op.Scope}
+		}
+		if err != nil {
+			return fmt.Errorf("counter watermark check and commit: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("counter watermark commit: %w", err)
+	}
+	committed = true
+	return nil
+}

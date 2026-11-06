@@ -251,3 +251,60 @@ func (s *SqliteWatermark) CheckAndRaiseFloor(
 	}
 	return nil
 }
+
+// sqliteCounterUpsert returns the guarded upsert for op and its arguments
+// (after the record key and encoded value). The guards match the single-scope
+// methods.
+func sqliteCounterUpsert(op CounterOp) (string, []any) {
+	var guard string
+	var extra []any
+	switch op.Kind {
+	case CounterFloor:
+		guard = `excluded.counter >= counter_watermark.counter`
+	case CounterFloorFrom:
+		guard = `excluded.counter >= counter_watermark.counter AND counter_watermark.counter >= ?`
+		extra = []any{counterEncode(op.Min)}
+	case CounterStrict:
+		guard = `excluded.counter > counter_watermark.counter`
+	default:
+		guard = `false`
+	}
+	return `INSERT INTO counter_watermark (record_key, counter) VALUES (?, ?)
+		 ON CONFLICT(record_key) DO UPDATE SET counter = excluded.counter, updated_at = strftime('%s','now')
+		 WHERE ` + guard + `
+		 RETURNING counter`, extra
+}
+
+// CheckAndCommitCounters applies every op's guarded upsert in one transaction
+// and rolls back on the first refusal.
+func (s *SqliteWatermark) CheckAndCommitCounters(
+	ctx context.Context,
+	key backend.KeyHash,
+	ops ...CounterOp,
+) error {
+	if err := validateCounterOps(ops); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("counter watermark begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, op := range ops {
+		q, extra := sqliteCounterUpsert(op)
+		want := counterEncode(op.Value)
+		var have string
+		err := tx.QueryRowContext(ctx, q, append([]any{recordKey(key, op.Scope), want}, extra...)...).
+			Scan(&have)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && have != want) {
+			return &CounterRegressionError{Scope: op.Scope}
+		}
+		if err != nil {
+			return fmt.Errorf("counter watermark check and commit: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("counter watermark commit: %w", err)
+	}
+	return nil
+}

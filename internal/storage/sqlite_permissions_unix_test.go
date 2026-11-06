@@ -18,6 +18,7 @@ package storage
 
 import (
 	"context"
+	"database/sql/driver"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -66,4 +67,29 @@ func TestSQLiteStoreUsesOwnerOnlyFilePermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	_, err = store.GetWallet(context.Background(), "persisted")
 	require.NoError(t, err)
+}
+
+// The pool opens a new connection after discarding one, and that connection
+// must be secured like the first.
+func TestSQLiteStoreSecuresTheDatabaseForANewConnection(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "wallets.db")
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	conn, err := store.db.Conn(context.Background())
+	require.NoError(t, err)
+	require.ErrorIs(
+		t,
+		conn.Raw(func(any) error { return driver.ErrBadConn }),
+		driver.ErrBadConn,
+	)
+	_ = conn.Close()
+	require.NoError(t, os.Chmod(dbPath, 0o644))
+
+	_, err = store.ListWallets(context.Background())
+	require.NoError(t, err)
+	info, err := os.Stat(dbPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
