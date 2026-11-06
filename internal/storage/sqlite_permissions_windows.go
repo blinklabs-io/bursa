@@ -158,7 +158,14 @@ const (
 // identity can open it before it is restricted. Every file, new or not, is
 // then reopened without following reparse points and its owner is checked
 // before its DACL is touched, so a foreign-owned file is rejected unchanged.
-func secureSQLiteFile(path string, create sqliteCreate) error {
+// When checkedDir is set, the reopened file must also lie in that resolved
+// directory: an empty directory can be turned into a junction after it was
+// checked, and the file's presence is what stops that from happening later.
+func secureSQLiteFile(
+	path string,
+	create sqliteCreate,
+	checkedDir string,
+) error {
 	path, err := sqliteWin32Path(path)
 	if err != nil {
 		return err
@@ -190,6 +197,19 @@ func secureSQLiteFile(path string, create sqliteCreate) error {
 		return err
 	}
 	defer f.Close()
+	if checkedDir != "" {
+		final, err := sqliteFinalPath(windows.Handle(f.Fd()), path)
+		if err != nil {
+			return err
+		}
+		want := checkedDir + `\` + filepath.Base(path)
+		if !strings.EqualFold(final, want) {
+			return fmt.Errorf(
+				"%q resolves to %q, outside the checked directory %q: %w",
+				path, final, checkedDir, bursa.ErrInsecureFileMode,
+			)
+		}
+	}
 	if err := checkSQLiteFileOwner(f); err != nil {
 		return err
 	}
@@ -220,13 +240,14 @@ func ensureSQLiteFilePermissions(path, mode string) error {
 		}
 		createDB = sqliteOpenExisting
 	}
-	if err := checkSQLiteDirectories(path); err != nil {
+	checkedDir, err := checkSQLiteDirectories(path)
+	if err != nil {
 		return err
 	}
 	if sqliteAfterDirectoryCheck != nil {
 		sqliteAfterDirectoryCheck()
 	}
-	if err := secureSQLiteFile(path, createDB); err != nil {
+	if err := secureSQLiteFile(path, createDB, checkedDir); err != nil {
 		return err
 	}
 	// Sidecars are created in every mode, "ro" included: a read-only
@@ -234,7 +255,11 @@ func ensureSQLiteFilePermissions(path, mode string) error {
 	// directory allows it. Where the directory refuses, SQLite cannot create
 	// them either, and an open WAL database needs no new file.
 	for _, suffix := range sqliteSidecarSuffixes {
-		if err := secureSQLiteFile(path+suffix, sqliteCreateIfPermitted); err != nil {
+		if err := secureSQLiteFile(
+			path+suffix,
+			sqliteCreateIfPermitted,
+			checkedDir,
+		); err != nil {
 			return fmt.Errorf("%s: %w", suffix, err)
 		}
 	}
@@ -255,6 +280,13 @@ const fileDeleteChild = 0x40
 const sqliteDirectoryUnsafeRights = fileDeleteChild | windows.DELETE |
 	windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL
 
+// sqliteReparsePointUnsafeRights are the further rights that let a holder
+// retarget a junction or symbolic link: FSCTL_SET_REPARSE_POINT is allowed
+// through a handle with either FILE_WRITE_DATA or FILE_WRITE_ATTRIBUTES.
+const sqliteReparsePointUnsafeRights = sqliteDirectoryUnsafeRights |
+	windows.FILE_WRITE_DATA | windows.FILE_WRITE_ATTRIBUTES |
+	windows.GENERIC_WRITE
+
 // trustedInstallerSID is NT SERVICE\TrustedInstaller, which owns the system
 // directories a store path can pass through, such as the volume root.
 const trustedInstallerSID = "S-1-5-80-956008885-3418522649-1831038044-" +
@@ -266,24 +298,24 @@ const trustedInstallerSID = "S-1-5-80-956008885-3418522649-1831038044-" +
 // before SQLite opens it, and SQLite would then write into the replacement.
 // Both the path as given and the path its links resolve to are checked: the
 // first covers a link that could be retargeted, the second the directories
-// SQLite actually writes in.
-func checkSQLiteDirectories(dbPath string) error {
+// SQLite actually writes in. It returns the resolved database directory.
+func checkSQLiteDirectories(dbPath string) (string, error) {
 	path, err := sqliteWin32Path(dbPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	dir := filepath.Dir(path)
 	if err := checkSQLiteDirectoryChain(dir); err != nil {
-		return err
+		return "", err
 	}
 	resolved, err := sqliteResolvedPath(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if strings.EqualFold(resolved, dir) {
-		return nil
+		return resolved, nil
 	}
-	return checkSQLiteDirectoryChain(resolved)
+	return resolved, checkSQLiteDirectoryChain(resolved)
 }
 
 func checkSQLiteDirectoryChain(dir string) error {
@@ -318,22 +350,29 @@ func sqliteResolvedPath(dir string) (string, error) {
 		return "", fmt.Errorf("failed to open directory %q: %w", dir, err)
 	}
 	defer func() { _ = windows.CloseHandle(handle) }()
+	return sqliteFinalPath(handle, dir)
+}
+
+// sqliteFinalPath returns the path handle refers to, in extended-length form
+// with every link and short name resolved. name is used in errors only.
+func sqliteFinalPath(handle windows.Handle, name string) (string, error) {
 	buf := make([]uint16, windows.MAX_LONG_PATH)
 	n, err := windows.GetFinalPathNameByHandle(
 		handle, &buf[0], windows.MAX_LONG_PATH, 0,
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve directory %q: %w", dir, err)
+		return "", fmt.Errorf("failed to resolve %q: %w", name, err)
 	}
 	if int(n) >= len(buf) {
-		return "", fmt.Errorf("resolved path of directory %q is too long", dir)
+		return "", fmt.Errorf("resolved path of %q is too long", name)
 	}
 	return windows.UTF16ToString(buf[:n]), nil
 }
 
 // checkSQLiteDirectory reads dir's own owner and DACL, not a link target's,
 // and rejects an untrusted owner or any ACE that applies to dir and grants an
-// untrusted identity one of sqliteDirectoryUnsafeRights. Deny ACEs are
+// untrusted identity one of sqliteDirectoryUnsafeRights, or of
+// sqliteReparsePointUnsafeRights when dir is a junction or link. Deny ACEs are
 // ignored rather than netted off, which can only reject more.
 func checkSQLiteDirectory(dir string) error {
 	name, err := windows.UTF16PtrFromString(dir)
@@ -342,7 +381,7 @@ func checkSQLiteDirectory(dir string) error {
 	}
 	handle, err := windows.CreateFile(
 		name,
-		windows.READ_CONTROL,
+		windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -353,6 +392,24 @@ func checkSQLiteDirectory(dir string) error {
 		return fmt.Errorf("failed to open directory %q: %w", dir, err)
 	}
 	defer func() { _ = windows.CloseHandle(handle) }()
+	var tagInfo struct {
+		FileAttributes uint32
+		ReparseTag     uint32
+	}
+	if err := windows.GetFileInformationByHandleEx(
+		handle,
+		windows.FileAttributeTagInfo,
+		(*byte)(unsafe.Pointer(&tagInfo)),
+		uint32(unsafe.Sizeof(tagInfo)),
+	); err != nil {
+		return fmt.Errorf("failed to read attributes of %q: %w", dir, err)
+	}
+	unsafeRights := uint32(sqliteDirectoryUnsafeRights)
+	reason := "delete or rename its entries"
+	if tagInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		unsafeRights = sqliteReparsePointUnsafeRights
+		reason = "retarget or replace this reparse point"
+	}
 	descriptor, err := windows.GetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
@@ -412,7 +469,7 @@ func checkSQLiteDirectory(dir string) error {
 				bursa.ErrInsecureFileMode,
 			)
 		}
-		if ace.Mask&sqliteDirectoryUnsafeRights == 0 {
+		if uint32(ace.Mask)&unsafeRights == 0 {
 			continue
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
@@ -421,9 +478,10 @@ func checkSQLiteDirectory(dir string) error {
 			continue
 		}
 		return fmt.Errorf(
-			"sqlite database directory %q lets %s delete or rename its entries: %w",
+			"sqlite database directory %q lets %s %s: %w",
 			dir,
 			sid,
+			reason,
 			bursa.ErrInsecureFileMode,
 		)
 	}
@@ -453,7 +511,7 @@ func sqliteOwnerPlaceholder(sid *windows.SID) bool {
 // files SQLite recreated after the pre-creation in ensureSQLiteFilePermissions.
 func secureSQLiteSidecars(path string) error {
 	for _, suffix := range append([]string{""}, sqliteSidecarSuffixes...) {
-		if err := secureSQLiteFile(path+suffix, sqliteOpenExisting); err != nil &&
+		if err := secureSQLiteFile(path+suffix, sqliteOpenExisting, ""); err != nil &&
 			!errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s: %w", suffix, err)
 		}

@@ -168,7 +168,9 @@ files to the owning account. On Windows it also refuses to open a database
 whose directory, or any parent directory, is owned by another account or lets
 another account delete, rename, take ownership of, or change permissions on
 its entries: such an account could replace a file after Bursa checks it and
-before SQLite opens it. Administrators, SYSTEM and TrustedInstaller are
+before SQLite opens it. A directory on the path that is a junction or symbolic
+link is also refused when another account may write to it, since that is
+enough to retarget it. Administrators, SYSTEM and TrustedInstaller are
 exempt. Keep the database in a directory under the account's profile.
 
 ### AWS Secrets Manager wallet storage
