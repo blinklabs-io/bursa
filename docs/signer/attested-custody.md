@@ -361,9 +361,15 @@ serves this protocol at `/v1/inventory` and `/v1/sign`.
 
 For `opcert-next`, the profile record also holds the last counter the device
 issued, and a chain counter above it is refused: the ledger only holds
-counters the device issued. `bursa signer` answers a request the device
-refuses for its floor or its last issued counter with HTTP 409, whatever its
-watermark mode: the device signs nothing. A record written before this counter existed has
+counters the device issued. A reissue of that counter, as for a pool that has
+not forged since, may not take a KES period below the one the signing log
+holds for it for the same profile and cold key, so it cannot extend an older
+KES key's window. A profile name reprovisioned with a different cold key does
+not inherit the old key's period; the log records the cold key hash with each
+`opcert-next` entry. `bursa signer`
+answers a request the device refuses for its floor, its last issued counter
+or a backdated reissue with HTTP 409, whatever its watermark mode: the device
+signs nothing. A record written before this counter existed has
 none until its next `opcert-next`. `POST /provision/floor` on the provisioning
 firmware sets the floor to the operator's chain counter and clears the last
 issued counter. Firmware without this counter refuses a record that carries
@@ -676,8 +682,15 @@ checks the card against it at boot and before every write, so an older copy of
 the card, a blank card or a truncated log is refused. The entry is written and
 the card read back before the signature leaves the device.
 
+A card formatted by this firmware uses log format version 2, whose
+`opcert-next` entries also carry the cold key hash (blake2b-224 of the cold
+verification key, the pool ID). A card formatted by earlier firmware (format
+version 1) is still read, verified and appended to in its own format: its
+entries carry no cold key hash, and an entry without one limits every cold key
+of its profile. `signlog-verify` reads both versions.
+
 One request is not recorded again: an `opcert-next` whose profile, issue
-counter, KES key hash and KES period match the latest entry is signed again
+counter, KES key hash, cold key hash and KES period match the latest entry is signed again
 without a new entry, since that entry already records it. The device checks
 the card against the head before signing such a repeat, as it does before a
 write.
