@@ -48,11 +48,12 @@ var ErrCounterRegression = errors.New(
 )
 
 // counterState is the durable counter record. NextIssueNumber serves the
-// explicit-counter path. The remaining fields serve opcert-next and are
-// omitted from the object while zero, so an object written before they
-// existed decodes with all of them zero: no recorded chain floor, no recorded
-// last-issued number (derived from NextIssueNumber), and an unknown KES
-// period. An unknown period is 0 and never refuses a reissue.
+// explicit-counter path. The remaining fields serve opcert-next, and both
+// paths write LastIssued and LastIssuedPeriod. They are omitted from the
+// object while zero, so an object written before they existed decodes with
+// all of them zero: no recorded chain floor, no recorded last-issued number
+// (derived from NextIssueNumber), and an unknown KES period. An unknown
+// period is 0 and never refuses a reissue.
 type counterState struct {
 	Version         string `json:"version"`
 	KeyHash         string `json:"key_hash"`
@@ -154,11 +155,11 @@ func NewCloudCounterStore(
 }
 
 // CheckAndAdvance commits issueNumber only when it is the next sequential
-// value for key.
+// value for key, and records period as that certificate's KES period.
 func (s *CloudCounterStore) CheckAndAdvance(
 	ctx context.Context,
 	key backend.KeyHash,
-	issueNumber uint64,
+	issueNumber, period uint64,
 ) error {
 	keyHash := key.String()
 	for range maxCounterCASRetries {
@@ -177,8 +178,7 @@ func (s *CloudCounterStore) CheckAndAdvance(
 		}
 		next := current
 		next.NextIssueNumber = issueNumber + 1
-		// the period of an explicitly numbered certificate is not known
-		next.LastIssued, next.LastIssuedPeriod = issueNumber, 0
+		next.LastIssued, next.LastIssuedPeriod = issueNumber, period
 		if err := s.store(ctx, next, generation, exists); err == nil {
 			return nil
 		} else if !isPreconditionFailure(err) {

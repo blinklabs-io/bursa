@@ -231,7 +231,7 @@ func (s *memoryStore) Replace(expected, data []byte) error {
 func (s *memoryStore) CheckAndAdvance(
 	_ context.Context,
 	key backend.KeyHash,
-	counter uint64,
+	counter, _ uint64,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

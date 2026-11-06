@@ -67,7 +67,13 @@ type EnvelopeStore interface {
 // sequential operational-certificate issue counters.
 type CounterStore interface {
 	Prepare(context.Context, backend.KeyHash, bool) error
-	CheckAndAdvance(context.Context, backend.KeyHash, uint64) error
+	// CheckAndAdvance commits the next issue number of the explicit path and
+	// records the KES period it is signed for.
+	CheckAndAdvance(
+		ctx context.Context,
+		key backend.KeyHash,
+		issueNumber, period uint64,
+	) error
 	// NextOpCert chooses and records the issue number for an opcert-next
 	// request from the chain counter and KES period.
 	NextOpCert(
@@ -518,8 +524,8 @@ func (w *Workload) Sign(
 	signable := req.Payload
 	var issued *uint64
 	counter := binary.BigEndian.Uint64(req.Payload[32:40])
+	period := binary.BigEndian.Uint64(req.Payload[40:])
 	if req.Purpose == backend.PurposeOpCertNext {
-		period := binary.BigEndian.Uint64(req.Payload[40:])
 		issue, err := w.counter.NextOpCert(ctx, w.hash, counter, period)
 		if err != nil {
 			resp.Error = opCertNextRefusal(err)
@@ -528,7 +534,12 @@ func (w *Workload) Sign(
 		signable = bytes.Clone(req.Payload)
 		binary.BigEndian.PutUint64(signable[32:40], issue)
 		issued = &issue
-	} else if err := w.counter.CheckAndAdvance(ctx, w.hash, counter); err != nil {
+	} else if err := w.counter.CheckAndAdvance(
+		ctx,
+		w.hash,
+		counter,
+		period,
+	); err != nil {
 		resp.Error = "request refused"
 		return resp, nil
 	}
@@ -562,6 +573,7 @@ func opCertNextRefusal(err error) string {
 		opcertrule.ErrBelowFloor,
 		opcertrule.ErrAboveIssued,
 		opcertrule.ErrKESBackdated,
+		opcertrule.ErrOutOfRange,
 	} {
 		if errors.Is(err, rule) {
 			return rule.Error()

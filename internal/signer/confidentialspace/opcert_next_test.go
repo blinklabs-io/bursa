@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -289,8 +290,8 @@ func TestOpCertNextAfterExplicitIssue(t *testing.T) {
 			t.Fatalf("explicit issue %d: %+v err=%v", i, resp, err)
 		}
 	}
-	requireRefused(t, w, nextRequest(w, 1, 3, 10), refusalAboveIssued)
-	requireIssued(t, w, nextRequest(w, 2, 1, 10), 2)
+	requireRefused(t, w, nextRequest(w, 1, 3, 11), refusalAboveIssued)
+	requireIssued(t, w, nextRequest(w, 2, 1, 11), 2)
 	// an explicit counter that is not the next one is still refused
 	payload := lcommon.OpCertSignableBytes(
 		bytes.Repeat([]byte{0x23}, 32),
@@ -388,4 +389,41 @@ func TestHostOpCertNextAgainstWorkload(t *testing.T) {
 			t.Fatalf("%s: err = %v, want ErrCustodyCounterConflict", name, err)
 		}
 	}
+}
+
+// An explicit issue records its KES period, so an opcert-next reissue of that
+// number at a lower period is refused.
+func TestOpCertNextAfterExplicitIssueChecksPeriod(t *testing.T) {
+	t.Parallel()
+	w := cloudWorkload(t, &memoryStore{}, &memoryCounterObject{})
+	for i := range 2 {
+		payload := lcommon.OpCertSignableBytes(
+			bytes.Repeat([]byte{0x23}, 32), uint64(i), 11,
+		)
+		resp, err := w.Sign(t.Context(), backend.AttestedRequest{
+			Version: backend.AttestedProtocol,
+			Purpose: backend.PurposeOpCert,
+			KeyHash: w.hash.String(),
+			Role:    backend.KeyTypePool,
+			Nonce:   bytes.Repeat([]byte{byte(10 + i)}, 32),
+			Payload: payload,
+		})
+		if err != nil || resp.Error != "" {
+			t.Fatalf("explicit issue %d: %+v err=%v", i, resp, err)
+		}
+	}
+	requireRefused(t, w, nextRequest(w, 1, 0, 10), refusalBackdated)
+	requireIssued(t, w, nextRequest(w, 2, 0, 11), 1)
+}
+
+// A chain counter with no successor is refused with the rule's own text.
+func TestOpCertNextOutOfRange(t *testing.T) {
+	t.Parallel()
+	w := cloudWorkload(t, &memoryStore{}, &memoryCounterObject{})
+	requireRefused(
+		t,
+		w,
+		nextRequest(w, 1, math.MaxUint64, 10),
+		"chain counter out of range",
+	)
 }
