@@ -104,7 +104,8 @@ paths:
         '400':
           description: |
             Malformed request (bad JSON, unknown type, bad hex), or several
-            backends hold the key and the request names no profile.
+            backends hold the key and the request names no profile (for tx,
+            only when no signer succeeds).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -124,7 +125,7 @@ paths:
         '404':
           description: |
             Requested key not found, or no backend holds it under the
-            requested profile.
+            requested profile (for tx, only when no signer succeeds).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -342,7 +343,10 @@ components:
             backend is served by it whatever the profile, so one tx can name
             the profile of its armory signer and still reach other signers.
             Anti-double-sign records of a profiled backend are kept per
-            profile.
+            profile. For tx, a profile refusal applies to that signer only:
+            when another signer succeeds the response is 200 with the
+            refusal in errors, so check errors before treating the
+            transaction as fully signed.
         kes_vkey:
           type: string
           description: opcert - hex-encoded 32-byte KES verification key.

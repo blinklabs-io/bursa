@@ -306,8 +306,9 @@ One cold key may be held by several armory backends, each with its own
 device). Startup accepts a key hash in several backends only when every holder
 has a non-empty profile and the profiles are distinct. A hash in a profiled and
 an unprofiled backend, in two backends with one profile, or in two unprofiled
-backends is refused. Configure one `keys:` entry per hash; its `backend` field
-is informational.
+backends is refused. Configure one `keys:` entry per hash. Its `backend` field
+is enforced: when set, a request is denied unless the backend the profile
+selects has that name, so a key served under several profiles leaves it empty.
 
 A sign request names the profile in `profile`; `GET /v1/keys/<hash>` takes it as
 the `profile` query parameter. Without it, a key held by one backend is served
