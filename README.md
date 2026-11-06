@@ -163,6 +163,14 @@ opt-in writes mnemonics and signing keys in plaintext; deleting a SQLite wallet
 does not guarantee that old page data is removed from the database file. Use
 the opt-in only for isolated development or test deployments.
 
+Bursa restricts the SQLite database and its `-wal`, `-shm` and `-journal`
+files to the owning account. On Windows it also refuses to open a database
+whose directory, or any parent directory, is owned by another account or lets
+another account delete, rename, take ownership of, or change permissions on
+its entries: such an account could replace a file after Bursa checks it and
+before SQLite opens it. Administrators, SYSTEM and TrustedInstaller are
+exempt. Keep the database in a directory under the account's profile.
+
 ### AWS Secrets Manager wallet storage
 
 To persist API-created wallets in AWS Secrets Manager, select the AWS backend
