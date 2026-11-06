@@ -287,6 +287,46 @@ whose `record_key` is `<56-character hex key hash>|opcert-chain-issued` from
 `signer_counter_watermark` (Postgres) or `counter_watermark` (SQLite), and
 resume requests.
 
+#### Failover and failback of an opcert signer
+
+Opcert counter records are per signer store and never sync between signers.
+If signer A issued counter 9 and the pool then renewed through signer B,
+which issued 10 and forged with it, the chain is at 10 while A still records 9
+as issued. A refuses a `chain_counter` of 10 as above the last counter issued,
+and an armory device refuses it the same way.
+
+Reset A's records to the current chain counter before failing back:
+
+```
+bursa signer counter-reset --config signer.yaml \
+  --key <56-character cold key hash> --chain-counter 10 --yes
+```
+
+Without `--yes` it prints the records and the change, writes nothing, and
+exits non-zero. It sets `opcert-chain-floor` to the reported counter, lower or
+higher than the stored value, and deletes `opcert-chain-issued`, in one
+transaction, so it is safe while the signer runs. It leaves `opcert-counter`
+(explicit `issue_counter` requests) and the tx and cip8 watermarks alone, and
+refuses a `mem` store, watermark `mode: off`, and a `file` store path that does
+not exist. It is a local command with no API route.
+
+The reset trusts the chain counter you report, as the device's floor reset
+does. Read it from the chain (the counter of the pool's last forged block)
+and not from another signer.
+
+An armory device keeps its own floor. Reset it separately with the
+`/provision/floor` admin route, which sets the floor and clears the last
+issued counter (see the `opcert-check` command for how the device records
+them).
+
+Order:
+
+1. Stop issuing through the old path (signer A and its device).
+2. Renew through the new path (signer B).
+3. Before failing back, read the chain counter, then reset both the device
+   and signer A to it.
+4. Resume issuing through A; its next opcert is `chain_counter + 1`.
+
 ### High availability
 
 For a single active instance, a durable `file` (SQLite) watermark is sufficient.
