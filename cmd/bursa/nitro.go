@@ -44,7 +44,7 @@ func nitroCommand() *cobra.Command {
 
 func nitroEnclaveCommand() *cobra.Command {
 	var signerPort, kmsProxyPort uint32
-	var serverCertFile, serverKeyFile, clientCAFile, provisionAuthorityFile string
+	var serverCertFile, serverKeyFile, clientCAFile, provisionAuthorityFile, signerAuthorityFile string
 	command := &cobra.Command{
 		Use:   "enclave",
 		Short: "Run the measured pool-cold signing workload",
@@ -52,6 +52,14 @@ func nitroEnclaveCommand() *cobra.Command {
 			provisionAuthority, err := readFixedHexFile(
 				provisionAuthorityFile,
 				"provisioning authority public key",
+				ed25519.PublicKeySize,
+			)
+			if err != nil {
+				return err
+			}
+			signerAuthority, err := readFixedHexFile(
+				signerAuthorityFile,
+				"signer authority public key",
 				ed25519.PublicKeySize,
 			)
 			if err != nil {
@@ -86,6 +94,7 @@ func nitroEnclaveCommand() *cobra.Command {
 					nitro.NewKMSProxyHTTPClient(kmsProxyPort),
 				),
 				ed25519.PublicKey(provisionAuthority),
+				ed25519.PublicKey(signerAuthority),
 			)
 			if err != nil {
 				return err
@@ -120,7 +129,10 @@ func nitroEnclaveCommand() *cobra.Command {
 		StringVar(&clientCAFile, "client-ca-file", "", "CA PEM authorized to issue proxy client certificates")
 	command.Flags().
 		StringVar(&provisionAuthorityFile, "provision-authority-file", "", "hex Ed25519 public key authorized to approve provisioning")
+	command.Flags().
+		StringVar(&signerAuthorityFile, "signer-authority-file", "", "hex Ed25519 public key authorized to submit signing requests")
 	_ = command.MarkFlagRequired("provision-authority-file")
+	_ = command.MarkFlagRequired("signer-authority-file")
 	return command
 }
 

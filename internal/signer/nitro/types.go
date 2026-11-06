@@ -133,6 +133,19 @@ type InventoryRequest struct {
 	Nonce   []byte `json:"nonce"`
 }
 
+// ChallengeRequest asks the enclave for a one-time signer-authorization
+// challenge.
+type ChallengeRequest struct {
+	Version string `json:"version"`
+}
+
+// ChallengeResponse carries a challenge that the authorized signer process
+// must bind into its next signing request.
+type ChallengeResponse struct {
+	Version   string `json:"version"`
+	Challenge []byte `json:"challenge"`
+}
+
 // KMS exposes only the recipient-attested operations required for envelope
 // encryption. Implementations must never return plaintext data keys.
 type KMS interface {

@@ -843,6 +843,7 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		{"nitro non-hex PCR", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: "zz"}}, "pcrs[0]"},
 		{"nitro zero PCR0", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: strings.Repeat("00", 48)}}, "all zeros"},
 		{"nitro without address", config.SignerBackendConfig{Type: "nitro", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "address"},
+		{"nitro without host key", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "host_key_file"},
 		{"confidential-space without audience", config.SignerBackendConfig{Type: "confidential-space", Address: "http://127.0.0.1:1", ImageDigest: "sha256:aa"}, "audience"},
 		{"confidential-space cleartext jwks", config.SignerBackendConfig{
 			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://example.com/jwks",

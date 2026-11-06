@@ -22,6 +22,7 @@ const maxProxyBody = 1 << 20
 
 type enclaveAPI interface {
 	Inventory(context.Context, []byte) (backend.AttestedInventory, error)
+	Challenge(context.Context) (ChallengeResponse, error)
 	Sign(
 		context.Context,
 		backend.AttestedRequest,
@@ -65,7 +66,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 	}
 }
 
-// ServeHTTP exposes only the two paths consumed by backend.HTTPEnclave.
+// ServeHTTP exposes only the paths consumed by backend.HTTPEnclave.
 func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1/inventory":
@@ -81,6 +82,22 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(
 				w,
 				"enclave inventory unavailable",
+				http.StatusBadGateway,
+			)
+			return
+		}
+		writeJSON(w, response)
+	case "/v1/challenge":
+		var request struct{}
+		if err := decodeRequest(w, r, &request); err != nil {
+			http.Error(w, "invalid challenge request", http.StatusBadRequest)
+			return
+		}
+		response, err := p.enclave.Challenge(r.Context())
+		if err != nil {
+			http.Error(
+				w,
+				"enclave challenge unavailable",
 				http.StatusBadGateway,
 			)
 			return

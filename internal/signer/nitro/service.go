@@ -36,31 +36,38 @@ type Service struct {
 	recipient          Recipient
 	kms                KMSFactory
 	provisionAuthority ed25519.PublicKey
+	signerAuthority    ed25519.PublicKey
 	key                ed25519.PrivateKey
 	pub                ed25519.PublicKey
 	envelope           Envelope
+	challenges         map[[requestNonceSize]byte]struct{}
 	seen               map[[requestNonceSize]byte]struct{}
 	counter            uint64
 	hasCounter         bool
 }
 
 // NewService constructs an enclave service from the NSM recipient, an
-// enclave-side KMS client factory, and a measured provisioning authority.
+// enclave-side KMS client factory, and measured provisioning and signer
+// authorities.
 func NewService(
 	recipient Recipient,
 	kms KMSFactory,
-	provisionAuthority ed25519.PublicKey,
+	provisionAuthority, signerAuthority ed25519.PublicKey,
 ) (*Service, error) {
 	if recipient == nil || kms == nil ||
 		len(provisionAuthority) != ed25519.PublicKeySize ||
-		bytes.Equal(provisionAuthority, make([]byte, ed25519.PublicKeySize)) {
+		bytes.Equal(provisionAuthority, make([]byte, ed25519.PublicKeySize)) ||
+		len(signerAuthority) != ed25519.PublicKeySize ||
+		bytes.Equal(signerAuthority, make([]byte, ed25519.PublicKeySize)) {
 		return nil, errors.New(
-			"nitro recipient, KMS factory, and provisioning authority are required",
+			"nitro recipient, KMS factory, provisioning authority, and signer authority are required",
 		)
 	}
 	return &Service{
 		recipient: recipient, kms: kms,
 		provisionAuthority: bytes.Clone(provisionAuthority),
+		signerAuthority:    bytes.Clone(signerAuthority),
+		challenges:         make(map[[requestNonceSize]byte]struct{}),
 		seen:               make(map[[requestNonceSize]byte]struct{}),
 	}, nil
 }
@@ -291,6 +298,31 @@ func (s *Service) Inventory(
 	}, nil
 }
 
+// Challenge returns a one-time value that binds the next signing request to
+// the separately authorized signer process rather than the untrusted proxy.
+func (s *Service) Challenge(
+	_ context.Context,
+	req *ChallengeRequest,
+) (*ChallengeResponse, error) {
+	if req == nil || req.Version != Protocol {
+		return nil, fmt.Errorf("%w: invalid challenge request", ErrProtocol)
+	}
+	var challenge [requestNonceSize]byte
+	if _, err := rand.Read(challenge[:]); err != nil {
+		return nil, fmt.Errorf("generate signer challenge: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.challenges) >= maxSeenNonces {
+		return nil, fmt.Errorf("%w: challenge cache is full", ErrProtocol)
+	}
+	s.challenges[challenge] = struct{}{}
+	return &ChallengeResponse{
+		Version:   backend.AttestedProtocol,
+		Challenge: bytes.Clone(challenge[:]),
+	}, nil
+}
+
 // Sign accepts only canonical pool-cold operational-certificate signables with
 // an explicit issue counter. It refuses opcert-next, which would let the host
 // re-issue an existing number for a new KES key, and profiled requests, whose
@@ -301,7 +333,7 @@ func (s *Service) Sign(
 ) (*backend.AttestedResponse, error) {
 	if req == nil || req.Version != backend.AttestedProtocol ||
 		req.Purpose != backend.PurposeOpCert ||
-		req.Profile != "" ||
+		req.Profile != "" || req.Era != nil ||
 		req.Role != backend.KeyTypePool ||
 		len(req.Payload) != 48 ||
 		len(req.Nonce) != requestNonceSize {
@@ -318,6 +350,23 @@ func (s *Service) Sign(
 	}
 	if req.KeyHash != backend.HashPublicKey(s.pub).String() {
 		return nil, fmt.Errorf("%w: key hash mismatch", ErrProtocol)
+	}
+	var challenge [requestNonceSize]byte
+	if len(req.Challenge) != requestNonceSize {
+		return nil, fmt.Errorf("%w: signer challenge is required", ErrProtocol)
+	}
+	copy(challenge[:], req.Challenge)
+	if _, exists := s.challenges[challenge]; !exists {
+		return nil, fmt.Errorf(
+			"%w: signer challenge is unknown or used",
+			ErrProtocol,
+		)
+	}
+	delete(s.challenges, challenge)
+	if !bytes.Equal(req.HostKey, s.signerAuthority) ||
+		len(req.HostSignature) != ed25519.SignatureSize ||
+		!ed25519.Verify(s.signerAuthority, backend.AttestedRequestBinding(*req), req.HostSignature) {
+		return nil, fmt.Errorf("%w: signer authorization invalid", ErrProtocol)
 	}
 	if _, exists := s.seen[nonce]; exists {
 		return nil, fmt.Errorf("%w: request nonce replay", ErrProtocol)
@@ -354,6 +403,7 @@ func (s *Service) install(
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
 	s.envelope = cloneEnvelope(env)
+	s.challenges = make(map[[requestNonceSize]byte]struct{})
 	if !sameKey {
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0

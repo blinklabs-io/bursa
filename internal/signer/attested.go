@@ -61,7 +61,21 @@ func buildNitroBackend(
 	if err != nil {
 		return nil, err
 	}
-	return loadAttestedBackend(ctx, c, verifier)
+	if c.Address == "" {
+		return nil, errors.New("nitro backend requires address")
+	}
+	if c.HostKeyFile == "" {
+		return nil, errors.New("nitro backend requires host_key_file")
+	}
+	hostKey, err := readArmoryHostKey(c.HostKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("host_key_file: %w", err)
+	}
+	enclave, err := backend.NewHostKeyHTTPEnclave(c.Address, c.Profile, hostKey)
+	if err != nil {
+		return nil, err
+	}
+	return loadAttestedEnclave(ctx, c, enclave, verifier)
 }
 
 // buildConfidentialSpaceBackend wires a GCP Confidential Space custody

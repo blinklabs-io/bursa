@@ -222,6 +222,18 @@ func (c *rpcClient) Inventory(
 	return response, err
 }
 
+// Challenge asks the enclave for a one-time signer authorization value.
+func (c *rpcClient) Challenge(ctx context.Context) (ChallengeResponse, error) {
+	var response ChallengeResponse
+	err := c.conn.Invoke(
+		ctx,
+		"/"+rpcServiceName+"/Challenge",
+		&ChallengeRequest{Version: Protocol},
+		&response,
+	)
+	return response, err
+}
+
 // Sign implements backend.Enclave over gRPC.
 func (c *rpcClient) Sign(
 	ctx context.Context,
@@ -239,6 +251,7 @@ var custodyServiceDesc = grpc.ServiceDesc{
 		{MethodName: "Provision", Handler: provisionHandler},
 		{MethodName: "Reload", Handler: reloadHandler},
 		{MethodName: "Inventory", Handler: inventoryHandler},
+		{MethodName: "Challenge", Handler: challengeHandler},
 		{MethodName: "Sign", Handler: signHandler},
 	},
 }
@@ -250,6 +263,10 @@ type custodyRPC interface {
 		context.Context,
 		*InventoryRequest,
 	) (*backend.AttestedInventory, error)
+	Challenge(
+		context.Context,
+		*ChallengeRequest,
+	) (*ChallengeResponse, error)
 	Sign(
 		context.Context,
 		*backend.AttestedRequest,
@@ -344,6 +361,28 @@ func inventoryHandler(
 		interceptor,
 		func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
 			return rpc.Inventory(ctx, request.(*InventoryRequest))
+		},
+	)
+}
+
+func challengeHandler(
+	service any,
+	ctx context.Context,
+	decode func(any) error,
+	interceptor grpc.UnaryServerInterceptor,
+) (any, error) {
+	request := new(ChallengeRequest)
+	if err := decode(request); err != nil {
+		return nil, err
+	}
+	return invokeRPC(
+		service,
+		ctx,
+		request,
+		"Challenge",
+		interceptor,
+		func(rpc custodyRPC, ctx context.Context, request any) (any, error) {
+			return rpc.Challenge(ctx, request.(*ChallengeRequest))
 		},
 	)
 }

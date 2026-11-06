@@ -32,6 +32,7 @@ backends:
   - name: "nitro-pool-cold"
     type: "nitro"
     address: "unix:///run/bursa/nitro.sock"
+    host_key_file: "/etc/bursa/signer/nitro-host.skey"
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 lowercase hex characters from the production EIF>"
@@ -39,11 +40,17 @@ backends:
 
 Create a dedicated CA for the proxy identity. Create an offline Ed25519
 provisioning authority and put only its 32-byte lowercase-hex public key in the
-EIF. The authority private key must remain outside both the EIF and parent
-instance. Put the CA certificate and the enclave server certificate and
-owner-only key in the EIF. Install the proxy client certificate, its owner-only
-key, and the enclave server CA on the parent for the dedicated proxy service
-user.
+EIF. Create a separate signer host key and put its 32-byte lowercase-hex public
+key in the EIF; its private key is the signer's `host_key_file` and must not be
+readable by the proxy service user. The provisioning authority private key must
+remain outside both the EIF and parent instance. Put the CA certificate and the
+enclave server certificate and owner-only key in the EIF. Install the proxy
+client certificate, its owner-only key, and the enclave server CA on the parent
+for the dedicated proxy service user.
+
+`host_key_file` uses the owner-only `ArmoryHostSigningKey_ed25519` text envelope
+accepted by the attested signer backends. `signer-authority-file` is the
+lowercase-hex public key corresponding to that private key.
 
 Run `bursa nitro enclave` as the EIF entry point:
 
@@ -52,7 +59,8 @@ bursa nitro enclave \
   --server-cert-file /etc/bursa/nitro/server.pem \
   --server-key-file /etc/bursa/nitro/server-key.pem \
   --client-ca-file /etc/bursa/nitro/proxy-ca.pem \
-  --provision-authority-file /etc/bursa/nitro/provision-authority.hex
+  --provision-authority-file /etc/bursa/nitro/provision-authority.hex \
+  --signer-authority-file /etc/bursa/nitro/signer-authority.hex
 ```
 
 On the parent instance run:
@@ -149,13 +157,14 @@ trailing values. The signer-facing protocol remains
 `bursa-attested-signer/1`, so the existing `KeyRef` path retains caller ACL,
 policy, watermark, attestation, and returned-signature checks.
 
-The host OS and proxy client key are the RPC access boundary. A process without
-that key cannot invoke provisioning, reload, inventory, or signing. Provisioning
-also requires a signature from the authority whose public key is part of the
-measured EIF. Host root, proxy-key, or AWS credential compromise therefore
-cannot authorize a different KMS key. The enclave independently restricts
-signing to canonical pool-cold operational-certificate payloads and maintains
-its nonce and issue counter guards while the key remains loaded.
+The proxy client key authorizes lifecycle, inventory, and challenge RPCs.
+Signing additionally requires a fresh enclave challenge and a request signature
+from the signer authority whose public key is part of the measured EIF. The
+proxy can forward that authorization but cannot create another signing request.
+Provisioning also requires a signature from the separate provisioning authority.
+The enclave independently restricts signing to canonical pool-cold
+operational-certificate payloads and maintains its nonce and issue counter
+guards while the key remains loaded.
 
 The enclave accepts only the `pool` role and `opcert` purpose, without a
 workload profile. It signs the canonical 48-byte `OCertSignable` value:
@@ -165,9 +174,10 @@ KES verification key (32 bytes) || issue counter (uint64 big endian) ||
 KES period (uint64 big endian)
 ```
 
-Requests require a fresh 32-byte nonce. The enclave rejects nonce replay,
-non-increasing counters, a wrong key hash or role, malformed payloads, and
-unsupported protocol versions. The signer verifies the returned Ed25519
+Requests require a fresh 32-byte nonce and one-time signer challenge. The
+enclave rejects an absent or invalid signer authorization, challenge or nonce
+replay, non-increasing counters, a wrong key hash or role, malformed payloads,
+and unsupported protocol versions. The signer verifies the returned Ed25519
 signature before constructing the operational certificate.
 
 Two signer features are refused by design:

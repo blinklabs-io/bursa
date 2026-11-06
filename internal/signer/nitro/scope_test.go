@@ -54,6 +54,7 @@ func TestServiceRefusesUnsupportedSignScope(t *testing.T) {
 			_, err := service.Sign(context.Background(), &refused)
 			require.ErrorIs(t, err, ErrProtocol)
 
+			authorizeTestRequest(t, service, &request)
 			signed, err := service.Sign(context.Background(), &request)
 			require.NoError(t, err)
 			require.True(
@@ -62,6 +63,49 @@ func TestServiceRefusesUnsupportedSignScope(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestServiceRequiresSignerAuthorization(t *testing.T) {
+	service, _, _ := newTestService(t, testEvidence(t, 7))
+	env := provisionTestKey(t, service)
+	request := backend.AttestedRequest{
+		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
+		KeyHash: backend.HashPublicKey(env.PublicKey).
+			String(),
+		Role: backend.KeyTypePool,
+		Nonce: bytes.Repeat(
+			[]byte{8},
+			requestNonceSize,
+		), Payload: make([]byte, 48),
+	}
+
+	_, err := service.Sign(context.Background(), &request)
+	require.ErrorContains(t, err, "signer challenge is required")
+
+	challenge, err := service.Challenge(
+		context.Background(),
+		&ChallengeRequest{Version: Protocol},
+	)
+	require.NoError(t, err)
+	other := ed25519.NewKeyFromSeed(
+		bytes.Repeat([]byte{0x35}, ed25519.SeedSize),
+	)
+	request.Challenge = challenge.Challenge
+	request.HostKey = other.Public().(ed25519.PublicKey)
+	request.HostSignature = ed25519.Sign(
+		other,
+		backend.AttestedRequestBinding(request),
+	)
+	_, err = service.Sign(context.Background(), &request)
+	require.ErrorContains(t, err, "signer authorization invalid")
+
+	authorizeTestRequest(t, service, &request)
+	response, err := service.Sign(context.Background(), &request)
+	require.NoError(t, err)
+	require.True(
+		t,
+		ed25519.Verify(env.PublicKey, request.Payload, response.Signature),
+	)
 }
 
 func TestProxyRefusesProfiledInventory(t *testing.T) {

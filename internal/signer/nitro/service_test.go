@@ -35,6 +35,9 @@ var testCredentials = Credentials{
 var testProvisionAuthority = ed25519.NewKeyFromSeed(
 	bytes.Repeat([]byte{0x42}, ed25519.SeedSize),
 )
+var testSignerAuthority = ed25519.NewKeyFromSeed(
+	bytes.Repeat([]byte{0x24}, ed25519.SeedSize),
+)
 
 func testEvidence(t *testing.T, measurement byte) []byte {
 	t.Helper()
@@ -124,9 +127,30 @@ func newTestService(
 			return kms, nil
 		},
 		testProvisionAuthority.Public().(ed25519.PublicKey),
+		testSignerAuthority.Public().(ed25519.PublicKey),
 	)
 	require.NoError(t, err)
 	return service, kms, recipient
+}
+
+func authorizeTestRequest(
+	t *testing.T,
+	service *Service,
+	request *backend.AttestedRequest,
+) {
+	t.Helper()
+	challenge, err := service.Challenge(
+		context.Background(),
+		&ChallengeRequest{Version: Protocol},
+	)
+	require.NoError(t, err)
+	require.Equal(t, backend.AttestedProtocol, challenge.Version)
+	request.Challenge = challenge.Challenge
+	request.HostKey = testSignerAuthority.Public().(ed25519.PublicKey)
+	request.HostSignature = ed25519.Sign(
+		testSignerAuthority,
+		backend.AttestedRequestBinding(*request),
+	)
 }
 
 func provisionTestKey(t *testing.T, service *Service) Envelope {
@@ -350,13 +374,16 @@ func TestReloadAndCanonicalOpCertSigning(t *testing.T) {
 		Role:  backend.KeyTypePool,
 		Nonce: nonce, Payload: payload,
 	}
+	authorizeTestRequest(t, restarted, request)
 	signed, err := restarted.Sign(context.Background(), request)
 	require.NoError(t, err)
 	require.True(t, ed25519.Verify(env.PublicKey, payload, signed.Signature))
 
+	authorizeTestRequest(t, restarted, request)
 	_, err = restarted.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "nonce replay")
 	request.Nonce = bytes.Repeat([]byte{8}, requestNonceSize)
+	authorizeTestRequest(t, restarted, request)
 	_, err = restarted.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "issue counter is not increasing")
 
@@ -387,6 +414,7 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 		Role:  backend.KeyTypePool,
 		Nonce: bytes.Repeat([]byte{1}, requestNonceSize), Payload: payload,
 	}
+	authorizeTestRequest(t, service, request)
 	_, err := service.Sign(context.Background(), request)
 	require.NoError(t, err)
 
@@ -406,9 +434,11 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, env.PublicKey, inventory.Keys[0].PublicKey)
+	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "nonce replay")
 	request.Nonce = bytes.Repeat([]byte{2}, requestNonceSize)
+	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "issue counter is not increasing")
 
@@ -418,9 +448,11 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	})
 	require.NoError(t, err)
 	request.Nonce = bytes.Repeat([]byte{1}, requestNonceSize)
+	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "nonce replay")
 	request.Nonce = bytes.Repeat([]byte{3}, requestNonceSize)
+	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "issue counter is not increasing")
 }

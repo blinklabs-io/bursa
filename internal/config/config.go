@@ -187,9 +187,9 @@ type SignerBackendConfig struct {
 	TLSCAFile         string                   `yaml:"tls_ca_file"`          // confidential-space: PEM CA for the workload HTTPS certificate
 	TLSClientCertFile string                   `yaml:"tls_client_cert_file"` // confidential-space: PEM client certificate presented to the workload
 	TLSClientKeyFile  string                   `yaml:"tls_client_key_file"`  // confidential-space: PEM private key for tls_client_cert_file
-	Profile           string                   `yaml:"profile"`              // nitro, confidential-space: optional workload signing profile; armory: required device profile
+	Profile           string                   `yaml:"profile"`              // confidential-space: optional workload profile; armory: required device profile; Nitro leaves this empty
 	IdentityPublicKey string                   `yaml:"identity_public_key"`  // armory: device identity public key (hex), pinned
-	HostKeyFile       string                   `yaml:"host_key_file"`        // armory: optional host signing key file (armory-pool host-key) authenticating signing requests
+	HostKeyFile       string                   `yaml:"host_key_file"`        // armory/nitro: host signing key file authenticating signing requests
 	Protocol          string                   `yaml:"protocol"`             // armory: sign protocol for transaction bodies: "1" (default), "negotiate" (version 2, falling back to 1), or "2" (version 2 only)
 }
 
