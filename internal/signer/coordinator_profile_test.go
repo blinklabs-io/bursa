@@ -15,9 +15,13 @@
 package signer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -26,12 +30,14 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 )
 
-// profiledFakeKey is a fakeKey served under a profile.
+// profiledFakeKey is a fakeKey served by a named backend under a profile.
 type profiledFakeKey struct {
 	*fakeKey
+	backend string
 	profile string
 }
 
+func (k profiledFakeKey) Backend() string { return k.backend }
 func (k profiledFakeKey) Profile() string { return k.profile }
 
 // profiledFakeBackend holds one shared key; an empty profile makes it an
@@ -48,7 +54,7 @@ func (b profiledFakeBackend) ref() backend.KeyRef {
 	if b.profile == "" {
 		return b.key
 	}
-	return profiledFakeKey{fakeKey: b.key, profile: b.profile}
+	return profiledFakeKey{fakeKey: b.key, backend: b.name, profile: b.profile}
 }
 func (b profiledFakeBackend) ListKeys(context.Context) ([]backend.KeyRef, error) {
 	return []backend.KeyRef{b.ref()}, nil
@@ -308,5 +314,75 @@ func TestProfiledOpCert_ConcurrentIssuedConflict(t *testing.T) {
 	floor := opcertChainFloorScope + "|" + profPreview
 	if v, ok, _ := pw.counter.CounterFor(context.Background(), k.hash, floor); ok {
 		t.Fatalf("profiled floor = %d after a refused request, want none", v)
+	}
+}
+
+// lockedBuffer serialises writes from a JSON slog handler.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// signLogs decodes every "sign" log line written to b.
+func (b *lockedBuffer) signLogs(t *testing.T) []map[string]any {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(b.buf.Bytes()), []byte("\n")) {
+		var m map[string]any
+		if err := json.Unmarshal(line, &m); err != nil {
+			t.Fatalf("decode log line %q: %v", line, err)
+		}
+		if m["msg"] == "sign" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// Sign decisions about a key served by a profiled backend name that backend
+// and the profile whose records were consulted, so two profiles holding one
+// cold key are told apart in the logs.
+func TestProfiledSignLogs_NameBackendAndProfile(t *testing.T) {
+	t.Parallel()
+	k := newFakeKey(t)
+	c, _ := newProfiledCoordinator(t, k,
+		profiledFakeBackend{"dev-preview", profPreview, k},
+		profiledFakeBackend{"dev-musashi", profMusashi, k})
+	buf := &lockedBuffer{}
+	c.deps.Logger = slog.New(slog.NewJSONHandler(buf, nil))
+	kes := make([]byte, kesVkeySize)
+	id := k.hash.String()
+	musashi := WithProfile(context.Background(), profMusashi)
+
+	if _, code, err := c.SignOpCertFromChain(musashi, kes, 3, 1, id); err != nil {
+		t.Fatalf("musashi chain 3: code=%s err=%v", code, err)
+	}
+	if _, code, err := c.SignOpCertFromChain(musashi, kes, 1, 1, id); code != CodeConflict {
+		t.Fatalf("musashi chain 1 after 3: want conflict, got code=%s err=%v", code, err)
+	}
+	if res, perr, err := c.SignTx(musashi, []byte(testTxCbor), testTxEra, []string{id}); err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
+		t.Fatalf("tx: res=%v perr=%v err=%v", res, perr, err)
+	}
+	// the fake key cannot sign CIP-8; the refusal is still a logged decision
+	if _, code, _ := c.SignCIP8(musashi, []byte("x"), "", id); code != CodeUnsupported {
+		t.Fatalf("cip8: want unsupported, got code=%s", code)
+	}
+
+	logs := buf.signLogs(t)
+	if len(logs) != 4 {
+		t.Fatalf("want 4 sign log lines, got %d: %v", len(logs), logs)
+	}
+	for _, m := range logs {
+		if m["backend"] != "dev-musashi" || m["profile"] != profMusashi {
+			t.Errorf("sign log %v: want backend dev-musashi and profile %s", m, profMusashi)
+		}
 	}
 }
