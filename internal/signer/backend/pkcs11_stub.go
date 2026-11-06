@@ -21,7 +21,9 @@ import "errors"
 // ErrPKCS11NotCompiled is returned by the pure-Go build, where the PKCS#11
 // backend (which requires CGO) is not compiled in. Build with -tags pkcs11 and
 // CGO_ENABLED=1 to enable it.
-var ErrPKCS11NotCompiled = errors.New("pkcs11 backend not compiled in (build with -tags pkcs11)")
+var ErrPKCS11NotCompiled = errors.New(
+	"pkcs11 backend not compiled in (build with -tags pkcs11)",
+)
 
 // NewPKCS11Backend is the pure-Go stub. It matches the tagged constructor's
 // signature so setup wiring compiles under CGO_ENABLED=0, and always fails.

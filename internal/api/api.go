@@ -60,8 +60,14 @@ const maxRequestBodyBytes = 1 << 20
 const maxConcurrentScriptValidations = 4
 
 var (
-	scriptValidationBodySlots = make(chan struct{}, maxConcurrentScriptValidations)
-	scriptValidationSlots     = make(chan struct{}, maxConcurrentScriptValidations)
+	scriptValidationBodySlots = make(
+		chan struct{},
+		maxConcurrentScriptValidations,
+	)
+	scriptValidationSlots = make(
+		chan struct{},
+		maxConcurrentScriptValidations,
+	)
 )
 
 // writeJSONError writes a JSON error response safely
@@ -106,14 +112,24 @@ func setSecretResponseHeaders(w http.ResponseWriter) {
 // consumeRequestBodyWithinLimit drains a body for endpoints whose request has
 // no fields. Draining through MaxBytesReader makes the size limit effective
 // even when the handler does not otherwise decode a request body.
-func consumeRequestBodyWithinLimit(w http.ResponseWriter, r *http.Request) bool {
+func consumeRequestBodyWithinLimit(
+	w http.ResponseWriter,
+	r *http.Request,
+) bool {
 	if r.Body == nil {
 		return true
 	}
-	_, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	_, err := io.Copy(
+		io.Discard,
+		http.MaxBytesReader(w, r.Body, maxRequestBodyBytes),
+	)
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) {
-		writeError(w, http.StatusRequestEntityTooLarge, errors.New("request body too large"))
+		writeError(
+			w,
+			http.StatusRequestEntityTooLarge,
+			errors.New("request body too large"),
+		)
 		return false
 	}
 	if err != nil {
@@ -142,7 +158,9 @@ func writeError(w http.ResponseWriter, code int, err error) {
 // decodeAndValidate decodes a JSON request body and validates it.
 // Returns true on success; writes an error response and returns false on failure.
 func decodeAndValidate(w http.ResponseWriter, r *http.Request, dst any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	decoder := json.NewDecoder(
+		http.MaxBytesReader(w, r.Body, maxRequestBodyBytes),
+	)
 	if err := decoder.Decode(dst); err != nil {
 		writeDecodeError(w, err)
 		return false
@@ -161,7 +179,11 @@ func decodeAndValidate(w http.ResponseWriter, r *http.Request, dst any) bool {
 func writeDecodeError(w http.ResponseWriter, err error) {
 	var maxBytesErr *http.MaxBytesError
 	if errors.As(err, &maxBytesErr) {
-		writeError(w, http.StatusRequestEntityTooLarge, errors.New("request body too large"))
+		writeError(
+			w,
+			http.StatusRequestEntityTooLarge,
+			errors.New("request body too large"),
+		)
 		return
 	}
 	writeError(w, http.StatusBadRequest, errors.New("invalid JSON request"))
@@ -384,8 +406,8 @@ type ScriptCreateRequest struct {
 	Type           string   `json:"type"                      validate:"required,oneof=nOf all any"`
 	Required       int      `json:"required"                  validate:"omitempty,min=1"`
 	KeyHashes      []string `json:"key_hashes"                validate:"required,min=1,dive,hexadecimal,len=56"`
-	TimelockBefore uint64   `json:"timelock_before,omitempty"                                                   swaggertype:"integer" format:"int64"`
-	TimelockAfter  uint64   `json:"timelock_after,omitempty"                                                    swaggertype:"integer" format:"int64"`
+	TimelockBefore uint64   `json:"timelock_before,omitempty"                                                                    swaggertype:"integer" format:"int64"`
+	TimelockAfter  uint64   `json:"timelock_after,omitempty"                                                                     swaggertype:"integer" format:"int64"`
 	Network        string   `json:"network"                   validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
 }
 
@@ -400,10 +422,10 @@ type ScriptCreateRequest struct {
 type ScriptValidateRequest struct {
 	Script map[string]any `json:"script"                       validate:"required"`
 	// Message is the hex-encoded signed payload.
-	Message           string   `json:"message,omitempty"            validate:"omitempty,hexadecimal" format:"hex"`
-	PublicKeys        []string `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64" minLength:"64" maxLength:"64" format:"hex"`
+	Message           string   `json:"message,omitempty"            validate:"omitempty,hexadecimal"    format:"hex"`
+	PublicKeys        []string `json:"public_keys,omitempty"        validate:"dive,hexadecimal,len=64"  format:"hex"   minLength:"64" maxLength:"64"`
 	Signatures        []string `json:"signatures,omitempty"         validate:"dive,hexadecimal,len=128"`
-	Slot              uint64   `json:"slot,omitempty"                                                   swaggertype:"integer" format:"int64"`
+	Slot              uint64   `json:"slot,omitempty"                                                   format:"int64"                               swaggertype:"integer"`
 	RequireSignatures bool     `json:"require_signatures,omitempty"`
 }
 
@@ -521,12 +543,12 @@ type TxIDRequest struct {
 
 // AddressEnumerateRequest defines the request payload for address enumeration
 type AddressEnumerateRequest struct {
-	Mnemonic string `json:"mnemonic" validate:"required"`
+	Mnemonic string `json:"mnemonic"           validate:"required"`
 	Password string `json:"password,omitempty"`
-	Network  string `json:"network"  validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
-	Account  uint32 `json:"account"  validate:"max=2147483647"`
-	Start    uint32 `json:"start"    validate:"max=2147483647"`
-	Count    uint32 `json:"count"    validate:"required,min=1,max=1000"`
+	Network  string `json:"network"            validate:"required,oneof=mainnet preprod preview musashi dijkstra"`
+	Account  uint32 `json:"account"            validate:"max=2147483647"`
+	Start    uint32 `json:"start"              validate:"max=2147483647"`
+	Count    uint32 `json:"count"              validate:"required,min=1,max=1000"`
 }
 
 // SignDataRequest defines the request payload for CIP-8/CIP-30 message signing
@@ -592,7 +614,9 @@ type configuredLegacyWalletStore struct {
 	store storage.Store
 }
 
-func (s configuredLegacyWalletStore) List(ctx context.Context) ([]string, error) {
+func (s configuredLegacyWalletStore) List(
+	ctx context.Context,
+) ([]string, error) {
 	if _, ok := s.store.(*storage.GCPStore); ok {
 		return gcp.ListGoogleWallets(ctx, nil)
 	}
@@ -612,7 +636,10 @@ func (s configuredLegacyWalletStore) List(ctx context.Context) ([]string, error)
 	return names, nil
 }
 
-func (s configuredLegacyWalletStore) Get(ctx context.Context, name string) (*bursa.Wallet, error) {
+func (s configuredLegacyWalletStore) Get(
+	ctx context.Context,
+	name string,
+) (*bursa.Wallet, error) {
 	stored, err := s.store.GetWallet(ctx, name)
 	if err != nil {
 		return nil, err
@@ -624,7 +651,10 @@ func (s configuredLegacyWalletStore) Get(ctx context.Context, name string) (*bur
 	return wallet, nil
 }
 
-func (s configuredLegacyWalletStore) Update(ctx context.Context, name, description string) (bool, error) {
+func (s configuredLegacyWalletStore) Update(
+	ctx context.Context,
+	name, description string,
+) (bool, error) {
 	stored, err := s.store.GetWallet(ctx, name)
 	if err != nil {
 		return false, err
@@ -639,7 +669,10 @@ func (s configuredLegacyWalletStore) Update(ctx context.Context, name, descripti
 	return true, nil
 }
 
-func (s configuredLegacyWalletStore) Delete(ctx context.Context, name string) error {
+func (s configuredLegacyWalletStore) Delete(
+	ctx context.Context,
+	name string,
+) error {
 	return s.store.DeleteWallet(ctx, name)
 }
 
@@ -651,7 +684,12 @@ func (s configuredLegacyWalletStore) Close() error {
 	return closer.Close()
 }
 
-func (s configuredLegacyWalletStore) Create(ctx context.Context, name string, wallet *bursa.Wallet, description string) error {
+func (s configuredLegacyWalletStore) Create(
+	ctx context.Context,
+	name string,
+	wallet *bursa.Wallet,
+	description string,
+) error {
 	stored, err := s.store.CreateWallet(name)
 	if err != nil {
 		return err
@@ -690,7 +728,10 @@ func (gcpLegacyWalletStore) List(ctx context.Context) ([]string, error) {
 	return gcp.ListGoogleWallets(ctx, nil)
 }
 
-func (gcpLegacyWalletStore) Get(ctx context.Context, name string) (*bursa.Wallet, error) {
+func (gcpLegacyWalletStore) Get(
+	ctx context.Context,
+	name string,
+) (*bursa.Wallet, error) {
 	wallet := bursa.Wallet{}
 	stored := gcp.NewGoogleWallet(name)
 	if err := stored.Load(ctx); err != nil {
@@ -739,7 +780,11 @@ func withLegacyStore(store legacyWalletStore, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.WithValue(r.Context(), legacyWalletStoreContextKey{}, store)
+		ctx := context.WithValue(
+			r.Context(),
+			legacyWalletStoreContextKey{},
+			store,
+		)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -807,14 +852,19 @@ func init() {
 // request-signing are signer-specific protocols and cannot be safely inferred
 // from a plain HTTP listener. A configured API secret must be at least 32
 // bytes, and a JWKS URL must be the sole selected JWT trust source.
-func buildAPIAuth(ctx context.Context, cfg *config.Config) (signerapi.Validator, error) {
+func buildAPIAuth(
+	ctx context.Context,
+	cfg *config.Config,
+) (signerapi.Validator, error) {
 	if cfg == nil {
 		return nil, errors.New("API configuration is required")
 	}
 	hasSecret := cfg.Api.JWTSecret != ""
 	hasJWKS := cfg.Api.JWKSURL != ""
 	if hasSecret && hasJWKS {
-		return nil, errors.New("api.jwt_secret and api.jwks_url are mutually exclusive")
+		return nil, errors.New(
+			"api.jwt_secret and api.jwks_url are mutually exclusive",
+		)
 	}
 	if hasSecret {
 		if len(cfg.Api.JWTSecret) < 32 {
@@ -827,12 +877,20 @@ func buildAPIAuth(ctx context.Context, cfg *config.Config) (signerapi.Validator,
 		), nil
 	}
 	if hasJWKS {
-		return signerapi.JWKSValidator(ctx, cfg.Api.JWKSURL, cfg.Api.JWTIssuer, cfg.Api.JWTAudience)
+		return signerapi.JWKSValidator(
+			ctx,
+			cfg.Api.JWKSURL,
+			cfg.Api.JWTIssuer,
+			cfg.Api.JWTAudience,
+		)
 	}
 	return nil, nil
 }
 
-func protectAPIHandler(auth signerapi.Validator, next http.Handler) http.Handler {
+func protectAPIHandler(
+	auth signerapi.Validator,
+	next http.Handler,
+) http.Handler {
 	if auth == nil {
 		return next
 	}
@@ -850,7 +908,11 @@ func protectWalletStorageHandler(
 	if auth == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			writeError(w, http.StatusUnauthorized, errors.New("wallet storage authentication required"))
+			writeError(
+				w,
+				http.StatusUnauthorized,
+				errors.New("wallet storage authentication required"),
+			)
 		})
 	}
 	admins := make(map[string]struct{}, len(adminSubjects))
@@ -859,13 +921,20 @@ func protectWalletStorageHandler(
 			admins[subject] = struct{}{}
 		}
 	}
-	return protectAPIHandler(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := admins[signerapi.CallerFromContext(r.Context())]; !ok {
-			writeError(w, http.StatusForbidden, errors.New("wallet storage administrator access required"))
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
+	return protectAPIHandler(
+		auth,
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := admins[signerapi.CallerFromContext(r.Context())]; !ok {
+				writeError(
+					w,
+					http.StatusForbidden,
+					errors.New("wallet storage administrator access required"),
+				)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}),
+	)
 }
 
 func apiTLSConfigured(cfg *config.Config) (bool, error) {
@@ -875,7 +944,9 @@ func apiTLSConfigured(cfg *config.Config) (bool, error) {
 	hasCert := cfg.Api.TLSCertFile != ""
 	hasKey := cfg.Api.TLSKeyFile != ""
 	if hasCert != hasKey {
-		return false, errors.New("api.tls_cert_file and api.tls_key_file must both be configured")
+		return false, errors.New(
+			"api.tls_cert_file and api.tls_key_file must both be configured",
+		)
 	}
 	return hasCert, nil
 }
@@ -891,7 +962,8 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 	if err != nil {
 		return err
 	}
-	if !signer.IsLoopbackListenAddress(cfg.Api.ListenAddress) && !tlsConfigured {
+	if !signer.IsLoopbackListenAddress(cfg.Api.ListenAddress) &&
+		!tlsConfigured {
 		return fmt.Errorf(
 			"refusing plaintext API listener on non-loopback address %q: configure TLS with api.tls_cert_file and api.tls_key_file",
 			cfg.Api.ListenAddress,
@@ -899,7 +971,9 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 	}
 	if walletStorageConfigured(cfg) {
 		if auth == nil {
-			return errors.New("API JWT/JWKS authentication is required when wallet storage is enabled")
+			return errors.New(
+				"API JWT/JWKS authentication is required when wallet storage is enabled",
+			)
 		}
 		hasAdmin := false
 		for _, subject := range cfg.Api.JWTAdminSubjects {
@@ -909,7 +983,9 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 			}
 		}
 		if !hasAdmin {
-			return errors.New("api.jwt_admin_subjects must identify at least one administrator when authenticated wallet storage is enabled")
+			return errors.New(
+				"api.jwt_admin_subjects must identify at least one administrator when authenticated wallet storage is enabled",
+			)
 		}
 	}
 	return nil
@@ -975,20 +1051,39 @@ func registerAPIHandlers(
 	}
 	walletAccess := func(next http.Handler) http.Handler {
 		if walletStorageConfigured(cfg) {
-			return withLegacyStore(store, protectWalletStorageHandler(auth, cfg.Api.JWTAdminSubjects, next))
+			return withLegacyStore(
+				store,
+				protectWalletStorageHandler(
+					auth,
+					cfg.Api.JWTAdminSubjects,
+					next,
+				),
+			)
 		}
 		return protected(withLegacyStore(store, next))
 	}
-	mux.Handle("/api/wallet/create", walletAccess(http.HandlerFunc(handleWalletCreate)))
-	mux.Handle("/api/wallet/restore", walletAccess(http.HandlerFunc(handleWalletRestore)))
+	mux.Handle(
+		"/api/wallet/create",
+		walletAccess(http.HandlerFunc(handleWalletCreate)),
+	)
+	mux.Handle(
+		"/api/wallet/restore",
+		walletAccess(http.HandlerFunc(handleWalletRestore)),
+	)
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)
-	mux.Handle("/api/script/validate", boundedScriptValidation(http.HandlerFunc(handleScriptValidate)))
+	mux.Handle(
+		"/api/script/validate",
+		boundedScriptValidation(http.HandlerFunc(handleScriptValidate)),
+	)
 	mux.HandleFunc("/api/script/address", handleScriptAddress)
 
 	mux.HandleFunc("/api/address/parse", handleAddressParse)
 	mux.HandleFunc("/api/address/build", handleAddressBuild)
-	mux.Handle("/api/address/enumerate", protected(http.HandlerFunc(handleAddressEnumerate)))
+	mux.Handle(
+		"/api/address/enumerate",
+		protected(http.HandlerFunc(handleAddressEnumerate)),
+	)
 
 	mux.Handle("/api/tx/sign", protected(http.HandlerFunc(handleTxSign)))
 	mux.Handle("/api/tx/witness", protected(http.HandlerFunc(handleTxWitness)))
@@ -1000,10 +1095,22 @@ func registerAPIHandlers(
 	mux.HandleFunc("/api/sign/verify", handleVerifyData)
 
 	if walletStorageConfigured(cfg) {
-		mux.Handle("/api/wallet/list", walletAccess(http.HandlerFunc(handleWalletList)))
-		mux.Handle("/api/wallet/get", walletAccess(http.HandlerFunc(handleWalletGet)))
-		mux.Handle("/api/wallet/update", walletAccess(http.HandlerFunc(handleWalletUpdate)))
-		mux.Handle("/api/wallet/delete", walletAccess(http.HandlerFunc(handleWalletDelete)))
+		mux.Handle(
+			"/api/wallet/list",
+			walletAccess(http.HandlerFunc(handleWalletList)),
+		)
+		mux.Handle(
+			"/api/wallet/get",
+			walletAccess(http.HandlerFunc(handleWalletGet)),
+		)
+		mux.Handle(
+			"/api/wallet/update",
+			walletAccess(http.HandlerFunc(handleWalletUpdate)),
+		)
+		mux.Handle(
+			"/api/wallet/delete",
+			walletAccess(http.HandlerFunc(handleWalletDelete)),
+		)
 	}
 }
 
@@ -1018,7 +1125,11 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 		select {
 		case scriptValidationBodySlots <- struct{}{}:
 		default:
-			writeError(w, http.StatusServiceUnavailable, errors.New("script validation busy"))
+			writeError(
+				w,
+				http.StatusServiceUnavailable,
+				errors.New("script validation busy"),
+			)
 			return
 		}
 		bodySlotHeld := true
@@ -1029,7 +1140,9 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 		}()
 
 		if r.Body != nil {
-			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+			body, err := io.ReadAll(
+				http.MaxBytesReader(w, r.Body, maxRequestBodyBytes),
+			)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
@@ -1047,7 +1160,11 @@ func boundedScriptValidation(next http.Handler) http.Handler {
 			defer func() { <-scriptValidationSlots }()
 			next.ServeHTTP(w, r)
 		default:
-			writeError(w, http.StatusServiceUnavailable, errors.New("script validation busy"))
+			writeError(
+				w,
+				http.StatusServiceUnavailable,
+				errors.New("script validation busy"),
+			)
 		}
 	})
 }
@@ -1328,13 +1445,22 @@ func handleWalletCreate(w http.ResponseWriter, r *http.Request) {
 		creator, ok := legacyStore(r).(legacyWalletCreator)
 		if !ok {
 			logger.Error("configured wallet store cannot create wallets")
-			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
+			writeJSONError(
+				w,
+				logger,
+				map[string]string{"error": "Internal server error"},
+				http.StatusInternalServerError,
+			)
 			walletsFailCounter.Inc()
 			return
 		}
 		if err := creator.Create(r.Context(), name, wallet, description); err != nil {
 			logger.Error("failed to persist wallet", "error", err)
-			writeError(w, http.StatusInternalServerError, errors.New("failed to persist wallet"))
+			writeError(
+				w,
+				http.StatusInternalServerError,
+				errors.New("failed to persist wallet"),
+			)
 			walletsFailCounter.Inc()
 			return
 		}
@@ -1426,13 +1552,23 @@ func handleWalletRestore(w http.ResponseWriter, r *http.Request) {
 		creator, ok := legacyStore(r).(legacyWalletCreator)
 		if !ok {
 			logger.Error("configured wallet store cannot create wallets")
-			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
+			writeJSONError(
+				w,
+				logger,
+				map[string]string{"error": "Internal server error"},
+				http.StatusInternalServerError,
+			)
 			walletsFailCounter.Inc()
 			return
 		}
 		if err := creator.Create(r.Context(), name, wallet, description); err != nil {
 			logger.Error("failed to persist restored wallet", "error", err)
-			writeJSONError(w, logger, map[string]string{"error": "Internal server error"}, http.StatusInternalServerError)
+			writeJSONError(
+				w,
+				logger,
+				map[string]string{"error": "Internal server error"},
+				http.StatusInternalServerError,
+			)
 			walletsFailCounter.Inc()
 			return
 		}
@@ -1483,11 +1619,17 @@ func handleWalletList(w http.ResponseWriter, r *http.Request) {
 	resp, err := json.Marshal(wallets)
 	if err != nil {
 		logger.Error("failed to serialize wallet names", "error", err)
-		http.Error(w, "failed to serialize wallet names", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"failed to serialize wallet names",
+			http.StatusInternalServerError,
+		)
 		walletsFailCounter.Inc()
 		return
 	}
-	_, _ = w.Write(resp) //nolint:gosec // G705: Content-Type is set to application/json above
+	_, _ = w.Write(
+		resp,
+	) //nolint:gosec // G705: Content-Type is set to application/json above
 }
 
 // handleWalletGet handles the wallet get request.
@@ -1764,7 +1906,11 @@ func handleScriptCreate(w http.ResponseWriter, r *http.Request) {
 			script,
 		)
 	case req.TimelockAfter > 0:
-		script, err = bursa.NewTimelockedScript(req.TimelockAfter, false, script)
+		script, err = bursa.NewTimelockedScript(
+			req.TimelockAfter,
+			false,
+			script,
+		)
 	}
 	if err != nil {
 		logger.Error("failed to create timelocked script", "error", err)
@@ -1847,7 +1993,9 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write(
-			[]byte(`{"error":"public_keys and signatures must have the same length"}`),
+			[]byte(
+				`{"error":"public_keys and signatures must have the same length"}`,
+			),
 		)
 		return
 	}
@@ -1859,7 +2007,13 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 		}
 		vkey, err := hex.DecodeString(req.PublicKeys[i])
 		if err != nil {
-			logger.Error("invalid public key format", "publicKey", req.PublicKeys[i], "error", err)
+			logger.Error(
+				"invalid public key format",
+				"publicKey",
+				req.PublicKeys[i],
+				"error",
+				err,
+			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"Invalid public key format"}`))
@@ -1867,13 +2021,22 @@ func handleScriptValidate(w http.ResponseWriter, r *http.Request) {
 		}
 		sig, err := hex.DecodeString(sigStr)
 		if err != nil {
-			logger.Error("invalid signature format", "signature", sigStr, "error", err)
+			logger.Error(
+				"invalid signature format",
+				"signature",
+				sigStr,
+				"error",
+				err,
+			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"Invalid signature format"}`))
 			return
 		}
-		witnesses = append(witnesses, bursa.ScriptWitness{Vkey: vkey, Signature: sig})
+		witnesses = append(
+			witnesses,
+			bursa.ScriptWitness{Vkey: vkey, Signature: sig},
+		)
 	}
 
 	message, err := hex.DecodeString(req.Message)
@@ -2145,7 +2308,10 @@ func handleAddressBuild(w http.ResponseWriter, r *http.Request) {
 func readTxRequest(txCbor string) ([]byte, uint, error) {
 	txBytes, txType, err := bursa.ReadTxInput([]byte(txCbor), "")
 	if errors.Is(err, bursa.ErrAmbiguousTxEra) {
-		return nil, 0, fmt.Errorf("%w; send tx_cbor as a text envelope whose type names the era, such as \"Tx ConwayEra\"", err)
+		return nil, 0, fmt.Errorf(
+			"%w; send tx_cbor as a text envelope whose type names the era, such as \"Tx ConwayEra\"",
+			err,
+		)
 	}
 	return txBytes, txType, err
 }
@@ -2293,7 +2459,10 @@ func handleTxAssemble(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, TxCborResponse{TxCbor: hex.EncodeToString(assembled), TxId: id})
+	writeJSON(
+		w,
+		TxCborResponse{TxCbor: hex.EncodeToString(assembled), TxId: id},
+	)
 }
 
 // handleTxDecode godoc
@@ -2383,12 +2552,20 @@ func handleSignData(w http.ResponseWriter, r *http.Request) {
 	}
 	addr, err := hex.DecodeString(req.Address)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid address hex: %w", err))
+		writeError(
+			w,
+			http.StatusBadRequest,
+			fmt.Errorf("invalid address hex: %w", err),
+		)
 		return
 	}
 	payload, err := hex.DecodeString(req.Payload)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid payload hex: %w", err))
+		writeError(
+			w,
+			http.StatusBadRequest,
+			fmt.Errorf("invalid payload hex: %w", err),
+		)
 		return
 	}
 	lk, err := bursa.LoadKeyFromBytes([]byte(req.SigningKey))
@@ -2425,7 +2602,11 @@ func handleVerifyData(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, err := hex.DecodeString(req.Payload)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid payload hex: %w", err))
+		writeError(
+			w,
+			http.StatusBadRequest,
+			fmt.Errorf("invalid payload hex: %w", err),
+		)
 		return
 	}
 	ok, err := bursa.VerifyData(req.Signature, req.Key, payload)
@@ -2456,7 +2637,14 @@ func handleAddressEnumerate(w http.ResponseWriter, r *http.Request) {
 	if !decodeAndValidate(w, r, &req) {
 		return
 	}
-	addrs, err := bursa.EnumerateAddresses(req.Mnemonic, req.Password, req.Network, req.Account, req.Start, req.Count)
+	addrs, err := bursa.EnumerateAddresses(
+		req.Mnemonic,
+		req.Password,
+		req.Network,
+		req.Account,
+		req.Start,
+		req.Count,
+	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return

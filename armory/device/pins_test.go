@@ -37,12 +37,20 @@ var (
 // poolRegCert is a pool registration for pool and owner with the given VRF
 // key hash and parameters, naming testReward and carrying metadata when meta
 // is not nil.
-func poolRegCert(pool, owner [28]byte, vrf byte, pledge, cost uint64, meta *byte) []any {
+func poolRegCert(
+	pool, owner [28]byte,
+	vrf byte,
+	pledge, cost uint64,
+	meta *byte,
+) []any {
 	reward, _ := hex.DecodeString(testReward)
 
 	var md any
 	if meta != nil {
-		md = []any{"https://example.test/p.json", bytes.Repeat([]byte{*meta}, 32)}
+		md = []any{
+			"https://example.test/p.json",
+			bytes.Repeat([]byte{*meta}, 32),
+		}
 	}
 
 	return []any{
@@ -52,7 +60,9 @@ func poolRegCert(pool, owner [28]byte, vrf byte, pledge, cost uint64, meta *byte
 	}
 }
 
-func pinnedSetup(t *testing.T) (*Service, *fakeChip, ed25519.PublicKey, [28]byte, [28]byte) {
+func pinnedSetup(
+	t *testing.T,
+) (*Service, *fakeChip, ed25519.PublicKey, [28]byte, [28]byte) {
 	t.Helper()
 
 	s, chip := newTestService(t)
@@ -83,12 +93,20 @@ func with(c []any, i int, v any) []any {
 	return c
 }
 
-func signReg(t *testing.T, s *Service, cold []byte, n byte, cert []any) SignResponse {
+func signReg(
+	t *testing.T,
+	s *Service,
+	cold []byte,
+	n byte,
+	cert []any,
+) SignResponse {
 	t.Helper()
 
 	return sign(t, s, SignRequest{
 		Purpose: "tx-body", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(n), Payload: certBody(cert), Profile: "otg@preview", Era: conwayEra(),
+		Nonce: nonce(
+			n,
+		), Payload: certBody(cert), Profile: "otg@preview", Era: conwayEra(),
 	})
 }
 
@@ -107,7 +125,8 @@ func TestProvisionPins(t *testing.T) {
 	}
 
 	got, err := profile.DecodePins(chip.bins[id])
-	if err != nil || got.PledgeMax != 1000 || got.MetadataHash == nil || got.MarginMaxDen != 10 {
+	if err != nil || got.PledgeMax != 1000 || got.MetadataHash == nil ||
+		got.MarginMaxDen != 10 {
 		t.Fatalf("stored pins %+v, %v", got, err)
 	}
 
@@ -125,7 +144,8 @@ func TestProvisionPins(t *testing.T) {
 		t.Fatalf("replace: %d %s", code, body)
 	}
 
-	if got, _ = profile.DecodePins(chip.bins[id]); got.PledgeMax != 2000 || got.MetadataHash != nil {
+	if got, _ = profile.DecodePins(chip.bins[id]); got.PledgeMax != 2000 ||
+		got.MetadataHash != nil {
 		t.Errorf("pins not replaced: %+v", got)
 	}
 }
@@ -229,7 +249,8 @@ func TestPinsDamagedObjectRefuses(t *testing.T) {
 
 	chip.bins[s.profiles["otg@preview"].PinsID()][0] = 9
 
-	if r := signReg(t, s, cold, 1, poolRegCert(pool, owner, 0x99, 500, 400, nil)); r.Error == "" || r.Signature != nil {
+	if r := signReg(t, s, cold, 1, poolRegCert(pool, owner, 0x99, 500, 400, nil)); r.Error == "" ||
+		r.Signature != nil {
 		t.Fatal("registration signed with damaged pins")
 	}
 
@@ -251,7 +272,9 @@ func TestWipeProfileDeletesPins(t *testing.T) {
 		t.Fatalf("pins: %d %s", code, body)
 	}
 
-	chip.bins[(profile.Profile{Slot: 1}).PinsID()] = []byte("another profile's pins")
+	chip.bins[(profile.Profile{Slot: 1}).PinsID()] = []byte(
+		"another profile's pins",
+	)
 
 	if !objectIDs(chip)[gone.PinsID()] {
 		t.Fatal("pins object missing before the wipe")
@@ -302,13 +325,22 @@ func TestStartupReportShowsPinned(t *testing.T) {
 
 	var log strings.Builder
 
-	s := New(&sync.Mutex{}, func(f string, a ...any) { fmt.Fprintf(&log, f+"\n", a...) })
+	s := New(
+		&sync.Mutex{},
+		func(f string, a ...any) { fmt.Fprintf(&log, f+"\n", a...) },
+	)
 	if err := s.SetChip(chip); err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(log.String(), "registration pins set, relays and metadata not pinned") {
-		t.Errorf("startup report does not show the profile is pinned without its relays:\n%s", log.String())
+	if !strings.Contains(
+		log.String(),
+		"registration pins set, relays and metadata not pinned",
+	) {
+		t.Errorf(
+			"startup report does not show the profile is pinned without its relays:\n%s",
+			log.String(),
+		)
 	}
 
 	pins, _ = profile.EncodePins(profile.Pins{PinRelays: true, MarginMaxDen: 1})
@@ -319,8 +351,12 @@ func TestStartupReportShowsPinned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(log.String(), "registration pins set") || strings.Contains(log.String(), "not pinned") {
-		t.Errorf("startup report does not show the profile is pinned with its relays:\n%s", log.String())
+	if !strings.Contains(log.String(), "registration pins set") ||
+		strings.Contains(log.String(), "not pinned") {
+		t.Errorf(
+			"startup report does not show the profile is pinned with its relays:\n%s",
+			log.String(),
+		)
 	}
 
 	delete(chip.bins, (profile.Profile{Slot: 0}).PinsID())
@@ -331,7 +367,10 @@ func TestStartupReportShowsPinned(t *testing.T) {
 	}
 
 	if !strings.Contains(log.String(), "registration pins none") {
-		t.Errorf("startup report does not show the profile is unpinned:\n%s", log.String())
+		t.Errorf(
+			"startup report does not show the profile is unpinned:\n%s",
+			log.String(),
+		)
 	}
 }
 
@@ -344,7 +383,11 @@ func TestPinsRefuseUnsignedWithHostKey(t *testing.T) {
 	s, chip := newHostAuthService(t)
 	before := chipState(chip)
 
-	code, body := rawPost(s.ProvisioningHandler(), "/provision/pins", jsonOf(t, setPinsReq()))
+	code, body := rawPost(
+		s.ProvisioningHandler(),
+		"/provision/pins",
+		jsonOf(t, setPinsReq()),
+	)
 	if code == http.StatusOK {
 		t.Fatalf("unsigned pins request accepted: %s", body)
 	}
@@ -364,13 +407,20 @@ func TestPinsAcceptSignedWithHostKey(t *testing.T) {
 
 	s, _ := newHostAuthService(t)
 
-	code, body := postAs(t, s.ProvisioningHandler(), "/provision/pins", setPinsReq(), testHostKey)
+	code, body := postAs(
+		t,
+		s.ProvisioningHandler(),
+		"/provision/pins",
+		setPinsReq(),
+		testHostKey,
+	)
 	if code != http.StatusOK {
 		t.Fatalf("signed pins request refused: %d %s", code, body)
 	}
 
 	// the reply echoes the pins, not the request's authentication
-	if bytes.Contains(body, []byte("host_signature")) || bytes.Contains(body, []byte("challenge")) {
+	if bytes.Contains(body, []byte("host_signature")) ||
+		bytes.Contains(body, []byte("challenge")) {
 		t.Errorf("reply echoes host authentication: %s", body)
 	}
 }
@@ -384,9 +434,17 @@ func TestPinsRefusedWhileRecordMisplaced(t *testing.T) {
 
 	s, chip := newTestService(t)
 	plant(chip, freeColdID)
-	storeRecord(t, chip, profile.Profile{Name: "other@preview", Slot: 1, ColdKeyID: freeColdID})
+	storeRecord(
+		t,
+		chip,
+		profile.Profile{Name: "other@preview", Slot: 1, ColdKeyID: freeColdID},
+	)
 
-	moved := profile.Profile{Name: "moved@preview", Slot: 1, ColdKeyID: testColdID}
+	moved := profile.Profile{
+		Name:      "moved@preview",
+		Slot:      1,
+		ColdKeyID: testColdID,
+	}
 
 	rec, err := profile.Encode(moved)
 	if err != nil {
@@ -425,12 +483,15 @@ func TestProvisionPinsUnpinnedRelays(t *testing.T) {
 		t.Fatalf("unpinned relays refused: %d %s", code, body)
 	}
 
-	pins, err := profile.DecodePins(chip.bins[s.profiles["otg@preview"].PinsID()])
+	pins, err := profile.DecodePins(
+		chip.bins[s.profiles["otg@preview"].PinsID()],
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if pins.PinRelays || pins.MetadataHash != nil || pins.RelaysDigest != [profile.RelaysDigestSize]byte{} {
+	if pins.PinRelays || pins.MetadataHash != nil ||
+		pins.RelaysDigest != [profile.RelaysDigestSize]byte{} {
 		t.Errorf("stored pins %+v, want relays and metadata unpinned", pins)
 	}
 }

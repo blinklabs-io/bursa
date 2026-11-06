@@ -64,10 +64,16 @@ func TestTrackedAPIFixturesExcludeRecoveryMaterial(t *testing.T) {
 			containsRecovery := containsMnemonic(value)
 			containsSigningKey := containsSerializedSigningKey(value)
 			if containsRecovery {
-				t.Errorf("%s contains a complete BIP-39 recovery phrase in tracked test source", name)
+				t.Errorf(
+					"%s contains a complete BIP-39 recovery phrase in tracked test source",
+					name,
+				)
 			}
 			if containsSigningKey {
-				t.Errorf("%s contains a serialized signing key in tracked test source", name)
+				t.Errorf(
+					"%s contains a serialized signing key in tracked test source",
+					name,
+				)
 			}
 			return !containsRecovery && !containsSigningKey
 		})
@@ -98,7 +104,9 @@ func containsMnemonic(value string) bool {
 	words := sourceWords.FindAllString(strings.ToLower(value), -1)
 	for _, count := range []int{12, 15, 18, 21, 24} {
 		for start := 0; start+count <= len(words); start++ {
-			if bip39.IsMnemonicValid(strings.Join(words[start:start+count], " ")) {
+			if bip39.IsMnemonicValid(
+				strings.Join(words[start:start+count], " "),
+			) {
 				return true
 			}
 		}

@@ -31,20 +31,28 @@ func keyEncryptCommand() *cobra.Command {
 		Use:   "encrypt",
 		Short: "Encrypt a key file with a passphrase (scrypt + AES-256-GCM)",
 		Run: func(cmd *cobra.Command, args []string) {
-			passphrase, err := readPassphrase(cmd, passphraseFile, "Encryption passphrase: ")
+			passphrase, err := readPassphrase(
+				cmd,
+				passphraseFile,
+				"Encryption passphrase: ",
+			)
 			if err != nil {
-				logging.GetLogger().Error("failed to read passphrase", "error", err)
+				logging.GetLogger().
+					Error("failed to read passphrase", "error", err)
 				os.Exit(1)
 			}
 			if err := cli.RunKeyEncrypt(inFile, outFile, passphrase); err != nil {
-				logging.GetLogger().Error("failed to encrypt key file", "error", err)
+				logging.GetLogger().
+					Error("failed to encrypt key file", "error", err)
 				os.Exit(1)
 			}
 		},
 	}
 	cmd.Flags().StringVar(&inFile, "in-file", "", "File to encrypt")
-	cmd.Flags().StringVar(&outFile, "out-file", "", "Output file (default: overwrite in-file)")
-	cmd.Flags().StringVar(&passphraseFile, "passphrase-file", "", "File containing encryption passphrase (use - for stdin)")
+	cmd.Flags().
+		StringVar(&outFile, "out-file", "", "Output file (default: overwrite in-file)")
+	cmd.Flags().
+		StringVar(&passphraseFile, "passphrase-file", "", "File containing encryption passphrase (use - for stdin)")
 	_ = cmd.MarkFlagRequired("in-file")
 	return cmd
 }
@@ -55,25 +63,36 @@ func keyDecryptCommand() *cobra.Command {
 		Use:   "decrypt",
 		Short: "Decrypt a passphrase-encrypted key file",
 		Run: func(cmd *cobra.Command, args []string) {
-			passphrase, err := readPassphrase(cmd, passphraseFile, "Decryption passphrase: ")
+			passphrase, err := readPassphrase(
+				cmd,
+				passphraseFile,
+				"Decryption passphrase: ",
+			)
 			if err != nil {
-				logging.GetLogger().Error("failed to read passphrase", "error", err)
+				logging.GetLogger().
+					Error("failed to read passphrase", "error", err)
 				os.Exit(1)
 			}
 			if err := cli.RunKeyDecrypt(inFile, outFile, passphrase); err != nil {
-				logging.GetLogger().Error("failed to decrypt key file", "error", err)
+				logging.GetLogger().
+					Error("failed to decrypt key file", "error", err)
 				os.Exit(1)
 			}
 		},
 	}
 	cmd.Flags().StringVar(&inFile, "in-file", "", "File to decrypt")
-	cmd.Flags().StringVar(&outFile, "out-file", "", `Destination for the decrypted key: a path, or "-" for standard output`)
-	cmd.Flags().StringVar(&passphraseFile, "passphrase-file", "", "File containing decryption passphrase (use - for stdin)")
+	cmd.Flags().
+		StringVar(&outFile, "out-file", "", `Destination for the decrypted key: a path, or "-" for standard output`)
+	cmd.Flags().
+		StringVar(&passphraseFile, "passphrase-file", "", "File containing decryption passphrase (use - for stdin)")
 	_ = cmd.MarkFlagRequired("in-file")
 	return cmd
 }
 
-func readPassphrase(cmd *cobra.Command, passphraseFile, prompt string) (string, error) {
+func readPassphrase(
+	cmd *cobra.Command,
+	passphraseFile, prompt string,
+) (string, error) {
 	var passphrase string
 	if passphraseFile != "" {
 		var err error

@@ -49,18 +49,36 @@ func (f *fakeDiagnostics) WriteLogsZip(w io.Writer) error {
 // are the shared fakes). st drives the (deliberately absent) gate so the test
 // can confirm /diagnostics works in a non-ready state.
 func diagHandler(st Statuser, d Diagnostics) http.Handler {
-	return NewHandler(testSessionToken,
-		st, &fakeVault{}, &fakeWallet{}, &fakeSpender{}, &fakeSettings{}, &fakeContacts{},
-		nil, &fakePoolOps{}, nil, &fakeMultiSig{}, "preview", http.NotFoundHandler(),
+	return NewHandler(
+		testSessionToken,
+		st,
+		&fakeVault{},
+		&fakeWallet{},
+		&fakeSpender{},
+		&fakeSettings{},
+		&fakeContacts{},
+		nil,
+		&fakePoolOps{},
+		nil,
+		&fakeMultiSig{},
+		"preview",
+		http.NotFoundHandler(),
 		WithDiagnostics(d),
 	)
 }
 
 func TestDiagnosticsReport(t *testing.T) {
 	d := &fakeDiagnostics{report: diagnostics.Report{
-		Node:  diagnostics.NodeInfo{Network: "preview", DingoVersion: "v0.66.2"},
-		Sync:  diagnostics.SyncInfo{State: "syncing", Tip: 42},
-		Peers: diagnostics.PeersInfo{Available: true, Total: 7, Configured: []diagnostics.ConfiguredPeer{}},
+		Node: diagnostics.NodeInfo{
+			Network:      "preview",
+			DingoVersion: "v0.66.2",
+		},
+		Sync: diagnostics.SyncInfo{State: "syncing", Tip: 42},
+		Peers: diagnostics.PeersInfo{
+			Available:  true,
+			Total:      7,
+			Configured: []diagnostics.ConfiguredPeer{},
+		},
 	}}
 	// A non-ready node: /diagnostics must still respond (it is ungated like
 	// /status), which is exactly when a user needs it.
@@ -75,7 +93,8 @@ func TestDiagnosticsReport(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Node.Network != "preview" || got.Sync.State != "syncing" || got.Peers.Total != 7 {
+	if got.Node.Network != "preview" || got.Sync.State != "syncing" ||
+		got.Peers.Total != 7 {
 		t.Errorf("unexpected report: %+v", got)
 	}
 	if d.reportCalls != 1 {

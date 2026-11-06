@@ -173,10 +173,18 @@ func AdminBinding(route string, canonical, challenge []byte) []byte {
 // SignAdminRequest returns body, the JSON request for route, carrying the
 // challenge, the public key of key and its signature. Fields the route does
 // not take are refused, as the device does.
-func SignAdminRequest(route string, body []byte, key ed25519.PrivateKey, challenge []byte) ([]byte, error) {
+func SignAdminRequest(
+	route string,
+	body []byte,
+	key ed25519.PrivateKey,
+	challenge []byte,
+) ([]byte, error) {
 	mk, ok := adminRequests[route]
 	if !ok {
-		return nil, fmt.Errorf("route %s does not take host authentication", route)
+		return nil, fmt.Errorf(
+			"route %s does not take host authentication",
+			route,
+		)
 	}
 
 	req := mk()
@@ -194,9 +202,12 @@ func SignAdminRequest(route string, body []byte, key ed25519.PrivateKey, challen
 	}
 
 	*req.hostAuth() = HostAuth{
-		Challenge:     challenge,
-		HostKey:       key.Public().(ed25519.PublicKey),
-		HostSignature: ed25519.Sign(key, AdminBinding(route, canonical, challenge)),
+		Challenge: challenge,
+		HostKey:   key.Public().(ed25519.PublicKey),
+		HostSignature: ed25519.Sign(
+			key,
+			AdminBinding(route, canonical, challenge),
+		),
 	}
 
 	return json.Marshal(req)
@@ -227,11 +238,15 @@ func handleAdmin[Req any, P interface {
 
 // errProvisioningClosed refuses the firmware's unsigned cold key import once
 // a host key is registered.
-var errProvisioningClosed = errors.New("a host key is registered: send a signed /provision/cold request")
+var errProvisioningClosed = errors.New(
+	"a host key is registered: send a signed /provision/cold request",
+)
 
 // errUnsignedImportMulti refuses the firmware's unsigned cold key import in a
 // multi image, which has none.
-var errUnsignedImportMulti = errors.New("a multi image takes no unsigned cold key import: add the scope's first host key with /provision/host-key, then send a signed /provision/cold request")
+var errUnsignedImportMulti = errors.New(
+	"a multi image takes no unsigned cold key import: add the scope's first host key with /provision/host-key, then send a signed /provision/cold request",
+)
 
 // UnsignedProvisioningLocked reports why provisioning requests cannot be taken
 // unsigned, or nil when they can: no host key of any network or chain is
@@ -282,5 +297,10 @@ func (s *Service) authorizeAdmin(route string, req hostAuthed) error {
 
 	a := req.hostAuth()
 
-	return s.authenticateHost(a.HostKey, a.HostSignature, a.Challenge, AdminBinding(route, canonical, a.Challenge))
+	return s.authenticateHost(
+		a.HostKey,
+		a.HostSignature,
+		a.Challenge,
+		AdminBinding(route, canonical, a.Challenge),
+	)
 }

@@ -46,7 +46,8 @@ func TestBuildCallerPolicies(t *testing.T) {
 	if ov == nil {
 		t.Fatalf("missing override for alice/%s", testKeyHash)
 	}
-	if ov.MaxFeeAda != 2 || !ov.ForbidCertificates || len(ov.AllowedVoterKinds) != 1 {
+	if ov.MaxFeeAda != 2 || !ov.ForbidCertificates ||
+		len(ov.AllowedVoterKinds) != 1 {
 		t.Fatalf("override not mapped correctly: %+v", ov)
 	}
 }
@@ -84,7 +85,12 @@ func TestBuildPolicyHook(t *testing.T) {
 	if h != nil {
 		t.Fatalf("expected nil hook when policy_hook_url unset")
 	}
-	h, err = BuildPolicyHook(config.SignerConfig{PolicyHookURL: "https://policy.example/decide", PolicyHookTimeoutMs: 250})
+	h, err = BuildPolicyHook(
+		config.SignerConfig{
+			PolicyHookURL:       "https://policy.example/decide",
+			PolicyHookTimeoutMs: 250,
+		},
+	)
 	if err != nil {
 		t.Fatalf("BuildPolicyHook: %v", err)
 	}
@@ -94,9 +100,11 @@ func TestBuildPolicyHook(t *testing.T) {
 }
 
 func TestBuildPolicyHookRejectsPlaintextAllowEndpoint(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"allow": true}`))
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"allow": true}`))
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	h, err := BuildPolicyHook(config.SignerConfig{PolicyHookURL: srv.URL})

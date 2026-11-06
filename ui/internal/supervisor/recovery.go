@@ -25,7 +25,9 @@ import (
 // ErrRecoveryUnavailable means the node has not reported a failed sync. A
 // clean-data retry is intentionally unavailable while a healthy node is
 // running because it discards the local chain database.
-var ErrRecoveryUnavailable = errors.New("node recovery is available only after a sync failure")
+var ErrRecoveryUnavailable = errors.New(
+	"node recovery is available only after a sync failure",
+)
 
 // Recover removes the embedded node's database and launches a fresh sync. The
 // supervisor's DataDir is the node-only boundary supplied by boot; vaults,
@@ -51,32 +53,46 @@ func (s *Supervisor) Recover(ctx context.Context) error {
 	}
 
 	if strings.TrimSpace(s.cfg.WalletDataDir) == "" {
-		return s.recoveryFailed(errors.New("wallet data directory is not configured"))
+		return s.recoveryFailed(
+			errors.New("wallet data directory is not configured"),
+		)
 	}
 	nodeDir, err := filepath.Abs(s.cfg.DataDir)
 	if err != nil {
-		return s.recoveryFailed(fmt.Errorf("resolve node sync directory: %w", err))
+		return s.recoveryFailed(
+			fmt.Errorf("resolve node sync directory: %w", err),
+		)
 	}
 	nodeDir, err = filepath.EvalSymlinks(nodeDir)
 	if err != nil {
-		return s.recoveryFailed(fmt.Errorf("resolve node sync directory: %w", err))
+		return s.recoveryFailed(
+			fmt.Errorf("resolve node sync directory: %w", err),
+		)
 	}
 	walletDir, err := filepath.Abs(s.cfg.WalletDataDir)
 	if err != nil {
-		return s.recoveryFailed(fmt.Errorf("resolve wallet data directory: %w", err))
+		return s.recoveryFailed(
+			fmt.Errorf("resolve wallet data directory: %w", err),
+		)
 	}
 	walletDir, err = filepath.EvalSymlinks(walletDir)
 	if err != nil {
-		return s.recoveryFailed(fmt.Errorf("resolve wallet data directory: %w", err))
+		return s.recoveryFailed(
+			fmt.Errorf("resolve wallet data directory: %w", err),
+		)
 	}
 	if filepath.Dir(nodeDir) == nodeDir || containsPath(nodeDir, walletDir) {
-		return s.recoveryFailed(errors.New("refusing unsafe node sync directory"))
+		return s.recoveryFailed(
+			errors.New("refusing unsafe node sync directory"),
+		)
 	}
 	if err := s.removeAll(nodeDir); err != nil {
 		return s.recoveryFailed(fmt.Errorf("remove node sync data: %w", err))
 	}
 	if err := os.MkdirAll(nodeDir, 0o700); err != nil {
-		return s.recoveryFailed(fmt.Errorf("recreate node sync directory: %w", err))
+		return s.recoveryFailed(
+			fmt.Errorf("recreate node sync directory: %w", err),
+		)
 	}
 	if err := ctx.Err(); err != nil {
 		return s.recoveryFailed(err)
@@ -92,7 +108,8 @@ func containsPath(parent, child string) bool {
 	if err != nil {
 		return false
 	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+	return rel == "." ||
+		(rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func (s *Supervisor) recoveryFailed(err error) error {

@@ -20,13 +20,15 @@ func stalledUTxORPCServer(t *testing.T) (url string, accepted <-chan struct{}) {
 	t.Helper()
 	seen := make(chan struct{}, 8)
 	release := make(chan struct{})
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen <- struct{}{}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
+	srv := httptest.NewUnstartedServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen <- struct{}{}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}),
+	)
 	srv.Config.Protocols = new(http.Protocols)
 	srv.Config.Protocols.SetUnencryptedHTTP2(true)
 	srv.Start()
@@ -76,9 +78,14 @@ func TestSubmitStalledEndpointIsBounded(t *testing.T) {
 	select {
 	case <-accepted:
 	default:
-		t.Fatal("server never received the submission; the stall was not exercised")
+		t.Fatal(
+			"server never received the submission; the stall was not exercised",
+		)
 	}
 	if !errors.Is(err, ErrSubmitUnknown) {
-		t.Fatalf("Submit error = %v, want an unknown-outcome error after the deadline", err)
+		t.Fatalf(
+			"Submit error = %v, want an unknown-outcome error after the deadline",
+			err,
+		)
 	}
 }

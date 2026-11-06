@@ -29,14 +29,27 @@ func TestMultiUnsignedImportRefusalNamesFirstKey(t *testing.T) {
 	t.Parallel()
 
 	s := multiImage(t, newFakeChip(), true)
-	if err := s.UnsignedProvisioningLocked(); !errors.Is(err, errUnsignedImportMulti) {
-		t.Fatalf("UnsignedProvisioningLocked = %v, want %v", err, errUnsignedImportMulti)
+	if err := s.UnsignedProvisioningLocked(); !errors.Is(
+		err,
+		errUnsignedImportMulti,
+	) {
+		t.Fatalf(
+			"UnsignedProvisioningLocked = %v, want %v",
+			err,
+			errUnsignedImportMulti,
+		)
 	}
 }
 
 // otherChainKey is registered by an image of a chain the multi image does not
 // serve, then for scope by its own single-scope image.
-func otherChainKey(t *testing.T, chip *fakeChip, k ed25519.PrivateKey, network uint8, chain string) {
+func otherChainKey(
+	t *testing.T,
+	chip *fakeChip,
+	k ed25519.PrivateKey,
+	network uint8,
+	chain string,
+) {
 	t.Helper()
 
 	if _, err := imageOn(t, chip, 1, "other-mainnet").addHostKey(HostKeyRequest{PublicKey: hostPub(k)}); err != nil {
@@ -68,12 +81,30 @@ func TestMultiAddRefusesKeyOfUnservedScope(t *testing.T) {
 
 	h := multiImage(t, chip, true).Handler()
 	code, body := firstKey(t, h, scopeKey(0xd2), scopeTestnetName)
-	refused(t, "unsigned key on a device holding keys", code, body, errFirstKeyHeld)
+	refused(
+		t,
+		"unsigned key on a device holding keys",
+		code,
+		body,
+		errFirstKeyHeld,
+	)
 
 	stored := bytes.Clone(chip.bins[hostKeysID])
 
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(k), Scope: scopeTestnetName}, multiKeyTestnet)
-	refused(t, "testnet add of a key stored for an unserved chain", code, body, errKeyOtherScope)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{PublicKey: hostPub(k), Scope: scopeTestnetName},
+		multiKeyTestnet,
+	)
+	refused(
+		t,
+		"testnet add of a key stored for an unserved chain",
+		code,
+		body,
+		errKeyOtherScope,
+	)
 
 	if !bytes.Equal(chip.bins[hostKeysID], stored) {
 		t.Fatal("the refused add changed the stored list")
@@ -88,21 +119,38 @@ func TestMultiKeyScopeSkipsUnservedEntry(t *testing.T) {
 	chip := newFakeChip()
 	counter := uint64(3)
 
-	code, body := rawPost(imageOn(t, chip, 0, "").Handler(), RouteProvisionProfile, jsonOf(t, ProvisionRequest{
-		Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
-	}))
+	code, body := rawPost(
+		imageOn(t, chip, 0, "").Handler(),
+		RouteProvisionProfile,
+		jsonOf(t, ProvisionRequest{
+			Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
+		}),
+	)
 	mustOK(t, "profile on the testnet image", code, body)
 
 	k := scopeKey(0xd2)
 	otherChainKey(t, chip, k, 1, scopePrimeName)
 
 	h := multiImage(t, chip, false).Handler()
-	code, body = postAs(t, h, RouteProvisionFloor, FloorRequest{Profile: "otg@preview", ChainCounter: 4}, k)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionFloor,
+		FloorRequest{Profile: "otg@preview", ChainCounter: 4},
+		k,
+	)
 	refused(t, "prime key on the testnet profile", code, body, errScopeMismatch)
 }
 
 // postWith sends req to h signed by key over challenge ch.
-func postWith(t *testing.T, h http.Handler, path string, req any, key ed25519.PrivateKey, ch []byte) (int, []byte) {
+func postWith(
+	t *testing.T,
+	h http.Handler,
+	path string,
+	req any,
+	key ed25519.PrivateKey,
+	ch []byte,
+) (int, []byte) {
 	t.Helper()
 
 	body, err := SignAdminRequest(path, jsonOf(t, req), key, ch)
@@ -143,20 +191,48 @@ func TestMultiScopeRefusalKeepsChallenge(t *testing.T) {
 		ch := challengeOf(t, h)
 		req := FloorRequest{Profile: testnet.name, ChainCounter: 4}
 
-		code, body := postWith(t, h, RouteProvisionFloor, req, multiKeyPrime, ch)
+		code, body := postWith(
+			t,
+			h,
+			RouteProvisionFloor,
+			req,
+			multiKeyPrime,
+			ch,
+		)
 		refused(t, "prime key", code, body, errScopeMismatch)
 
-		code, body = postWith(t, h, RouteProvisionFloor, req, multiKeyTestnet, ch)
+		code, body = postWith(
+			t,
+			h,
+			RouteProvisionFloor,
+			req,
+			multiKeyTestnet,
+			ch,
+		)
 		mustOK(t, "testnet key on the same challenge", code, body)
 	})
 
 	t.Run("device-wide", func(t *testing.T) {
 		ch := challengeOf(t, h)
 
-		code, body := postWith(t, h, RouteProvisionIdentity, IdentityRequest{}, multiKeyTestnet, ch)
+		code, body := postWith(
+			t,
+			h,
+			RouteProvisionIdentity,
+			IdentityRequest{},
+			multiKeyTestnet,
+			ch,
+		)
 		refused(t, "testnet key", code, body, errDeviceWide)
 
-		code, body = postWith(t, h, RouteProvisionIdentity, IdentityRequest{}, multiKeyCardano, ch)
+		code, body = postWith(
+			t,
+			h,
+			RouteProvisionIdentity,
+			IdentityRequest{},
+			multiKeyCardano,
+			ch,
+		)
 		mustOK(t, "cardano key on the same challenge", code, body)
 	})
 
@@ -166,7 +242,9 @@ func TestMultiScopeRefusalKeepsChallenge(t *testing.T) {
 		cold, _ := chip.PublicKeyEd25519(testnet.cold)
 		req := SignRequest{
 			Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-			Nonce: nonce(0x61), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 4, 1100), Profile: testnet.name,
+			Nonce: nonce(
+				0x61,
+			), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 4, 1100), Profile: testnet.name,
 		}
 
 		if resp := postSign(t, s, authenticate(req, multiKeyPrime, ch)); resp.Error != errScopeMismatch.Error() {
@@ -181,7 +259,12 @@ func TestMultiScopeRefusalKeepsChallenge(t *testing.T) {
 	t.Run("inventory", func(t *testing.T) {
 		ch := challenge(t, s)
 		as := func(k ed25519.PrivateKey) (int, []byte) {
-			req := InventoryRequest{Nonce: nonce(0x62), Profile: testnet.name, Challenge: ch, HostKey: hostPub(k)}
+			req := InventoryRequest{
+				Nonce:     nonce(0x62),
+				Profile:   testnet.name,
+				Challenge: ch,
+				HostKey:   hostPub(k),
+			}
 			req.HostSignature = ed25519.Sign(k, InventoryRequestBinding(req))
 
 			return post(t, s, "/v1/inventory", req)
@@ -197,7 +280,11 @@ func TestMultiScopeRefusalKeepsChallenge(t *testing.T) {
 	t.Run("signlog", func(t *testing.T) {
 		ch := challenge(t, s)
 		as := func(k ed25519.PrivateKey) (int, []byte) {
-			req := SignLogRequest{Nonce: nonce(0x63), Challenge: ch, HostKey: hostPub(k)}
+			req := SignLogRequest{
+				Nonce:     nonce(0x63),
+				Challenge: ch,
+				HostKey:   hostPub(k),
+			}
 			req.HostSignature = ed25519.Sign(k, SignLogBinding(req))
 
 			return post(t, s, "/v1/signlog", req)
@@ -220,10 +307,22 @@ func TestMultiSameColdKeyTwoScopesOneProfile(t *testing.T) {
 	h := multiImage(t, chip, true).Handler()
 	counter := uint64(1)
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, 0x77), multiKeyTestnet)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50014, 0x77),
+		multiKeyTestnet,
+	)
 	mustOK(t, "testnet import", code, body)
 
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e5001d, 0x77), multiKeyPrime)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e5001d, 0x77),
+		multiKeyPrime,
+	)
 	mustOK(t, "prime import of the same key into another slot", code, body)
 
 	code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{

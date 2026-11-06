@@ -51,21 +51,36 @@ func Open(logger *slog.Logger, rawurl string) {
 	case "linux":
 		// xdg-open opens a URL in the default browser and a directory path in
 		// the default file manager.
-		cmd = exec.Command("xdg-open", target) //nolint:gosec // target is a validated http(s) URL or an existing directory
+		cmd = exec.Command(
+			"xdg-open",
+			target,
+		) //nolint:gosec // target is a validated http(s) URL or an existing directory
 	case "darwin":
-		cmd = exec.Command("open", target) //nolint:gosec // target is a validated http(s) URL or an existing directory
+		cmd = exec.Command(
+			"open",
+			target,
+		) //nolint:gosec // target is a validated http(s) URL or an existing directory
 	case "windows":
 		if isFile {
 			// target is a validated, absolute, existing directory, so explorer
 			// opens a folder view — never executes a file.
-			cmd = exec.Command("explorer", target) //nolint:gosec // target is a validated existing directory
+			cmd = exec.Command(
+				"explorer",
+				target,
+			) //nolint:gosec // target is a validated existing directory
 		} else {
 			// rundll32's url.dll opener takes the URL as its sole argument; it
 			// does not go through a shell, so no extra quoting is needed.
 			cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target) //nolint:gosec // target is a validated http(s) URL
 		}
 	default:
-		logger.Warn("no external opener for this OS", "os", runtime.GOOS, "url", target)
+		logger.Warn(
+			"no external opener for this OS",
+			"os",
+			runtime.GOOS,
+			"url",
+			target,
+		)
 		return
 	}
 
@@ -133,7 +148,9 @@ func fileURLDir(u *url.URL) (string, bool) {
 	if !filepath.IsAbs(p) {
 		return "", false
 	}
-	info, err := os.Stat(p) //nolint:gosec // G703: p is a cleaned absolute local path; remote hosts are rejected above
+	info, err := os.Stat( //nolint:gosec // G703: p is a cleaned absolute local path; remote hosts are rejected above
+		p,
+	)
 	if err != nil || !info.IsDir() {
 		return "", false
 	}

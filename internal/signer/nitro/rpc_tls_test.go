@@ -69,7 +69,13 @@ func newRPCTestCA(t *testing.T) rpcTestCA {
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		template,
+		template,
+		&key.PublicKey,
+		key,
+	)
 	require.NoError(t, err)
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
@@ -80,7 +86,13 @@ func newRPCTestCA(t *testing.T) rpcTestCA {
 	}
 }
 
-func writeRPCTestLeaf(t *testing.T, dir, name string, ca rpcTestCA, usage x509.ExtKeyUsage, dnsName string) (string, string) {
+func writeRPCTestLeaf(
+	t *testing.T,
+	dir, name string,
+	ca rpcTestCA,
+	usage x509.ExtKeyUsage,
+	dnsName string,
+) (string, string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -95,14 +107,34 @@ func writeRPCTestLeaf(t *testing.T, dir, name string, ca rpcTestCA, usage x509.E
 	if dnsName != "" {
 		template.DNSNames = []string{dnsName}
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		template,
+		ca.cert,
+		&key.PublicKey,
+		ca.key,
+	)
 	require.NoError(t, err)
 	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
 	require.NoError(t, err)
 	certPath := filepath.Join(dir, name+".pem")
 	keyPath := filepath.Join(dir, name+"-key.pem")
-	require.NoError(t, os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
-	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
+	require.NoError(
+		t,
+		os.WriteFile(
+			certPath,
+			pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+			0o600,
+		),
+	)
+	require.NoError(
+		t,
+		os.WriteFile(
+			keyPath,
+			pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+			0o600,
+		),
+	)
 	return certPath, keyPath
 }
 
@@ -112,15 +144,33 @@ func newRPCTestTLSFiles(t *testing.T) rpcTestTLSFiles {
 	ca := newRPCTestCA(t)
 	caPath := filepath.Join(dir, "ca.pem")
 	require.NoError(t, os.WriteFile(caPath, ca.pem, 0o600))
-	serverCert, serverKey := writeRPCTestLeaf(t, dir, "server", ca, x509.ExtKeyUsageServerAuth, testRPCServerName)
-	clientCert, clientKey := writeRPCTestLeaf(t, dir, "client", ca, x509.ExtKeyUsageClientAuth, "")
+	serverCert, serverKey := writeRPCTestLeaf(
+		t,
+		dir,
+		"server",
+		ca,
+		x509.ExtKeyUsageServerAuth,
+		testRPCServerName,
+	)
+	clientCert, clientKey := writeRPCTestLeaf(
+		t,
+		dir,
+		"client",
+		ca,
+		x509.ExtKeyUsageClientAuth,
+		"",
+	)
 	return rpcTestTLSFiles{
 		ca: caPath, serverCert: serverCert, serverKey: serverKey,
 		clientCert: clientCert, clientKey: clientKey,
 	}
 }
 
-func startTestRPCServer(t *testing.T, service *Service, files rpcTestTLSFiles) *bufconn.Listener {
+func startTestRPCServer(
+	t *testing.T,
+	service *Service,
+	files rpcTestTLSFiles,
+) *bufconn.Listener {
 	t.Helper()
 	options, err := RPCServerOptions(RPCServerTLSConfig{
 		CertificateFile: files.serverCert,
@@ -137,12 +187,18 @@ func startTestRPCServer(t *testing.T, service *Service, files rpcTestTLSFiles) *
 }
 
 func testRPCDialer(listener *bufconn.Listener) grpc.DialOption {
-	return grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-		return listener.Dial()
-	})
+	return grpc.WithContextDialer(
+		func(context.Context, string) (net.Conn, error) {
+			return listener.Dial()
+		},
+	)
 }
 
-func authorizedTestRPCClient(t *testing.T, listener *bufconn.Listener, files rpcTestTLSFiles) (*rpcClient, *grpc.ClientConn) {
+func authorizedTestRPCClient(
+	t *testing.T,
+	listener *bufconn.Listener,
+	files rpcTestTLSFiles,
+) (*rpcClient, *grpc.ClientConn) {
 	t.Helper()
 	options, err := RPCDialOptions(RPCClientTLSConfig{
 		CertificateFile: files.clientCert,
@@ -158,7 +214,11 @@ func authorizedTestRPCClient(t *testing.T, listener *bufconn.Listener, files rpc
 	return NewRPCClient(conn), conn
 }
 
-func unauthorizedTestRPCClient(t *testing.T, listener *bufconn.Listener, files rpcTestTLSFiles) *rpcClient {
+func unauthorizedTestRPCClient(
+	t *testing.T,
+	listener *bufconn.Listener,
+	files rpcTestTLSFiles,
+) *rpcClient {
 	t.Helper()
 	roots, err := loadRPCCertPool(files.ca)
 	require.NoError(t, err)
@@ -177,10 +237,17 @@ func unauthorizedTestRPCClient(t *testing.T, listener *bufconn.Listener, files r
 	return NewRPCClient(conn)
 }
 
-func testRPCClient(t *testing.T, service *Service) (*rpcClient, *grpc.ClientConn) {
+func testRPCClient(
+	t *testing.T,
+	service *Service,
+) (*rpcClient, *grpc.ClientConn) {
 	t.Helper()
 	files := newRPCTestTLSFiles(t)
-	return authorizedTestRPCClient(t, startTestRPCServer(t, service, files), files)
+	return authorizedTestRPCClient(
+		t,
+		startTestRPCServer(t, service, files),
+		files,
+	)
 }
 
 func TestRPCRejectsGroupReadablePrivateKey(t *testing.T) {
@@ -233,7 +300,10 @@ func testProvisionRequest() ProvisionRequest {
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials,
 		KMSKeyID: testKMSKey, Role: backend.KeyTypePool,
 	}
-	request.Authorization = ed25519.Sign(testProvisionAuthority, ProvisionAuthorizationBinding(request))
+	request.Authorization = ed25519.Sign(
+		testProvisionAuthority,
+		ProvisionAuthorizationBinding(request),
+	)
 	return request
 }
 
@@ -242,7 +312,9 @@ func testSignRequest(publicKey ed25519.PublicKey) backend.AttestedRequest {
 	binary.BigEndian.PutUint64(payload[32:40], 1)
 	return backend.AttestedRequest{
 		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
-		KeyHash: backend.HashPublicKey(publicKey).String(), Role: backend.KeyTypePool,
+		KeyHash: backend.HashPublicKey(publicKey).
+			String(),
+		Role:  backend.KeyTypePool,
 		Nonce: bytes.Repeat([]byte{9}, requestNonceSize), Payload: payload,
 	}
 }
@@ -265,24 +337,36 @@ func TestRPCRejectsUnauthorizedCallsBeforeStateMutation(t *testing.T) {
 
 	_, err := unauthorized.Provision(ctx, testProvisionRequest())
 	requireRPCDenied(t, "provision", err)
-	_, err = authorized.Inventory(ctx, bytes.Repeat([]byte{1}, requestNonceSize))
+	_, err = authorized.Inventory(
+		ctx,
+		bytes.Repeat([]byte{1}, requestNonceSize),
+	)
 	require.ErrorContains(t, err, ErrNotLoaded.Error())
 
 	provisioned, err := authorized.Provision(ctx, testProvisionRequest())
 	require.NoError(t, err)
-	_, err = unauthorized.Inventory(ctx, bytes.Repeat([]byte{2}, requestNonceSize))
+	_, err = unauthorized.Inventory(
+		ctx,
+		bytes.Repeat([]byte{2}, requestNonceSize),
+	)
 	requireRPCDenied(t, "inventory", err)
 
 	malformedProvision := testProvisionRequest()
 	malformedProvision.Version = "invalid"
 	_, err = unauthorized.Provision(ctx, malformedProvision)
 	requireRPCDenied(t, "malformed provision", err)
-	_, err = authorized.Inventory(ctx, bytes.Repeat([]byte{3}, requestNonceSize))
+	_, err = authorized.Inventory(
+		ctx,
+		bytes.Repeat([]byte{3}, requestNonceSize),
+	)
 	require.NoError(t, err, "unauthorized provision changed loaded state")
 
 	_, err = unauthorized.Reload(ctx, ReloadRequest{Version: "invalid"})
 	requireRPCDenied(t, "reload", err)
-	_, err = authorized.Inventory(ctx, bytes.Repeat([]byte{4}, requestNonceSize))
+	_, err = authorized.Inventory(
+		ctx,
+		bytes.Repeat([]byte{4}, requestNonceSize),
+	)
 	require.NoError(t, err, "unauthorized reload changed loaded state")
 
 	request := testSignRequest(provisioned.Envelope.PublicKey)
@@ -290,20 +374,36 @@ func TestRPCRejectsUnauthorizedCallsBeforeStateMutation(t *testing.T) {
 	requireRPCDenied(t, "sign", err)
 	signed, err := authorized.Sign(ctx, request)
 	require.NoError(t, err, "unauthorized sign consumed nonce or counter state")
-	require.True(t, ed25519.Verify(provisioned.Envelope.PublicKey, request.Payload, signed.Signature))
+	require.True(
+		t,
+		ed25519.Verify(
+			provisioned.Envelope.PublicKey,
+			request.Payload,
+			signed.Signature,
+		),
+	)
 }
 
 func TestRPCAuthorizedProxyRoundTrip(t *testing.T) {
 	service, _, _ := newTestService(t, testEvidence(t, 9))
 	client, _ := testRPCClient(t, service)
-	provisioned, err := client.Provision(context.Background(), testProvisionRequest())
+	provisioned, err := client.Provision(
+		context.Background(),
+		testProvisionRequest(),
+	)
 	require.NoError(t, err)
 	handler, err := NewProxyHandler(client)
 	require.NoError(t, err)
 
-	inventoryBody, err := json.Marshal(map[string][]byte{"nonce": bytes.Repeat([]byte{5}, requestNonceSize)})
+	inventoryBody, err := json.Marshal(
+		map[string][]byte{"nonce": bytes.Repeat([]byte{5}, requestNonceSize)},
+	)
 	require.NoError(t, err)
-	inventoryRequest := httptest.NewRequest(http.MethodPost, "/v1/inventory", bytes.NewReader(inventoryBody))
+	inventoryRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/inventory",
+		bytes.NewReader(inventoryBody),
+	)
 	inventoryResponse := httptest.NewRecorder()
 	handler.ServeHTTP(inventoryResponse, inventoryRequest)
 	require.Equal(t, http.StatusOK, inventoryResponse.Code)
@@ -311,13 +411,24 @@ func TestRPCAuthorizedProxyRoundTrip(t *testing.T) {
 	signRequest := testSignRequest(provisioned.Envelope.PublicKey)
 	signBody, err := json.Marshal(signRequest)
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(signBody))
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(signBody),
+	)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
 	var signed backend.AttestedResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &signed))
-	require.True(t, ed25519.Verify(provisioned.Envelope.PublicKey, signRequest.Payload, signed.Signature))
+	require.True(
+		t,
+		ed25519.Verify(
+			provisioned.Envelope.PublicKey,
+			signRequest.Payload,
+			signed.Signature,
+		),
+	)
 }
 
 func TestRPCServerBoundsReceivedMessageSize(t *testing.T) {
@@ -334,8 +445,18 @@ func TestRPCServerBoundsReceivedMessageSize(t *testing.T) {
 	_, err = client.Reload(ctx, ReloadRequest{
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: atLimit,
 	})
-	require.NotEqual(t, codes.ResourceExhausted, status.Code(err), "largest valid envelope was refused by the transport")
-	require.ErrorContains(t, err, "KMS decrypt data key", "largest valid envelope did not reach KMS")
+	require.NotEqual(
+		t,
+		codes.ResourceExhausted,
+		status.Code(err),
+		"largest valid envelope was refused by the transport",
+	)
+	require.ErrorContains(
+		t,
+		err,
+		"KMS decrypt data key",
+		"largest valid envelope did not reach KMS",
+	)
 
 	oversized := provisioned.Envelope
 	oversized.Ciphertext = make([]byte, 1<<20)
@@ -343,6 +464,12 @@ func TestRPCServerBoundsReceivedMessageSize(t *testing.T) {
 	_, err = client.Reload(ctx, ReloadRequest{
 		Version: Protocol, Region: "us-east-1", Credentials: testCredentials, Envelope: oversized,
 	})
-	require.Equal(t, codes.ResourceExhausted, status.Code(err), "oversized message was decoded: %v", err)
+	require.Equal(
+		t,
+		codes.ResourceExhausted,
+		status.Code(err),
+		"oversized message was decoded: %v",
+		err,
+	)
 	require.Zero(t, kms.calls)
 }

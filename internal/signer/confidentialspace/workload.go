@@ -138,7 +138,9 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	if err != nil {
 		return nil, err
 	}
-	pub := append(ed25519.PublicKey(nil), key.priv.Public().(ed25519.PublicKey)...)
+	pub := append(
+		ed25519.PublicKey(nil),
+		key.priv.Public().(ed25519.PublicKey)...)
 	hash := backend.HashPublicKey(pub)
 	if err := cfg.Counter.Prepare(ctx, hash, key.pending); err != nil {
 		wipe(key.priv)
@@ -375,16 +377,19 @@ func envelopeAAD(e envelope) []byte {
 		0,
 		len(e.Version)+len(e.Role)+len(e.KMSKey)+len(e.PublicKey)+16,
 	)
-	parts := [][]byte{[]byte(e.Version), []byte(e.Role), []byte(e.KMSKey), e.PublicKey}
+	parts := [][]byte{
+		[]byte(e.Version),
+		[]byte(e.Role),
+		[]byte(e.KMSKey),
+		e.PublicKey,
+	}
 	if e.Version == envelopeVersion {
 		parts = append(parts, []byte(e.Phase))
 	}
 	for _, part := range parts {
 		var size [4]byte
-		binary.BigEndian.PutUint32(
-			size[:],
-			uint32(len(part)), // #nosec G115 -- envelope and key fields are bounded above.
-		)
+		// #nosec G115 -- envelope and key fields are bounded above.
+		binary.BigEndian.PutUint32(size[:], uint32(len(part)))
 		buf = append(buf, size[:]...)
 		buf = append(buf, part...)
 	}
@@ -534,7 +539,11 @@ func (w *Workload) Handler() http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 ||
 			len(r.TLS.VerifiedChains) == 0 {
-			http.Error(rw, "client certificate required", http.StatusUnauthorized)
+			http.Error(
+				rw,
+				"client certificate required",
+				http.StatusUnauthorized,
+			)
 			return
 		}
 		mux.ServeHTTP(rw, r)

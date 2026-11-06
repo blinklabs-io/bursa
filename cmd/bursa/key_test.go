@@ -13,9 +13,15 @@ import (
 
 func TestBLSCommandRequiresSigningKeyFile(t *testing.T) {
 	cmd := keyBLSCommand()
-	cmd.SetArgs([]string{"--output-file", filepath.Join(t.TempDir(), "bls.json")})
+	cmd.SetArgs(
+		[]string{"--output-file", filepath.Join(t.TempDir(), "bls.json")},
+	)
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "required flag(s) \"signing-key-file\"") {
+	if err == nil ||
+		!strings.Contains(
+			err.Error(),
+			"required flag(s) \"signing-key-file\"",
+		) {
 		t.Fatalf("Execute error = %v, want required signing-key-file", err)
 	}
 }

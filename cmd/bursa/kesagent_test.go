@@ -32,22 +32,39 @@ func TestParseSocketMode(t *testing.T) {
 		{name: "widened 0660", in: "0660", want: 0o660},
 		{name: "whitespace trimmed", in: "  0600  ", want: 0o600},
 		{name: "not octal", in: "not-a-mode", wantErr: true},
-		{name: "decimal 8/9 digits invalid in octal", in: "0900", wantErr: true},
+		{
+			name:    "decimal 8/9 digits invalid in octal",
+			in:      "0900",
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseSocketMode(tt.in)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("parseSocketMode(%q): expected error, got mode %o", tt.in, got)
+					t.Fatalf(
+						"parseSocketMode(%q): expected error, got mode %o",
+						tt.in,
+						got,
+					)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseSocketMode(%q): unexpected error: %v", tt.in, err)
+				t.Fatalf(
+					"parseSocketMode(%q): unexpected error: %v",
+					tt.in,
+					err,
+				)
 			}
 			if got != tt.want {
-				t.Fatalf("parseSocketMode(%q) = %o, want %o", tt.in, got, tt.want)
+				t.Fatalf(
+					"parseSocketMode(%q) = %o, want %o",
+					tt.in,
+					got,
+					tt.want,
+				)
 			}
 		})
 	}
@@ -70,10 +87,17 @@ func TestValidateControlSocketMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateControlSocketMode(tt.mode)
 			if tt.wantErr && err == nil {
-				t.Fatalf("validateControlSocketMode(%o): expected error, got nil", tt.mode)
+				t.Fatalf(
+					"validateControlSocketMode(%o): expected error, got nil",
+					tt.mode,
+				)
 			}
 			if !tt.wantErr && err != nil {
-				t.Fatalf("validateControlSocketMode(%o): unexpected error: %v", tt.mode, err)
+				t.Fatalf(
+					"validateControlSocketMode(%o): unexpected error: %v",
+					tt.mode,
+					err,
+				)
 			}
 		})
 	}
@@ -87,7 +111,10 @@ func TestValidateServiceSocketMode(t *testing.T) {
 	}{
 		{name: "owner-only default", mode: 0o600},
 		{name: "group readable is fine", mode: 0o640},
-		{name: "group writable allowed (documented producer group)", mode: 0o660},
+		{
+			name: "group writable allowed (documented producer group)",
+			mode: 0o660,
+		},
 		{name: "other readable is fine", mode: 0o604},
 		{name: "other writable rejected", mode: 0o602, wantErr: true},
 		{name: "world writable rejected", mode: 0o666, wantErr: true},
@@ -96,10 +123,17 @@ func TestValidateServiceSocketMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateServiceSocketMode(tt.mode)
 			if tt.wantErr && err == nil {
-				t.Fatalf("validateServiceSocketMode(%o): expected error, got nil", tt.mode)
+				t.Fatalf(
+					"validateServiceSocketMode(%o): expected error, got nil",
+					tt.mode,
+				)
 			}
 			if !tt.wantErr && err != nil {
-				t.Fatalf("validateServiceSocketMode(%o): unexpected error: %v", tt.mode, err)
+				t.Fatalf(
+					"validateServiceSocketMode(%o): unexpected error: %v",
+					tt.mode,
+					err,
+				)
 			}
 		})
 	}
@@ -111,8 +145,18 @@ func TestLooksLikeText(t *testing.T) {
 		in   []byte
 		want bool
 	}{
-		{name: "hex string", in: []byte("0f0e0d0c0b0a09080706050403020100aabbccddeeff00112233445566778899"), want: true},
-		{name: "json envelope shape", in: []byte(`{"type":"KesVerificationKey","cborHex":"5820"}`), want: true},
+		{
+			name: "hex string",
+			in: []byte(
+				"0f0e0d0c0b0a09080706050403020100aabbccddeeff00112233445566778899",
+			),
+			want: true,
+		},
+		{
+			name: "json envelope shape",
+			in:   []byte(`{"type":"KesVerificationKey","cborHex":"5820"}`),
+			want: true,
+		},
 		{name: "empty is text", in: []byte(""), want: true},
 		{name: "contains a null byte", in: []byte("aaaa\x00aaaa"), want: false},
 		{name: "high-bit random byte", in: []byte("aaaa\xffaaaa"), want: false},
@@ -164,13 +208,18 @@ func TestLoadColdVKeyMalformedTextFileOfLength32(t *testing.T) {
 	// error out via the decode path rather than being accepted as raw bytes.
 	malformed := []byte("not-a-valid-cold-vkey!!-zzzzzzzz")
 	if len(malformed) != 32 {
-		t.Fatalf("test fixture must be exactly 32 bytes, got %d", len(malformed))
+		t.Fatalf(
+			"test fixture must be exactly 32 bytes, got %d",
+			len(malformed),
+		)
 	}
 	path := filepath.Join(t.TempDir(), "cold.vkey")
 	if err := os.WriteFile(path, malformed, 0o600); err != nil {
 		t.Fatalf("write cold vkey: %v", err)
 	}
 	if _, err := loadColdVKey("", path); err == nil {
-		t.Fatal("expected loadColdVKey to reject malformed text-shaped 32-byte input")
+		t.Fatal(
+			"expected loadColdVKey to reject malformed text-shaped 32-byte input",
+		)
 	}
 }

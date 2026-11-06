@@ -29,7 +29,11 @@ const (
 	coldKeyMoreFirst uint32 = 0x20e50600
 	coldKeyMoreLast  uint32 = 0x20e5060f
 
-	coldKeyCount = int(coldKeyLast-coldKeyFirst) + int(coldKeyMoreLast-coldKeyMoreFirst) + 2
+	coldKeyCount = int(
+		coldKeyLast-coldKeyFirst,
+	) + int(
+		coldKeyMoreLast-coldKeyMoreFirst,
+	) + 2
 )
 
 // ownersID holds the ownership record of the cold key objects: one binary
@@ -49,11 +53,17 @@ const (
 var (
 	// errColdOwner refuses a cold key object another scope owns, or one that
 	// holds a key nobody owns
-	errColdOwner = errors.New("cold key object belongs to another scope, or holds a key with no owner; a mainnet key removes it with /wipe/cold")
+	errColdOwner = errors.New(
+		"cold key object belongs to another scope, or holds a key with no owner; a mainnet key removes it with /wipe/cold",
+	)
 	// errOwnersRecord is the ownership record that cannot be trusted
-	errOwnersRecord = errors.New("cold key ownership record is corrupt; wipe the device")
+	errOwnersRecord = errors.New(
+		"cold key ownership record is corrupt; wipe the device",
+	)
 	// errColdInUse refuses /wipe/cold for a cold key a profile names
-	errColdInUse = errors.New("a profile names this cold key; remove the profile with /wipe/profile")
+	errColdInUse = errors.New(
+		"a profile names this cold key; remove the profile with /wipe/profile",
+	)
 )
 
 // isColdKeyID reports whether id is a cold key object.
@@ -68,7 +78,11 @@ func coldKeyIndex(id uint32) (int, bool) {
 	case id >= coldKeyFirst && id <= coldKeyLast:
 		return int(id - coldKeyFirst), true
 	case id >= coldKeyMoreFirst && id <= coldKeyMoreLast:
-		return int(coldKeyLast-coldKeyFirst) + 1 + int(id-coldKeyMoreFirst), true
+		return int(
+			coldKeyLast-coldKeyFirst,
+		) + 1 + int(
+			id-coldKeyMoreFirst,
+		), true
 	}
 
 	return 0, false
@@ -95,7 +109,11 @@ type scopeTag struct {
 	chain   [chainTagSize]byte
 }
 
-func tagOf(sc Scope) scopeTag { return scopeTag{network: sc.Network, chain: chainTag(sc.Chain)} }
+func tagOf(
+	sc Scope,
+) scopeTag {
+	return scopeTag{network: sc.Network, chain: chainTag(sc.Chain)}
+}
 
 // owners is the ownership record: the claim of each cold key object.
 type owners [coldKeyCount]struct {

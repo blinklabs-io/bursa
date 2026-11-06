@@ -52,10 +52,15 @@ type NitroVerifier struct {
 // certificate; pcrs maps PCR indexes to their required 48-byte values and must
 // include PCR0 with a non-zero value, which excludes debug-mode enclaves (the
 // platform reports every PCR as zero for those).
-func NewNitroVerifier(rootsPEM []byte, pcrs map[uint][]byte) (*NitroVerifier, error) {
+func NewNitroVerifier(
+	rootsPEM []byte,
+	pcrs map[uint][]byte,
+) (*NitroVerifier, error) {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(rootsPEM) {
-		return nil, errors.New("nitro root certificate: no PEM certificate found")
+		return nil, errors.New(
+			"nitro root certificate: no PEM certificate found",
+		)
 	}
 	pcr0, ok := pcrs[0]
 	if !ok {
@@ -63,11 +68,18 @@ func NewNitroVerifier(rootsPEM []byte, pcrs map[uint][]byte) (*NitroVerifier, er
 	}
 	for i, v := range pcrs {
 		if len(v) != nitroPCRSize {
-			return nil, fmt.Errorf("expected PCR%d must be %d bytes, got %d", i, nitroPCRSize, len(v))
+			return nil, fmt.Errorf(
+				"expected PCR%d must be %d bytes, got %d",
+				i,
+				nitroPCRSize,
+				len(v),
+			)
 		}
 	}
 	if bytes.Equal(pcr0, make([]byte, nitroPCRSize)) {
-		return nil, errors.New("expected PCR0 is all zeros (a debug-mode measurement)")
+		return nil, errors.New(
+			"expected PCR0 is all zeros (a debug-mode measurement)",
+		)
 	}
 	return &NitroVerifier{roots: roots, pcrs: pcrs, now: time.Now}, nil
 }
@@ -90,7 +102,10 @@ type nitroDocument struct {
 
 // Verify implements AttestationVerifier. The document's user_data must equal
 // binding.
-func (v *NitroVerifier) Verify(_ context.Context, evidence, binding []byte) error {
+func (v *NitroVerifier) Verify(
+	_ context.Context,
+	evidence, binding []byte,
+) error {
 	evidence = bytes.TrimPrefix(evidence, []byte{coseTagSign1})
 	var msg coseSign1Msg
 	if err := cbor.Unmarshal(evidence, &msg); err != nil {
@@ -101,7 +116,10 @@ func (v *NitroVerifier) Verify(_ context.Context, evidence, binding []byte) erro
 		return fmt.Errorf("nitro protected header: %w", err)
 	}
 	if protected[1] != coseAlgES384 {
-		return fmt.Errorf("nitro document: unsupported COSE algorithm %d", protected[1])
+		return fmt.Errorf(
+			"nitro document: unsupported COSE algorithm %d",
+			protected[1],
+		)
 	}
 	var doc nitroDocument
 	if err := cbor.Unmarshal(msg.Payload, &doc); err != nil {
@@ -136,9 +154,14 @@ func (v *NitroVerifier) Verify(_ context.Context, evidence, binding []byte) erro
 		return errors.New("nitro leaf certificate key is not ECDSA")
 	}
 	if len(msg.Signature) != 96 {
-		return fmt.Errorf("nitro signature must be 96 bytes, got %d", len(msg.Signature))
+		return fmt.Errorf(
+			"nitro signature must be 96 bytes, got %d",
+			len(msg.Signature),
+		)
 	}
-	toBeSigned, err := cbor.Marshal([]any{"Signature1", msg.Protected, []byte{}, msg.Payload})
+	toBeSigned, err := cbor.Marshal(
+		[]any{"Signature1", msg.Protected, []byte{}, msg.Payload},
+	)
 	if err != nil {
 		return fmt.Errorf("nitro sig structure: %w", err)
 	}
@@ -151,11 +174,16 @@ func (v *NitroVerifier) Verify(_ context.Context, evidence, binding []byte) erro
 
 	for idx, want := range v.pcrs {
 		if subtle.ConstantTimeCompare(doc.PCRs[idx], want) != 1 {
-			return fmt.Errorf("nitro PCR%d does not match the expected measurement", idx)
+			return fmt.Errorf(
+				"nitro PCR%d does not match the expected measurement",
+				idx,
+			)
 		}
 	}
 	if subtle.ConstantTimeCompare(doc.UserData, binding) != 1 {
-		return errors.New("nitro document user_data does not match the attestation binding")
+		return errors.New(
+			"nitro document user_data does not match the attestation binding",
+		)
 	}
 	return nil
 }

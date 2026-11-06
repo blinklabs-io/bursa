@@ -40,7 +40,11 @@ func (f *fakeSecretSource) List(ctx context.Context) ([]string, error) {
 	}
 	return names, nil
 }
-func (f *fakeSecretSource) Get(ctx context.Context, name string) ([]byte, error) {
+
+func (f *fakeSecretSource) Get(
+	ctx context.Context,
+	name string,
+) ([]byte, error) {
 	if b, ok := f.secrets[name]; ok {
 		return b, nil
 	}
@@ -73,7 +77,11 @@ func TestSopsBackend_LoadAndSign(t *testing.T) {
 		"signer-payment-1": mkKeyEnvelope(t, priv),
 	}}
 	// identity decrypt for the test
-	b := NewSopsBackend("gcp", src, func(data []byte) ([]byte, error) { return data, nil })
+	b := NewSopsBackend(
+		"gcp",
+		src,
+		func(data []byte) ([]byte, error) { return data, nil },
+	)
 	b.Register("signer-payment-1", KeyTypePayment)
 
 	if err := b.Load(context.Background()); err != nil {
@@ -100,7 +108,11 @@ func TestSopsBackend_LoadAndSign(t *testing.T) {
 func TestSopsBackend_Load_FetchError(t *testing.T) {
 	// fakeSecretSource has no secrets, so fetching "missing-key" must fail.
 	src := &fakeSecretSource{secrets: map[string][]byte{}}
-	b := NewSopsBackend("gcp", src, func(data []byte) ([]byte, error) { return data, nil })
+	b := NewSopsBackend(
+		"gcp",
+		src,
+		func(data []byte) ([]byte, error) { return data, nil },
+	)
 	b.Register("missing-key", KeyTypePayment)
 
 	err := b.Load(context.Background())
@@ -110,14 +122,17 @@ func TestSopsBackend_Load_FetchError(t *testing.T) {
 }
 
 func TestSopsBackend_Load_NilDependencies(t *testing.T) {
-	if err := (*SopsBackend)(nil).Load(context.Background()); err == nil || err.Error() != "sops backend is nil" {
+	if err := (*SopsBackend)(nil).Load(context.Background()); err == nil ||
+		err.Error() != "sops backend is nil" {
 		t.Fatalf("nil backend: got %v", err)
 	}
-	if err := NewSopsBackend("gcp", nil, func(data []byte) ([]byte, error) { return data, nil }).Load(context.Background()); err == nil || err.Error() != "sops backend source is nil" {
+	if err := NewSopsBackend("gcp", nil, func(data []byte) ([]byte, error) { return data, nil }).Load(context.Background()); err == nil ||
+		err.Error() != "sops backend source is nil" {
 		t.Fatalf("nil source: got %v", err)
 	}
 	src := &fakeSecretSource{secrets: map[string][]byte{}}
-	if err := NewSopsBackend("gcp", src, nil).Load(context.Background()); err == nil || err.Error() != "sops backend decrypt function is nil" {
+	if err := NewSopsBackend("gcp", src, nil).Load(context.Background()); err == nil ||
+		err.Error() != "sops backend decrypt function is nil" {
 		t.Fatalf("nil decrypt: got %v", err)
 	}
 }
@@ -145,7 +160,11 @@ func TestSopsBackend_DerivesPolicyTypeFromPaymentEnvelope(t *testing.T) {
 	src := &fakeSecretSource{secrets: map[string][]byte{
 		"policy-1": envelope,
 	}}
-	b := NewSopsBackend("sops", src, func(d []byte) ([]byte, error) { return d, nil })
+	b := NewSopsBackend(
+		"sops",
+		src,
+		func(d []byte) ([]byte, error) { return d, nil },
+	)
 	b.Register("policy-1", "")
 	if err := b.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
@@ -176,7 +195,11 @@ func TestSopsBackend_DerivesTypeFromEnvelope(t *testing.T) {
 	src := &fakeSecretSource{secrets: map[string][]byte{
 		"stake-1": []byte(envelope),
 	}}
-	b := NewSopsBackend("sops", src, func(d []byte) ([]byte, error) { return d, nil })
+	b := NewSopsBackend(
+		"sops",
+		src,
+		func(d []byte) ([]byte, error) { return d, nil },
+	)
 	b.Register("stake-1", "")
 	if err := b.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)

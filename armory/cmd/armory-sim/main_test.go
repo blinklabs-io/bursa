@@ -65,7 +65,14 @@ func TestScope(t *testing.T) {
 	for _, c := range cases {
 		id, label, err := scope(c.network, c.chain)
 		if (err == nil) != c.ok || id != c.id || label != c.label {
-			t.Errorf("scope(%q, %q) = %d, %q, %v", c.network, c.chain, id, label, err)
+			t.Errorf(
+				"scope(%q, %q) = %d, %q, %v",
+				c.network,
+				c.chain,
+				id,
+				label,
+				err,
+			)
 		}
 	}
 }
@@ -111,7 +118,10 @@ func TestChipPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(pub, ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)) {
+	if !bytes.Equal(
+		pub,
+		ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey),
+	) {
 		t.Fatal("reopened chip returned a different key")
 	}
 
@@ -197,12 +207,23 @@ func TestBuildImages(t *testing.T) {
 		}
 
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080"+c.path, strings.NewReader("{}"))
+		r := httptest.NewRequest(
+			http.MethodPost,
+			"http://127.0.0.1:18080"+c.path,
+			strings.NewReader("{}"),
+		)
 		r.Header.Set("Content-Type", "application/json")
 		h.ServeHTTP(w, r)
 
 		if w.Code != c.want {
-			t.Errorf("%s %s: %d %s, want %d", c.image, c.path, w.Code, w.Body, c.want)
+			t.Errorf(
+				"%s %s: %d %s, want %d",
+				c.image,
+				c.path,
+				w.Code,
+				w.Body,
+				c.want,
+			)
 		}
 	}
 
@@ -250,8 +271,16 @@ func TestSigningLogOpens(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := build(options{listen: "127.0.0.1:0", state: dir, image: "sign", network: "testnet", cardBlocks: 1 << 10},
-			func(f string, a ...any) { logged = append(logged, f) })
+		_, err := build(
+			options{
+				listen:     "127.0.0.1:0",
+				state:      dir,
+				image:      "sign",
+				network:    "testnet",
+				cardBlocks: 1 << 10,
+			},
+			func(f string, a ...any) { logged = append(logged, f) },
+		)
 		done <- err
 	}()
 
@@ -348,7 +377,12 @@ func TestOpenChipRejectsKeyAndBinary(t *testing.T) {
 // directory another one holds.
 func TestStateLocked(t *testing.T) {
 	dir := t.TempDir()
-	o := options{listen: "127.0.0.1:0", state: dir, image: "provision", network: "testnet"}
+	o := options{
+		listen:  "127.0.0.1:0",
+		state:   dir,
+		image:   "provision",
+		network: "testnet",
+	}
 
 	if _, err := build(o, t.Logf); err != nil {
 		t.Fatal(err)
@@ -400,7 +434,11 @@ func TestLoopbackHostOnly(t *testing.T) {
 	for _, c := range cases {
 		body := &countingReader{r: strings.NewReader("{}")}
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/challenge", body)
+		r := httptest.NewRequest(
+			http.MethodPost,
+			"http://127.0.0.1:18080/v1/challenge",
+			body,
+		)
 		r.Host = c.host
 		r.Header.Set("Content-Type", "application/json")
 		h.ServeHTTP(w, r)
@@ -410,7 +448,11 @@ func TestLoopbackHostOnly(t *testing.T) {
 		}
 
 		if c.want == http.StatusForbidden && body.reads != 0 {
-			t.Errorf("Host %q: body read %d times before the refusal", c.host, body.reads)
+			t.Errorf(
+				"Host %q: body read %d times before the refusal",
+				c.host,
+				body.reads,
+			)
 		}
 	}
 }

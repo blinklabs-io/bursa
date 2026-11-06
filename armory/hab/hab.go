@@ -209,8 +209,15 @@ func formatEvent(index int, ev []byte) string {
 
 	b := ev[eventHeaderLen:]
 
-	return fmt.Sprintf("hab: event %d: status 0x%02x reason 0x%02x context 0x%02x engine 0x%02x: %x",
-		index, b[0], b[1], b[2], b[3], ev)
+	return fmt.Sprintf(
+		"hab: event %d: status 0x%02x reason 0x%02x context 0x%02x engine 0x%02x: %x",
+		index,
+		b[0],
+		b[1],
+		b[2],
+		b[3],
+		ev,
+	)
 }
 
 // ReadEvents reads the ROM's event log through read, which calls
@@ -218,7 +225,9 @@ func formatEvent(index int, ev []byte) string {
 // reported success. The record may share a buffer across calls. Reading stops
 // at the first failure, which ends the log; at most MaxEvents records are
 // kept, each cut to MaxEventLen, and more reports whether another exists.
-func ReadEvents(read func(index uint32) (record []byte, ok bool)) (events [][]byte, more bool) {
+func ReadEvents(
+	read func(index uint32) (record []byte, ok bool),
+) (events [][]byte, more bool) {
 	for i := uint32(0); i <= MaxEvents; i++ {
 		record, ok := read(i)
 

@@ -32,16 +32,25 @@ type fakeOutput struct {
 	lovelace uint64
 }
 
-func (o *fakeOutput) Address() lcommon.Address                                  { return o.address }
-func (o *fakeOutput) Amount() *big.Int                                          { return new(big.Int).SetUint64(o.lovelace) }
+func (o *fakeOutput) Address() lcommon.Address { return o.address }
+
+func (o *fakeOutput) Amount() *big.Int { return new(big.Int).SetUint64(o.lovelace) }
+
 func (o *fakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] { return nil }
-func (o *fakeOutput) Datum() *lcommon.Datum                                     { return nil }
-func (o *fakeOutput) DatumHash() *lcommon.Blake2b256                            { return nil }
-func (o *fakeOutput) Cbor() []byte                                              { return nil }
-func (o *fakeOutput) Utxorpc() (*utxorpc.TxOutput, error)                       { return nil, nil }
-func (o *fakeOutput) ScriptRef() lcommon.Script                                 { return nil }
-func (o *fakeOutput) ToPlutusData() data.PlutusData                             { return nil }
-func (o *fakeOutput) String() string                                            { return o.address.String() }
+
+func (o *fakeOutput) Datum() *lcommon.Datum { return nil }
+
+func (o *fakeOutput) DatumHash() *lcommon.Blake2b256 { return nil }
+
+func (o *fakeOutput) Cbor() []byte { return nil }
+
+func (o *fakeOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
+
+func (o *fakeOutput) ScriptRef() lcommon.Script { return nil }
+
+func (o *fakeOutput) ToPlutusData() data.PlutusData { return nil }
+
+func (o *fakeOutput) String() string { return o.address.String() }
 
 type FakeChain struct {
 	UtxosMap           map[string][]UTxO
@@ -58,9 +67,17 @@ type FakeChain struct {
 
 func NewFakeChain() *FakeChain {
 	return &FakeChain{
-		UtxosMap:           map[string][]UTxO{},
-		PpFee:              &bursa.ProtocolParams{TxFeePerByte: 44, TxFeeFixed: 155381},
-		PpExtra:            &ProtocolParametersExtra{MinFeeA: 44, MinFeeB: 155381, KeyDeposit: 2000000, PoolDeposit: 500000000},
+		UtxosMap: map[string][]UTxO{},
+		PpFee: &bursa.ProtocolParams{
+			TxFeePerByte: 44,
+			TxFeeFixed:   155381,
+		},
+		PpExtra: &ProtocolParametersExtra{
+			MinFeeA:     44,
+			MinFeeB:     155381,
+			KeyDeposit:  2000000,
+			PoolDeposit: 500000000,
+		},
 		SlotVal:            1000000,
 		PoolRegistered:     map[string]bool{},
 		StakeDelegDeposits: map[StakeCredentialKey]uint64{},
@@ -68,11 +85,16 @@ func NewFakeChain() *FakeChain {
 	}
 }
 
-func (f *FakeChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error) {
+func (f *FakeChain) GetUTxOs(
+	ctx context.Context,
+	address string,
+) ([]UTxO, error) {
 	return f.UtxosMap[address], nil
 }
 
-func (f *FakeChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
+func (f *FakeChain) GetProtocolParameters(
+	ctx context.Context,
+) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
 	if f.PpErr != nil {
 		return nil, nil, f.PpErr
 	}
@@ -83,7 +105,10 @@ func (f *FakeChain) GetSlot(ctx context.Context) (uint64, error) {
 	return f.SlotVal, nil
 }
 
-func (f *FakeChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) (bool, error) {
+func (f *FakeChain) GetPoolRegistration(
+	ctx context.Context,
+	poolKeyHash []byte,
+) (bool, error) {
 	if f.PoolRegistration != nil {
 		return f.PoolRegistration(poolKeyHash)
 	}
@@ -94,7 +119,10 @@ func (f *FakeChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte)
 	return false, nil
 }
 
-func (f *FakeChain) GetStakeDelegDeposits(ctx context.Context, creds []lcommon.Credential) (map[StakeCredentialKey]uint64, error) {
+func (f *FakeChain) GetStakeDelegDeposits(
+	ctx context.Context,
+	creds []lcommon.Credential,
+) (map[StakeCredentialKey]uint64, error) {
 	out := make(map[StakeCredentialKey]uint64, len(creds))
 	for _, c := range creds {
 		key := StakeCredentialKeyFrom(c)

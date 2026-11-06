@@ -39,7 +39,12 @@ func TestDecryptRejectsNilKeyWithoutParsing(t *testing.T) {
 
 // The fixture is assembled from raw ASN.1 rather than the parser's own
 // structs, so a wrong tag or field order in those structs cannot cancel out.
-func derTLV(t *testing.T, class, tag int, compound bool, children ...[]byte) []byte {
+func derTLV(
+	t *testing.T,
+	class, tag int,
+	compound bool,
+	children ...[]byte,
+) []byte {
 	t.Helper()
 	encoded, err := asn1.Marshal(asn1.RawValue{
 		Class: class, Tag: tag, IsCompound: compound, Bytes: bytes.Join(children, nil),
@@ -76,35 +81,104 @@ func newRecipientFixture(t *testing.T) recipientFixture {
 	plaintext := bytes.Repeat([]byte{0x5a}, 32)
 	contentKey := bytes.Repeat([]byte{0x11}, aes256KeySize)
 	iv := bytes.Repeat([]byte{0x22}, aes.BlockSize)
-	padded := append(bytes.Clone(plaintext), bytes.Repeat([]byte{aes.BlockSize}, aes.BlockSize)...)
+	padded := append(
+		bytes.Clone(plaintext),
+		bytes.Repeat([]byte{aes.BlockSize}, aes.BlockSize)...)
 	block, err := aes.NewCipher(contentKey)
 	require.NoError(t, err)
 	ciphertext := make([]byte, len(padded))
 	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
-	encrypted, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, contentKey, nil)
+	encrypted, err := rsa.EncryptOAEP(
+		sha256.New(),
+		rand.Reader,
+		&key.PublicKey,
+		contentKey,
+		nil,
+	)
 	require.NoError(t, err)
-	return recipientFixture{key: key, plaintext: plaintext, encrypted: encrypted, iv: iv, ciphertext: ciphertext}
+	return recipientFixture{
+		key:        key,
+		plaintext:  plaintext,
+		encrypted:  encrypted,
+		iv:         iv,
+		ciphertext: ciphertext,
+	}
 }
 
 func (f recipientFixture) recipientInfo(t *testing.T) []byte {
-	sha256ID := derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true, derValue(t, oidSHA256), derValue(t, asn1.NullRawValue))
+	sha256ID := derTLV(
+		t,
+		asn1.ClassUniversal,
+		asn1.TagSequence,
+		true,
+		derValue(t, oidSHA256),
+		derValue(t, asn1.NullRawValue),
+	)
 	oaepParams := derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true,
 		derTLV(t, asn1.ClassContextSpecific, 0, true, sha256ID),
-		derTLV(t, asn1.ClassContextSpecific, 1, true,
-			derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true, derValue(t, oidMGF1), sha256ID)),
-		derTLV(t, asn1.ClassContextSpecific, 2, true,
-			derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true, derValue(t, oidPSpecified), derValue(t, []byte{}))),
+		derTLV(
+			t,
+			asn1.ClassContextSpecific,
+			1,
+			true,
+			derTLV(
+				t,
+				asn1.ClassUniversal,
+				asn1.TagSequence,
+				true,
+				derValue(t, oidMGF1),
+				sha256ID,
+			),
+		),
+		derTLV(
+			t,
+			asn1.ClassContextSpecific,
+			2,
+			true,
+			derTLV(
+				t,
+				asn1.ClassUniversal,
+				asn1.TagSequence,
+				true,
+				derValue(t, oidPSpecified),
+				derValue(t, []byte{}),
+			),
+		),
 	)
-	return derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true,
+	return derTLV(
+		t,
+		asn1.ClassUniversal,
+		asn1.TagSequence,
+		true,
 		derValue(t, recipientInfoVersion),
-		derTLV(t, asn1.ClassContextSpecific, 0, false, []byte("subject-key-id")),
-		derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true, derValue(t, oidRSAESOAEP), oaepParams),
+		derTLV(
+			t,
+			asn1.ClassContextSpecific,
+			0,
+			false,
+			[]byte("subject-key-id"),
+		),
+		derTLV(
+			t,
+			asn1.ClassUniversal,
+			asn1.TagSequence,
+			true,
+			derValue(t, oidRSAESOAEP),
+			oaepParams,
+		),
 		derValue(t, f.encrypted),
 	)
 }
 
 func (f recipientFixture) contentAlgorithm(t *testing.T) []byte {
-	return derTLV(t, asn1.ClassUniversal, asn1.TagSequence, true, derValue(t, oidAES256CBC), derValue(t, f.iv))
+	return derTLV(
+		t,
+		asn1.ClassUniversal,
+		asn1.TagSequence,
+		true,
+		derValue(t, oidAES256CBC),
+		derValue(t, f.iv),
+	)
 }
 
 func (f recipientFixture) der(t *testing.T) []byte {
@@ -132,10 +206,15 @@ func (f recipientFixture) ber(t *testing.T) []byte {
 		berIndefinite(0xa0, berIndefinite(0x30,
 			derValue(t, envelopedDataVersion),
 			berIndefinite(0x31, f.recipientInfo(t)),
-			berIndefinite(0x30,
+			berIndefinite(
+				0x30,
 				derValue(t, oidData),
 				f.contentAlgorithm(t),
-				berIndefinite(0xa0, derValue(t, f.ciphertext[:half]), derValue(t, f.ciphertext[half:])),
+				berIndefinite(
+					0xa0,
+					derValue(t, f.ciphertext[:half]),
+					derValue(t, f.ciphertext[half:]),
+				),
 			),
 		)),
 	)

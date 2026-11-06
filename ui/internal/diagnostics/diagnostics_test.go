@@ -32,8 +32,10 @@ type fakeNode struct {
 	configured []supervisor.ConfiguredPeer
 }
 
-func (f fakeNode) Status() supervisor.Status                    { return f.status }
-func (f fakeNode) Peers() supervisor.PeerCounts                 { return f.peers }
+func (f fakeNode) Status() supervisor.Status { return f.status }
+
+func (f fakeNode) Peers() supervisor.PeerCounts { return f.peers }
+
 func (f fakeNode) ConfiguredPeers() []supervisor.ConfiguredPeer { return f.configured }
 
 type fakeChain struct {
@@ -103,14 +105,19 @@ func TestReportAssemblesRealFields(t *testing.T) {
 	if !rep.Peers.Available || rep.Peers.Total != 7 || rep.Peers.Outbound != 5 {
 		t.Errorf("unexpected peers: %+v", rep.Peers)
 	}
-	if len(rep.Peers.Configured) != 1 || rep.Peers.Configured[0].Source != "bootstrap" {
+	if len(rep.Peers.Configured) != 1 ||
+		rep.Peers.Configured[0].Source != "bootstrap" {
 		t.Errorf("unexpected configured peers: %+v", rep.Peers.Configured)
 	}
-	if rep.Listen.ControlSurface != "127.0.0.1:8090" || rep.Listen.BlockfrostPort != 5556 {
+	if rep.Listen.ControlSurface != "127.0.0.1:8090" ||
+		rep.Listen.BlockfrostPort != 5556 {
 		t.Errorf("unexpected listen: %+v", rep.Listen)
 	}
 	if rep.Listen.NodeSocket != "/data/node.socket" {
-		t.Errorf("nodeSocket = %q, want /data/node.socket", rep.Listen.NodeSocket)
+		t.Errorf(
+			"nodeSocket = %q, want /data/node.socket",
+			rep.Listen.NodeSocket,
+		)
 	}
 	if rep.Uptime.Seconds != 600 {
 		t.Errorf("uptime = %d, want 600", rep.Uptime.Seconds)
@@ -121,11 +128,22 @@ func TestReportAssemblesRealFields(t *testing.T) {
 }
 
 func TestReportOmitsChainFieldsOnError(t *testing.T) {
-	svc := New(fakeNode{status: supervisor.Status{State: supervisor.StateError, Err: "boom"}}, Config{
-		Network: "preview",
-		Now:     time.Now,
-		Chain:   fakeChain{epochErr: errors.New("node down"), heightErr: errors.New("node down")},
-	})
+	svc := New(
+		fakeNode{
+			status: supervisor.Status{
+				State: supervisor.StateError,
+				Err:   "boom",
+			},
+		},
+		Config{
+			Network: "preview",
+			Now:     time.Now,
+			Chain: fakeChain{
+				epochErr:  errors.New("node down"),
+				heightErr: errors.New("node down"),
+			},
+		},
+	)
 	rep := svc.Report(context.Background())
 	if rep.Sync.Epoch != nil || rep.Sync.BlockHeight != nil {
 		t.Errorf("chain fields must be nil when lookups fail: %+v", rep.Sync)
@@ -141,8 +159,11 @@ func TestReportOmitsChainFieldsOnError(t *testing.T) {
 
 func TestReportBootstrapPercent(t *testing.T) {
 	svc := New(fakeNode{status: supervisor.Status{
-		State:     supervisor.StateBootstrapping,
-		Bootstrap: &supervisor.BootstrapProgress{Phase: "bootstrap", Percent: 42.5},
+		State: supervisor.StateBootstrapping,
+		Bootstrap: &supervisor.BootstrapProgress{
+			Phase:   "bootstrap",
+			Percent: 42.5,
+		},
 	}}, Config{Now: time.Now})
 	rep := svc.Report(context.Background())
 	if rep.Sync.BootstrapPercent == nil || *rep.Sync.BootstrapPercent != 42.5 {
@@ -203,7 +224,11 @@ func TestLogExport(t *testing.T) {
 	var zipped bytes.Buffer
 	_, _ = zipped.ReadFrom(rc)
 	if zipped.String() != string(got) {
-		t.Errorf("zipped content mismatch: %q vs %q", zipped.String(), string(got))
+		t.Errorf(
+			"zipped content mismatch: %q vs %q",
+			zipped.String(),
+			string(got),
+		)
 	}
 }
 
@@ -213,11 +238,17 @@ func TestLogUnavailable(t *testing.T) {
 		t.Error("LogAvailable should be false with no LogPath")
 	}
 	// LogPath set but file does not exist.
-	svc := New(fakeNode{}, Config{LogPath: filepath.Join(t.TempDir(), "missing.log")})
+	svc := New(
+		fakeNode{},
+		Config{LogPath: filepath.Join(t.TempDir(), "missing.log")},
+	)
 	if svc.LogAvailable() {
 		t.Error("LogAvailable should be false when the file is missing")
 	}
-	if err := svc.WriteLogsZip(&bytes.Buffer{}); !errors.Is(err, os.ErrNotExist) {
+	if err := svc.WriteLogsZip(&bytes.Buffer{}); !errors.Is(
+		err,
+		os.ErrNotExist,
+	) {
 		t.Errorf("WriteLogsZip err = %v, want ErrNotExist", err)
 	}
 }

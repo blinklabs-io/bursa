@@ -61,7 +61,11 @@ func TestUnlockBudgetLimitsFailures(t *testing.T) {
 		finish(true)
 	}
 	if _, err := b.begin(); !errors.Is(err, ErrUnlockLimited) {
-		t.Fatalf("begin after %d failures = %v, want ErrUnlockLimited", unlockFailureLimit, err)
+		t.Fatalf(
+			"begin after %d failures = %v, want ErrUnlockLimited",
+			unlockFailureLimit,
+			err,
+		)
 	}
 }
 
@@ -86,7 +90,10 @@ func TestUnlockBudgetRejectsConcurrentDerivation(t *testing.T) {
 		t.Fatalf("first begin: %v", err)
 	}
 	if _, err := b.begin(); !errors.Is(err, ErrUnlockLimited) {
-		t.Fatalf("begin during an active derivation = %v, want ErrUnlockLimited", err)
+		t.Fatalf(
+			"begin during an active derivation = %v, want ErrUnlockLimited",
+			err,
+		)
 	}
 	finish(false)
 	finish, err = b.begin()
@@ -116,7 +123,10 @@ func TestUnlockBudgetWindowResets(t *testing.T) {
 	}
 	finish(true)
 	if b.failures != 1 {
-		t.Fatalf("failures = %d after reset and one failure, want 1", b.failures)
+		t.Fatalf(
+			"failures = %d after reset and one failure, want 1",
+			b.failures,
+		)
 	}
 }
 
@@ -126,8 +136,14 @@ func TestOpenProductionKDFLimited(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if _, err := Open(blob, []byte("longpassword")); !errors.Is(err, ErrUnlockLimited) {
-		t.Fatalf("Open with an exhausted budget = %v, want ErrUnlockLimited", err)
+	if _, err := Open(blob, []byte("longpassword")); !errors.Is(
+		err,
+		ErrUnlockLimited,
+	) {
+		t.Fatalf(
+			"Open with an exhausted budget = %v, want ErrUnlockLimited",
+			err,
+		)
 	}
 }
 
@@ -141,8 +157,14 @@ func TestUnlockProductionKDFLimited(t *testing.T) {
 	if err := os.WriteFile(path, blob, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := New(path).Unlock("longpassword"); !errors.Is(err, ErrUnlockLimited) {
-		t.Fatalf("Unlock with an exhausted budget = %v, want ErrUnlockLimited", err)
+	if _, err := New(path).Unlock("longpassword"); !errors.Is(
+		err,
+		ErrUnlockLimited,
+	) {
+		t.Fatalf(
+			"Unlock with an exhausted budget = %v, want ErrUnlockLimited",
+			err,
+		)
 	}
 }
 
@@ -155,7 +177,10 @@ func TestCheapKDFExemptFromUnlockBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	if _, err := open(blob, []byte("wrong-password")); !errors.Is(err, ErrDecryptFailed) {
+	if _, err := open(blob, []byte("wrong-password")); !errors.Is(
+		err,
+		ErrDecryptFailed,
+	) {
 		t.Fatalf("open with wrong password = %v, want ErrDecryptFailed", err)
 	}
 	got, err := open(blob, []byte("right-password"))
@@ -166,7 +191,11 @@ func TestCheapKDFExemptFromUnlockBudget(t *testing.T) {
 		t.Fatalf("open = %q, want plaintext", got)
 	}
 	if n := processUnlockFailures(); n != unlockFailureLimit {
-		t.Fatalf("process failures = %d after cheap KDF attempts, want %d", n, unlockFailureLimit)
+		t.Fatalf(
+			"process failures = %d after cheap KDF attempts, want %d",
+			n,
+			unlockFailureLimit,
+		)
 	}
 }
 
@@ -183,13 +212,18 @@ func TestProductionKDFFailureCounted(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	_, err = Open(blob, []byte("longpassword"))
-	if !errors.Is(err, ErrDecryptFailed) || !strings.Contains(err.Error(), "wrong password") {
+	if !errors.Is(err, ErrDecryptFailed) ||
+		!strings.Contains(err.Error(), "wrong password") {
 		t.Fatalf("Open = %v, want ErrDecryptFailed", err)
 	}
 	processUnlockBudget.mu.Lock()
 	failures, active := processUnlockBudget.failures, processUnlockBudget.active
 	processUnlockBudget.mu.Unlock()
 	if failures != 1 || active {
-		t.Fatalf("budget after one failure: failures=%d active=%v, want 1 false", failures, active)
+		t.Fatalf(
+			"budget after one failure: failures=%d active=%v, want 1 false",
+			failures,
+			active,
+		)
 	}
 }

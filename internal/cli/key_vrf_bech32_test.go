@@ -54,5 +54,9 @@ func TestRunKeyVRFBech32SigningKeyIsSeedAndPublicKey(t *testing.T) {
 	require.Contains(t, decoded, "vrf_sk")
 	require.Contains(t, decoded, "vrf_vk")
 	assert.Equal(t, pub, decoded["vrf_vk"])
-	assert.Equal(t, append(append([]byte(nil), seed...), pub...), decoded["vrf_sk"])
+	assert.Equal(
+		t,
+		append(append([]byte(nil), seed...), pub...),
+		decoded["vrf_sk"],
+	)
 }

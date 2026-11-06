@@ -159,15 +159,25 @@ func TestRoundTrip(t *testing.T) {
 			t.Errorf("entry %d has seq %d", i, e.Seq)
 		}
 
-		if e.Hash != want[i].Hash || !bytes.Equal(e.Signature, want[i].Signature) {
+		if e.Hash != want[i].Hash ||
+			!bytes.Equal(e.Signature, want[i].Signature) {
 			t.Errorf("entry %d differs from the appended one", i)
 		}
 
-		if e.Record.Profile != want[i].Record.Profile || e.Purpose != want[i].Purpose ||
-			!bytes.Equal(e.BodyHash, want[i].BodyHash) || e.Summary != want[i].Summary ||
-			e.IssueCounter != want[i].IssueCounter || e.KESPeriod != want[i].KESPeriod ||
-			!bytes.Equal(e.KESKeyHash, want[i].KESKeyHash) || e.Role != want[i].Role {
-			t.Errorf("entry %d record differs: %+v vs %+v", i, e.Record, want[i].Record)
+		if e.Record.Profile != want[i].Record.Profile ||
+			e.Purpose != want[i].Purpose ||
+			!bytes.Equal(e.BodyHash, want[i].BodyHash) ||
+			e.Summary != want[i].Summary ||
+			e.IssueCounter != want[i].IssueCounter ||
+			e.KESPeriod != want[i].KESPeriod ||
+			!bytes.Equal(e.KESKeyHash, want[i].KESKeyHash) ||
+			e.Role != want[i].Role {
+			t.Errorf(
+				"entry %d record differs: %+v vs %+v",
+				i,
+				e.Record,
+				want[i].Record,
+			)
 		}
 	}
 
@@ -192,7 +202,11 @@ func TestRoundTrip(t *testing.T) {
 
 	// everything past the last record is untouched
 	img := f.medium.Image()
-	if len(img)%BlockSize != 0 || !bytes.Equal(img[slotOffset(6):], make([]byte, len(img)-slotOffset(6))) {
+	if len(img)%BlockSize != 0 ||
+		!bytes.Equal(
+			img[slotOffset(6):],
+			make([]byte, len(img)-slotOffset(6)),
+		) {
 		t.Error("image is not block aligned or wrote past the last entry")
 	}
 }
@@ -230,7 +244,8 @@ func TestEmptyLogVerifies(t *testing.T) {
 	}
 
 	head, _ := f.heads.Load()
-	if head.Seq != 0 || head.Hash != log.Header.Hash || head.Hash == ([HashSize]byte{}) {
+	if head.Seq != 0 || head.Hash != log.Header.Hash ||
+		head.Hash == ([HashSize]byte{}) {
 		t.Errorf("head %+v is not the header hash", head)
 	}
 }
@@ -293,7 +308,11 @@ func TestTamperWithFixedChecksumFailsSignature(t *testing.T) {
 
 		if _, err := f.verify(t, f.pub); !errors.Is(err, ErrBadSignature) &&
 			!errors.Is(err, ErrCorrupt) && !errors.Is(err, ErrChain) {
-			t.Errorf("offset %d: got %v, want ErrBadSignature, ErrCorrupt or ErrChain", off, err)
+			t.Errorf(
+				"offset %d: got %v, want ErrBadSignature, ErrCorrupt or ErrChain",
+				off,
+				err,
+			)
 		}
 	}
 }
@@ -391,7 +410,12 @@ func TestSplicedGenuineEntryBreaksChain(t *testing.T) {
 	f := newFixture(t, 8)
 	f.fill(t, f.open(t), 4)
 
-	g := &fixture{pub: f.pub, id: f.id, medium: NewMemMedium(testBlocks(8)), heads: NewMemHeadStore(Head{})}
+	g := &fixture{
+		pub:    f.pub,
+		id:     f.id,
+		medium: NewMemMedium(testBlocks(8)),
+		heads:  NewMemHeadStore(Head{}),
+	}
 	g.fill(t, g.open(t), 3)
 
 	other := g.medium.Image()
@@ -501,7 +525,10 @@ func TestBlankCardWithHeadRefused(t *testing.T) {
 	g := newFixture(t, 8)
 	g.open(t)
 
-	if _, err := Open(NewMemMedium(testBlocks(8)), g.heads, g.id); !errors.Is(err, ErrBlank) {
+	if _, err := Open(NewMemMedium(testBlocks(8)), g.heads, g.id); !errors.Is(
+		err,
+		ErrBlank,
+	) {
 		t.Fatalf("seq 0 head: got %v, want ErrBlank", err)
 	}
 }
@@ -518,7 +545,10 @@ func TestTruncatedRecordRefusedAtOpen(t *testing.T) {
 		f.fill(t, f.open(t), 3)
 		f.mutate(t, cut)
 
-		if _, err := Open(f.medium, f.heads, f.id); !errors.Is(err, ErrRollback) {
+		if _, err := Open(f.medium, f.heads, f.id); !errors.Is(
+			err,
+			ErrRollback,
+		) {
 			t.Errorf("%s: got %v, want ErrRollback", name, err)
 		}
 	}
@@ -534,7 +564,10 @@ func TestMismatchedHashRefusedAtOpen(t *testing.T) {
 	head.Hash[0] ^= 1
 	f.heads.Store(head)
 
-	if _, err := Open(f.medium, f.heads, f.id); !errors.Is(err, ErrHashMismatch) {
+	if _, err := Open(f.medium, f.heads, f.id); !errors.Is(
+		err,
+		ErrHashMismatch,
+	) {
 		t.Fatalf("got %v, want ErrHashMismatch", err)
 	}
 }
@@ -551,7 +584,10 @@ func TestDifferentDeviceRefused(t *testing.T) {
 		t.Fatalf("verify: got %v, want ErrWrongDevice", err)
 	}
 
-	if _, err := Open(f.medium, f.heads, NewKeySigner(otherPriv)); !errors.Is(err, ErrWrongDevice) {
+	if _, err := Open(f.medium, f.heads, NewKeySigner(otherPriv)); !errors.Is(
+		err,
+		ErrWrongDevice,
+	) {
 		t.Fatalf("open: got %v, want ErrWrongDevice", err)
 	}
 }
@@ -661,7 +697,10 @@ func (h *faultHeads) setFail(v bool) {
 	h.fail = v
 }
 
-func newFaultFixture(t *testing.T, slots int) (*fixture, *faultMedium, *faultHeads) {
+func newFaultFixture(
+	t *testing.T,
+	slots int,
+) (*fixture, *faultMedium, *faultHeads) {
 	t.Helper()
 
 	f := newFixture(t, slots)
@@ -709,7 +748,11 @@ func TestTornFinalWrite(t *testing.T) {
 		fm.set(func(m *faultMedium) { m.tornAfter = torn })
 
 		if _, err := w.Append(bodyRecord(3)); !errors.Is(err, errInjected) {
-			t.Fatalf("torn after %d blocks: got %v, want the injected failure", torn, err)
+			t.Fatalf(
+				"torn after %d blocks: got %v, want the injected failure",
+				torn,
+				err,
+			)
 		}
 
 		if head, _ := f.heads.Load(); head.Seq != 2 {
@@ -738,7 +781,12 @@ func TestTornFinalWrite(t *testing.T) {
 		}
 
 		if e, err := w.Append(bodyRecord(4)); err != nil || e.Seq != 3 {
-			t.Fatalf("torn %d: append after tear: seq %d err %v", torn, e.Seq, err)
+			t.Fatalf(
+				"torn %d: append after tear: seq %d err %v",
+				torn,
+				e.Seq,
+				err,
+			)
 		}
 
 		if log, err := f.verify(t, f.pub); err != nil || len(log.Entries) != 3 {
@@ -814,7 +862,10 @@ func TestHeadStoredOnlyAfterSync(t *testing.T) {
 
 	// at the moment the head is stored the entry must be on the medium and
 	// every write synced
-	f.mutate(t, func(img []byte) { clear(img[slotOffset(1) : slotOffset(1)+RecordSize]) })
+	f.mutate(
+		t,
+		func(img []byte) { clear(img[slotOffset(1) : slotOffset(1)+RecordSize]) },
+	)
 	fm.set(func(m *faultMedium) { m.failSync, m.dirty = false, false })
 
 	var onMedium, synced bool
@@ -833,7 +884,11 @@ func TestHeadStoredOnlyAfterSync(t *testing.T) {
 	}
 
 	if !onMedium || !synced {
-		t.Errorf("head stored with entry on medium %t, medium synced %t", onMedium, synced)
+		t.Errorf(
+			"head stored with entry on medium %t, medium synced %t",
+			onMedium,
+			synced,
+		)
 	}
 }
 
@@ -904,7 +959,10 @@ func TestFailedHeadStoreIsRetriedBeforeNextAppend(t *testing.T) {
 	}
 
 	img := f.medium.Image()
-	if !bytes.Equal(img[slotOffset(3):slotOffset(3)+RecordSize], make([]byte, RecordSize)) {
+	if !bytes.Equal(
+		img[slotOffset(3):slotOffset(3)+RecordSize],
+		make([]byte, RecordSize),
+	) {
 		t.Fatal("entry written while the head was two behind")
 	}
 
@@ -1048,7 +1106,8 @@ func TestLongSummaryIsCutOnARuneBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(e.Summary) > MaxSummary || !utf8.ValidString(e.Summary) || len(e.Summary) < MaxSummary-4 {
+	if len(e.Summary) > MaxSummary || !utf8.ValidString(e.Summary) ||
+		len(e.Summary) < MaxSummary-4 {
 		t.Fatalf("summary of %d bytes", len(e.Summary))
 	}
 
@@ -1085,7 +1144,12 @@ func TestTruncationIsRecordedAndSigned(t *testing.T) {
 
 	for i, want := range []bool{false, true, false} {
 		if got[i].SummaryTruncated != want {
-			t.Errorf("entry %d: SummaryTruncated=%v, want %v", i+1, got[i].SummaryTruncated, want)
+			t.Errorf(
+				"entry %d: SummaryTruncated=%v, want %v",
+				i+1,
+				got[i].SummaryTruncated,
+				want,
+			)
 		}
 	}
 
@@ -1096,7 +1160,12 @@ func TestTruncationIsRecordedAndSigned(t *testing.T) {
 
 	for i, want := range []bool{false, true, false} {
 		if log.Entries[i].SummaryTruncated != want {
-			t.Errorf("verified entry %d: SummaryTruncated=%v, want %v", i+1, log.Entries[i].SummaryTruncated, want)
+			t.Errorf(
+				"verified entry %d: SummaryTruncated=%v, want %v",
+				i+1,
+				log.Entries[i].SummaryTruncated,
+				want,
+			)
 		}
 	}
 
@@ -1133,11 +1202,13 @@ func TestRawPurposeRoundTrips(t *testing.T) {
 	}
 
 	got := log.Entries[0]
-	if got.Purpose != PurposeRaw || !bytes.Equal(got.BodyHash, e.BodyHash) || got.Summary != "unfiltered testnet signing" {
+	if got.Purpose != PurposeRaw || !bytes.Equal(got.BodyHash, e.BodyHash) ||
+		got.Summary != "unfiltered testnet signing" {
 		t.Fatalf("entry %+v", got)
 	}
 
-	if line := FormatEntry(got); !strings.Contains(line, PurposeRaw) || !strings.Contains(line, "body=0505") {
+	if line := FormatEntry(got); !strings.Contains(line, PurposeRaw) ||
+		!strings.Contains(line, "body=0505") {
 		t.Fatalf("line %q", line)
 	}
 
@@ -1197,7 +1268,10 @@ func TestUndersizedMediumRefused(t *testing.T) {
 		t.Fatalf("verify: got %v, want ErrMedium", err)
 	}
 
-	if _, err := Open(NewMemMedium(1), NewMemHeadStore(Head{}), f.id); !errors.Is(err, ErrMedium) {
+	if _, err := Open(NewMemMedium(1), NewMemHeadStore(Head{}), f.id); !errors.Is(
+		err,
+		ErrMedium,
+	) {
 		t.Fatalf("open: got %v, want ErrMedium", err)
 	}
 }
@@ -1210,9 +1284,15 @@ func TestFormatRefusesUnzeroedSlots(t *testing.T) {
 
 	for _, seq := range []int{1, 4} {
 		f := newFixture(t, 4)
-		f.mutate(t, func(img []byte) { img[slotOffset(seq)+RecordSize-1] = 0xff })
+		f.mutate(
+			t,
+			func(img []byte) { img[slotOffset(seq)+RecordSize-1] = 0xff },
+		)
 
-		if _, err := Open(f.medium, f.heads, f.id); !errors.Is(err, ErrNotBlank) {
+		if _, err := Open(f.medium, f.heads, f.id); !errors.Is(
+			err,
+			ErrNotBlank,
+		) {
 			t.Fatalf("slot %d: got %v, want ErrNotBlank", seq, err)
 		}
 
@@ -1318,7 +1398,10 @@ func TestWriterCheck(t *testing.T) {
 
 	img := f.medium.Image()
 
-	f.mutate(t, func(b []byte) { clear(b[slotOffset(2) : slotOffset(2)+RecordSize]) })
+	f.mutate(
+		t,
+		func(b []byte) { clear(b[slotOffset(2) : slotOffset(2)+RecordSize]) },
+	)
 
 	if err := w.Check(); err == nil {
 		t.Fatal("check passed with the latest entry gone")
@@ -1376,7 +1459,11 @@ func TestWriterLastIsACopy(t *testing.T) {
 	}
 
 	want, _ := w.Last()
-	want.KESKeyHash, want.Signature = bytes.Clone(want.KESKeyHash), bytes.Clone(want.Signature)
+	want.KESKeyHash, want.Signature = bytes.Clone(
+		want.KESKeyHash,
+	), bytes.Clone(
+		want.Signature,
+	)
 
 	scribble := func(e Entry) {
 		for _, b := range [][]byte{e.KESKeyHash, e.BodyHash, e.Signature} {
@@ -1390,7 +1477,8 @@ func TestWriterLastIsACopy(t *testing.T) {
 		t.Helper()
 
 		got, ok := w.Last()
-		if !ok || !bytes.Equal(got.KESKeyHash, want.KESKeyHash) || !bytes.Equal(got.Signature, want.Signature) {
+		if !ok || !bytes.Equal(got.KESKeyHash, want.KESKeyHash) ||
+			!bytes.Equal(got.Signature, want.Signature) {
 			t.Fatalf("%s: last changed to %+v", when, got)
 		}
 

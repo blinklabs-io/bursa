@@ -119,12 +119,17 @@ func New(deps Deps) *Coordinator {
 	case "":
 		deps.WMMode = watermark.ModeEnforce
 	default:
-		deps.Logger.Warn("unrecognized watermark mode; coercing to enforce (fail closed)",
-			"requested_mode", string(deps.WMMode))
+		deps.Logger.Warn(
+			"unrecognized watermark mode; coercing to enforce (fail closed)",
+			"requested_mode",
+			string(deps.WMMode),
+		)
 		deps.WMMode = watermark.ModeEnforce
 	}
 	if deps.WMMode != watermark.ModeOff && deps.Watermark == nil {
-		deps.Logger.Warn("watermark mode requires a store; using in-memory watermark")
+		deps.Logger.Warn(
+			"watermark mode requires a store; using in-memory watermark",
+		)
 		if deps.WMMode == watermark.ModeWarn {
 			deps.Watermark = watermark.NewWarningMemWatermark()
 		} else {
@@ -144,7 +149,10 @@ func ResolveSigner(s string) (backend.KeyHash, error) {
 	}
 	addr, err := lcommon.NewAddress(s)
 	if err != nil {
-		return backend.KeyHash{}, fmt.Errorf("signer %q is neither a key hash nor an address", s)
+		return backend.KeyHash{}, fmt.Errorf(
+			"signer %q is neither a key hash nor an address",
+			s,
+		)
 	}
 	// Prefer the payment key hash when present.
 	pkh := addr.PaymentKeyHash()
@@ -160,7 +168,10 @@ func ResolveSigner(s string) (backend.KeyHash, error) {
 		copy(h[:], skh[:])
 		return h, nil
 	}
-	return backend.KeyHash{}, fmt.Errorf("signer %q: address has no key credential usable as a signer", s)
+	return backend.KeyHash{}, fmt.Errorf(
+		"signer %q: address has no key credential usable as a signer",
+		s,
+	)
 }
 
 // MaxTxSigners is a hard work limit for one transaction signing request. A
@@ -177,7 +188,10 @@ func ValidateSignerList(signers []string) ([]backend.KeyHash, error) {
 		return nil, errors.New("at least one signer is required")
 	}
 	if len(signers) > MaxTxSigners {
-		return nil, fmt.Errorf("request may contain at most %d signers", MaxTxSigners)
+		return nil, fmt.Errorf(
+			"request may contain at most %d signers",
+			MaxTxSigners,
+		)
 	}
 	resolved := make([]backend.KeyHash, 0, len(signers))
 	seen := make(map[backend.KeyHash]int, len(signers))
@@ -208,7 +222,12 @@ func ValidateSignerList(signers []string) ([]backend.KeyHash, error) {
 // Every signing decision (allow or deny) is emitted as a structured audit-log
 // line so that all outcomes are auditable. Secrets (private keys, raw tx bytes)
 // are never logged.
-func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, signers []string) (*TxResult, []SignerError, error) {
+func (c *Coordinator) SignTx(
+	ctx context.Context,
+	cborInput []byte,
+	era string,
+	signers []string,
+) (*TxResult, []SignerError, error) {
 	resolvedSigners, err := ValidateSignerList(signers)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadRequest, err)
@@ -251,22 +270,71 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 		hash := resolvedSigners[i]
 		ref, err := c.deps.Resolver.Resolve(ctx, hash)
 		if errors.Is(err, backend.ErrKeyNotFound) {
-			errs = append(errs, SignerError{Signer: s, Code: CodeNotFound, Reason: "key not found"})
-			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", "key not found")
+			errs = append(
+				errs,
+				SignerError{
+					Signer: s,
+					Code:   CodeNotFound,
+					Reason: "key not found",
+				},
+			)
+			c.deps.Logger.Info(
+				"sign",
+				"type",
+				"tx",
+				"caller-key",
+				hash.String(),
+				"txid",
+				insp.TxId,
+				"result",
+				"denied",
+				"reason",
+				"key not found",
+			)
 			c.deps.Metrics.observe("tx", string(CodeNotFound))
 			c.deps.Metrics.observeDeny(string(CodeNotFound))
 			continue
 		}
 		if err != nil {
-			errs = append(errs, SignerError{Signer: s, Code: CodeBackend, Reason: err.Error()})
-			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "error", "reason", err.Error())
+			errs = append(
+				errs,
+				SignerError{Signer: s, Code: CodeBackend, Reason: err.Error()},
+			)
+			c.deps.Logger.Info(
+				"sign",
+				"type",
+				"tx",
+				"caller-key",
+				hash.String(),
+				"txid",
+				insp.TxId,
+				"result",
+				"error",
+				"reason",
+				err.Error(),
+			)
 			c.deps.Metrics.observe("tx", string(CodeBackend))
 			c.deps.Metrics.observeBackendError("resolver")
 			continue
 		}
 		if dec := c.deps.Policy.EvaluateTx(hash, insp, policy.WithCaller(caller), policy.WithOps(ops), policy.WithBackend(ref.Backend())); !dec.Allow {
-			errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: dec.Reason})
-			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", dec.Reason)
+			errs = append(
+				errs,
+				SignerError{Signer: s, Code: CodeDenied, Reason: dec.Reason},
+			)
+			c.deps.Logger.Info(
+				"sign",
+				"type",
+				"tx",
+				"caller-key",
+				hash.String(),
+				"txid",
+				insp.TxId,
+				"result",
+				"denied",
+				"reason",
+				dec.Reason,
+			)
 			c.deps.Metrics.observe("tx", string(CodeDenied))
 			c.deps.Metrics.observeDeny(string(CodeDenied))
 			continue
@@ -276,15 +344,53 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 		if c.deps.PolicyHook != nil {
 			sum, serr := summarizeTx(caller, hash.String(), insp, ops)
 			if serr != nil {
-				errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: serr.Error()})
-				c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", serr.Error())
+				errs = append(
+					errs,
+					SignerError{
+						Signer: s,
+						Code:   CodeDenied,
+						Reason: serr.Error(),
+					},
+				)
+				c.deps.Logger.Info(
+					"sign",
+					"type",
+					"tx",
+					"caller-key",
+					hash.String(),
+					"txid",
+					insp.TxId,
+					"result",
+					"denied",
+					"reason",
+					serr.Error(),
+				)
 				c.deps.Metrics.observe("tx", string(CodeDenied))
 				c.deps.Metrics.observeDeny(string(CodeDenied))
 				continue
 			}
 			if herr := c.deps.PolicyHook.Authorize(ctx, sum); herr != nil {
-				errs = append(errs, SignerError{Signer: s, Code: CodeDenied, Reason: herr.Error()})
-				c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", "policy hook: "+herr.Error())
+				errs = append(
+					errs,
+					SignerError{
+						Signer: s,
+						Code:   CodeDenied,
+						Reason: herr.Error(),
+					},
+				)
+				c.deps.Logger.Info(
+					"sign",
+					"type",
+					"tx",
+					"caller-key",
+					hash.String(),
+					"txid",
+					insp.TxId,
+					"result",
+					"denied",
+					"reason",
+					"policy hook: "+herr.Error(),
+				)
 				c.deps.Metrics.observe("tx", string(CodeDenied))
 				c.deps.Metrics.observeDeny(string(CodeDenied))
 				continue
@@ -294,15 +400,53 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 		if c.deps.WMMode == watermark.ModeEnforce {
 			if werr := c.deps.Watermark.CheckAndCommit(ctx, hash, scope, txid); werr != nil {
 				if errors.Is(werr, watermark.ErrConflict) {
-					errs = append(errs, SignerError{Signer: s, Code: CodeConflict, Reason: werr.Error()})
-					c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "denied", "reason", "watermark conflict")
+					errs = append(
+						errs,
+						SignerError{
+							Signer: s,
+							Code:   CodeConflict,
+							Reason: werr.Error(),
+						},
+					)
+					c.deps.Logger.Info(
+						"sign",
+						"type",
+						"tx",
+						"caller-key",
+						hash.String(),
+						"txid",
+						insp.TxId,
+						"result",
+						"denied",
+						"reason",
+						"watermark conflict",
+					)
 					c.deps.Metrics.observe("tx", string(CodeConflict))
 					c.deps.Metrics.observeDeny(string(CodeConflict))
 					c.deps.Metrics.observeWatermarkConflict()
 					continue
 				}
-				errs = append(errs, SignerError{Signer: s, Code: CodeBackend, Reason: werr.Error()})
-				c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "error", "reason", werr.Error())
+				errs = append(
+					errs,
+					SignerError{
+						Signer: s,
+						Code:   CodeBackend,
+						Reason: werr.Error(),
+					},
+				)
+				c.deps.Logger.Info(
+					"sign",
+					"type",
+					"tx",
+					"caller-key",
+					hash.String(),
+					"txid",
+					insp.TxId,
+					"result",
+					"error",
+					"reason",
+					werr.Error(),
+				)
 				c.deps.Metrics.observe("tx", string(CodeBackend))
 				c.deps.Metrics.observeBackendError("watermark")
 				continue
@@ -325,7 +469,10 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 		signStart := time.Now()
 		sig, summary, err := backend.SignTxFor(ctx, ref, txBody, txType, txid)
 		// Attempt latency, including failures — not successful-sign latency.
-		c.deps.Metrics.observeSignDuration(ref.Backend(), time.Since(signStart).Seconds())
+		c.deps.Metrics.observeSignDuration(
+			ref.Backend(),
+			time.Since(signStart).Seconds(),
+		)
 		if err != nil {
 			code := CodeBackend
 			if errors.Is(err, backend.ErrInvalidSignature) {
@@ -333,13 +480,32 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			} else if errors.Is(err, backend.ErrUnsupportedExtended) {
 				code = CodeUnsupported
 			}
-			errs = append(errs, SignerError{Signer: s, Code: code, Reason: err.Error()})
-			c.deps.Logger.Info("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "error", "reason", err.Error())
+			errs = append(
+				errs,
+				SignerError{Signer: s, Code: code, Reason: err.Error()},
+			)
+			c.deps.Logger.Info(
+				"sign",
+				"type",
+				"tx",
+				"caller-key",
+				hash.String(),
+				"txid",
+				insp.TxId,
+				"result",
+				"error",
+				"reason",
+				err.Error(),
+			)
 			c.deps.Metrics.observe("tx", string(code))
 			switch code {
 			case CodeBackend:
 				c.deps.Metrics.observeBackendError(ref.Backend())
-			case CodeBadRequest, CodeNotFound, CodeDenied, CodeConflict, CodeUnsupported:
+			case CodeBadRequest,
+				CodeNotFound,
+				CodeDenied,
+				CodeConflict,
+				CodeUnsupported:
 				c.deps.Metrics.observeDeny(string(code))
 			case CodeInternal:
 			}
@@ -347,14 +513,52 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 		}
 		pub := ref.PublicKey()
 		if len(pub) != ed25519.PublicKeySize {
-			errs = append(errs, SignerError{Signer: s, Code: CodeInternal, Reason: "backend returned malformed public key"})
-			c.deps.Logger.Error("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "internal-error", "reason", "malformed public key from backend")
+			errs = append(
+				errs,
+				SignerError{
+					Signer: s,
+					Code:   CodeInternal,
+					Reason: "backend returned malformed public key",
+				},
+			)
+			c.deps.Logger.Error(
+				"sign",
+				"type",
+				"tx",
+				"caller-key",
+				hash.String(),
+				"txid",
+				insp.TxId,
+				"result",
+				"internal-error",
+				"reason",
+				"malformed public key from backend",
+			)
 			c.deps.Metrics.observe("tx", string(CodeInternal))
 			continue
 		}
 		if !ed25519.Verify(pub, txid, sig) {
-			errs = append(errs, SignerError{Signer: s, Code: CodeInternal, Reason: "produced signature failed verification"})
-			c.deps.Logger.Error("sign", "type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "internal-error", "reason", "produced signature failed ed25519 verification")
+			errs = append(
+				errs,
+				SignerError{
+					Signer: s,
+					Code:   CodeInternal,
+					Reason: "produced signature failed verification",
+				},
+			)
+			c.deps.Logger.Error(
+				"sign",
+				"type",
+				"tx",
+				"caller-key",
+				hash.String(),
+				"txid",
+				insp.TxId,
+				"result",
+				"internal-error",
+				"reason",
+				"produced signature failed ed25519 verification",
+			)
 			c.deps.Metrics.observe("tx", string(CodeInternal))
 			continue
 		}
@@ -365,7 +569,16 @@ func (c *Coordinator) SignTx(ctx context.Context, cborInput []byte, era string, 
 			}
 		}
 		wits = append(wits, lcommon.VkeyWitness{Vkey: pub, Signature: sig})
-		logArgs := []any{"type", "tx", "caller-key", hash.String(), "txid", insp.TxId, "result", "signed"}
+		logArgs := []any{
+			"type",
+			"tx",
+			"caller-key",
+			hash.String(),
+			"txid",
+			insp.TxId,
+			"result",
+			"signed",
+		}
 		if summary != "" {
 			logArgs = append(logArgs, "summary", summary)
 			if !slices.Contains(summaries, summary) {

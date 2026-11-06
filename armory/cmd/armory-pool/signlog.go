@@ -27,7 +27,10 @@ import (
 
 // readLog posts one signing log read, authenticating it with the host key
 // when the session has one.
-func (s *session) readLog(from uint64, count uint32) (device.SignLogResponse, error) {
+func (s *session) readLog(
+	from uint64,
+	count uint32,
+) (device.SignLogResponse, error) {
 	nonce, err := randomNonce()
 	if err != nil {
 		return device.SignLogResponse{}, err
@@ -55,14 +58,21 @@ func (s *session) readLog(from uint64, count uint32) (device.SignLogResponse, er
 
 	if count == 0 && (len(resp.Attestation) != ed25519.SignatureSize ||
 		!ed25519.Verify(s.identity, device.SignLogResponseBinding(req, resp), resp.Attestation)) {
-		return resp, errors.New("signing log snapshot attestation does not verify under the pinned identity key")
+		return resp, errors.New(
+			"signing log snapshot attestation does not verify under the pinned identity key",
+		)
 	}
 
 	if resp.Version != device.Protocol {
-		return resp, fmt.Errorf("response version %q, want %q", resp.Version, device.Protocol)
+		return resp, fmt.Errorf(
+			"response version %q, want %q",
+			resp.Version,
+			device.Protocol,
+		)
 	}
 
-	if resp.From != from || len(resp.Blocks) != int(count)*signlog.BlockSize || len(resp.HeadHash) != signlog.HashSize {
+	if resp.From != from || len(resp.Blocks) != int(count)*signlog.BlockSize ||
+		len(resp.HeadHash) != signlog.HashSize {
 		return resp, errors.New("malformed signing log response")
 	}
 
@@ -81,7 +91,11 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 
 	// the device reports the head; bound the read by what a device formats
 	if first.HeadSeq > signlog.DefaultMaxEntries {
-		return nil, fmt.Errorf("device reports entry %d, beyond the log's capacity of %d", first.HeadSeq, signlog.DefaultMaxEntries)
+		return nil, fmt.Errorf(
+			"device reports entry %d, beyond the log's capacity of %d",
+			first.HeadSeq,
+			signlog.DefaultMaxEntries,
+		)
 	}
 
 	// one slot beyond the head shows an entry written but not yet headed
@@ -92,7 +106,9 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 
 	for uint64(len(prefix))/signlog.BlockSize < want {
 		from := uint64(len(prefix)) / signlog.BlockSize
-		count := uint32(min(uint64(device.MaxLogBlocks), want-from)) //nolint:gosec // bounded by MaxLogBlocks
+		count := uint32(
+			min(uint64(device.MaxLogBlocks), want-from),
+		) //nolint:gosec // bounded by MaxLogBlocks
 
 		part, err := s.readLog(from, count)
 		if err != nil {
@@ -100,7 +116,9 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 		}
 
 		if part.NumBlocks != first.NumBlocks {
-			return nil, errors.New("device changed its signing log medium during the read")
+			return nil, errors.New(
+				"device changed its signing log medium during the read",
+			)
 		}
 
 		prefix = append(prefix, part.Blocks...)
@@ -118,8 +136,13 @@ func (s *session) fetchLog() (*signlog.Log, error) {
 
 	head := log.Head()
 	if head.Seq != first.HeadSeq || !bytes.Equal(head.Hash[:], first.HeadHash) {
-		return nil, fmt.Errorf("log ends at entry %d %x but the device reports %d %x (retry if it signed meanwhile)",
-			head.Seq, head.Hash, first.HeadSeq, first.HeadHash)
+		return nil, fmt.Errorf(
+			"log ends at entry %d %x but the device reports %d %x (retry if it signed meanwhile)",
+			head.Seq,
+			head.Hash,
+			first.HeadSeq,
+			first.HeadHash,
+		)
 	}
 
 	return log, nil
@@ -135,15 +158,28 @@ func (s *session) signLog(pinSeq int64, pinHash []byte, out io.Writer) error {
 
 	head := log.Head()
 
-	if pinSeq >= 0 && (head.Seq != uint64(pinSeq) || !bytes.Equal(head.Hash[:], pinHash)) { //nolint:gosec // pinSeq is non-negative here
-		return fmt.Errorf("latest entry is %d %x, expected %d %x", head.Seq, head.Hash, pinSeq, pinHash)
+	if pinSeq >= 0 &&
+		(head.Seq != uint64(pinSeq) || !bytes.Equal(head.Hash[:], pinHash)) { //nolint:gosec // pinSeq is non-negative here
+		return fmt.Errorf(
+			"latest entry is %d %x, expected %d %x",
+			head.Seq,
+			head.Hash,
+			pinSeq,
+			pinHash,
+		)
 	}
 
 	for _, e := range log.Entries {
 		fmt.Fprintln(out, signlog.FormatEntry(e))
 	}
 
-	fmt.Fprintf(out, "ok: %d entries, head %d %x\n", len(log.Entries), head.Seq, head.Hash)
+	fmt.Fprintf(
+		out,
+		"ok: %d entries, head %d %x\n",
+		len(log.Entries),
+		head.Seq,
+		head.Hash,
+	)
 
 	return nil
 }

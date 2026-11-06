@@ -48,7 +48,10 @@ func TestPinsRoundTrip(t *testing.T) {
 		}
 
 		again, _ := EncodePins(got)
-		if !bytes.Equal(again, b) || (got.MetadataHash == nil) != (p.MetadataHash == nil) || got.RelaysDigest != p.RelaysDigest || got.PinRelays != p.PinRelays {
+		if !bytes.Equal(again, b) ||
+			(got.MetadataHash == nil) != (p.MetadataHash == nil) ||
+			got.RelaysDigest != p.RelaysDigest ||
+			got.PinRelays != p.PinRelays {
 			t.Errorf("%s: round trip changed the pins", name)
 		}
 	}
@@ -66,8 +69,49 @@ func TestPinsLayout(t *testing.T) {
 	want := append([]byte{1, 3, 0x11}, make([]byte, 31)...)
 	want = append(want, 0x33)
 	want = append(want, make([]byte, 31)...)
-	want = append(want, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0xf4, 0, 0, 0, 0, 0, 0, 0, 170,
-		0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 10)
+	want = append(
+		want,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		1,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		1,
+		0xf4,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		170,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		1,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		10,
+	)
 	want = append(want, 0x55)
 	want = append(want, make([]byte, 18)...)
 	want = append(want, 0x66)

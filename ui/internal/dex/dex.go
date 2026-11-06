@@ -168,8 +168,16 @@ func NewService(c chainQuerier, network string) *Service {
 // an output is a spendable protocol pool.
 func defaultProtocols() []protocolDef {
 	return []protocolDef{
-		{parser: shaidex.NewMinswapV1Parser(), encoding: valueTxOut, identity: identityMinswap},
-		{parser: shaidex.NewMinswapV2Parser(), encoding: valueTxOut, identity: identityMinswapV2},
+		{
+			parser:   shaidex.NewMinswapV1Parser(),
+			encoding: valueTxOut,
+			identity: identityMinswap,
+		},
+		{
+			parser:   shaidex.NewMinswapV2Parser(),
+			encoding: valueTxOut,
+			identity: identityMinswapV2,
+		},
 	}
 }
 
@@ -198,7 +206,11 @@ func (s *Service) Pools(ctx context.Context) ([]Pool, error) {
 // Quote scans every parseable pool that contains both assetIn and assetOut and
 // returns the quote with the largest output amount. assetIn/assetOut are units:
 // "lovelace" (or "") for ADA, or concatenated policy-id + asset-name hex.
-func (s *Service) Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (Quote, error) {
+func (s *Service) Quote(
+	ctx context.Context,
+	assetIn, assetOut string,
+	amountIn uint64,
+) (Quote, error) {
 	inPolicy, inName, err := parseUnit(assetIn)
 	if err != nil {
 		return Quote{}, fmt.Errorf("%w: asset_in: %w", ErrInvalidRequest, err)
@@ -208,10 +220,16 @@ func (s *Service) Quote(ctx context.Context, assetIn, assetOut string, amountIn 
 		return Quote{}, fmt.Errorf("%w: asset_out: %w", ErrInvalidRequest, err)
 	}
 	if normalizeUnit(assetIn) == normalizeUnit(assetOut) {
-		return Quote{}, fmt.Errorf("%w: asset_in and asset_out must differ", ErrInvalidRequest)
+		return Quote{}, fmt.Errorf(
+			"%w: asset_in and asset_out must differ",
+			ErrInvalidRequest,
+		)
 	}
 	if amountIn == 0 {
-		return Quote{}, fmt.Errorf("%w: amount_in must be greater than zero", ErrInvalidRequest)
+		return Quote{}, fmt.Errorf(
+			"%w: amount_in must be greater than zero",
+			ErrInvalidRequest,
+		)
 	}
 
 	states, err := s.poolStates(ctx)
@@ -264,7 +282,9 @@ func (s *Service) Quote(ctx context.Context, assetIn, assetOut string, amountIn 
 // under the same lock and returns immediately rather than re-scanning. This
 // trades a brief block for callers during a cache-miss window against the
 // alternative of a full node scan per concurrent request.
-func (s *Service) poolStates(ctx context.Context) ([]*shaidex.PoolState, error) {
+func (s *Service) poolStates(
+	ctx context.Context,
+) ([]*shaidex.PoolState, error) {
 	if s.network != "mainnet" {
 		return nil, ErrNotMainnet
 	}
@@ -308,7 +328,12 @@ func (s *Service) scan(ctx context.Context) ([]*shaidex.PoolState, error) {
 				}
 				st, ok, err := s.parseUTxO(ctx, def, u, datumCache)
 				if err != nil {
-					return nil, fmt.Errorf("parse pool utxo %s#%d: %w", u.TxHash, u.OutputIndex, err)
+					return nil, fmt.Errorf(
+						"parse pool utxo %s#%d: %w",
+						u.TxHash,
+						u.OutputIndex,
+						err,
+					)
 				}
 				if ok {
 					states = append(states, st)
@@ -331,7 +356,12 @@ func (s *Service) parseUTxO(
 	u chain.UTxO,
 	datumCache map[string][]chain.TxOutput,
 ) (*shaidex.PoolState, bool, error) {
-	datumHex, amounts, locked, err := inlineDatumFor(ctx, s.chain, u, datumCache)
+	datumHex, amounts, locked, err := inlineDatumFor(
+		ctx,
+		s.chain,
+		u,
+		datumCache,
+	)
 	if err != nil {
 		return nil, false, err
 	}
@@ -415,7 +445,11 @@ func validPoolIdentity(kind poolIdentity, locked map[string]uint64) bool {
 	}
 }
 
-func reservesMatchLocked(protocol string, state *shaidex.PoolState, locked map[string]uint64) bool {
+func reservesMatchLocked(
+	protocol string,
+	state *shaidex.PoolState,
+	locked map[string]uint64,
+) bool {
 	if state.AssetX.Amount == 0 || state.AssetY.Amount == 0 ||
 		bytes.Equal(state.AssetX.Class.PolicyId, state.AssetY.Class.PolicyId) &&
 			bytes.Equal(state.AssetX.Class.Name, state.AssetY.Class.Name) {
@@ -439,7 +473,11 @@ func reserveMatches(
 	reserve shaicommon.AssetAmount,
 	locked map[string]uint64,
 ) bool {
-	unit := hex.EncodeToString(reserve.Class.PolicyId) + hex.EncodeToString(reserve.Class.Name)
+	unit := hex.EncodeToString(
+		reserve.Class.PolicyId,
+	) + hex.EncodeToString(
+		reserve.Class.Name,
+	)
 	if reserve.IsLovelace() {
 		unit = "lovelace"
 	}
@@ -480,7 +518,11 @@ func inlineDatumFor(
 				cache[u.TxHash] = nil // negative-cache: no such tx; don't retry in this scan
 				return "", nil, nil, nil
 			}
-			return "", nil, nil, fmt.Errorf("query tx outputs for %s: %w", u.TxHash, err)
+			return "", nil, nil, fmt.Errorf(
+				"query tx outputs for %s: %w",
+				u.TxHash,
+				err,
+			)
 		}
 		cache[u.TxHash] = outs
 	}
@@ -573,7 +615,9 @@ func encodeTxOut(amounts []chain.Amount) ([]byte, error) {
 		if _, ok := multiAssetData[ph]; !ok {
 			multiAssetData[ph] = map[cbor.ByteString]lcommon.MultiAssetTypeOutput{}
 		}
-		multiAssetData[ph][cbor.NewByteString(name)] = new(big.Int).SetUint64(qty)
+		multiAssetData[ph][cbor.NewByteString(name)] = new(
+			big.Int,
+		).SetUint64(qty)
 	}
 
 	var multiAsset *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput]
@@ -629,14 +673,18 @@ func poolFromState(st *shaidex.PoolState) Pool {
 
 // poolHasPair reports whether the pool's two assets are exactly the requested
 // in/out pair (in either orientation).
-func poolHasPair(st *shaidex.PoolState, inPolicy, inName, outPolicy, outName []byte) bool {
+func poolHasPair(
+	st *shaidex.PoolState,
+	inPolicy, inName, outPolicy, outName []byte,
+) bool {
 	x := st.AssetX.Class
 	y := st.AssetY.Class
 	matchesIn := func(c shaicommon.AssetClass) bool {
 		return bytes.Equal(c.PolicyId, inPolicy) && bytes.Equal(c.Name, inName)
 	}
 	matchesOut := func(c shaicommon.AssetClass) bool {
-		return bytes.Equal(c.PolicyId, outPolicy) && bytes.Equal(c.Name, outName)
+		return bytes.Equal(c.PolicyId, outPolicy) &&
+			bytes.Equal(c.Name, outName)
 	}
 	return (matchesIn(x) && matchesOut(y)) || (matchesIn(y) && matchesOut(x))
 }
@@ -683,11 +731,19 @@ func splitUnit(unit string) (policy, name []byte, err error) {
 	}
 	policy, err = hex.DecodeString(unit[:policyIDHexLen])
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid policy id in unit %q: %w", unit, err)
+		return nil, nil, fmt.Errorf(
+			"invalid policy id in unit %q: %w",
+			unit,
+			err,
+		)
 	}
 	name, err = hex.DecodeString(unit[policyIDHexLen:])
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid asset name in unit %q: %w", unit, err)
+		return nil, nil, fmt.Errorf(
+			"invalid asset name in unit %q: %w",
+			unit,
+			err,
+		)
 	}
 	return policy, name, nil
 }

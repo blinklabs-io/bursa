@@ -307,7 +307,9 @@ func (s *Service) WriteLogsZip(w io.Writer) error {
 }
 
 func addFileToZip(zw *zip.Writer, path string) error {
-	f, err := os.Open(path) //nolint:gosec // path is the wallet's own configured log file
+	f, err := os.Open(
+		path,
+	) //nolint:gosec // path is the wallet's own configured log file
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,8 @@ func TestBLSKeyDeterministicVector(t *testing.T) {
 	if got, want := hex.EncodeToString(key.PossessionProof), "90798ee2d044031096d849936f4302c841b37c6d4d737e451f65bb07313b56508ab89f5a8e2b77248c2d2404a11c6e52"; got != want {
 		t.Fatalf("possession proof = %s, want %s", got, want)
 	}
-	if len(key.PublicKey) != BLSPublicKeySize || len(key.PossessionProof) != BLSPossessionProofSize {
+	if len(key.PublicKey) != BLSPublicKeySize ||
+		len(key.PossessionProof) != BLSPossessionProofSize {
 		t.Fatal("generated BLS registration material has invalid length")
 	}
 	if !key.VerifyPossessionProof() {
@@ -34,7 +35,8 @@ func TestBLSKeyDeterministicVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(key.PublicKey, keyAgain.PublicKey) || !bytes.Equal(key.PossessionProof, keyAgain.PossessionProof) {
+	if !bytes.Equal(key.PublicKey, keyAgain.PublicKey) ||
+		!bytes.Equal(key.PossessionProof, keyAgain.PossessionProof) {
 		t.Fatal("same BLS keygen input produced different output")
 	}
 }
@@ -60,7 +62,9 @@ func TestBLSKeyRejectsInfinityPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	infinityPublic := append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...)
-	infinityProof := append([]byte{0xc0}, make([]byte, BLSPossessionProofSize-1)...)
+	infinityProof := append(
+		[]byte{0xc0},
+		make([]byte, BLSPossessionProofSize-1)...)
 	key.PublicKey = infinityPublic
 	key.PossessionProof = infinityProof
 	if key.VerifyPossessionProof() {
@@ -107,7 +111,9 @@ func TestBLSEnvelopesValidateMaterial(t *testing.T) {
 		t.Fatal("out-of-range BLS secret scalar was accepted")
 	}
 
-	invalidPublic := &BLSKey{PublicKey: append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...)}
+	invalidPublic := &BLSKey{
+		PublicKey: append([]byte{0xc0}, make([]byte, BLSPublicKeySize-1)...),
+	}
 	if _, err := invalidPublic.BLSVerificationKeyEnvelope(); err == nil {
 		t.Fatal("infinity BLS public key was accepted")
 	}

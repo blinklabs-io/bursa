@@ -181,7 +181,11 @@ func (c *ipfsClient) fetch(ctx context.Context, cidStr string) ([]byte, error) {
 		return nil, fmt.Errorf("nft: read %s: %w", cidStr, err)
 	}
 	if len(data) > maxImageBytes {
-		return nil, fmt.Errorf("nft: image %s exceeds %d bytes", cidStr, maxImageBytes)
+		return nil, fmt.Errorf(
+			"nft: image %s exceeds %d bytes",
+			cidStr,
+			maxImageBytes,
+		)
 	}
 	return data, nil
 }

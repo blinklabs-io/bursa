@@ -31,5 +31,9 @@ const chain = ""
 // configureScope fixes the image to the testnet scope.
 func configureScope(svc *device.Service, report *Report) {
 	svc.SetNetwork(network, chain)
-	report.Logf("network: %s (id %d); other networks' profiles are refused", networkName, network)
+	report.Logf(
+		"network: %s (id %d); other networks' profiles are refused",
+		networkName,
+		network,
+	)
 }

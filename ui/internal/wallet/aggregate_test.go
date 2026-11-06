@@ -9,8 +9,19 @@ import (
 
 func TestAggregateBalance(t *testing.T) {
 	utxos := []chain.UTxO{
-		{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}, {Unit: "tokenB", Quantity: "5"}}},
-		{Amount: []chain.Amount{{Unit: "lovelace", Quantity: "2500000"}, {Unit: "tokenA", Quantity: "3"}, {Unit: "tokenB", Quantity: "2"}}},
+		{
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "1000000"},
+				{Unit: "tokenB", Quantity: "5"},
+			},
+		},
+		{
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "2500000"},
+				{Unit: "tokenA", Quantity: "3"},
+				{Unit: "tokenB", Quantity: "2"},
+			},
+		},
 	}
 	bal, err := AggregateBalance(utxos)
 	if err != nil {
@@ -44,10 +55,17 @@ func TestAggregateBalanceInvalidQuantity(t *testing.T) {
 	for _, quantity := range []string{"bad", "-1"} {
 		t.Run(quantity, func(t *testing.T) {
 			_, err := AggregateBalance([]chain.UTxO{
-				{Amount: []chain.Amount{{Unit: "lovelace", Quantity: quantity}}},
+				{
+					Amount: []chain.Amount{
+						{Unit: "lovelace", Quantity: quantity},
+					},
+				},
 			})
 			if !errors.Is(err, ErrInvalidAmountQuantity) {
-				t.Fatalf("AggregateBalance err = %v, want ErrInvalidAmountQuantity", err)
+				t.Fatalf(
+					"AggregateBalance err = %v, want ErrInvalidAmountQuantity",
+					err,
+				)
 			}
 		})
 	}
@@ -57,7 +75,12 @@ func TestMergeTransactions(t *testing.T) {
 	a := []chain.AddressTx{
 		{TxHash: "t1", TxIndex: 0, BlockHeight: 10, BlockTime: 100},
 		{TxHash: "t2", TxIndex: 1, BlockHeight: 20, BlockTime: 200},
-		{TxHash: "z-same-block-lower-index", TxIndex: 0, BlockHeight: 20, BlockTime: 200},
+		{
+			TxHash:      "z-same-block-lower-index",
+			TxIndex:     0,
+			BlockHeight: 20,
+			BlockTime:   200,
+		},
 	}
 	b := []chain.AddressTx{
 		{TxHash: "t2", TxIndex: 1, BlockHeight: 20, BlockTime: 200},
@@ -67,17 +90,38 @@ func TestMergeTransactions(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("got %d txs, want 4 (dedup): %+v", len(got), got)
 	}
-	if got[0].TxHash != "t3" || got[1].TxHash != "t2" || got[2].TxHash != "z-same-block-lower-index" || got[3].TxHash != "t1" {
-		t.Fatalf("order = %v, want t3,t2,z-same-block-lower-index,t1", []string{got[0].TxHash, got[1].TxHash, got[2].TxHash, got[3].TxHash})
+	if got[0].TxHash != "t3" || got[1].TxHash != "t2" ||
+		got[2].TxHash != "z-same-block-lower-index" ||
+		got[3].TxHash != "t1" {
+		t.Fatalf(
+			"order = %v, want t3,t2,z-same-block-lower-index,t1",
+			[]string{
+				got[0].TxHash,
+				got[1].TxHash,
+				got[2].TxHash,
+				got[3].TxHash,
+			},
+		)
 	}
 }
 
 func TestComputeTxDeltaReceived(t *testing.T) {
 	mine := map[string]bool{"addr_mine": true}
-	inputs := []chain.TxIO{{Address: "addr_other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}}
+	inputs := []chain.TxIO{
+		{
+			Address: "addr_other",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}},
+		},
+	}
 	outputs := []chain.TxIO{
-		{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
-		{Address: "addr_other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1800000"}}},
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}},
+		},
+		{
+			Address: "addr_other",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "1800000"}},
+		},
 	}
 	dir, net, deltas, err := computeTxDelta(inputs, outputs, mine)
 	if err != nil {
@@ -96,10 +140,21 @@ func TestComputeTxDeltaReceived(t *testing.T) {
 
 func TestComputeTxDeltaSent(t *testing.T) {
 	mine := map[string]bool{"addr_mine": true}
-	inputs := []chain.TxIO{{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}}
+	inputs := []chain.TxIO{
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}},
+		},
+	}
 	outputs := []chain.TxIO{
-		{Address: "addr_other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}}},
-		{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1800000"}}}, // change
+		{
+			Address: "addr_other",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}},
+		},
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "1800000"}},
+		}, // change
 	}
 	dir, net, _, err := computeTxDelta(inputs, outputs, mine)
 	if err != nil {
@@ -122,11 +177,20 @@ func TestComputeTxDeltaSent(t *testing.T) {
 func TestComputeTxDeltaMixedInputNoExternalOutIsReceived(t *testing.T) {
 	mine := map[string]bool{"addr_mine": true}
 	inputs := []chain.TxIO{
-		{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}},
-		{Address: "addr_other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "2000000"}}},
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}},
+		},
+		{
+			Address: "addr_other",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "2000000"}},
+		},
 	}
 	outputs := []chain.TxIO{
-		{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "6800000"}}},
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "6800000"}},
+		},
 	}
 	dir, _, _, err := computeTxDelta(inputs, outputs, mine)
 	if err != nil {
@@ -139,8 +203,18 @@ func TestComputeTxDeltaMixedInputNoExternalOutIsReceived(t *testing.T) {
 
 func TestComputeTxDeltaSelf(t *testing.T) {
 	mine := map[string]bool{"addr_a": true, "addr_b": true}
-	inputs := []chain.TxIO{{Address: "addr_a", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}}}
-	outputs := []chain.TxIO{{Address: "addr_b", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "4800000"}}}}
+	inputs := []chain.TxIO{
+		{
+			Address: "addr_a",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}},
+		},
+	}
+	outputs := []chain.TxIO{
+		{
+			Address: "addr_b",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "4800000"}},
+		},
+	}
 	dir, net, _, err := computeTxDelta(inputs, outputs, mine)
 	if err != nil {
 		t.Fatalf("computeTxDelta: %v", err)
@@ -160,8 +234,20 @@ func TestComputeTxDeltaAssetDeltas(t *testing.T) {
 		{Unit: "tokenA", Quantity: "10"},
 	}}}
 	outputs := []chain.TxIO{
-		{Address: "addr_other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}, {Unit: "tokenA", Quantity: "4"}}},
-		{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1800000"}, {Unit: "tokenA", Quantity: "6"}}},
+		{
+			Address: "addr_other",
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "3000000"},
+				{Unit: "tokenA", Quantity: "4"},
+			},
+		},
+		{
+			Address: "addr_mine",
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "1800000"},
+				{Unit: "tokenA", Quantity: "6"},
+			},
+		},
 	}
 	dir, _, deltas, err := computeTxDelta(inputs, outputs, mine)
 	if err != nil {
@@ -170,7 +256,8 @@ func TestComputeTxDeltaAssetDeltas(t *testing.T) {
 	if dir != TxDirectionSent {
 		t.Fatalf("direction = %v, want sent", dir)
 	}
-	if len(deltas) != 1 || deltas[0].Unit != "tokenA" || deltas[0].Quantity != "-4" {
+	if len(deltas) != 1 || deltas[0].Unit != "tokenA" ||
+		deltas[0].Quantity != "-4" {
 		t.Fatalf("deltas = %+v, want [{tokenA -4}]", deltas)
 	}
 }
@@ -179,8 +266,18 @@ func TestComputeTxDeltaOmitsZeroAssetDelta(t *testing.T) {
 	// tokenA passes straight through (spent and returned in full): it did not
 	// actually move for the wallet, so it should not appear as a delta.
 	mine := map[string]bool{"addr_mine": true}
-	inputs := []chain.TxIO{{Address: "addr_mine", Amount: []chain.Amount{{Unit: "tokenA", Quantity: "10"}}}}
-	outputs := []chain.TxIO{{Address: "addr_mine", Amount: []chain.Amount{{Unit: "tokenA", Quantity: "10"}}}}
+	inputs := []chain.TxIO{
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "tokenA", Quantity: "10"}},
+		},
+	}
+	outputs := []chain.TxIO{
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "tokenA", Quantity: "10"}},
+		},
+	}
 	_, _, deltas, err := computeTxDelta(inputs, outputs, mine)
 	if err != nil {
 		t.Fatalf("computeTxDelta: %v", err)
@@ -206,7 +303,15 @@ func TestTxConfirmations(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			conf, pending := txConfirmations(c.tip, c.block)
 			if conf != c.wantConf || pending != c.wantPending {
-				t.Fatalf("txConfirmations(%d,%d) = (%d,%v), want (%d,%v)", c.tip, c.block, conf, pending, c.wantConf, c.wantPending)
+				t.Fatalf(
+					"txConfirmations(%d,%d) = (%d,%v), want (%d,%v)",
+					c.tip,
+					c.block,
+					conf,
+					pending,
+					c.wantConf,
+					c.wantPending,
+				)
 			}
 		})
 	}
@@ -215,8 +320,17 @@ func TestTxConfirmations(t *testing.T) {
 func TestToTxIOs(t *testing.T) {
 	mine := map[string]bool{"addr_mine": true}
 	ios := []chain.TxIO{
-		{Address: "addr_mine", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}}},
-		{Address: "addr_other", Amount: []chain.Amount{{Unit: "lovelace", Quantity: "500000"}, {Unit: "tokenA", Quantity: "2"}}},
+		{
+			Address: "addr_mine",
+			Amount:  []chain.Amount{{Unit: "lovelace", Quantity: "1000000"}},
+		},
+		{
+			Address: "addr_other",
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "500000"},
+				{Unit: "tokenA", Quantity: "2"},
+			},
+		},
 	}
 	out, err := toTxIOs(ios, mine)
 	if err != nil {
@@ -231,7 +345,8 @@ func TestToTxIOs(t *testing.T) {
 	if out[1].IsMine {
 		t.Fatal("out[1] should not be mine")
 	}
-	if out[1].Lovelace != "500000" || len(out[1].Assets) != 1 || out[1].Assets[0].Unit != "tokenA" {
+	if out[1].Lovelace != "500000" || len(out[1].Assets) != 1 ||
+		out[1].Assets[0].Unit != "tokenA" {
 		t.Fatalf("out[1] = %+v", out[1])
 	}
 }

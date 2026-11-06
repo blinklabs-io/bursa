@@ -30,7 +30,11 @@ var testHostKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x48}, 32))
 
 var testHostKey2 = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x49}, 32))
 
-func hostPub(k ed25519.PrivateKey) []byte { return []byte(k.Public().(ed25519.PublicKey)) }
+func hostPub(
+	k ed25519.PrivateKey,
+) []byte {
+	return []byte(k.Public().(ed25519.PublicKey))
+}
 
 func registerHostKey(t *testing.T, s *Service, pub []byte) {
 	t.Helper()
@@ -61,18 +65,29 @@ func challenge(t *testing.T, s *Service) []byte {
 }
 
 // opcertRequest is a request every check but host authentication accepts.
-func opcertRequest(t *testing.T, s *Service, chip *fakeChip, n byte) SignRequest {
+func opcertRequest(
+	t *testing.T,
+	s *Service,
+	chip *fakeChip,
+	n byte,
+) SignRequest {
 	t.Helper()
 
 	cold, _ := chip.PublicKeyEd25519(testColdID)
 
 	return SignRequest{
 		Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: "otg@preview",
+		Nonce: nonce(
+			n,
+		), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: "otg@preview",
 	}
 }
 
-func authenticate(req SignRequest, k ed25519.PrivateKey, ch []byte) SignRequest {
+func authenticate(
+	req SignRequest,
+	k ed25519.PrivateKey,
+	ch []byte,
+) SignRequest {
 	req.Challenge = ch
 	req.HostKey = hostPub(k)
 	req.HostSignature = ed25519.Sign(k, RequestBinding(req))
@@ -109,7 +124,15 @@ func newHostAuthService(t *testing.T) (*Service, *fakeChip) {
 func TestHostAuthSigns(t *testing.T) {
 	s, chip := newHostAuthService(t)
 
-	r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 1), testHostKey, challenge(t, s)))
+	r := postSign(
+		t,
+		s,
+		authenticate(
+			opcertRequest(t, s, chip, 1),
+			testHostKey,
+			challenge(t, s),
+		),
+	)
 	if r.Error != "" || len(r.Signature) == 0 {
 		t.Fatalf("authenticated request refused: %+v", r)
 	}
@@ -131,7 +154,11 @@ func TestHostAuthRefusals(t *testing.T) {
 			return req
 		},
 		"unknown challenge": func(_ *testing.T, _ *Service, req SignRequest, _ []byte) SignRequest {
-			return authenticate(req, testHostKey, bytes.Repeat([]byte{1}, challengeSize))
+			return authenticate(
+				req,
+				testHostKey,
+				bytes.Repeat([]byte{1}, challengeSize),
+			)
 		},
 		"expired challenge": func(_ *testing.T, s *Service, req SignRequest, ch []byte) SignRequest {
 			s.now = func() time.Time { return time.Now().Add(challengeTTL) }
@@ -168,7 +195,8 @@ func TestHostAuthRefusals(t *testing.T) {
 			before := chip.signs
 
 			r := postSign(t, s, req)
-			if r.Error == "" || len(r.Signature) != 0 || len(r.BindingSignature) != 0 {
+			if r.Error == "" || len(r.Signature) != 0 ||
+				len(r.BindingSignature) != 0 {
 				t.Fatalf("signed: %+v", r)
 			}
 
@@ -214,13 +242,18 @@ func TestHostAuthNoKeyRegistered(t *testing.T) {
 	provisionTestProfile(t, s)
 
 	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error != "" {
-		t.Fatalf("unauthenticated request refused with no host key registered: %+v", r)
+		t.Fatalf(
+			"unauthenticated request refused with no host key registered: %+v",
+			r,
+		)
 	}
 
 	s.RequireHostAuth()
 
 	if r := postSign(t, s, opcertRequest(t, s, chip, 2)); r.Error == "" {
-		t.Fatal("unauthenticated request signed when host authentication is required")
+		t.Fatal(
+			"unauthenticated request signed when host authentication is required",
+		)
 	}
 }
 
@@ -229,7 +262,9 @@ func TestHostKeyProvisioning(t *testing.T) {
 	keys := make([][]byte, maxHostKeys+1)
 
 	for i := range keys {
-		keys[i] = hostPub(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{byte(0x60 + i)}, 32)))
+		keys[i] = hostPub(
+			ed25519.NewKeyFromSeed(bytes.Repeat([]byte{byte(0x60 + i)}, 32)),
+		)
 	}
 
 	// the first key is added unsigned, the others are signed by it
@@ -313,7 +348,10 @@ func TestRequestBindingVector(t *testing.T) {
 	era := uint(6)
 	req := SignRequest{
 		Version: Protocol, Purpose: "opcert-next", KeyHash: strings.Repeat("ab", 28), Role: "pool",
-		Nonce: bytes.Repeat([]byte{1}, 32), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview",
+		Nonce: bytes.Repeat(
+			[]byte{1},
+			32,
+		), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview",
 		Era: &era, Challenge: bytes.Repeat([]byte{3}, 32),
 	}
 
@@ -351,7 +389,9 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 			// the list is unknown, so no key can sign for a write; the device
 			// wipe, confirmed by the identity key alone, is the way out
 			if code, _ := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey); code == http.StatusOK {
-				t.Fatal("host key list rewritten while the stored list is unknown")
+				t.Fatal(
+					"host key list rewritten while the stored list is unknown",
+				)
 			}
 
 			if code, body := rawPost(s.WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`)); code != http.StatusOK {
@@ -361,7 +401,11 @@ func TestHostKeyWriteFailureRefusesSigning(t *testing.T) {
 			registerHostKey(t, s, hostPub(testHostKey))
 
 			if code, body := postAs(t, s.ProvisioningHandler(), "/provision/identity", IdentityRequest{}, testHostKey); code != http.StatusOK {
-				t.Fatalf("not recovered by the wipe and a good write: %d %s", code, body)
+				t.Fatalf(
+					"not recovered by the wipe and a good write: %d %s",
+					code,
+					body,
+				)
 			}
 		})
 	}
@@ -375,8 +419,15 @@ func TestRevokeLastHostKeyRefused(t *testing.T) {
 
 	s, chip := newHostAuthService(t)
 
-	code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey)}, testHostKey)
-	if code == http.StatusOK || !strings.Contains(string(body), errLastHostKey.Error()) {
+	code, body := postAs(
+		t,
+		s.ProvisioningHandler(),
+		"/provision/host-key/revoke",
+		HostKeyRequest{PublicKey: hostPub(testHostKey)},
+		testHostKey,
+	)
+	if code == http.StatusOK ||
+		!strings.Contains(string(body), errLastHostKey.Error()) {
 		t.Errorf("revoking the last host key: %d %s", code, body)
 	}
 
@@ -386,17 +437,33 @@ func TestRevokeLastHostKeyRefused(t *testing.T) {
 
 	// each unsigned request is valid apart from its missing signature, so
 	// only host authentication refuses it
-	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); !strings.Contains(r.Error, errHostKeyUnknown.Error()) {
-		t.Errorf("unauthenticated sign after revoking the last host key: %+v", r)
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); !strings.Contains(
+		r.Error,
+		errHostKeyUnknown.Error(),
+	) {
+		t.Errorf(
+			"unauthenticated sign after revoking the last host key: %+v",
+			r,
+		)
 	}
 
-	if code, body := post(t, s, "/provision/floor", FloorRequest{Profile: "otg@preview", ChainCounter: 9}); code == http.StatusOK || !strings.Contains(string(body), errHostKeyUnknown.Error()) {
-		t.Errorf("unsigned provisioning after revoking the last host key: %d %s", code, body)
+	if code, body := post(t, s, "/provision/floor", FloorRequest{Profile: "otg@preview", ChainCounter: 9}); code == http.StatusOK ||
+		!strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Errorf(
+			"unsigned provisioning after revoking the last host key: %d %s",
+			code,
+			body,
+		)
 	}
 
 	// last, as an accepted enrollment would refill the list
-	if code, body := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}); code == http.StatusOK || !strings.Contains(string(body), errHostKeyUnknown.Error()) {
-		t.Errorf("unsigned host key after revoking the last host key: %d %s", code, body)
+	if code, body := post(t, s, "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}); code == http.StatusOK ||
+		!strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Errorf(
+			"unsigned host key after revoking the last host key: %d %s",
+			code,
+			body,
+		)
 	}
 
 	// a restart reads the same list
@@ -405,7 +472,9 @@ func TestRevokeLastHostKeyRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(s2.hostKeys) != 1 || !bytes.Equal(s2.hostKeys[0], hostPub(testHostKey)) || s2.hostKeysBad {
+	if len(s2.hostKeys) != 1 ||
+		!bytes.Equal(s2.hostKeys[0], hostPub(testHostKey)) ||
+		s2.hostKeysBad {
 		t.Fatalf("reloaded keys %x bad %v", s2.hostKeys, s2.hostKeysBad)
 	}
 }
@@ -417,7 +486,13 @@ func TestRevokeNonLastHostKey(t *testing.T) {
 
 	s, chip := newHostAuthService(t)
 
-	code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey)
+	code, body := postAs(
+		t,
+		s.ProvisioningHandler(),
+		"/provision/host-key",
+		HostKeyRequest{PublicKey: hostPub(testHostKey2)},
+		testHostKey,
+	)
 	if code != http.StatusOK {
 		t.Fatalf("add second key: %d %s", code, body)
 	}
@@ -426,11 +501,15 @@ func TestRevokeNonLastHostKey(t *testing.T) {
 		t.Fatalf("revoke with another key left: %d %s", code, body)
 	}
 
-	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey2); code == http.StatusOK || !strings.Contains(string(body), errLastHostKey.Error()) {
+	if code, body := postAs(t, s.ProvisioningHandler(), "/provision/host-key/revoke", HostKeyRequest{PublicKey: hostPub(testHostKey2)}, testHostKey2); code == http.StatusOK ||
+		!strings.Contains(string(body), errLastHostKey.Error()) {
 		t.Fatalf("revoking the last key: %d %s", code, body)
 	}
 
-	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); !strings.Contains(r.Error, errHostKeyUnknown.Error()) {
+	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); !strings.Contains(
+		r.Error,
+		errHostKeyUnknown.Error(),
+	) {
 		t.Fatalf("unauthenticated sign with a host key left: %+v", r)
 	}
 
@@ -504,7 +583,9 @@ func TestMainnetRequiresHostAuth(t *testing.T) {
 	req := func(n byte) SignRequest {
 		return SignRequest{
 			Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-			Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 0, 1100), Profile: "pool@prime-mainnet",
+			Nonce: nonce(
+				n,
+			), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 0, 1100), Profile: "pool@prime-mainnet",
 		}
 	}
 
@@ -528,7 +609,10 @@ func TestResponseBindingSummaryVector(t *testing.T) {
 	era := uint(6)
 	req := SignRequest{
 		Version: ProtocolSummary, Purpose: "tx-body", KeyHash: strings.Repeat("ab", 28), Role: "pool",
-		Nonce: bytes.Repeat([]byte{1}, 32), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview", Era: &era,
+		Nonce: bytes.Repeat(
+			[]byte{1},
+			32,
+		), Payload: bytes.Repeat([]byte{2}, 48), Profile: "otg@preview", Era: &era,
 	}
 	sig := bytes.Repeat([]byte{4}, 64)
 
@@ -640,7 +724,10 @@ func TestChallengeUsedSetAgesOut(t *testing.T) {
 	}
 
 	if len(s.usedChallenges) > 1 {
-		t.Fatalf("used set holds %d entries after expiry", len(s.usedChallenges))
+		t.Fatalf(
+			"used set holds %d entries after expiry",
+			len(s.usedChallenges),
+		)
 	}
 }
 
@@ -663,7 +750,10 @@ func TestChallengeRequestPurgesExpiredUsed(t *testing.T) {
 	challenge(t, s)
 
 	if len(s.usedChallenges) != 0 {
-		t.Fatalf("used set holds %d entries after expiry", len(s.usedChallenges))
+		t.Fatalf(
+			"used set holds %d entries after expiry",
+			len(s.usedChallenges),
+		)
 	}
 }
 
@@ -693,7 +783,10 @@ func TestChallengeOutOfOrderReplayRefused(t *testing.T) {
 
 	now = t0.Add(challengeTTL + 5*time.Second)
 
-	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 3), testHostKey, newer)); !strings.Contains(r.Error, "challenge") {
+	if r := postSign(t, s, authenticate(opcertRequest(t, s, chip, 3), testHostKey, newer)); !strings.Contains(
+		r.Error,
+		"challenge",
+	) {
 		t.Fatalf("replayed newer challenge: %+v", r)
 	}
 

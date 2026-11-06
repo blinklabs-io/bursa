@@ -38,8 +38,20 @@ type ownerScope struct {
 
 var ownerScopes = []ownerScope{
 	{scopeTestnetName, 0, multiKeyTestnet, "t@preview", ScopeTestnet},
-	{scopeCardanoName, 1, multiKeyCardano, "c@cardano-mainnet", Scope{Network: 1, Chain: "cardano-mainnet"}},
-	{scopePrimeName, 1, multiKeyPrime, "p@prime-mainnet", Scope{Network: 1, Chain: "prime-mainnet"}},
+	{
+		scopeCardanoName,
+		1,
+		multiKeyCardano,
+		"c@cardano-mainnet",
+		Scope{Network: 1, Chain: "cardano-mainnet"},
+	},
+	{
+		scopePrimeName,
+		1,
+		multiKeyPrime,
+		"p@prime-mainnet",
+		Scope{Network: 1, Chain: "prime-mainnet"},
+	},
 }
 
 // ownersRecord builds an ownership record claiming the given objects.
@@ -109,7 +121,13 @@ func ownerHandler(t *testing.T, chip *fakeChip) http.Handler {
 	return h
 }
 
-func provisionOn(t *testing.T, h http.Handler, o ownerScope, slot uint8, cold uint32) (int, []byte) {
+func provisionOn(
+	t *testing.T,
+	h http.Handler,
+	o ownerScope,
+	slot uint8,
+	cold uint32,
+) (int, []byte) {
 	t.Helper()
 
 	counter := uint64(1)
@@ -165,7 +183,13 @@ func TestColdOwnershipAnyScopeAnyFreeObject(t *testing.T) {
 
 	for i, id := range coldKeyIDs() {
 		o := ownerScopes[i%len(ownerScopes)]
-		code, body := postAs(t, h, RouteProvisionCold, coldReq(id, byte(0x80+i)), o.key)
+		code, body := postAs(
+			t,
+			h,
+			RouteProvisionCold,
+			coldReq(id, byte(0x80+i)),
+			o.key,
+		)
 		mustOK(t, fmt.Sprintf("%s import into %#08x", o.name, id), code, body)
 
 		if got, ok := claimOf(t, chip, id); !ok || got != o.sc {
@@ -188,7 +212,13 @@ func TestColdOwnershipRefusesOtherScope(t *testing.T) {
 				chip := newFakeChip()
 				h := ownerHandler(t, chip)
 
-				code, body := postAs(t, h, RouteProvisionCold, coldReq(id, 0x61), owner.key)
+				code, body := postAs(
+					t,
+					h,
+					RouteProvisionCold,
+					coldReq(id, 0x61),
+					owner.key,
+				)
 				mustOK(t, "owner import", code, body)
 
 				for _, other := range ownerScopes {
@@ -196,21 +226,69 @@ func TestColdOwnershipRefusesOtherScope(t *testing.T) {
 						continue
 					}
 
-					code, body = postAs(t, h, RouteProvisionCold, coldReq(id, 0x61), other.key)
-					refused(t, other.name+" imports the same key", code, body, errColdOwner)
+					code, body = postAs(
+						t,
+						h,
+						RouteProvisionCold,
+						coldReq(id, 0x61),
+						other.key,
+					)
+					refused(
+						t,
+						other.name+" imports the same key",
+						code,
+						body,
+						errColdOwner,
+					)
 
-					code, body = postAs(t, h, RouteProvisionCold, coldReq(id, 0x62), other.key)
-					refused(t, other.name+" imports another key", code, body, errColdOwner)
+					code, body = postAs(
+						t,
+						h,
+						RouteProvisionCold,
+						coldReq(id, 0x62),
+						other.key,
+					)
+					refused(
+						t,
+						other.name+" imports another key",
+						code,
+						body,
+						errColdOwner,
+					)
 
 					code, body = provisionOn(t, h, other, 3, id)
-					refused(t, other.name+" provisions a profile", code, body, errColdOwner)
+					refused(
+						t,
+						other.name+" provisions a profile",
+						code,
+						body,
+						errColdOwner,
+					)
 				}
 
-				code, body = postAs(t, h, RouteProvisionCold, coldReq(id, 0x61), owner.key)
+				code, body = postAs(
+					t,
+					h,
+					RouteProvisionCold,
+					coldReq(id, 0x61),
+					owner.key,
+				)
 				mustOK(t, "owner re-imports the same key", code, body)
 
-				code, body = postAs(t, h, RouteProvisionCold, coldReq(id, 0x62), owner.key)
-				refused(t, "owner imports another key", code, body, errKeyExists)
+				code, body = postAs(
+					t,
+					h,
+					RouteProvisionCold,
+					coldReq(id, 0x62),
+					owner.key,
+				)
+				refused(
+					t,
+					"owner imports another key",
+					code,
+					body,
+					errKeyExists,
+				)
 
 				code, body = provisionOn(t, h, owner, 3, id)
 				mustOK(t, "owner provisions a profile", code, body)
@@ -231,15 +309,23 @@ func TestColdOwnershipStaleClaimOnEmptyObjectIsFree(t *testing.T) {
 	})
 	h := ownerHandler(t, chip)
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50600, 0x63), multiKeyCardano)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50600, 0x63),
+		multiKeyCardano,
+	)
 	mustOK(t, "cardano into an object with a stale testnet claim", code, body)
 
-	if got, ok := claimOf(t, chip, 0x20e50600); !ok || got != ownerScopes[1].sc {
+	if got, ok := claimOf(t, chip, 0x20e50600); !ok ||
+		got != ownerScopes[1].sc {
 		t.Errorf("claim = %v %v, want cardano", got, ok)
 	}
 
 	// the other claim is untouched
-	if got, ok := claimOf(t, chip, 0x20e50012); !ok || got != ownerScopes[2].sc {
+	if got, ok := claimOf(t, chip, 0x20e50012); !ok ||
+		got != ownerScopes[2].sc {
 		t.Errorf("unrelated claim = %v %v, want prime", got, ok)
 	}
 }
@@ -254,13 +340,24 @@ func TestColdOwnershipClaimBeforeImport(t *testing.T) {
 
 	chip.failImport = true
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50601, 0x64), multiKeyCardano)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50601, 0x64),
+		multiKeyCardano,
+	)
 	if code == http.StatusOK {
 		t.Fatalf("import succeeded on a failing chip: %s", body)
 	}
 
-	if got, ok := claimOf(t, chip, 0x20e50601); !ok || got != ownerScopes[1].sc {
-		t.Fatalf("claim after the failed import = %v %v, want cardano's, written first", got, ok)
+	if got, ok := claimOf(t, chip, 0x20e50601); !ok ||
+		got != ownerScopes[1].sc {
+		t.Fatalf(
+			"claim after the failed import = %v %v, want cardano's, written first",
+			got,
+			ok,
+		)
 	}
 
 	if _, ok := chip.keys[0x20e50601]; ok {
@@ -269,7 +366,13 @@ func TestColdOwnershipClaimBeforeImport(t *testing.T) {
 
 	chip.failImport = false
 
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50601, 0x65), multiKeyPrime)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50601, 0x65),
+		multiKeyPrime,
+	)
 	mustOK(t, "prime into the object a failed cardano import left", code, body)
 
 	if got, _ := claimOf(t, chip, 0x20e50601); got != ownerScopes[2].sc {
@@ -288,14 +391,22 @@ func TestColdOwnershipLegacyKeys(t *testing.T) {
 			t.Parallel()
 
 			chip := newFakeChip()
-			chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x66}, 32))
+			chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(
+				bytes.Repeat([]byte{0x66}, 32),
+			)
 			storeRecord(t, chip, profile.Profile{
 				Name: owner.profile, NetworkID: owner.net, Slot: 7, ColdKeyID: 0x20e50014,
 			})
 			h := ownerHandler(t, chip)
 
 			for _, other := range ownerScopes {
-				code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, 0x66), other.key)
+				code, body := postAs(
+					t,
+					h,
+					RouteProvisionCold,
+					coldReq(0x20e50014, 0x66),
+					other.key,
+				)
 
 				if other.name == owner.name {
 					mustOK(t, "owner re-imports the legacy key", code, body)
@@ -313,7 +424,13 @@ func TestColdOwnershipLegacyKeys(t *testing.T) {
 			second := owner
 			second.profile = "second-" + owner.profile
 			code, body := provisionOn(t, h, second, 3, 0x20e50014)
-			refused(t, "owner provisions a second profile", code, body, errors.New("cold key already belongs to a profile"))
+			refused(
+				t,
+				"owner provisions a second profile",
+				code,
+				body,
+				errors.New("cold key already belongs to a profile"),
+			)
 		})
 	}
 
@@ -321,17 +438,47 @@ func TestColdOwnershipLegacyKeys(t *testing.T) {
 		t.Parallel()
 
 		chip := newFakeChip()
-		chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x66}, 32))
-		chip.keys[0x20e50602] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x67}, 32))
+		chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(
+			bytes.Repeat([]byte{0x66}, 32),
+		)
+		chip.keys[0x20e50602] = ed25519.NewKeyFromSeed(
+			bytes.Repeat([]byte{0x67}, 32),
+		)
 		h := ownerHandler(t, chip)
 
 		for _, id := range []uint32{0x20e50014, 0x20e50602} {
 			for _, o := range ownerScopes {
-				code, body := postAs(t, h, RouteProvisionCold, coldReq(id, 0x66), o.key)
-				refused(t, fmt.Sprintf("%s imports into the unowned %#08x", o.name, id), code, body, errColdOwner)
+				code, body := postAs(
+					t,
+					h,
+					RouteProvisionCold,
+					coldReq(id, 0x66),
+					o.key,
+				)
+				refused(
+					t,
+					fmt.Sprintf(
+						"%s imports into the unowned %#08x",
+						o.name,
+						id,
+					),
+					code,
+					body,
+					errColdOwner,
+				)
 
 				code, body = provisionOn(t, h, o, 3, id)
-				refused(t, fmt.Sprintf("%s provisions on the unowned %#08x", o.name, id), code, body, errColdOwner)
+				refused(
+					t,
+					fmt.Sprintf(
+						"%s provisions on the unowned %#08x",
+						o.name,
+						id,
+					),
+					code,
+					body,
+					errColdOwner,
+				)
 			}
 		}
 	})
@@ -355,8 +502,20 @@ func TestColdOwnershipSingleImageClaims(t *testing.T) {
 	h := ownerHandler(t, chip)
 
 	for _, o := range ownerScopes[1:] {
-		code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50600, 0x68), o.key)
-		refused(t, o.name+" imports into the testnet image's key", code, body, errColdOwner)
+		code, body = postAs(
+			t,
+			h,
+			RouteProvisionCold,
+			coldReq(0x20e50600, 0x68),
+			o.key,
+		)
+		refused(
+			t,
+			o.name+" imports into the testnet image's key",
+			code,
+			body,
+			errColdOwner,
+		)
 
 		code, body = provisionOn(t, h, o, 3, 0x20e50600)
 		refused(t, o.name+" provisions on it", code, body, errColdOwner)
@@ -368,7 +527,10 @@ func TestColdOwnershipSingleImageClaims(t *testing.T) {
 	// a single image refuses a key the record gives to a mainnet scope
 	chip = newFakeChip()
 	plant(chip, 0x20e50601)
-	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{0x20e50601: ownerScopes[1].sc})
+	chip.bins[ownersID] = ownersRecord(
+		t,
+		map[uint32]Scope{0x20e50601: ownerScopes[1].sc},
+	)
 
 	testnet = imageOn(t, chip, 0, "")
 	code, body = post(t, testnet, "/provision/cold", coldReq(0x20e50601, 0x69))
@@ -379,7 +541,13 @@ func TestColdOwnershipSingleImageClaims(t *testing.T) {
 	code, body = post(t, testnet, "/provision/profile", ProvisionRequest{
 		Name: "x@preview", Slot: 1, ColdKeyID: 0x20e50601, ChainCounter: &chain, RewardAccount: testReward,
 	})
-	refused(t, "testnet image provisions on cardano's key", code, body, errColdOwner)
+	refused(
+		t,
+		"testnet image provisions on cardano's key",
+		code,
+		body,
+		errColdOwner,
+	)
 }
 
 // A device wipe clears the record, and the wipe image lists both cold key
@@ -391,7 +559,10 @@ func TestColdOwnershipWipe(t *testing.T) {
 	id := identityHex(t, s)
 
 	plant(chip, 0x20e50600, 0x20e5060f, 0x20e50010)
-	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{0x20e50600: ScopeTestnet})
+	chip.bins[ownersID] = ownersRecord(
+		t,
+		map[uint32]Scope{0x20e50600: ScopeTestnet},
+	)
 
 	code, body := wipePost(t, s, "/wipe/objects", struct{}{})
 	if code != http.StatusOK {
@@ -409,7 +580,12 @@ func TestColdOwnershipWipe(t *testing.T) {
 		}
 	}
 
-	code, body = wipePost(t, s, "/wipe/device", WipeDeviceRequest{IdentityPublicKey: id})
+	code, body = wipePost(
+		t,
+		s,
+		"/wipe/device",
+		WipeDeviceRequest{IdentityPublicKey: id},
+	)
 	if code != http.StatusOK {
 		t.Fatalf("wipe: %d %s", code, body)
 	}
@@ -445,7 +621,12 @@ func TestColdOwnershipWipeProfileClearsClaim(t *testing.T) {
 		t.Fatal("import left no claim")
 	}
 
-	code, body = wipePost(t, s, "/wipe/profile", WipeProfileRequest{IdentityPublicKey: id, Profile: "w@preview"})
+	code, body = wipePost(
+		t,
+		s,
+		"/wipe/profile",
+		WipeProfileRequest{IdentityPublicKey: id, Profile: "w@preview"},
+	)
 	mustOK(t, "wipe profile", code, body)
 
 	if _, ok := chip.keys[0x20e50602]; ok {
@@ -479,14 +660,34 @@ func TestColdOwnershipCorruptRecordFailsClosed(t *testing.T) {
 			t.Parallel()
 
 			chip := newFakeChip()
-			chip.keys[0x20e50015] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x6b}, 32))
+			chip.keys[0x20e50015] = ed25519.NewKeyFromSeed(
+				bytes.Repeat([]byte{0x6b}, 32),
+			)
 			chip.bins[ownersID] = rec
 			h := ownerHandler(t, chip)
 
-			code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50016, 0x6c), multiKeyTestnet)
-			refused(t, "import into an empty object", code, body, errOwnersRecord)
+			code, body := postAs(
+				t,
+				h,
+				RouteProvisionCold,
+				coldReq(0x20e50016, 0x6c),
+				multiKeyTestnet,
+			)
+			refused(
+				t,
+				"import into an empty object",
+				code,
+				body,
+				errOwnersRecord,
+			)
 
-			code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50015, 0x6b), multiKeyTestnet)
+			code, body = postAs(
+				t,
+				h,
+				RouteProvisionCold,
+				coldReq(0x20e50015, 0x6b),
+				multiKeyTestnet,
+			)
 			refused(t, "import into a held object", code, body, errOwnersRecord)
 
 			code, body = provisionOn(t, h, ownerScopes[0], 3, 0x20e50015)
@@ -512,7 +713,13 @@ func TestColdOwnershipRecordWriteFailureFailsClosed(t *testing.T) {
 	h := ownerHandler(t, chip)
 	chip.failWrite = true
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50603, 0x6d), multiKeyTestnet)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50603, 0x6d),
+		multiKeyTestnet,
+	)
 	refused(t, "import with a failing claim write", code, body, errDevice)
 
 	if _, ok := chip.keys[0x20e50603]; ok {
@@ -533,7 +740,10 @@ func TestColdOwnershipCheckedAtSigning(t *testing.T) {
 
 	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{prime.cold: cardano})
 	if resp := opcertFor(t, s, chip, prime, multiKeyPrime, 1); resp.Error != errColdOwner.Error() {
-		t.Fatalf("prime signed with a key the record gives cardano: %q", resp.Error)
+		t.Fatalf(
+			"prime signed with a key the record gives cardano: %q",
+			resp.Error,
+		)
 	}
 
 	chip.bins[ownersID] = []byte{9}
@@ -546,7 +756,10 @@ func TestColdOwnershipCheckedAtSigning(t *testing.T) {
 		t.Fatalf("no record stopped signing: %q", resp.Error)
 	}
 
-	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{prime.cold: primeScope})
+	chip.bins[ownersID] = ownersRecord(
+		t,
+		map[uint32]Scope{prime.cold: primeScope},
+	)
 	if resp := opcertFor(t, s, chip, prime, multiKeyPrime, 4); resp.Error != "" {
 		t.Fatalf("prime refused with its own claim: %q", resp.Error)
 	}
@@ -574,20 +787,31 @@ func TestColdOwnershipCheckedAtSigningSingleImage(t *testing.T) {
 		t.Fatalf("signing with the image's own claim: %q", resp.Error)
 	}
 
-	chip.bins[ownersID] = ownersRecord(t, map[uint32]Scope{0x20e50600: {Network: 1, Chain: scopeCardanoName}})
+	chip.bins[ownersID] = ownersRecord(
+		t,
+		map[uint32]Scope{0x20e50600: {Network: 1, Chain: scopeCardanoName}},
+	)
 	if resp := opcertUnsigned(t, s, chip, p, 2); resp.Error != errColdOwner.Error() {
 		t.Fatalf("testnet image signed with cardano's key: %q", resp.Error)
 	}
 }
 
-func opcertUnsigned(t *testing.T, s *Service, chip *fakeChip, p multiProfile, n byte) SignResponse {
+func opcertUnsigned(
+	t *testing.T,
+	s *Service,
+	chip *fakeChip,
+	p multiProfile,
+	n byte,
+) SignResponse {
 	t.Helper()
 
 	cold, _ := chip.PublicKeyEd25519(p.cold)
 
 	return postSign(t, s, SignRequest{
 		Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: p.name,
+		Nonce: nonce(
+			n,
+		), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: p.name,
 	})
 }
 
@@ -630,11 +854,23 @@ func TestColdOwnershipWipeCold(t *testing.T) {
 			plant(chip, unowned)
 
 			for id, k := range map[uint32]ed25519.PrivateKey{testnet: multiKeyTestnet, cardano: multiKeyCardano, prime: multiKeyPrime} {
-				code, body := postAs(t, h, RouteProvisionCold, coldReq(id, 0x70+byte(id&0xf)), k)
+				code, body := postAs(
+					t,
+					h,
+					RouteProvisionCold,
+					coldReq(id, 0x70+byte(id&0xf)),
+					k,
+				)
 				mustOK(t, "import", code, body)
 			}
 
-			code, body := postAs(t, h, RouteProvisionIdentity, IdentityRequest{}, multiKeyCardano)
+			code, body := postAs(
+				t,
+				h,
+				RouteProvisionIdentity,
+				IdentityRequest{},
+				multiKeyCardano,
+			)
 			mustOK(t, "identity", code, body)
 
 			var ident IdentityResponse
@@ -643,7 +879,10 @@ func TestColdOwnershipWipeCold(t *testing.T) {
 			}
 
 			before := objectIDs(chip)
-			req := WipeColdRequest{IdentityPublicKey: hexOf(ident.PublicKey), ColdKeyID: c.id}
+			req := WipeColdRequest{
+				IdentityPublicKey: hexOf(ident.PublicKey),
+				ColdKeyID:         c.id,
+			}
 			code, body = postAs(t, s.WipeHandler(), RouteWipeCold, req, c.by)
 
 			if c.want != nil {
@@ -667,7 +906,13 @@ func TestColdOwnershipWipeCold(t *testing.T) {
 			}
 
 			// the emptied object is free to any scope
-			code, body = postAs(t, h, RouteProvisionCold, coldReq(c.id, 0x7e), multiKeyPrime)
+			code, body = postAs(
+				t,
+				h,
+				RouteProvisionCold,
+				coldReq(c.id, 0x7e),
+				multiKeyPrime,
+			)
 			mustOK(t, "prime imports into the freed object", code, body)
 		})
 	}
@@ -679,26 +924,77 @@ func TestColdOwnershipLegacyKeySharedAcrossScopes(t *testing.T) {
 	t.Parallel()
 
 	chip := newFakeChip()
-	chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x66}, 32))
-	storeRecord(t, chip, profile.Profile{Name: "t@preview", NetworkID: 0, Slot: 7, ColdKeyID: 0x20e50014})
-	storeRecord(t, chip, profile.Profile{Name: "c@cardano-mainnet", NetworkID: 1, Slot: 8, ColdKeyID: 0x20e50014})
+	chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(
+		bytes.Repeat([]byte{0x66}, 32),
+	)
+	storeRecord(
+		t,
+		chip,
+		profile.Profile{
+			Name:      "t@preview",
+			NetworkID: 0,
+			Slot:      7,
+			ColdKeyID: 0x20e50014,
+		},
+	)
+	storeRecord(
+		t,
+		chip,
+		profile.Profile{
+			Name:      "c@cardano-mainnet",
+			NetworkID: 1,
+			Slot:      8,
+			ColdKeyID: 0x20e50014,
+		},
+	)
 
 	s := multiImage(t, chip, true)
 
 	for range 20 {
 		if tag, ok, err := s.coldOwner(0x20e50014); err != nil || ok {
-			t.Fatalf("shared legacy key owner = %v %v %v, want none", tag, ok, err)
+			t.Fatalf(
+				"shared legacy key owner = %v %v %v, want none",
+				tag,
+				ok,
+				err,
+			)
 		}
 	}
 
 	// profiles of one scope sharing it still give that scope
 	chip = newFakeChip()
-	chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x66}, 32))
-	storeRecord(t, chip, profile.Profile{Name: "a@preview", NetworkID: 0, Slot: 7, ColdKeyID: 0x20e50014})
-	storeRecord(t, chip, profile.Profile{Name: "b@preview", NetworkID: 0, Slot: 8, ColdKeyID: 0x20e50014})
+	chip.keys[0x20e50014] = ed25519.NewKeyFromSeed(
+		bytes.Repeat([]byte{0x66}, 32),
+	)
+	storeRecord(
+		t,
+		chip,
+		profile.Profile{
+			Name:      "a@preview",
+			NetworkID: 0,
+			Slot:      7,
+			ColdKeyID: 0x20e50014,
+		},
+	)
+	storeRecord(
+		t,
+		chip,
+		profile.Profile{
+			Name:      "b@preview",
+			NetworkID: 0,
+			Slot:      8,
+			ColdKeyID: 0x20e50014,
+		},
+	)
 
 	s = multiImage(t, chip, true)
-	if tag, ok, err := s.coldOwner(0x20e50014); err != nil || !ok || tag != tagOf(ScopeTestnet) {
-		t.Fatalf("legacy key of one scope owner = %v %v %v, want testnet", tag, ok, err)
+	if tag, ok, err := s.coldOwner(0x20e50014); err != nil || !ok ||
+		tag != tagOf(ScopeTestnet) {
+		t.Fatalf(
+			"legacy key of one scope owner = %v %v %v, want testnet",
+			tag,
+			ok,
+			err,
+		)
 	}
 }

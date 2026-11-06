@@ -121,7 +121,10 @@ func Load(path string) (*Store, error) {
 			return s, nil
 		}
 		if errors.Is(err, errContactsTooLarge) {
-			return nil, fmt.Errorf("contacts file exceeds %d bytes", maxContactsLen)
+			return nil, fmt.Errorf(
+				"contacts file exceeds %d bytes",
+				maxContactsLen,
+			)
 		}
 		return nil, fmt.Errorf("read contacts: %w", err)
 	}
@@ -135,7 +138,12 @@ func Load(path string) (*Store, error) {
 	// rewrite the file as v1 on the next Upsert/Delete, permanently dropping
 	// any fields a newer version added.
 	if d.Version > contactsVersion {
-		return nil, fmt.Errorf("contacts file %s has version %d, newer than supported version %d", path, d.Version, contactsVersion)
+		return nil, fmt.Errorf(
+			"contacts file %s has version %d, newer than supported version %d",
+			path,
+			d.Version,
+			contactsVersion,
+		)
 	}
 	d, err = normalizeLoadedData(d)
 	if err != nil {
@@ -169,9 +177,16 @@ func LoadOrEmpty(path string) (*Store, error) {
 
 func normalizeLoadedData(d data) (data, error) {
 	if len(d.Entries) > maxEntries {
-		return data{}, fmt.Errorf("has %d entries, max %d", len(d.Entries), maxEntries)
+		return data{}, fmt.Errorf(
+			"has %d entries, max %d",
+			len(d.Entries),
+			maxEntries,
+		)
 	}
-	normalized := data{Version: d.Version, Entries: make([]Entry, len(d.Entries))}
+	normalized := data{
+		Version: d.Version,
+		Entries: make([]Entry, len(d.Entries)),
+	}
 	seenIDs := make(map[string]struct{}, len(d.Entries))
 	for i, entry := range d.Entries {
 		id := strings.TrimSpace(entry.ID)
@@ -186,7 +201,12 @@ func normalizeLoadedData(d data) (data, error) {
 		if err != nil {
 			return data{}, fmt.Errorf("entry %d: %w", i, err)
 		}
-		normalized.Entries[i] = Entry{ID: id, Name: name, Address: addr, Note: note}
+		normalized.Entries[i] = Entry{
+			ID:      id,
+			Name:    name,
+			Address: addr,
+			Note:    note,
+		}
 	}
 	return normalized, nil
 }
@@ -232,7 +252,11 @@ func (s *Store) Upsert(in Entry) (Entry, error) {
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
 		if len(s.d.Entries) >= maxEntries {
-			return Entry{}, fmt.Errorf("%w: address book is full (max %d contacts)", ErrInvalidRequest, maxEntries)
+			return Entry{}, fmt.Errorf(
+				"%w: address book is full (max %d contacts)",
+				ErrInvalidRequest,
+				maxEntries,
+			)
 		}
 		gid, err := newID()
 		if err != nil {
@@ -263,27 +287,49 @@ func (s *Store) Upsert(in Entry) (Entry, error) {
 	return entry, nil
 }
 
-func validateEntryFields(in Entry) (name string, addr string, note string, err error) {
+func validateEntryFields(
+	in Entry,
+) (name string, addr string, note string, err error) {
 	name = strings.TrimSpace(in.Name)
 	if name == "" {
 		return "", "", "", fmt.Errorf("%w: name is required", ErrInvalidRequest)
 	}
 	if len(name) > maxNameLen {
-		return "", "", "", fmt.Errorf("%w: name exceeds %d bytes", ErrInvalidRequest, maxNameLen)
+		return "", "", "", fmt.Errorf(
+			"%w: name exceeds %d bytes",
+			ErrInvalidRequest,
+			maxNameLen,
+		)
 	}
 	addr = strings.TrimSpace(in.Address)
 	if addr == "" {
-		return "", "", "", fmt.Errorf("%w: address is required", ErrInvalidRequest)
+		return "", "", "", fmt.Errorf(
+			"%w: address is required",
+			ErrInvalidRequest,
+		)
 	}
 	if len(addr) > maxAddressLen {
-		return "", "", "", fmt.Errorf("%w: address exceeds %d bytes", ErrInvalidRequest, maxAddressLen)
+		return "", "", "", fmt.Errorf(
+			"%w: address exceeds %d bytes",
+			ErrInvalidRequest,
+			maxAddressLen,
+		)
 	}
 	if _, err := lcommon.NewAddress(addr); err != nil {
-		return "", "", "", fmt.Errorf("%w: invalid address %q: %w", ErrInvalidRequest, addr, err)
+		return "", "", "", fmt.Errorf(
+			"%w: invalid address %q: %w",
+			ErrInvalidRequest,
+			addr,
+			err,
+		)
 	}
 	note = strings.TrimSpace(in.Note)
 	if len(note) > maxNoteLen {
-		return "", "", "", fmt.Errorf("%w: note exceeds %d bytes", ErrInvalidRequest, maxNoteLen)
+		return "", "", "", fmt.Errorf(
+			"%w: note exceeds %d bytes",
+			ErrInvalidRequest,
+			maxNoteLen,
+		)
 	}
 	return name, addr, note, nil
 }
@@ -389,7 +435,10 @@ func (s *Store) writeLocked() (committed bool, err error) {
 	// to write a file Load would then refuse to read back. committed stays
 	// false, so the caller rolls back its in-memory snapshot.
 	if len(blob) > maxContactsLen {
-		return false, fmt.Errorf("contacts write would exceed %d bytes", maxContactsLen)
+		return false, fmt.Errorf(
+			"contacts write would exceed %d bytes",
+			maxContactsLen,
+		)
 	}
 	dir := filepath.Dir(s.path)
 	tmp, err := os.CreateTemp(dir, ".contacts-*.tmp")

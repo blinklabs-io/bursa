@@ -28,7 +28,10 @@ const mnemonicA = "abandon abandon abandon abandon abandon abandon abandon aband
 const mnemonicB = "legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title"
 
 // multiSigKeyHash derives a mnemonic's CIP-1854 multi-sig payment vkey + key-hash.
-func multiSigKeyHash(t *testing.T, mnemonic string) (vkeyHex, keyHashHex string, skey bip32.XPrv) {
+func multiSigKeyHash(
+	t *testing.T,
+	mnemonic string,
+) (vkeyHex, keyHashHex string, skey bip32.XPrv) {
 	t.Helper()
 	root, err := bursa.GetRootKeyFromMnemonic(mnemonic, "")
 	if err != nil {
@@ -60,7 +63,9 @@ type fakeChain struct {
 
 func newFakeChain() *fakeChain {
 	var h lcommon.Blake2b256
-	b, _ := hex.DecodeString("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	b, _ := hex.DecodeString(
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+	)
 	copy(h[:], b)
 	return &fakeChain{
 		utxos: map[string][]lcommon.Utxo{},
@@ -76,7 +81,11 @@ func newFakeChain() *fakeChain {
 	}
 }
 
-func (fc *fakeChain) addUTxO(addr, txHashHex string, outIdx uint32, lovelace uint64) {
+func (fc *fakeChain) addUTxO(
+	addr, txHashHex string,
+	outIdx uint32,
+	lovelace uint64,
+) {
 	var txID lcommon.Blake2b256
 	b, _ := hex.DecodeString(txHashHex)
 	copy(txID[:], b)
@@ -94,7 +103,9 @@ type fakeOutput struct {
 }
 
 func (o *fakeOutput) Address() lcommon.Address { return o.address }
-func (o *fakeOutput) Amount() *big.Int         { return new(big.Int).SetUint64(o.lovelace) }
+
+func (o *fakeOutput) Amount() *big.Int { return new(big.Int).SetUint64(o.lovelace) }
+
 func (o *fakeOutput) Assets() *lcommon.MultiAsset[lcommon.MultiAssetTypeOutput] {
 	return nil
 }
@@ -104,13 +115,19 @@ func (o *fakeOutput) Cbor() []byte                        { return nil }
 func (o *fakeOutput) Utxorpc() (*utxorpc.TxOutput, error) { return nil, nil }
 func (o *fakeOutput) ScriptRef() lcommon.Script           { return nil }
 func (o *fakeOutput) ToPlutusData() data.PlutusData       { return nil }
-func (o *fakeOutput) String() string                      { return o.address.String() }
+
+func (o *fakeOutput) String() string { return o.address.String() }
 
 func (fc *fakeChain) ProtocolParams() (backend.ProtocolParameters, error) {
 	return fc.pp, nil
 }
 func (fc *fakeChain) GenesisParams() (backend.GenesisParameters, error) {
-	return backend.GenesisParameters{ActiveSlotsCoefficient: 0.05, EpochLength: 432000, SlotLength: 1, NetworkMagic: 1}, nil
+	return backend.GenesisParameters{
+		ActiveSlotsCoefficient: 0.05,
+		EpochLength:            432000,
+		SlotLength:             1,
+		NetworkMagic:           1,
+	}, nil
 }
 func (fc *fakeChain) NetworkId() uint8              { return 0 }
 func (fc *fakeChain) CurrentEpoch() (uint64, error) { return 500, nil }
@@ -130,10 +147,18 @@ func (fc *fakeChain) SubmitTx(tx []byte) (lcommon.Blake2b256, error) {
 	}
 	return fc.submitHash, nil
 }
-func (fc *fakeChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+
+func (fc *fakeChain) EvaluateTx(
+	_ []byte,
+	_ []lcommon.Utxo,
+) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
-func (fc *fakeChain) UtxoByRef(txHash lcommon.Blake2b256, index uint32) (*lcommon.Utxo, error) {
+
+func (fc *fakeChain) UtxoByRef(
+	txHash lcommon.Blake2b256,
+	index uint32,
+) (*lcommon.Utxo, error) {
 	for _, utxos := range fc.utxos {
 		for _, u := range utxos {
 			if u.Id.Id() == txHash && u.Id.Index() == index {
@@ -198,8 +223,14 @@ func TestComposeScriptThresholdAndAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse addr: %v", err)
 	}
-	if got := hex.EncodeToString(parsed.PaymentKeyHash().Bytes()); got != hex.EncodeToString(script.Hash().Bytes()) {
-		t.Fatalf("address credential %s != script hash %s", got, script.Hash().String())
+	if got := hex.EncodeToString(parsed.PaymentKeyHash().Bytes()); got != hex.EncodeToString(
+		script.Hash().Bytes(),
+	) {
+		t.Fatalf(
+			"address credential %s != script hash %s",
+			got,
+			script.Hash().String(),
+		)
 	}
 }
 
@@ -219,13 +250,19 @@ func TestComposeScriptTimelock(t *testing.T) {
 	}
 	// A time-locked policy wraps the threshold in an "all" (type 1).
 	if id, err := bursa.GetScriptType(script); err != nil || id != 1 {
-		t.Fatalf("expected All (type 1) for timelocked, got type %d err %v", id, err)
+		t.Fatalf(
+			"expected All (type 1) for timelocked, got type %d err %v",
+			id,
+			err,
+		)
 	}
 }
 
 func TestComposeScriptRejectsBadThreshold(t *testing.T) {
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
-	_, err := composeScript(Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: khA}}})
+	_, err := composeScript(
+		Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: khA}}},
+	)
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("expected ErrInvalidRequest, got %v", err)
 	}
@@ -240,7 +277,10 @@ func TestCreateListGetDelete(t *testing.T) {
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "treasury",
 		Network: "preview",
-		Policy:  Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}}},
+		Policy: Policy{
+			Threshold:    2,
+			Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -288,7 +328,10 @@ func TestMyKeyWrongPassword(t *testing.T) {
 	fc := newFakeChain()
 	ks := newTestKeystore(t, mnemonicA)
 	svc := NewService(fc, ks, &memAccounts{})
-	if _, err := svc.MyKey("wrong-password-xx"); !errors.Is(err, ErrWrongPassword) {
+	if _, err := svc.MyKey("wrong-password-xx"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("expected ErrWrongPassword, got %v", err)
 	}
 }
@@ -309,14 +352,22 @@ func TestSpendFlow(t *testing.T) {
 	acct, err := createForTest(svcA, CreateRequest{
 		Label:   "joint",
 		Network: "preview",
-		Policy:  Policy{Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}}},
+		Policy: Policy{
+			Threshold:    2,
+			Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	// Fund the script address with 10 ADA.
-	fc.addUTxO(acct.ScriptAddress, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", 0, 10_000_000)
+	fc.addUTxO(
+		acct.ScriptAddress,
+		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		0,
+		10_000_000,
+	)
 
 	// Balance reflects the funded UTxO.
 	bal, err := svcA.Balance(context.Background(), acct.ID)
@@ -327,7 +378,11 @@ func TestSpendFlow(t *testing.T) {
 	// Build a spend to a third-party address (reuse khA's own ordinary receive is
 	// fine; we just need a valid bech32 — derive a plain payment address).
 	recv := externalAddr(t)
-	built, err := svcA.Build(context.Background(), acct.ID, BuildRequest{To: recv, Lovelace: "3000000"})
+	built, err := svcA.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: recv, Lovelace: "3000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -347,12 +402,20 @@ func TestSpendFlow(t *testing.T) {
 	}
 
 	// Submitting with only one witness must fail the threshold check.
-	if _, err := svcA.Submit(context.Background(), acct.ID, built.UnsignedTxCBOR, []string{witA.WitnessCBOR}); !errors.Is(err, ErrInvalidWitness) {
+	if _, err := svcA.Submit(context.Background(), acct.ID, built.UnsignedTxCBOR, []string{witA.WitnessCBOR}); !errors.Is(
+		err,
+		ErrInvalidWitness,
+	) {
 		t.Fatalf("expected ErrInvalidWitness with 1/2 sigs, got %v", err)
 	}
 
 	// With both witnesses, submission succeeds.
-	res, err := svcA.Submit(context.Background(), acct.ID, built.UnsignedTxCBOR, []string{witA.WitnessCBOR, witB.WitnessCBOR})
+	res, err := svcA.Submit(
+		context.Background(),
+		acct.ID,
+		built.UnsignedTxCBOR,
+		[]string{witA.WitnessCBOR, witB.WitnessCBOR},
+	)
 	if err != nil {
 		t.Fatalf("Submit 2/2: %v", err)
 	}
@@ -385,7 +448,12 @@ func externalAddr(t *testing.T) string {
 
 // assertSubmittedWitnesses decodes the broadcast tx CBOR and checks the witness
 // set carries the native script and both participant vkey witnesses.
-func assertSubmittedWitnesses(t *testing.T, fc *fakeChain, acct Account, khA, khB string) {
+func assertSubmittedWitnesses(
+	t *testing.T,
+	fc *fakeChain,
+	acct Account,
+	khA, khB string,
+) {
 	t.Helper()
 	fc.submitMu.Lock()
 	raw := append([]byte(nil), fc.submitCbor...)
@@ -410,7 +478,12 @@ func assertSubmittedWitnesses(t *testing.T, fc *fakeChain, acct Account, khA, kh
 		have[hex.EncodeToString(lcommon.Blake2b224Hash(vw.Vkey).Bytes())] = true
 	}
 	if !have[khA] || !have[khB] {
-		t.Errorf("submitted tx missing a participant witness: have %v want %s,%s", have, khA, khB)
+		t.Errorf(
+			"submitted tx missing a participant witness: have %v want %s,%s",
+			have,
+			khA,
+			khB,
+		)
 	}
 }
 
@@ -434,9 +507,18 @@ func TestBuildTimelockValidityInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	fc.addUTxO(acct.ScriptAddress, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890", 0, 10_000_000)
+	fc.addUTxO(
+		acct.ScriptAddress,
+		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		0,
+		10_000_000,
+	)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "3000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "3000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -479,10 +561,24 @@ func TestBuildTimelockValidityInterval(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			fc.addUTxO(acct.ScriptAddress, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 0, 10_000_000)
-			_, err = svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "3000000"})
-			if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Build error = %v, want ErrInvalidRequest containing %q", err, tc.want)
+			fc.addUTxO(
+				acct.ScriptAddress,
+				"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				0,
+				10_000_000,
+			)
+			_, err = svc.Build(
+				context.Background(),
+				acct.ID,
+				BuildRequest{To: externalAddr(t), Lovelace: "3000000"},
+			)
+			if !errors.Is(err, ErrInvalidRequest) ||
+				!strings.Contains(err.Error(), tc.want) {
+				t.Fatalf(
+					"Build error = %v, want ErrInvalidRequest containing %q",
+					err,
+					tc.want,
+				)
 			}
 		})
 	}
@@ -495,12 +591,18 @@ func TestBuildNoUTxOs(t *testing.T) {
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "empty",
 		Network: "preview",
-		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: khA}}},
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: khA}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"}); !errors.Is(err, ErrInsufficientFunds) {
+	if _, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"}); !errors.Is(
+		err,
+		ErrInsufficientFunds,
+	) {
 		t.Fatalf("expected ErrInsufficientFunds with no UTxOs, got %v", err)
 	}
 }

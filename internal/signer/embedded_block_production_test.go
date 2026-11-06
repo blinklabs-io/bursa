@@ -59,13 +59,20 @@ func writeEmbeddedBPFrame(t *testing.T, conn embeddedBPConn, value any) {
 		t.Fatalf("marshal frame: %v", err)
 	}
 	if len(payload) > embeddedBPMaxFrame {
-		t.Fatalf("frame is %d bytes, exceeds %d", len(payload), embeddedBPMaxFrame)
+		t.Fatalf(
+			"frame is %d bytes, exceeds %d",
+			len(payload),
+			embeddedBPMaxFrame,
+		)
 	}
 	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatalf("set frame deadline: %v", err)
 	}
 	var length [4]byte
-	binary.BigEndian.PutUint32(length[:], uint32(len(payload))) // #nosec G115 -- bounded above
+	binary.BigEndian.PutUint32(
+		length[:],
+		uint32(len(payload)),
+	) // #nosec G115 -- bounded above
 	writeEmbeddedBPBytes(t, conn, length[:])
 	writeEmbeddedBPBytes(t, conn, payload)
 }
@@ -131,7 +138,10 @@ func embeddedBPHeader(
 ) []byte {
 	t.Helper()
 	eta0 := make([]byte, 32)
-	vrfInput, err := vrf.MkInputVrf(int64(slot), eta0) // #nosec G115 -- test slots are small
+	vrfInput, err := vrf.MkInputVrf(
+		int64(slot),
+		eta0,
+	) // #nosec G115 -- test slots are small
 	if err != nil {
 		t.Fatalf("build VRF input: %v", err)
 	}
@@ -183,7 +193,8 @@ func signEmbeddedBPHeader(
 	conn := dialEmbeddedBPAgent(t, socket)
 	var hello kesagent.Hello
 	readEmbeddedBPFrame(t, conn, &hello)
-	if hello.Protocol != kesagent.ProtocolID || hello.Mode != kesagent.ModeSign {
+	if hello.Protocol != kesagent.ProtocolID ||
+		hello.Mode != kesagent.ModeSign {
 		t.Fatalf("KES agent hello = %+v", hello)
 	}
 	writeEmbeddedBPFrame(t, conn, kesagent.SignRequest{
@@ -193,7 +204,8 @@ func signEmbeddedBPHeader(
 	})
 	var response kesagent.SignResponse
 	readEmbeddedBPFrame(t, conn, &response)
-	if response.Type != "sign_response" || response.Period != period || response.Error != "" {
+	if response.Type != "sign_response" || response.Period != period ||
+		response.Error != "" {
 		t.Fatalf("KES sign response = %+v", response)
 	}
 	return response.Signature
@@ -209,15 +221,18 @@ func TestEmbeddedBlockProducerRemoteCustody(t *testing.T) {
 	t.Cleanup(vault.Close)
 	t.Setenv("VAULT_TOKEN", "test-token")
 
-	vaultBackend, err := buildVaultBackend(t.Context(), config.SignerBackendConfig{
-		Name:    "vault",
-		Type:    "vault",
-		Address: vault.URL,
-		Keys: []config.SignerBackendKeyConfig{{
-			Name: "pool-cold",
-			Type: string(backend.KeyTypePool),
-		}},
-	})
+	vaultBackend, err := buildVaultBackend(
+		t.Context(),
+		config.SignerBackendConfig{
+			Name:    "vault",
+			Type:    "vault",
+			Address: vault.URL,
+			Keys: []config.SignerBackendKeyConfig{{
+				Name: "pool-cold",
+				Type: string(backend.KeyTypePool),
+			}},
+		},
+	)
 	if err != nil {
 		t.Fatalf("build Vault backend: %v", err)
 	}
@@ -321,10 +336,26 @@ func TestEmbeddedBlockProducerRemoteCustody(t *testing.T) {
 	}
 
 	firstHeader := embeddedBPHeader(
-		t, initialPeriod*100, coldPublic, kesVkey, coldSignature, vrfVkey, vrfSecret,
+		t,
+		initialPeriod*100,
+		coldPublic,
+		kesVkey,
+		coldSignature,
+		vrfVkey,
+		vrfSecret,
 	)
-	firstSignature := signEmbeddedBPHeader(t, socket, initialPeriod, firstHeader)
-	if !kes.VerifySignedKES(kesVkey, initialPeriod, firstHeader, firstSignature) {
+	firstSignature := signEmbeddedBPHeader(
+		t,
+		socket,
+		initialPeriod,
+		firstHeader,
+	)
+	if !kes.VerifySignedKES(
+		kesVkey,
+		initialPeriod,
+		firstHeader,
+		firstSignature,
+	) {
 		t.Fatal("initial KES signature does not verify")
 	}
 
@@ -333,19 +364,43 @@ func TestEmbeddedBlockProducerRemoteCustody(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if agent.Info().CurrentPeriod <= initialPeriod {
-		t.Fatalf("current KES period = %d, want greater than %d", agent.Info().CurrentPeriod, initialPeriod)
+		t.Fatalf(
+			"current KES period = %d, want greater than %d",
+			agent.Info().CurrentPeriod,
+			initialPeriod,
+		)
 	}
 	agent.Tick()
 	rotatedPeriod := agent.Info().ActivePeriod
 	if rotatedPeriod <= initialPeriod {
-		t.Fatalf("active KES period = %d after evolution, want greater than %d", rotatedPeriod, initialPeriod)
+		t.Fatalf(
+			"active KES period = %d after evolution, want greater than %d",
+			rotatedPeriod,
+			initialPeriod,
+		)
 	}
 
 	rotatedHeader := embeddedBPHeader(
-		t, rotatedPeriod*100, coldPublic, kesVkey, coldSignature, vrfVkey, vrfSecret,
+		t,
+		rotatedPeriod*100,
+		coldPublic,
+		kesVkey,
+		coldSignature,
+		vrfVkey,
+		vrfSecret,
 	)
-	rotatedSignature := signEmbeddedBPHeader(t, socket, rotatedPeriod, rotatedHeader)
-	if !kes.VerifySignedKES(kesVkey, rotatedPeriod, rotatedHeader, rotatedSignature) {
+	rotatedSignature := signEmbeddedBPHeader(
+		t,
+		socket,
+		rotatedPeriod,
+		rotatedHeader,
+	)
+	if !kes.VerifySignedKES(
+		kesVkey,
+		rotatedPeriod,
+		rotatedHeader,
+		rotatedSignature,
+	) {
 		t.Fatal("evolved KES signature does not verify after reconnect")
 	}
 
@@ -353,7 +408,12 @@ func TestEmbeddedBlockProducerRemoteCustody(t *testing.T) {
 	if result, code, err := coordinator.SignOpCert(
 		t.Context(), kesVkey, 2, 1, missing.String(),
 	); result != nil || code != CodeNotFound || err == nil {
-		t.Fatalf("missing cold key = result=%v code=%s err=%v", result, code, err)
+		t.Fatalf(
+			"missing cold key = result=%v code=%s err=%v",
+			result,
+			code,
+			err,
+		)
 	}
 }
 
@@ -369,9 +429,15 @@ func TestEmbeddedBlockProducerRemoteCustodyFailures(t *testing.T) {
 		t.Setenv("VAULT_TOKEN", "")
 		_, err := buildVaultBackend(t.Context(), config.SignerBackendConfig{
 			Name: "vault", Type: "vault", Address: vault.URL,
-			Keys: []config.SignerBackendKeyConfig{{Name: "pool-cold", Type: "pool"}},
+			Keys: []config.SignerBackendKeyConfig{
+				{Name: "pool-cold", Type: "pool"},
+			},
 		})
-		if err == nil || !strings.Contains(err.Error(), "vault token env var VAULT_TOKEN is empty") {
+		if err == nil ||
+			!strings.Contains(
+				err.Error(),
+				"vault token env var VAULT_TOKEN is empty",
+			) {
 			t.Fatalf("missing token error = %v", err)
 		}
 	})
@@ -380,9 +446,13 @@ func TestEmbeddedBlockProducerRemoteCustodyFailures(t *testing.T) {
 		t.Setenv("VAULT_TOKEN", "expired-token")
 		_, err := buildVaultBackend(t.Context(), config.SignerBackendConfig{
 			Name: "vault", Type: "vault", Address: vault.URL,
-			Keys: []config.SignerBackendKeyConfig{{Name: "pool-cold", Type: "pool"}},
+			Keys: []config.SignerBackendKeyConfig{
+				{Name: "pool-cold", Type: "pool"},
+			},
 		})
-		if err == nil || !strings.Contains(err.Error(), "vault key \"pool-cold\"") || !strings.Contains(err.Error(), "Code: 403") {
+		if err == nil ||
+			!strings.Contains(err.Error(), "vault key \"pool-cold\"") ||
+			!strings.Contains(err.Error(), "Code: 403") {
 			t.Fatalf("rejected token error = %v", err)
 		}
 	})
@@ -404,7 +474,8 @@ func TestEmbeddedBlockProducerRemoteCustodyFailures(t *testing.T) {
 			t.Fatalf("create KES agent: %v", err)
 		}
 		t.Cleanup(agent.Close)
-		if _, err := agent.SignHeader(0, []byte{0x80}); err == nil || !strings.Contains(err.Error(), "no active KES key installed") {
+		if _, err := agent.SignHeader(0, []byte{0x80}); err == nil ||
+			!strings.Contains(err.Error(), "no active KES key installed") {
 			t.Fatalf("missing KES key error = %v", err)
 		}
 	})
@@ -441,7 +512,8 @@ func TestEmbeddedBlockProducerRemoteCustodyFailures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("encode operational certificate: %v", err)
 		}
-		if _, err := agent.InstallKey(envelope); err == nil || !strings.Contains(err.Error(), "opcert expired") {
+		if _, err := agent.InstallKey(envelope); err == nil ||
+			!strings.Contains(err.Error(), "opcert expired") {
 			t.Fatalf("expired opcert error = %v", err)
 		}
 	})

@@ -29,9 +29,24 @@ func TestCaughtUp(t *testing.T) {
 		want      bool
 	}{
 		{"zero time is never caught up", time.Time{}, 2 * time.Minute, false},
-		{"recent block is caught up", now.Add(-30 * time.Second), 2 * time.Minute, true},
-		{"old block is not caught up", now.Add(-10 * time.Minute), 2 * time.Minute, false},
-		{"exactly at threshold is caught up", now.Add(-2 * time.Minute), 2 * time.Minute, true},
+		{
+			"recent block is caught up",
+			now.Add(-30 * time.Second),
+			2 * time.Minute,
+			true,
+		},
+		{
+			"old block is not caught up",
+			now.Add(-10 * time.Minute),
+			2 * time.Minute,
+			false,
+		},
+		{
+			"exactly at threshold is caught up",
+			now.Add(-2 * time.Minute),
+			2 * time.Minute,
+			true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,8 +89,14 @@ func TestStatusBootstrapSerialisation(t *testing.T) {
 
 	// Present (with progress) when bootstrapping.
 	s := Status{
-		State:     StateBootstrapping,
-		Bootstrap: &BootstrapProgress{Phase: "ledger_import", Percent: 42.5, BytesDownloaded: 10, TotalBytes: 20, BytesPerSecond: 5},
+		State: StateBootstrapping,
+		Bootstrap: &BootstrapProgress{
+			Phase:           "ledger_import",
+			Percent:         42.5,
+			BytesDownloaded: 10,
+			TotalBytes:      20,
+			BytesPerSecond:  5,
+		},
 	}
 	b, err = json.Marshal(s)
 	if err != nil {
@@ -85,7 +106,8 @@ func TestStatusBootstrapSerialisation(t *testing.T) {
 	if !strings.Contains(got, `"state":"bootstrapping"`) {
 		t.Fatalf("missing bootstrapping state: %s", got)
 	}
-	if !strings.Contains(got, `"phase":"ledger_import"`) || !strings.Contains(got, `"percent":42.5`) {
+	if !strings.Contains(got, `"phase":"ledger_import"`) ||
+		!strings.Contains(got, `"percent":42.5`) {
 		t.Fatalf("missing bootstrap progress: %s", got)
 	}
 }

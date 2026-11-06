@@ -89,13 +89,20 @@ specify --signing-key-file to persist it in cardano-cli envelope format.
 The registration material contains the 96-byte public key and 48-byte proof
 of possession as lowercase hexadecimal strings.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cli.RunKeyBLS(signingKeyFile, verificationKeyFile, outputFile)
+			return cli.RunKeyBLS(
+				signingKeyFile,
+				verificationKeyFile,
+				outputFile,
+			)
 		},
 	}
-	cmd.Flags().StringVar(&signingKeyFile, "signing-key-file", "", "Path to write the BLS signing key")
+	cmd.Flags().
+		StringVar(&signingKeyFile, "signing-key-file", "", "Path to write the BLS signing key")
 	_ = cmd.MarkFlagRequired("signing-key-file")
-	cmd.Flags().StringVar(&verificationKeyFile, "verification-key-file", "", "Path to write the BLS verification key")
-	cmd.Flags().StringVar(&outputFile, "output-file", "", "Path to write public key and proof JSON (default: stdout)")
+	cmd.Flags().
+		StringVar(&verificationKeyFile, "verification-key-file", "", "Path to write the BLS verification key")
+	cmd.Flags().
+		StringVar(&outputFile, "output-file", "", "Path to write public key and proof JSON (default: stdout)")
 	return &cmd
 }
 

@@ -35,19 +35,84 @@ type keyDestinationCase struct {
 func keyDestinationCases() []keyDestinationCase {
 	m := testKeyMnemonic
 	return []keyDestinationCase{
-		{"root", func(s, _ string) error { return RunKeyRoot(m, "", "", s) }, "root_xsk", false},
-		{"account", func(s, _ string) error { return RunKeyAccount(m, "", "", s, 0) }, "acct_xsk", false},
-		{"payment", func(s, v string) error { return RunKeyPayment(m, "", "", s, v, 0, 0) }, "addr_xsk", true},
-		{"stake", func(s, v string) error { return RunKeyStake(m, "", "", s, v, 0, 0) }, "stake_xsk", true},
-		{"pool-owner", func(s, v string) error { return RunKeyPoolOwner(m, "", "", s, v, 0, 0) }, "stake_sk1", true},
-		{"policy", func(s, v string) error { return RunKeyPolicy(m, "", "", s, v, 0) }, "policy_xsk", true},
-		{"pool-cold", func(s, v string) error { return RunKeyPoolCold(m, "", "", s, v, 0) }, "pool_xsk", true},
-		{"calidus", func(s, v string) error { return RunKeyCalidus(m, "", "", s, v, 0, 0) }, "calidus_xsk", true},
-		{"drep", func(s, v string) error { return RunKeyDRep(m, "", "", s, v, 0, 0) }, "drep_xsk", true},
-		{"committee-cold", func(s, v string) error { return RunKeyCommitteeCold(m, "", "", s, v, 0, 0) }, "cc_cold_xsk", true},
-		{"committee-hot", func(s, v string) error { return RunKeyCommitteeHot(m, "", "", s, v, 0, 0) }, "cc_hot_xsk", true},
-		{"vrf", func(s, v string) error { return RunKeyVRF(m, "", "", s, v, 0) }, "vrf_skey: vrf_sk", true},
-		{"kes", func(s, v string) error { return RunKeyKES(m, "", "", s, v, 0) }, "kes_skey: kes_sk", true},
+		{
+			"root",
+			func(s, _ string) error { return RunKeyRoot(m, "", "", s) },
+			"root_xsk",
+			false,
+		},
+		{
+			"account",
+			func(s, _ string) error { return RunKeyAccount(m, "", "", s, 0) },
+			"acct_xsk",
+			false,
+		},
+		{
+			"payment",
+			func(s, v string) error { return RunKeyPayment(m, "", "", s, v, 0, 0) },
+			"addr_xsk",
+			true,
+		},
+		{
+			"stake",
+			func(s, v string) error { return RunKeyStake(m, "", "", s, v, 0, 0) },
+			"stake_xsk",
+			true,
+		},
+		{
+			"pool-owner",
+			func(s, v string) error { return RunKeyPoolOwner(m, "", "", s, v, 0, 0) },
+			"stake_sk1",
+			true,
+		},
+		{
+			"policy",
+			func(s, v string) error { return RunKeyPolicy(m, "", "", s, v, 0) },
+			"policy_xsk",
+			true,
+		},
+		{
+			"pool-cold",
+			func(s, v string) error { return RunKeyPoolCold(m, "", "", s, v, 0) },
+			"pool_xsk",
+			true,
+		},
+		{
+			"calidus",
+			func(s, v string) error { return RunKeyCalidus(m, "", "", s, v, 0, 0) },
+			"calidus_xsk",
+			true,
+		},
+		{
+			"drep",
+			func(s, v string) error { return RunKeyDRep(m, "", "", s, v, 0, 0) },
+			"drep_xsk",
+			true,
+		},
+		{
+			"committee-cold",
+			func(s, v string) error { return RunKeyCommitteeCold(m, "", "", s, v, 0, 0) },
+			"cc_cold_xsk",
+			true,
+		},
+		{
+			"committee-hot",
+			func(s, v string) error { return RunKeyCommitteeHot(m, "", "", s, v, 0, 0) },
+			"cc_hot_xsk",
+			true,
+		},
+		{
+			"vrf",
+			func(s, v string) error { return RunKeyVRF(m, "", "", s, v, 0) },
+			"vrf_skey: vrf_sk",
+			true,
+		},
+		{
+			"kes",
+			func(s, v string) error { return RunKeyKES(m, "", "", s, v, 0) },
+			"kes_skey: kes_sk",
+			true,
+		},
 	}
 }
 
@@ -59,7 +124,11 @@ func TestKeyDerivationRequiresExplicitDestination(t *testing.T) {
 			out := captureStdout(t, func() { err = tc.run("", "") })
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "destination")
-			assert.Empty(t, out, "no secret may be printed without a destination")
+			assert.Empty(
+				t,
+				out,
+				"no secret may be printed without a destination",
+			)
 		})
 	}
 }
@@ -95,14 +164,22 @@ func TestKeyDerivationVerificationOnlyNeedsNoSecretDestination(t *testing.T) {
 // Not t.Parallel: captureStdout swaps the process-wide os.Stdout.
 func TestKeyDerivationDashCannotCombineWithVerificationFile(t *testing.T) {
 	err := RunKeyPayment(
-		testKeyMnemonic, "", "", "-", filepath.Join(t.TempDir(), "p.vkey"), 0, 0,
+		testKeyMnemonic,
+		"",
+		"",
+		"-",
+		filepath.Join(t.TempDir(), "p.vkey"),
+		0,
+		0,
 	)
 	require.Error(t, err)
 }
 
 // Not t.Parallel: captureStdout swaps the process-wide os.Stdout.
 func TestRunKeyDecryptRequiresExplicitDestination(t *testing.T) {
-	plaintext := []byte(`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`)
+	plaintext := []byte(
+		`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`,
+	)
 	enc, err := sops.EncryptWithPassphrase(plaintext, "right")
 	require.NoError(t, err)
 	in := filepath.Join(t.TempDir(), "k.enc")

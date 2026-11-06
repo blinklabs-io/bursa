@@ -54,7 +54,11 @@ func isLiteralLoopbackHost(host string) bool {
 func loopbackHostGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isLiteralLoopbackHost(r.Host) {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			http.Error(
+				w,
+				http.StatusText(http.StatusForbidden),
+				http.StatusForbidden,
+			)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -77,7 +81,10 @@ func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
 	// The loopback check accepts a bracketed IPv6 literal, which JoinHostPort
 	// would bracket a second time.
 	host := strings.Trim(strings.TrimSpace(cfg.ListenAddress), "[]")
-	addr := net.JoinHostPort(host, strconv.FormatUint(uint64(cfg.ListenPort), 10))
+	addr := net.JoinHostPort(
+		host,
+		strconv.FormatUint(uint64(cfg.ListenPort), 10),
+	)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -88,7 +95,8 @@ func startDebugListener(cfg config.DebugConfig) (*http.Server, error) {
 		ReadHeaderTimeout: 60 * time.Second,
 	}
 	go func() {
-		if err := debugger.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := debugger.Serve(ln); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
 			slog.Error("debug listener stopped", "error", err)
 		}
 	}()
@@ -110,7 +118,8 @@ func apiCommand() *cobra.Command {
 			logging.ConfigureJSON()
 
 			if _, err := startDebugListener(cfg.Debug); err != nil {
-				logging.GetLogger().Warn("failed to start debug listener; continuing without pprof", "error", err)
+				logging.GetLogger().
+					Warn("failed to start debug listener; continuing without pprof", "error", err)
 			}
 
 			// Create a context that can be canceled for graceful shutdown

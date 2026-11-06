@@ -84,21 +84,36 @@ func TestWriteFrameWipesKeyPushPayload(t *testing.T) {
 
 			err := writeFrame(writer, push)
 			if !errors.Is(err, test.payloadErr) {
-				t.Fatalf("writeFrame() error = %v, want %v", err, test.payloadErr)
+				t.Fatalf(
+					"writeFrame() error = %v, want %v",
+					err,
+					test.payloadErr,
+				)
 			}
 			if len(writer.payload) == 0 {
 				t.Fatal("writer did not retain the serialized payload")
 			}
 			if !bytes.Equal(writer.payload, make([]byte, len(writer.payload))) {
-				t.Fatal("serialized KeyPush payload retained secret-bearing bytes after write returned")
+				t.Fatal(
+					"serialized KeyPush payload retained secret-bearing bytes after write returned",
+				)
 			}
 
 			if test.payloadErr == nil {
 				if len(writer.header) != 4 {
-					t.Fatalf("frame header length = %d, want 4", len(writer.header))
+					t.Fatalf(
+						"frame header length = %d, want 4",
+						len(writer.header),
+					)
 				}
-				if got := binary.BigEndian.Uint32(writer.header); got != uint32(len(writer.wire)) {
-					t.Fatalf("frame payload length = %d, want %d", got, len(writer.wire))
+				if got := binary.BigEndian.Uint32(writer.header); got != uint32(
+					len(writer.wire),
+				) {
+					t.Fatalf(
+						"frame payload length = %d, want %d",
+						got,
+						len(writer.wire),
+					)
 				}
 				var decoded KeyPush
 				if err := json.Unmarshal(writer.wire, &decoded); err != nil {
@@ -143,7 +158,10 @@ func TestKeyPushMarshalFrameRejectsOversizedPush(t *testing.T) {
 		{Type: "key_push", OpCert: big},
 	} {
 		if got, err := push.marshalFrame(); err == nil {
-			t.Fatalf("marshalFrame() returned %d bytes, want frame-size error", len(got))
+			t.Fatalf(
+				"marshalFrame() returned %d bytes, want frame-size error",
+				len(got),
+			)
 		}
 	}
 }
@@ -161,7 +179,12 @@ func TestWriteFrameLeavesNoSigningKeyInHeap(t *testing.T) {
 	}
 	needle := base64.StdEncoding.AppendEncode(nil, secret)
 	defer clear(needle)
-	push := KeyPush{Type: "key_push", KESSignKey: secret, KESVKey: []byte{1}, OpCert: []byte{2}}
+	push := KeyPush{
+		Type:       "key_push",
+		KESSignKey: secret,
+		KESVKey:    []byte{1},
+		OpCert:     []byte{2},
+	}
 	clear(secret)
 	secret = nil
 	// Rebuild the key inside the push from the needle so the plain secret
@@ -180,7 +203,10 @@ func TestWriteFrameLeavesNoSigningKeyInHeap(t *testing.T) {
 		t.Fatal("nothing written")
 	}
 	if n := countInHeap(t, needle, &needle[0]); n != 0 {
-		t.Fatalf("base64 signing key found %d time(s) in process memory after writeFrame", n)
+		t.Fatalf(
+			"base64 signing key found %d time(s) in process memory after writeFrame",
+			n,
+		)
 	}
 }
 
@@ -228,7 +254,8 @@ func countInHeap(t *testing.T, needle []byte, self *byte) int {
 					break
 				}
 				addr := off + uint64(i+j)
-				if addr != uint64(uintptr(unsafe.Pointer(self))) && (addr < uint64(uintptr(unsafe.Pointer(&buf[0]))) || addr >= uint64(uintptr(unsafe.Pointer(&buf[0])))+uint64(len(buf))) {
+				if addr != uint64(uintptr(unsafe.Pointer(self))) &&
+					(addr < uint64(uintptr(unsafe.Pointer(&buf[0]))) || addr >= uint64(uintptr(unsafe.Pointer(&buf[0])))+uint64(len(buf))) {
 					count++
 				}
 				i += j + 1
@@ -267,6 +294,9 @@ func TestWriteFrameLeavesNoSigningKeyInHeapWithFullSizeFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := countInHeap(t, needle, &needle[0]); n != 0 {
-		t.Fatalf("base64 signing key found %d time(s) in process memory after writeFrame", n)
+		t.Fatalf(
+			"base64 signing key found %d time(s) in process memory after writeFrame",
+			n,
+		)
 	}
 }

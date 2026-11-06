@@ -27,21 +27,33 @@ type fakeSecrets struct {
 	describeErr error
 }
 
-func (s *fakeSecrets) GetSecretValue(context.Context, *secretsmanager.GetSecretValueInput, ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+func (s *fakeSecrets) GetSecretValue(
+	context.Context,
+	*secretsmanager.GetSecretValueInput,
+	...func(*secretsmanager.Options),
+) (*secretsmanager.GetSecretValueOutput, error) {
 	if s.getErr != nil {
 		return nil, s.getErr
 	}
 	return &secretsmanager.GetSecretValueOutput{SecretBinary: s.value}, nil
 }
 
-func (s *fakeSecrets) DescribeSecret(context.Context, *secretsmanager.DescribeSecretInput, ...func(*secretsmanager.Options)) (*secretsmanager.DescribeSecretOutput, error) {
+func (s *fakeSecrets) DescribeSecret(
+	context.Context,
+	*secretsmanager.DescribeSecretInput,
+	...func(*secretsmanager.Options),
+) (*secretsmanager.DescribeSecretOutput, error) {
 	if s.describeErr != nil {
 		return nil, s.describeErr
 	}
 	return s.describe, nil
 }
 
-func (s *fakeSecrets) PutSecretValue(_ context.Context, input *secretsmanager.PutSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.PutSecretValueOutput, error) {
+func (s *fakeSecrets) PutSecretValue(
+	_ context.Context,
+	input *secretsmanager.PutSecretValueInput,
+	_ ...func(*secretsmanager.Options),
+) (*secretsmanager.PutSecretValueOutput, error) {
 	s.value = append([]byte(nil), input.SecretBinary...)
 	return &secretsmanager.PutSecretValueOutput{}, nil
 }
@@ -89,7 +101,9 @@ func TestSecretStoreRejectsUnknownAndTrailingFields(t *testing.T) {
 }
 
 func TestSecretStoreLoadDistinguishesVersionlessSecret(t *testing.T) {
-	notFound := &types.ResourceNotFoundException{Message: aws.String("not found")}
+	notFound := &types.ResourceNotFoundException{
+		Message: aws.String("not found"),
+	}
 	for name, tc := range map[string]struct {
 		client *fakeSecrets
 		want   error

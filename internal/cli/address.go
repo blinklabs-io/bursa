@@ -22,12 +22,22 @@ import (
 )
 
 // RunAddressList prints `count` derived addresses as JSON.
-func RunAddressList(mnemonic, mnemonicFile, password, network string, account, start, count uint32) error {
+func RunAddressList(
+	mnemonic, mnemonicFile, password, network string,
+	account, start, count uint32,
+) error {
 	m, err := resolveMnemonic(mnemonic, mnemonicFile)
 	if err != nil {
 		return err
 	}
-	addrs, err := bursa.EnumerateAddresses(m, password, network, account, start, count)
+	addrs, err := bursa.EnumerateAddresses(
+		m,
+		password,
+		network,
+		account,
+		start,
+		count,
+	)
 	if err != nil {
 		return err
 	}

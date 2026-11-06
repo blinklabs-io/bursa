@@ -45,7 +45,10 @@ type logRig struct {
 func newLogRig(t *testing.T, slots uint64) *logRig {
 	t.Helper()
 
-	chip := &fakeChip{keys: map[uint32]ed25519.PrivateKey{}, bins: map[uint32][]byte{}}
+	chip := &fakeChip{
+		keys: map[uint32]ed25519.PrivateKey{},
+		bins: map[uint32][]byte{},
+	}
 	svc := device.New(&sync.Mutex{}, t.Logf)
 
 	if err := svc.SetChip(chip); err != nil {
@@ -54,10 +57,12 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 
 	// the device answers only to its own address, not the loopback one
 	dev := svc.Handler()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = device.Address
-		dev.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Host = device.Address
+			dev.ServeHTTP(w, r)
+		}),
+	)
 	t.Cleanup(srv.Close)
 
 	var id device.IdentityResponse
@@ -85,7 +90,11 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 
 	m := signlog.NewMemMedium(1 + slots*signlog.RecordBlocks)
 
-	w, err := signlog.Open(m, chipstore.NewHeadStore(chip, devprofile.SignLogHeadID), ident)
+	w, err := signlog.Open(
+		m,
+		chipstore.NewHeadStore(chip, devprofile.SignLogHeadID),
+		ident,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +106,11 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 
 	return &logRig{
 		rig: &rig{
-			s:        &session{c: newClient(srv.URL, ""), identity: id.PublicKey, profile: profile},
+			s: &session{
+				c:        newClient(srv.URL, ""),
+				identity: id.PublicKey,
+				profile:  profile,
+			},
 			identity: id.PublicKey, pool: pool, owner: prov.OwnerPublicKey, srv: srv,
 		},
 		medium: m, svc: svc, w: w,
@@ -118,7 +131,16 @@ func (r *logRig) witnessN(t *testing.T, n int) {
 }
 
 func (r *logRig) args(extra ...string) []string {
-	return append([]string{"-signer", r.srv.URL, "-source", "", "-identity", hex.EncodeToString(r.identity)}, extra...)
+	return append(
+		[]string{
+			"-signer",
+			r.srv.URL,
+			"-source",
+			"",
+			"-identity",
+			hex.EncodeToString(r.identity),
+		},
+		extra...)
 }
 
 func TestSignLogFetchesAndVerifies(t *testing.T) {
@@ -133,21 +155,30 @@ func TestSignLogFetchesAndVerifies(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "1 tx-body "+profile+" pool body=") ||
-		!strings.HasPrefix(lines[1], "2 tx-body ") || !strings.HasPrefix(lines[2], "ok: 2 entries, head 2 ") {
+	if len(lines) != 3 ||
+		!strings.HasPrefix(lines[0], "1 tx-body "+profile+" pool body=") ||
+		!strings.HasPrefix(lines[1], "2 tx-body ") ||
+		!strings.HasPrefix(lines[2], "ok: 2 entries, head 2 ") {
 		t.Fatalf("output:\n%s", out.String())
 	}
 
 	// pinning the printed head passes; any other head fails
 	head := strings.Fields(lines[2])
-	pin := []string{"signlog", "-head-seq", "2", "-head-hash", head[len(head)-1]}
+	pin := []string{
+		"signlog",
+		"-head-seq",
+		"2",
+		"-head-hash",
+		head[len(head)-1],
+	}
 
 	if err := run(r.args(pin...), &bytes.Buffer{}); err != nil {
 		t.Fatalf("pinned head refused: %v", err)
 	}
 
 	pin[2] = "1"
-	if err := run(r.args(pin...), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "expected 1") {
+	if err := run(r.args(pin...), &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "expected 1") {
 		t.Fatalf("stale pin: %v", err)
 	}
 
@@ -160,7 +191,14 @@ func TestSignLogFetchesAndVerifies(t *testing.T) {
 	}
 
 	// a positional token stops flag parsing; the pin after it must not vanish
-	pin = []string{"signlog", "unexpected", "-head-seq", "1", "-head-hash", head[len(head)-1]}
+	pin = []string{
+		"signlog",
+		"unexpected",
+		"-head-seq",
+		"1",
+		"-head-hash",
+		head[len(head)-1],
+	}
 	if err := run(r.args(pin...), &bytes.Buffer{}); err == nil {
 		t.Fatal("a head pin after a positional argument was ignored")
 	}
@@ -220,7 +258,18 @@ func TestSignLogRefusesOtherIdentity(t *testing.T) {
 
 	other, _, _ := ed25519.GenerateKey(nil)
 
-	err := run([]string{"-signer", r.srv.URL, "-source", "", "-identity", hex.EncodeToString(other), "signlog"}, &bytes.Buffer{})
+	err := run(
+		[]string{
+			"-signer",
+			r.srv.URL,
+			"-source",
+			"",
+			"-identity",
+			hex.EncodeToString(other),
+			"signlog",
+		},
+		&bytes.Buffer{},
+	)
 	if err == nil || !strings.Contains(err.Error(), "pinned identity key") {
 		t.Fatalf("got %v", err)
 	}
@@ -242,15 +291,24 @@ func TestSignLogHostKeyAuth(t *testing.T) {
 
 	var keys device.HostKeyResponse
 
-	devicePost(t, r.srv, "/provision/host-key", json.RawMessage(out.Bytes()), &keys)
+	devicePost(
+		t,
+		r.srv,
+		"/provision/host-key",
+		json.RawMessage(out.Bytes()),
+		&keys,
+	)
 
 	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil {
-		t.Fatal("log served to an unauthenticated host once a host key is registered")
+		t.Fatal(
+			"log served to an unauthenticated host once a host key is registered",
+		)
 	}
 
 	out.Reset()
 
-	if err := run(r.args("-host-key", hostFile, "signlog"), &out); err != nil || !strings.Contains(out.String(), "ok: 1 entries") {
+	if err := run(r.args("-host-key", hostFile, "signlog"), &out); err != nil ||
+		!strings.Contains(out.String(), "ok: 1 entries") {
 		t.Fatalf("authenticated: %v\n%s", err, out.String())
 	}
 }
@@ -280,7 +338,8 @@ func TestSignLogBoundsTheRead(t *testing.T) {
 	r.witnessN(t, 1)
 	r.svc.SetSigningLog(hugeHead{r.w}, r.medium)
 
-	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "capacity") {
+	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "capacity") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -292,7 +351,8 @@ func TestSignLogRefusesHeadThatDiffersFromLog(t *testing.T) {
 	r.witnessN(t, 2)
 	r.svc.SetSigningLog(staleHead{r.w}, r.medium)
 
-	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "device reports") {
+	if err := run(r.args("signlog"), &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "device reports") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -315,25 +375,27 @@ func TestSignLogRefusesReplayedSnapshot(t *testing.T) {
 
 	r.witnessN(t, 1)
 
-	replay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		var read device.SignLogRequest
-		if err := json.NewDecoder(req.Body).Decode(&read); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	replay := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			var read device.SignLogRequest
+			if err := json.NewDecoder(req.Body).Decode(&read); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 
-		resp := old
-		if read.Count > 0 {
-			start := int(read.From) * signlog.BlockSize
-			end := start + int(read.Count)*signlog.BlockSize
-			resp.Attestation = nil
-			resp.From = read.From
-			resp.Blocks = bytes.Clone(oldBlocks[start:end])
-		}
+			resp := old
+			if read.Count > 0 {
+				start := int(read.From) * signlog.BlockSize
+				end := start + int(read.Count)*signlog.BlockSize
+				resp.Attestation = nil
+				resp.From = read.From
+				resp.Blocks = bytes.Clone(oldBlocks[start:end])
+			}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		}),
+	)
 	t.Cleanup(replay.Close)
 
 	s := session{c: newClient(replay.URL, ""), identity: r.identity}

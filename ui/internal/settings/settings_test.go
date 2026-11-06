@@ -172,10 +172,14 @@ func TestSetHistoryExpiryRollsBackOnPersistError(t *testing.T) {
 	}
 
 	if err := s.SetHistoryExpiry(false); err == nil {
-		t.Fatal("SetHistoryExpiry should fail when the settings directory is missing")
+		t.Fatal(
+			"SetHistoryExpiry should fail when the settings directory is missing",
+		)
 	}
 	if !s.HistoryExpiry() {
-		t.Fatal("failed SetHistoryExpiry must leave the in-memory setting unchanged")
+		t.Fatal(
+			"failed SetHistoryExpiry must leave the in-memory setting unchanged",
+		)
 	}
 }
 
@@ -202,7 +206,9 @@ func TestSetHistoryExpiryDoesNotRollBackAfterRename(t *testing.T) {
 		t.Fatalf("SetHistoryExpiry error = %q, want syncDir error", err)
 	}
 	if !s.HistoryExpiry() {
-		t.Fatal("post-rename syncDir failure must keep memory aligned with replaced settings file")
+		t.Fatal(
+			"post-rename syncDir failure must keep memory aligned with replaced settings file",
+		)
 	}
 
 	reloaded, err := Load(path)
@@ -210,7 +216,9 @@ func TestSetHistoryExpiryDoesNotRollBackAfterRename(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 	if !reloaded.HistoryExpiry() {
-		t.Fatal("post-rename syncDir failure should leave the replaced settings file readable")
+		t.Fatal(
+			"post-rename syncDir failure should leave the replaced settings file readable",
+		)
 	}
 }
 
@@ -222,7 +230,11 @@ func TestAutoLockDefaultsWhenAbsent(t *testing.T) {
 		t.Fatalf("Load with no file: %v", err)
 	}
 	if got := s.AutoLockMinutes(); got != defaultAutoLockMinutes {
-		t.Fatalf("AutoLockMinutes() = %d, want default %d", got, defaultAutoLockMinutes)
+		t.Fatalf(
+			"AutoLockMinutes() = %d, want default %d",
+			got,
+			defaultAutoLockMinutes,
+		)
 	}
 }
 
@@ -275,14 +287,28 @@ func TestAutoLockRejectsInvalidValues(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if err := s.SetAutoLockMinutes(bad); !errors.Is(err, ErrInvalidAutoLockMinutes) {
-			t.Fatalf("SetAutoLockMinutes(%d) error = %v, want ErrInvalidAutoLockMinutes", bad, err)
+		if err := s.SetAutoLockMinutes(bad); !errors.Is(
+			err,
+			ErrInvalidAutoLockMinutes,
+		) {
+			t.Fatalf(
+				"SetAutoLockMinutes(%d) error = %v, want ErrInvalidAutoLockMinutes",
+				bad,
+				err,
+			)
 		}
 		if got := s.AutoLockMinutes(); got != defaultAutoLockMinutes {
-			t.Fatalf("rejected SetAutoLockMinutes(%d) must leave the default in place, got %d", bad, got)
+			t.Fatalf(
+				"rejected SetAutoLockMinutes(%d) must leave the default in place, got %d",
+				bad,
+				got,
+			)
 		}
 		if _, err := os.Stat(path); err == nil {
-			t.Fatalf("rejected SetAutoLockMinutes(%d) must not write a settings file", bad)
+			t.Fatalf(
+				"rejected SetAutoLockMinutes(%d) must not write a settings file",
+				bad,
+			)
 		}
 	}
 }
@@ -319,7 +345,12 @@ func TestAutoLockMinutesFallsBackOnInvalidPersistedValue(t *testing.T) {
 			},
 		}
 		if got := s.AutoLockMinutes(); got != defaultAutoLockMinutes {
-			t.Fatalf("AutoLockMinutes() with invalid persisted %d = %d, want default %d", bad, got, defaultAutoLockMinutes)
+			t.Fatalf(
+				"AutoLockMinutes() with invalid persisted %d = %d, want default %d",
+				bad,
+				got,
+				defaultAutoLockMinutes,
+			)
 		}
 	}
 }
@@ -335,10 +366,15 @@ func TestSetAutoLockMinutesRollsBackOnPersistError(t *testing.T) {
 	}
 
 	if err := s.SetAutoLockMinutes(30); err == nil {
-		t.Fatal("SetAutoLockMinutes should fail when the settings directory is missing")
+		t.Fatal(
+			"SetAutoLockMinutes should fail when the settings directory is missing",
+		)
 	}
 	if got := s.AutoLockMinutes(); got != initial {
-		t.Fatalf("failed SetAutoLockMinutes must leave the in-memory setting unchanged, got %d", got)
+		t.Fatalf(
+			"failed SetAutoLockMinutes must leave the in-memory setting unchanged, got %d",
+			got,
+		)
 	}
 }
 
@@ -363,7 +399,9 @@ func TestSeedDefaultFalseStillPersistsFirstRun(t *testing.T) {
 		t.Fatalf("reload SeedDefault(true): %v", err)
 	}
 	if reloaded.HistoryExpiry() {
-		t.Fatal("first-run SeedDefault(false) should lock in false, not be re-seeded to true")
+		t.Fatal(
+			"first-run SeedDefault(false) should lock in false, not be re-seeded to true",
+		)
 	}
 }
 

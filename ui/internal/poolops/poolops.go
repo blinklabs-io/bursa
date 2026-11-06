@@ -133,7 +133,9 @@ func deriveCold(root bip32.XPrv, index uint32) (coldKeyMaterial, error) {
 		return coldKeyMaterial{}, fmt.Errorf("derive pool cold key: %w", err)
 	}
 	seed := append([]byte(nil), cold.PrivateKey()[:32]...)
-	vkey := append([]byte(nil), ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)...)
+	vkey := append(
+		[]byte(nil),
+		ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)...)
 	return coldKeyMaterial{seed: seed, vkey: vkey}, nil
 }
 
@@ -154,7 +156,11 @@ func poolIDFromVKey(coldVKey []byte) lcommon.PoolKeyHash {
 }
 
 // deriveCredentials derives the full credential set from a root key.
-func deriveCredentials(root bip32.XPrv, network string, coldIdx, vrfIdx, kesIdx uint32) (Credentials, error) {
+func deriveCredentials(
+	root bip32.XPrv,
+	network string,
+	coldIdx, vrfIdx, kesIdx uint32,
+) (Credentials, error) {
 	cold, err := deriveCold(root, coldIdx)
 	if err != nil {
 		return Credentials{}, err
@@ -229,10 +235,19 @@ func poolIDFromColdVKeyHex(coldVKeyHex string) (lcommon.PoolKeyHash, error) {
 func decodeColdVKey(coldVKeyHex string) ([]byte, error) {
 	vkey, err := hex.DecodeString(strings.TrimSpace(coldVKeyHex))
 	if err != nil {
-		return nil, fmt.Errorf("%w: cold vkey is not valid hex: %w", ErrInvalidRequest, err)
+		return nil, fmt.Errorf(
+			"%w: cold vkey is not valid hex: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	if len(vkey) != coldVKeyLen {
-		return nil, fmt.Errorf("%w: cold vkey must be %d bytes, got %d", ErrInvalidRequest, coldVKeyLen, len(vkey))
+		return nil, fmt.Errorf(
+			"%w: cold vkey must be %d bytes, got %d",
+			ErrInvalidRequest,
+			coldVKeyLen,
+			len(vkey),
+		)
 	}
 	return vkey, nil
 }
@@ -264,7 +279,9 @@ type KESPeriodInfo struct {
 // genesis slots-per-KES-period. It is the integer division tipSlot ÷ spkp.
 func kesPeriod(tipSlot, slotsPerKESPeriod uint64) (uint64, error) {
 	if slotsPerKESPeriod == 0 {
-		return 0, errors.New("slots_per_kes_period is zero (genesis not available)")
+		return 0, errors.New(
+			"slots_per_kes_period is zero (genesis not available)",
+		)
 	}
 	return tipSlot / slotsPerKESPeriod, nil
 }
@@ -312,7 +329,10 @@ func buildMetadata(in MetadataInput) (MetadataResult, error) {
 	}
 	canonical, err := jcs.Transform(raw)
 	if err != nil {
-		return MetadataResult{}, fmt.Errorf("canonicalize metadata (RFC 8785): %w", err)
+		return MetadataResult{}, fmt.Errorf(
+			"canonicalize metadata (RFC 8785): %w",
+			err,
+		)
 	}
 	sum := blake2b.Sum256(canonical)
 	return MetadataResult{
@@ -331,24 +351,48 @@ const (
 
 func validateMetadata(in MetadataInput) error {
 	if in.Name == "" || in.Ticker == "" || in.Homepage == "" {
-		return fmt.Errorf("%w: metadata name, ticker, and homepage are required", ErrInvalidRequest)
+		return fmt.Errorf(
+			"%w: metadata name, ticker, and homepage are required",
+			ErrInvalidRequest,
+		)
 	}
 	if utf8.RuneCountInString(in.Name) > metadataNameMax {
-		return fmt.Errorf("%w: metadata name must be at most %d characters", ErrInvalidRequest, metadataNameMax)
+		return fmt.Errorf(
+			"%w: metadata name must be at most %d characters",
+			ErrInvalidRequest,
+			metadataNameMax,
+		)
 	}
 	tickerLen := utf8.RuneCountInString(in.Ticker)
 	if tickerLen < metadataTickerMin || tickerLen > metadataTickerMax {
-		return fmt.Errorf("%w: metadata ticker must be %d to %d characters", ErrInvalidRequest, metadataTickerMin, metadataTickerMax)
+		return fmt.Errorf(
+			"%w: metadata ticker must be %d to %d characters",
+			ErrInvalidRequest,
+			metadataTickerMin,
+			metadataTickerMax,
+		)
 	}
 	if utf8.RuneCountInString(in.Homepage) > metadataHomepageMax {
-		return fmt.Errorf("%w: metadata homepage must be at most %d characters", ErrInvalidRequest, metadataHomepageMax)
+		return fmt.Errorf(
+			"%w: metadata homepage must be at most %d characters",
+			ErrInvalidRequest,
+			metadataHomepageMax,
+		)
 	}
 	if utf8.RuneCountInString(in.Description) > metadataDescriptionMax {
-		return fmt.Errorf("%w: metadata description must be at most %d characters", ErrInvalidRequest, metadataDescriptionMax)
+		return fmt.Errorf(
+			"%w: metadata description must be at most %d characters",
+			ErrInvalidRequest,
+			metadataDescriptionMax,
+		)
 	}
 	u, err := url.Parse(in.Homepage)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("%w: metadata homepage must be a valid http(s) URL", ErrInvalidRequest)
+	if err != nil || u.Host == "" ||
+		(u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf(
+			"%w: metadata homepage must be a valid http(s) URL",
+			ErrInvalidRequest,
+		)
 	}
 	return nil
 }
@@ -385,18 +429,31 @@ func ledgerIPv6Bytes(ip net.IP) net.IP {
 // toPoolRelay converts a wallet Relay into a gouroboros PoolRelay.
 func (r Relay) toPoolRelay() (lcommon.PoolRelay, error) {
 	if r.Port != nil && *r.Port > 65535 {
-		return lcommon.PoolRelay{}, fmt.Errorf("%w: relay port must be between 0 and 65535", ErrInvalidRequest)
+		return lcommon.PoolRelay{}, fmt.Errorf(
+			"%w: relay port must be between 0 and 65535",
+			ErrInvalidRequest,
+		)
 	}
 	switch r.Type {
 	case "single_host_address":
-		pr := lcommon.PoolRelay{Type: lcommon.PoolRelayTypeSingleHostAddress, Port: r.Port}
+		pr := lcommon.PoolRelay{
+			Type: lcommon.PoolRelayTypeSingleHostAddress,
+			Port: r.Port,
+		}
 		if r.IPv4 == "" && r.IPv6 == "" {
-			return lcommon.PoolRelay{}, fmt.Errorf("%w: single_host_address relay needs ipv4 or ipv6", ErrInvalidRequest)
+			return lcommon.PoolRelay{}, fmt.Errorf(
+				"%w: single_host_address relay needs ipv4 or ipv6",
+				ErrInvalidRequest,
+			)
 		}
 		if r.IPv4 != "" {
 			ip := net.ParseIP(strings.TrimSpace(r.IPv4))
 			if ip == nil || ip.To4() == nil {
-				return lcommon.PoolRelay{}, fmt.Errorf("%w: invalid ipv4 %q", ErrInvalidRequest, r.IPv4)
+				return lcommon.PoolRelay{}, fmt.Errorf(
+					"%w: invalid ipv4 %q",
+					ErrInvalidRequest,
+					r.IPv4,
+				)
 			}
 			v4 := ip.To4()
 			pr.Ipv4 = &v4
@@ -404,7 +461,11 @@ func (r Relay) toPoolRelay() (lcommon.PoolRelay, error) {
 		if r.IPv6 != "" {
 			ip := net.ParseIP(strings.TrimSpace(r.IPv6))
 			if ip == nil || ip.To4() != nil || ip.To16() == nil {
-				return lcommon.PoolRelay{}, fmt.Errorf("%w: invalid ipv6 %q", ErrInvalidRequest, r.IPv6)
+				return lcommon.PoolRelay{}, fmt.Errorf(
+					"%w: invalid ipv6 %q",
+					ErrInvalidRequest,
+					r.IPv6,
+				)
 			}
 			v6 := ledgerIPv6Bytes(ip.To16())
 			pr.Ipv6 = &v6
@@ -413,17 +474,34 @@ func (r Relay) toPoolRelay() (lcommon.PoolRelay, error) {
 	case "single_host_name":
 		host := strings.TrimSpace(r.Hostname)
 		if host == "" {
-			return lcommon.PoolRelay{}, fmt.Errorf("%w: single_host_name relay needs a hostname", ErrInvalidRequest)
+			return lcommon.PoolRelay{}, fmt.Errorf(
+				"%w: single_host_name relay needs a hostname",
+				ErrInvalidRequest,
+			)
 		}
-		return lcommon.PoolRelay{Type: lcommon.PoolRelayTypeSingleHostName, Hostname: &host, Port: r.Port}, nil
+		return lcommon.PoolRelay{
+			Type:     lcommon.PoolRelayTypeSingleHostName,
+			Hostname: &host,
+			Port:     r.Port,
+		}, nil
 	case "multi_host_name":
 		host := strings.TrimSpace(r.Hostname)
 		if host == "" {
-			return lcommon.PoolRelay{}, fmt.Errorf("%w: multi_host_name relay needs a hostname", ErrInvalidRequest)
+			return lcommon.PoolRelay{}, fmt.Errorf(
+				"%w: multi_host_name relay needs a hostname",
+				ErrInvalidRequest,
+			)
 		}
-		return lcommon.PoolRelay{Type: lcommon.PoolRelayTypeMultiHostName, Hostname: &host}, nil
+		return lcommon.PoolRelay{
+			Type:     lcommon.PoolRelayTypeMultiHostName,
+			Hostname: &host,
+		}, nil
 	default:
-		return lcommon.PoolRelay{}, fmt.Errorf("%w: unknown relay type %q", ErrInvalidRequest, r.Type)
+		return lcommon.PoolRelay{}, fmt.Errorf(
+			"%w: unknown relay type %q",
+			ErrInvalidRequest,
+			r.Type,
+		)
 	}
 }
 

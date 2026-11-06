@@ -54,7 +54,12 @@ func (b *btReset) GPIOMode() {
 
 	// a pad control value of zero disables the output driver
 	bits.SetN(&ctl, iomuxc.SW_PAD_CTL_DSE, 0b111, iomuxc.SW_PAD_CTL_DSE_2_R0_4)
-	bits.SetN(&ctl, iomuxc.SW_PAD_CTL_SPEED, 0b11, iomuxc.SW_PAD_CTL_SPEED_50MHZ)
+	bits.SetN(
+		&ctl,
+		iomuxc.SW_PAD_CTL_SPEED,
+		0b11,
+		iomuxc.SW_PAD_CTL_SPEED_50MHZ,
+	)
 
 	p := iomuxc.Init(
 		usbarmory.IOMUXC_SW_MUX_CTL_PAD_GPIO1_IO09,

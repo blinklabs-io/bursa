@@ -50,7 +50,11 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	m := signlog.NewMemMedium(1 + slots*signlog.RecordBlocks)
 
-	w, err := signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), signlog.NewKeySigner(priv))
+	w, err := signlog.Open(
+		m,
+		signlog.NewMemHeadStore(signlog.Head{}),
+		signlog.NewKeySigner(priv),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +78,11 @@ func (r *logRig) signN(t *testing.T, n int) {
 	}
 }
 
-func readLog(t *testing.T, s *Service, req SignLogRequest) (int, SignLogResponse, string) {
+func readLog(
+	t *testing.T,
+	s *Service,
+	req SignLogRequest,
+) (int, SignLogResponse, string) {
 	t.Helper()
 	if len(req.Nonce) == 0 {
 		req.Nonce = nonce(0x51)
@@ -92,7 +100,11 @@ func readLog(t *testing.T, s *Service, req SignLogRequest) (int, SignLogResponse
 	return code, resp, string(body)
 }
 
-func authLogRead(req SignLogRequest, k ed25519.PrivateKey, ch []byte) SignLogRequest {
+func authLogRead(
+	req SignLogRequest,
+	k ed25519.PrivateKey,
+	ch []byte,
+) SignLogRequest {
 	if len(req.Nonce) == 0 {
 		req.Nonce = nonce(0x52)
 	}
@@ -178,13 +190,22 @@ func TestSignLogReadBackVerifies(t *testing.T) {
 	for from := uint32(0); from < want; from += 5 {
 		count := min(5, want-from)
 
-		code, resp, body := readLog(t, r.s, SignLogRequest{From: uint64(from), Count: count})
+		code, resp, body := readLog(
+			t,
+			r.s,
+			SignLogRequest{From: uint64(from), Count: count},
+		)
 		if code != http.StatusOK {
 			t.Fatalf("read %d+%d: %d %s", from, count, code, body)
 		}
 
-		if resp.From != uint64(from) || len(resp.Blocks) != int(count)*signlog.BlockSize {
-			t.Fatalf("response from %d with %d bytes", resp.From, len(resp.Blocks))
+		if resp.From != uint64(from) ||
+			len(resp.Blocks) != int(count)*signlog.BlockSize {
+			t.Fatalf(
+				"response from %d with %d bytes",
+				resp.From,
+				len(resp.Blocks),
+			)
 		}
 
 		prefix, head = append(prefix, resp.Blocks...), resp
@@ -206,11 +227,18 @@ func TestSignLogReadBackVerifies(t *testing.T) {
 
 	got := log.Head()
 	if head.HeadSeq != got.Seq || !bytes.Equal(head.HeadHash, got.Hash[:]) {
-		t.Fatalf("served head %d %x, log head %d %x", head.HeadSeq, head.HeadHash, got.Seq, got.Hash)
+		t.Fatalf(
+			"served head %d %x, log head %d %x",
+			head.HeadSeq,
+			head.HeadHash,
+			got.Seq,
+			got.Hash,
+		)
 	}
 
 	// the entries are the ones the sign path logged
-	if log.Entries[0].Purpose != signlog.PurposeTxBody || log.Entries[0].Profile != "otg@preview" {
+	if log.Entries[0].Purpose != signlog.PurposeTxBody ||
+		log.Entries[0].Profile != "otg@preview" {
 		t.Fatalf("entry %+v", log.Entries[0])
 	}
 }
@@ -238,7 +266,9 @@ func TestSignLogReadRefusals(t *testing.T) {
 	}
 
 	// the head alone, with no blocks
-	if code, resp, body := readLog(t, r.s, SignLogRequest{}); code != http.StatusOK || len(resp.Blocks) != 0 || resp.NumBlocks != n {
+	if code, resp, body := readLog(t, r.s, SignLogRequest{}); code != http.StatusOK ||
+		len(resp.Blocks) != 0 ||
+		resp.NumBlocks != n {
 		t.Fatalf("head only: %d %s", code, body)
 	}
 }
@@ -251,7 +281,9 @@ func TestSignLogReadWithoutLog(t *testing.T) {
 	s.SigningLogFailed(errNoCardForTest)
 
 	code, _, body := readLog(t, s, SignLogRequest{})
-	if code == http.StatusOK || !strings.Contains(body, "signing log unavailable") || !strings.Contains(body, "no SD card") {
+	if code == http.StatusOK ||
+		!strings.Contains(body, "signing log unavailable") ||
+		!strings.Contains(body, "no SD card") {
 		t.Fatalf("%d %s", code, body)
 	}
 
@@ -311,7 +343,11 @@ func TestSignLogReadHostAuth(t *testing.T) {
 	// a signing request signature cannot be replayed as a read
 	ch = challenge(t, r.s)
 	sreq := SignRequest{Version: Protocol, Challenge: ch}
-	other := SignLogRequest{Challenge: ch, HostKey: hostPub(testHostKey), HostSignature: ed25519.Sign(testHostKey, RequestBinding(sreq))}
+	other := SignLogRequest{
+		Challenge:     ch,
+		HostKey:       hostPub(testHostKey),
+		HostSignature: ed25519.Sign(testHostKey, RequestBinding(sreq)),
+	}
 
 	if code, _, _ := readLog(t, r.s, other); code == http.StatusOK {
 		t.Fatal("read served with a signing-request signature")
@@ -325,7 +361,8 @@ func TestSignLogReadRequiresHostAuthWhenRequired(t *testing.T) {
 	r := newLogRig(t, 4)
 	r.s.RequireHostAuth()
 
-	if code, _, body := readLog(t, r.s, SignLogRequest{}); code == http.StatusOK || !strings.Contains(body, "host authentication") {
+	if code, _, body := readLog(t, r.s, SignLogRequest{}); code == http.StatusOK ||
+		!strings.Contains(body, "host authentication") {
 		t.Fatalf("%d %s", code, body)
 	}
 }

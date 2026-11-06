@@ -54,7 +54,14 @@ func EncryptWithPassphrase(data []byte, passphrase string) ([]byte, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return nil, err
 	}
-	key, err := scrypt.Key([]byte(passphrase), salt, scryptN, scryptR, scryptP, keyLen)
+	key, err := scrypt.Key(
+		[]byte(passphrase),
+		salt,
+		scryptN,
+		scryptR,
+		scryptP,
+		keyLen,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("scrypt: %w", err)
 	}
@@ -128,7 +135,9 @@ func DecryptWithPassphrase(data []byte, passphrase string) ([]byte, error) {
 	}
 	pt, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
-		return nil, errors.New("decryption failed (wrong passphrase or corrupt data)")
+		return nil, errors.New(
+			"decryption failed (wrong passphrase or corrupt data)",
+		)
 	}
 	return pt, nil
 }
@@ -136,7 +145,8 @@ func DecryptWithPassphrase(data []byte, passphrase string) ([]byte, error) {
 // IsPassphraseContainer reports whether data looks like a passphrase container.
 func IsPassphraseContainer(data []byte) bool {
 	var c passphraseContainer
-	return json.Unmarshal(data, &c) == nil && c.KDF == "scrypt" && c.Ciphertext != ""
+	return json.Unmarshal(data, &c) == nil && c.KDF == "scrypt" &&
+		c.Ciphertext != ""
 }
 
 // IsEncrypted reports whether data is a SOPS-encrypted JSON document (top-level

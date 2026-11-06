@@ -29,11 +29,17 @@ const maxPCRIndex = 23
 // PCR 7 (secure-boot state).
 func pcrSelection(pcrs []uint) (tpm2.TPMLPCRSelection, error) {
 	if len(pcrs) == 0 {
-		return tpm2.TPMLPCRSelection{}, errors.New("tpm: PCR selection is empty")
+		return tpm2.TPMLPCRSelection{}, errors.New(
+			"tpm: PCR selection is empty",
+		)
 	}
 	for _, pcr := range pcrs {
 		if pcr > maxPCRIndex {
-			return tpm2.TPMLPCRSelection{}, fmt.Errorf("tpm: PCR index %d out of range 0-%d", pcr, maxPCRIndex)
+			return tpm2.TPMLPCRSelection{}, fmt.Errorf(
+				"tpm: PCR index %d out of range 0-%d",
+				pcr,
+				maxPCRIndex,
+			)
 		}
 	}
 	return tpm2.TPMLPCRSelection{
@@ -60,7 +66,12 @@ func computePCRPolicyDigest(tp transport.TPM, pcrs []uint) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess, cleanup, err := tpm2.PolicySession(tp, tpm2.TPMAlgSHA256, 16, tpm2.Trial())
+	sess, cleanup, err := tpm2.PolicySession(
+		tp,
+		tpm2.TPMAlgSHA256,
+		16,
+		tpm2.Trial(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("tpm: PCR trial session: %w", err)
 	}
@@ -95,7 +106,12 @@ func computePCRPolicyDigest(tp transport.TPM, pcrs []uint) ([]byte, error) {
 // as ErrWrongPassword by the caller); a PCR mismatch makes PolicyPCR fail closed
 // (machine state changed) — in both cases the password recovery path remains
 // available. The command order here MUST mirror computePCRPolicyDigest.
-func pcrPolicySession(tp transport.TPM, pcrs []uint, auth []byte, opts ...tpm2.AuthOption) (tpm2.Session, func() error, error) {
+func pcrPolicySession(
+	tp transport.TPM,
+	pcrs []uint,
+	auth []byte,
+	opts ...tpm2.AuthOption,
+) (tpm2.Session, func() error, error) {
 	selection, err := pcrSelection(pcrs)
 	if err != nil {
 		return nil, nil, err

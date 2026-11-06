@@ -54,10 +54,16 @@ func TestStartDebugListenerDisabledAtPortZero(t *testing.T) {
 // startDebugListenerOnFreePort starts the listener on host at a port picked
 // from the kernel. The probe releases the port before the listener binds it,
 // so a bind lost to another process is retried on a fresh port.
-func startDebugListenerOnFreePort(t *testing.T, host string) (*http.Server, int) {
+func startDebugListenerOnFreePort(
+	t *testing.T,
+	host string,
+) (*http.Server, int) {
 	t.Helper()
 	for range 5 {
-		probe, err := net.Listen("tcp", net.JoinHostPort(strings.Trim(host, "[]"), "0"))
+		probe, err := net.Listen(
+			"tcp",
+			net.JoinHostPort(strings.Trim(host, "[]"), "0"),
+		)
 		if err != nil {
 			t.Fatalf("probe listen: %v", err)
 		}
@@ -93,7 +99,10 @@ func TestStartDebugListenerServesPprofOnLoopback(t *testing.T) {
 		_, port := startDebugListenerOnFreePort(t, host)
 		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Get(
-			"http://" + net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(port)) +
+			"http://" + net.JoinHostPort(
+				strings.Trim(host, "[]"),
+				strconv.Itoa(port),
+			) +
 				"/debug/pprof/",
 		)
 		if err != nil {

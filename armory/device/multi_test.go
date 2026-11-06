@@ -68,10 +68,19 @@ func refused(t *testing.T, what string, code int, body []byte, want error) {
 	}
 }
 
-func firstKey(t *testing.T, h http.Handler, key ed25519.PrivateKey, scope string) (int, []byte) {
+func firstKey(
+	t *testing.T,
+	h http.Handler,
+	key ed25519.PrivateKey,
+	scope string,
+) (int, []byte) {
 	t.Helper()
 
-	return rawPost(h, RouteProvisionHostKey, jsonOf(t, HostKeyRequest{PublicKey: hostPub(key), Scope: scope}))
+	return rawPost(
+		h,
+		RouteProvisionHostKey,
+		jsonOf(t, HostKeyRequest{PublicKey: hostPub(key), Scope: scope}),
+	)
 }
 
 // seedHostKeys gives a device with no host key the key of each scope: the
@@ -86,7 +95,13 @@ func seedHostKeys(t *testing.T, h http.Handler) {
 		scope string
 		key   ed25519.PrivateKey
 	}{{scopeTestnetName, multiKeyTestnet}, {scopePrimeName, multiKeyPrime}} {
-		code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(c.key), Scope: c.scope}, multiKeyCardano)
+		code, body = postAs(
+			t,
+			h,
+			RouteProvisionHostKey,
+			HostKeyRequest{PublicKey: hostPub(c.key), Scope: c.scope},
+			multiKeyCardano,
+		)
 		mustOK(t, "first key "+c.scope, code, body)
 	}
 }
@@ -105,14 +120,22 @@ func TestMultiFirstHostKeyPerScope(t *testing.T) {
 
 	// the answer lists the keys of the scope only
 	var resp HostKeyResponse
-	if err := json.Unmarshal(body, &resp); err != nil || len(resp.HostKeys) != 1 || !bytes.Equal(resp.HostKeys[0], hostPub(multiKeyCardano)) {
+	if err := json.Unmarshal(body, &resp); err != nil ||
+		len(resp.HostKeys) != 1 ||
+		!bytes.Equal(resp.HostKeys[0], hostPub(multiKeyCardano)) {
 		t.Fatalf("first cardano key answer %s (%v)", body, err)
 	}
 
 	// the device holds a key: no other scope's first key goes in unsigned
 	for _, sc := range []string{scopeCardanoName, scopePrimeName, scopeTestnetName} {
 		code, body = firstKey(t, h, scopeKey(0xa0), sc)
-		refused(t, "unsigned "+sc+" key on a device with a key", code, body, errFirstKeyHeld)
+		refused(
+			t,
+			"unsigned "+sc+" key on a device with a key",
+			code,
+			body,
+			errFirstKeyHeld,
+		)
 	}
 
 	for _, c := range []struct {
@@ -122,18 +145,43 @@ func TestMultiFirstHostKeyPerScope(t *testing.T) {
 		{scopePrimeName, multiKeyPrime},
 		{scopeTestnetName, multiKeyTestnet},
 	} {
-		code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(c.key), Scope: c.scope}, multiKeyCardano)
+		code, body = postAs(
+			t,
+			h,
+			RouteProvisionHostKey,
+			HostKeyRequest{PublicKey: hostPub(c.key), Scope: c.scope},
+			multiKeyCardano,
+		)
 		mustOK(t, "cardano key adds the first "+c.scope+" key", code, body)
 
 		// the answer lists the keys the mainnet key sees, the new one included
-		if err := json.Unmarshal(body, &resp); err != nil || !slices.ContainsFunc(resp.HostKeys, func(k []byte) bool { return bytes.Equal(k, hostPub(c.key)) }) {
+		if err := json.Unmarshal(body, &resp); err != nil ||
+			!slices.ContainsFunc(
+				resp.HostKeys,
+				func(k []byte) bool { return bytes.Equal(k, hostPub(c.key)) },
+			) {
 			t.Fatalf("first %s key answer %s (%v)", c.scope, body, err)
 		}
 	}
 
 	// every scope has a key now
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xa1)), Scope: scopePrimeName}, multiKeyCardano)
-	refused(t, "cardano key adds a second prime key", code, body, errAddScopeMismatch)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xa1)),
+			Scope:     scopePrimeName,
+		},
+		multiKeyCardano,
+	)
+	refused(
+		t,
+		"cardano key adds a second prime key",
+		code,
+		body,
+		errAddScopeMismatch,
+	)
 }
 
 // A testnet key does not act device-wide on an image that serves mainnet
@@ -147,21 +195,64 @@ func TestMultiTestnetKeyAddsNoFirstMainnetKey(t *testing.T) {
 	code, body := firstKey(t, h, multiKeyTestnet, scopeTestnetName)
 	mustOK(t, "first testnet key", code, body)
 
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(multiKeyPrime), Scope: scopePrimeName}, multiKeyTestnet)
-	refused(t, "testnet key adds the first prime key", code, body, errAddScopeMismatch)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{
+			PublicKey: hostPub(multiKeyPrime),
+			Scope:     scopePrimeName,
+		},
+		multiKeyTestnet,
+	)
+	refused(
+		t,
+		"testnet key adds the first prime key",
+		code,
+		body,
+		errAddScopeMismatch,
+	)
 
 	code, body = firstKey(t, h, multiKeyPrime, scopePrimeName)
-	refused(t, "unsigned prime key beside a testnet key", code, body, errFirstKeyHeld)
+	refused(
+		t,
+		"unsigned prime key beside a testnet key",
+		code,
+		body,
+		errFirstKeyHeld,
+	)
 
 	// the device's last key stays: emptying it would take an unsigned key again
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)}, multiKeyTestnet)
-	refused(t, "testnet key revokes the device's last key", code, body, errLastHostKey)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)},
+		multiKeyTestnet,
+	)
+	refused(
+		t,
+		"testnet key revokes the device's last key",
+		code,
+		body,
+		errLastHostKey,
+	)
 
 	code, body = firstKey(t, h, multiKeyPrime, scopePrimeName)
-	refused(t, "unsigned prime key after the refused revoke", code, body, errFirstKeyHeld)
+	refused(
+		t,
+		"unsigned prime key after the refused revoke",
+		code,
+		body,
+		errFirstKeyHeld,
+	)
 
 	// a device wipe returns to the bootstrap state
-	code, body = rawPost(multiImage(t, chip, false).WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`))
+	code, body = rawPost(
+		multiImage(t, chip, false).WipeHandler(),
+		"/wipe/device",
+		[]byte(`{"identity_public_key":""}`),
+	)
 	mustOK(t, "device wipe", code, body)
 
 	h = multiImage(t, chip, true).Handler()
@@ -230,13 +321,42 @@ type multiProfile struct {
 }
 
 var multiProfiles = []multiProfile{
-	{"otg@preview", scopeTestnetName, 0, 0, testColdID + 1, 0x01, multiKeyTestnet},
-	{"pool@cardano-mainnet", scopeCardanoName, 1, 1, 0x20e50018, 0x02, multiKeyCardano},
-	{"pool@prime-mainnet", scopePrimeName, 1, 2, 0x20e5001c, 0x03, multiKeyPrime},
+	{
+		"otg@preview",
+		scopeTestnetName,
+		0,
+		0,
+		testColdID + 1,
+		0x01,
+		multiKeyTestnet,
+	},
+	{
+		"pool@cardano-mainnet",
+		scopeCardanoName,
+		1,
+		1,
+		0x20e50018,
+		0x02,
+		multiKeyCardano,
+	},
+	{
+		"pool@prime-mainnet",
+		scopePrimeName,
+		1,
+		2,
+		0x20e5001c,
+		0x03,
+		multiKeyPrime,
+	},
 }
 
 func coldReq(slot uint32, seed byte) ColdRequest {
-	return ColdRequest{ColdKeyID: slot, SigningKey: secretHex(append([]byte{0x58, 0x20}, bytes.Repeat([]byte{seed}, 32)...))}
+	return ColdRequest{
+		ColdKeyID: slot,
+		SigningKey: secretHex(
+			append([]byte{0x58, 0x20}, bytes.Repeat([]byte{seed}, 32)...),
+		),
+	}
 }
 
 func mustOK(t *testing.T, what string, code int, body []byte) {
@@ -258,13 +378,25 @@ func seedMulti(t *testing.T) (*fakeChip, *Service) {
 
 	seedHostKeys(t, h)
 
-	code, body := postAs(t, h, RouteProvisionIdentity, IdentityRequest{}, multiKeyCardano)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionIdentity,
+		IdentityRequest{},
+		multiKeyCardano,
+	)
 	mustOK(t, "identity", code, body)
 
 	counter := uint64(3)
 
 	for _, p := range multiProfiles {
-		code, body = postAs(t, h, RouteProvisionCold, coldReq(p.cold, p.seed), p.key)
+		code, body = postAs(
+			t,
+			h,
+			RouteProvisionCold,
+			coldReq(p.cold, p.seed),
+			p.key,
+		)
 		mustOK(t, "cold "+p.name, code, body)
 
 		code, body = postAs(t, h, RouteProvisionProfile, ProvisionRequest{
@@ -277,13 +409,22 @@ func seedMulti(t *testing.T) (*fakeChip, *Service) {
 }
 
 // opcertFor is an opcert-next request for p, authenticated by key.
-func opcertFor(t *testing.T, s *Service, chip *fakeChip, p multiProfile, key ed25519.PrivateKey, n byte) SignResponse {
+func opcertFor(
+	t *testing.T,
+	s *Service,
+	chip *fakeChip,
+	p multiProfile,
+	key ed25519.PrivateKey,
+	n byte,
+) SignResponse {
 	t.Helper()
 
 	cold, _ := chip.PublicKeyEd25519(p.cold)
 	req := SignRequest{
 		Version: Protocol, Purpose: "opcert-next", KeyHash: hashHex(cold), Role: "pool",
-		Nonce: nonce(n), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: p.name,
+		Nonce: nonce(
+			n,
+		), Payload: opCertPayload(bytes.Repeat([]byte{0x4b}, 32), 3, 1100), Profile: p.name,
 	}
 
 	return postSign(t, s, authenticate(req, key, challenge(t, s)))
@@ -305,14 +446,26 @@ func TestMultiSigningNeedsKeyOfProfileScope(t *testing.T) {
 
 			if p.scope == k.scope {
 				if resp.Error != "" || len(resp.Signature) == 0 {
-					t.Errorf("%s key refused for %s: %q", k.scope, p.name, resp.Error)
+					t.Errorf(
+						"%s key refused for %s: %q",
+						k.scope,
+						p.name,
+						resp.Error,
+					)
 				}
 
 				continue
 			}
 
-			if resp.Error != errScopeMismatch.Error() || len(resp.Signature) != 0 {
-				t.Errorf("%s key signing for %s: error %q, signature %x", k.scope, p.name, resp.Error, resp.Signature)
+			if resp.Error != errScopeMismatch.Error() ||
+				len(resp.Signature) != 0 {
+				t.Errorf(
+					"%s key signing for %s: error %q, signature %x",
+					k.scope,
+					p.name,
+					resp.Error,
+					resp.Signature,
+				)
 			}
 		}
 	}
@@ -356,7 +509,15 @@ func profileRequest(t *testing.T, route string, p multiProfile) any {
 	case RouteProvisionFloor:
 		return FloorRequest{Profile: p.name, ChainCounter: 3}
 	case RouteProvisionReward:
-		return RewardRequest{Profile: p.name, RewardAccount: "e" + string(rune('0'+p.net)) + strings.Repeat("ee", 28)}
+		return RewardRequest{
+			Profile: p.name,
+			RewardAccount: "e" + string(
+				rune('0'+p.net),
+			) + strings.Repeat(
+				"ee",
+				28,
+			),
+		}
 	case RouteProvisionPins:
 		r := setPinsReq()
 		r.Profile = p.name
@@ -383,7 +544,13 @@ func TestMultiProfileRoutesNeedKeyOfProfileScope(t *testing.T) {
 					t.Parallel()
 
 					_, s := seedMulti(t)
-					code, body := postAs(t, s.Handler(), route, profileRequest(t, route, p), k.key)
+					code, body := postAs(
+						t,
+						s.Handler(),
+						route,
+						profileRequest(t, route, p),
+						k.key,
+					)
 
 					if p.scope == k.scope {
 						mustOK(t, "same scope", code, body)
@@ -413,14 +580,23 @@ func TestMultiWipeProfileNeedsKeyOfProfileScope(t *testing.T) {
 				// the wipe confirms the device identity
 				var id IdentityResponse
 
-				code, body := postAs(t, s.Handler(), RouteProvisionIdentity, IdentityRequest{}, multiKeyCardano)
+				code, body := postAs(
+					t,
+					s.Handler(),
+					RouteProvisionIdentity,
+					IdentityRequest{},
+					multiKeyCardano,
+				)
 				mustOK(t, "identity", code, body)
 
 				if err := json.Unmarshal(body, &id); err != nil {
 					t.Fatal(err)
 				}
 
-				req := WipeProfileRequest{Profile: p.name, IdentityPublicKey: hexOf(id.PublicKey)}
+				req := WipeProfileRequest{
+					Profile:           p.name,
+					IdentityPublicKey: hexOf(id.PublicKey),
+				}
 				code, body = postAs(t, h, RouteWipeProfile, req, k.key)
 
 				// a mainnet key also removes a testnet profile
@@ -457,7 +633,13 @@ func TestMultiProvisionProfileNeedsKeyOfProfileScope(t *testing.T) {
 	} {
 		// the cold key is imported by the key that also provisions, in the
 		// scope of that key, so the scope check is the one that refuses
-		req := ProvisionRequest{Name: c.name, NetworkID: c.net, Slot: 9, ColdKeyID: testColdID + 9, ChainCounter: &counter}
+		req := ProvisionRequest{
+			Name:         c.name,
+			NetworkID:    c.net,
+			Slot:         9,
+			ColdKeyID:    testColdID + 9,
+			ChainCounter: &counter,
+		}
 		code, body := postAs(t, h, RouteProvisionProfile, req, c.key)
 		refused(t, c.name, code, body, errScopeMismatch)
 	}
@@ -473,7 +655,13 @@ func TestMultiTestnetProfileRefusesMainnetName(t *testing.T) {
 	h := s.Handler()
 	counter := uint64(1)
 
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, 0x46), multiKeyTestnet)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50014, 0x46),
+		multiKeyTestnet,
+	)
 	mustOK(t, "testnet cold key", code, body)
 
 	for _, name := range []string{"squat@cardano-mainnet", "squat@prime-mainnet"} {
@@ -549,12 +737,25 @@ func TestMultiHostKeyListing(t *testing.T) {
 		{multiKeyPrime, scopePrimeName, 3},
 	} {
 		// re-adding the key is a no-op that answers with the list
-		code, body := postAs(t, s.Handler(), RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(c.key), Scope: c.scope}, c.key)
+		code, body := postAs(
+			t,
+			s.Handler(),
+			RouteProvisionHostKey,
+			HostKeyRequest{PublicKey: hostPub(c.key), Scope: c.scope},
+			c.key,
+		)
 		mustOK(t, c.scope, code, body)
 
 		var resp HostKeyResponse
-		if err := json.Unmarshal(body, &resp); err != nil || len(resp.HostKeys) != c.want {
-			t.Errorf("%s key lists %d keys, want %d (%v)", c.scope, len(resp.HostKeys), c.want, err)
+		if err := json.Unmarshal(body, &resp); err != nil ||
+			len(resp.HostKeys) != c.want {
+			t.Errorf(
+				"%s key lists %d keys, want %d (%v)",
+				c.scope,
+				len(resp.HostKeys),
+				c.want,
+				err,
+			)
 		}
 	}
 }
@@ -581,7 +782,13 @@ func TestMultiSignedHostKeyAddNamesSigningScope(t *testing.T) {
 		refused(t, name, code, body, c.want)
 	}
 
-	code, body := postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(extra), Scope: scopePrimeName}, multiKeyPrime)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{PublicKey: hostPub(extra), Scope: scopePrimeName},
+		multiKeyPrime,
+	)
 	mustOK(t, "prime key adds a second prime key", code, body)
 }
 
@@ -593,15 +800,37 @@ func TestMultiHostKeyScopeIsSigned(t *testing.T) {
 	_, s := seedMulti(t)
 	h := s.Handler()
 
-	body := jsonOf(t, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb2)), Scope: scopePrimeName})
-	other := jsonOf(t, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb2)), Scope: scopeCardanoName})
+	body := jsonOf(
+		t,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb2)),
+			Scope:     scopePrimeName,
+		},
+	)
+	other := jsonOf(
+		t,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb2)),
+			Scope:     scopeCardanoName,
+		},
+	)
 
-	a, err := canonicalRequest(&HostKeyRequest{PublicKey: hostPub(scopeKey(0xb2)), Scope: scopePrimeName})
+	a, err := canonicalRequest(
+		&HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb2)),
+			Scope:     scopePrimeName,
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	b, _ := canonicalRequest(&HostKeyRequest{PublicKey: hostPub(scopeKey(0xb2)), Scope: scopeCardanoName})
+	b, _ := canonicalRequest(
+		&HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb2)),
+			Scope:     scopeCardanoName,
+		},
+	)
 	if bytes.Equal(a, b) {
 		t.Fatal("the canonical request does not cover the scope")
 	}
@@ -613,7 +842,12 @@ func TestMultiHostKeyScopeIsSigned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	signed, err := SignAdminRequest(RouteProvisionHostKey, body, multiKeyPrime, c.Challenge)
+	signed, err := SignAdminRequest(
+		RouteProvisionHostKey,
+		body,
+		multiKeyPrime,
+		c.Challenge,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,7 +866,8 @@ func TestMultiHostKeyScopeIsSigned(t *testing.T) {
 	forged, _ := json.Marshal(env)
 	code, resp := rawPost(h, RouteProvisionHostKey, forged)
 
-	if code == http.StatusOK || !strings.Contains(string(resp), "host signature does not verify") {
+	if code == http.StatusOK ||
+		!strings.Contains(string(resp), "host signature does not verify") {
 		t.Fatalf("scope swapped under a valid signature: %d %s", code, resp)
 	}
 }
@@ -647,19 +882,58 @@ func TestMultiRevoke(t *testing.T) {
 
 	// a second prime key, revoked by the first
 	second := scopeKey(0xb3)
-	code, body := postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyPrime)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName},
+		multiKeyPrime,
+	)
 	mustOK(t, "add", code, body)
 
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyPrime), Scope: scopePrimeName}, multiKeyTestnet)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{
+			PublicKey: hostPub(multiKeyPrime),
+			Scope:     scopePrimeName,
+		},
+		multiKeyTestnet,
+	)
 	refused(t, "testnet key revokes prime key", code, body, errDeviceWide)
 
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyPrime)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName},
+		multiKeyPrime,
+	)
 	mustOK(t, "prime key revokes a prime key", code, body)
 
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb6)), Scope: scopeTestnetName}, multiKeyTestnet)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb6)),
+			Scope:     scopeTestnetName,
+		},
+		multiKeyTestnet,
+	)
 	mustOK(t, "add a second testnet key", code, body)
 
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyTestnet), Scope: scopeTestnetName}, multiKeyCardano)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{
+			PublicKey: hostPub(multiKeyTestnet),
+			Scope:     scopeTestnetName,
+		},
+		multiKeyCardano,
+	)
 	mustOK(t, "mainnet key revokes a testnet key", code, body)
 }
 
@@ -685,16 +959,34 @@ func TestMultiColdKeyNotSharedAcrossScopes(t *testing.T) {
 		"testnet key, cardano's key":     {0x20e50014, cardano.seed, multiKeyTestnet},
 		"cardano key, prime profile key": {0x20e50019, prime.seed, multiKeyCardano},
 	} {
-		code, body := postAs(t, h, RouteProvisionCold, coldReq(c.slot, c.seed), c.key)
+		code, body := postAs(
+			t,
+			h,
+			RouteProvisionCold,
+			coldReq(c.slot, c.seed),
+			c.key,
+		)
 		refused(t, name, code, body, errCrossScope)
 	}
 
 	// the testnet profile's own slot belongs to the testnet scope
-	code, body := postAs(t, h, RouteProvisionCold, coldReq(testnet.cold, testnet.seed), multiKeyPrime)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(testnet.cold, testnet.seed),
+		multiKeyPrime,
+	)
 	refused(t, "prime key, slot of testnet", code, body, errColdOwner)
 
 	// the same testnet key twice, under two slots, is one scope
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50014, testnet.seed), multiKeyTestnet)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50014, testnet.seed),
+		multiKeyTestnet,
+	)
 	mustOK(t, "same-scope duplicate cold key", code, body)
 
 	counter := uint64(1)
@@ -723,7 +1015,13 @@ func TestMultiProvisionRefusesCrossScopeKeys(t *testing.T) {
 	// a prime cold key whose slot holds a key the testnet profile owns too:
 	// the key shared by two slots, one of each scope, is refused at the
 	// second profile
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e5001d, 0x44), multiKeyPrime)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e5001d, 0x44),
+		multiKeyPrime,
+	)
 	mustOK(t, "prime cold key", code, body)
 
 	// an imported owner key equal to another scope's cold key
@@ -732,14 +1030,26 @@ func TestMultiProvisionRefusesCrossScopeKeys(t *testing.T) {
 		OwnerSigningKey: coldReq(0, cardano.seed).SigningKey,
 	}
 	code, body = postAs(t, h, RouteProvisionProfile, own, multiKeyPrime)
-	refused(t, "owner key equal to a cardano cold key", code, body, errCrossScope)
+	refused(
+		t,
+		"owner key equal to a cardano cold key",
+		code,
+		body,
+		errCrossScope,
+	)
 
 	// within one scope it is allowed
 	same := ProvisionRequest{
 		Name: "y@preview", Slot: 9, ColdKeyID: 0x20e50015, ChainCounter: &counter,
 		OwnerSigningKey: coldReq(0, testnet.seed).SigningKey,
 	}
-	code, body = postAs(t, h, RouteProvisionCold, coldReq(0x20e50015, 0x45), multiKeyTestnet)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionCold,
+		coldReq(0x20e50015, 0x45),
+		multiKeyTestnet,
+	)
 	mustOK(t, "testnet cold key", code, body)
 
 	code, body = postAs(t, h, RouteProvisionProfile, same, multiKeyTestnet)
@@ -762,9 +1072,13 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 			old := imageOn(t, chip, 0, "")
 			counter := uint64(3)
 
-			code, body := rawPost(old.Handler(), RouteProvisionProfile, jsonOf(t, ProvisionRequest{
-				Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
-			}))
+			code, body := rawPost(
+				old.Handler(),
+				RouteProvisionProfile,
+				jsonOf(t, ProvisionRequest{
+					Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
+				}),
+			)
 			mustOK(t, "profile on the testnet image", code, body)
 
 			if legacy {
@@ -780,7 +1094,10 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 
 			signing := multiImage(t, chip, false)
 			if resp := opcertFor(t, signing, chip, preview, multiKeyTestnet, 1); resp.Error != "" {
-				t.Fatalf("the testnet key no longer signs otg@preview: %q", resp.Error)
+				t.Fatalf(
+					"the testnet key no longer signs otg@preview: %q",
+					resp.Error,
+				)
 			}
 
 			if !bytes.Equal(chip.bins[hostKeysID], stored) {
@@ -789,63 +1106,147 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 
 			// the device holds a key, so none goes in unsigned
 			prov := multiImage(t, chip, true)
-			code, body = firstKey(t, prov.Handler(), scopeKey(0xc0), scopeTestnetName)
-			refused(t, "second unsigned testnet key", code, body, errFirstKeyHeld)
+			code, body = firstKey(
+				t,
+				prov.Handler(),
+				scopeKey(0xc0),
+				scopeTestnetName,
+			)
+			refused(
+				t,
+				"second unsigned testnet key",
+				code,
+				body,
+				errFirstKeyHeld,
+			)
 
-			code, body = firstKey(t, prov.Handler(), multiKeyCardano, scopeCardanoName)
-			refused(t, "unsigned cardano key beside the testnet key", code, body, errFirstKeyHeld)
+			code, body = firstKey(
+				t,
+				prov.Handler(),
+				multiKeyCardano,
+				scopeCardanoName,
+			)
+			refused(
+				t,
+				"unsigned cardano key beside the testnet key",
+				code,
+				body,
+				errFirstKeyHeld,
+			)
 
 			// a testnet add keeps the legacy entry legacy in the rewritten list
 			extra := scopeKey(0xc1)
-			code, body = postAs(t, prov.Handler(), RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(extra), Scope: scopeTestnetName}, multiKeyTestnet)
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionHostKey,
+				HostKeyRequest{
+					PublicKey: hostPub(extra),
+					Scope:     scopeTestnetName,
+				},
+				multiKeyTestnet,
+			)
 			mustOK(t, "testnet key adds a testnet key", code, body)
 
-			if legacy && chip.bins[hostKeysID][ed25519.PublicKeySize] != scopeLegacy {
+			if legacy &&
+				chip.bins[hostKeysID][ed25519.PublicKeySize] != scopeLegacy {
 				t.Fatal("the legacy host key was rewritten as scoped")
 			}
 
 			// a testnet key revokes another, never the device's last key
-			code, body = postAs(t, prov.Handler(), RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(extra)}, multiKeyTestnet)
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionHostRevoke,
+				HostKeyRequest{PublicKey: hostPub(extra)},
+				multiKeyTestnet,
+			)
 			mustOK(t, "testnet key revokes a testnet key", code, body)
 
-			code, body = postAs(t, prov.Handler(), RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)}, multiKeyTestnet)
-			refused(t, "testnet key revokes the device's last key", code, body, errLastHostKey)
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionHostRevoke,
+				HostKeyRequest{PublicKey: hostPub(multiKeyTestnet)},
+				multiKeyTestnet,
+			)
+			refused(
+				t,
+				"testnet key revokes the device's last key",
+				code,
+				body,
+				errLastHostKey,
+			)
 
 			// only a device wipe takes the mainnet key unsigned again, which
 			// adds the other scopes' keys; the wipe removes the profile too
-			code, body = rawPost(multiImage(t, chip, false).WipeHandler(), "/wipe/device", []byte(`{"identity_public_key":""}`))
+			code, body = rawPost(
+				multiImage(t, chip, false).WipeHandler(),
+				"/wipe/device",
+				[]byte(`{"identity_public_key":""}`),
+			)
 			mustOK(t, "device wipe", code, body)
 
 			prov = multiImage(t, chip, true)
 			seedHostKeys(t, prov.Handler())
 
-			code, body = postAs(t, prov.Handler(), RouteProvisionCold, coldReq(testColdID, 0x56), multiKeyTestnet)
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionCold,
+				coldReq(testColdID, 0x56),
+				multiKeyTestnet,
+			)
 			mustOK(t, "testnet cold key", code, body)
 
-			code, body = postAs(t, prov.Handler(), RouteProvisionProfile, ProvisionRequest{
-				Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
-			}, multiKeyTestnet)
+			code, body = postAs(
+				t,
+				prov.Handler(),
+				RouteProvisionProfile,
+				ProvisionRequest{
+					Name: "otg@preview", Slot: 0, ColdKeyID: testColdID, ChainCounter: &counter,
+				},
+				multiKeyTestnet,
+			)
 			mustOK(t, "testnet profile", code, body)
 
 			// each key signs for its own scope only
 			signing = multiImage(t, chip, false)
 			if resp := opcertFor(t, signing, chip, preview, multiKeyTestnet, 2); resp.Error != "" {
-				t.Fatalf("the testnet key stopped signing otg@preview: %q", resp.Error)
+				t.Fatalf(
+					"the testnet key stopped signing otg@preview: %q",
+					resp.Error,
+				)
 			}
 
 			for _, k := range []ed25519.PrivateKey{multiKeyCardano, multiKeyPrime} {
 				if resp := opcertFor(t, signing, chip, preview, k, 3); resp.Error != errScopeMismatch.Error() {
-					t.Fatalf("a mainnet key signed for otg@preview: %q", resp.Error)
+					t.Fatalf(
+						"a mainnet key signed for otg@preview: %q",
+						resp.Error,
+					)
 				}
 			}
 
 			// and a prime profile is provisioned and signed by the prime key
-			code, body = postAs(t, signing.Handler(), RouteProvisionCold, coldReq(0x20e5001d, 0x55), multiKeyPrime)
+			code, body = postAs(
+				t,
+				signing.Handler(),
+				RouteProvisionCold,
+				coldReq(0x20e5001d, 0x55),
+				multiKeyPrime,
+			)
 			mustOK(t, "prime cold key", code, body)
 
-			code, body = postAs(t, signing.Handler(), RouteProvisionProfile, ProvisionRequest{
-				Name: "pool@prime-mainnet", NetworkID: 1, Slot: 1, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
-			}, multiKeyPrime)
+			code, body = postAs(
+				t,
+				signing.Handler(),
+				RouteProvisionProfile,
+				ProvisionRequest{
+					Name: "pool@prime-mainnet", NetworkID: 1, Slot: 1, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
+				},
+				multiKeyPrime,
+			)
 			mustOK(t, "prime profile", code, body)
 
 			signing = multiImage(t, chip, false)
@@ -856,7 +1257,10 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 			}
 
 			if resp := opcertFor(t, signing, chip, prime, multiKeyTestnet, 5); resp.Error != errScopeMismatch.Error() {
-				t.Fatalf("the testnet key signed for the prime profile: %q", resp.Error)
+				t.Fatalf(
+					"the testnet key signed for the prime profile: %q",
+					resp.Error,
+				)
 			}
 		})
 	}
@@ -869,7 +1273,9 @@ func TestMultiClosesUnsignedImport(t *testing.T) {
 
 	s := multiImage(t, newFakeChip(), true)
 	if err := s.UnsignedProvisioningLocked(); err == nil {
-		t.Fatal("a multi image takes an unsigned cold key import with no host key registered")
+		t.Fatal(
+			"a multi image takes an unsigned cold key import with no host key registered",
+		)
 	}
 }
 
@@ -906,7 +1312,11 @@ func installLog(t *testing.T, s *Service) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	m := signlog.NewMemMedium(1 + 4*signlog.RecordBlocks)
 
-	w, err := signlog.Open(m, signlog.NewMemHeadStore(signlog.Head{}), signlog.NewKeySigner(priv))
+	w, err := signlog.Open(
+		m,
+		signlog.NewMemHeadStore(signlog.Head{}),
+		signlog.NewKeySigner(priv),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -914,7 +1324,12 @@ func installLog(t *testing.T, s *Service) {
 	s.SetSigningLog(w, m)
 }
 
-func inventoryAs(t *testing.T, s *Service, p multiProfile, key ed25519.PrivateKey) (int, []byte) {
+func inventoryAs(
+	t *testing.T,
+	s *Service,
+	p multiProfile,
+	key ed25519.PrivateKey,
+) (int, []byte) {
 	t.Helper()
 
 	req := InventoryRequest{Nonce: nonce(0x31), Profile: p.name}
@@ -957,7 +1372,10 @@ func TestInventoryRequestBindingVector(t *testing.T) {
 	t.Parallel()
 
 	got := hex.EncodeToString(InventoryRequestBinding(InventoryRequest{
-		Nonce: bytes.Repeat([]byte{1}, 32), Profile: "otg@preview", Challenge: bytes.Repeat([]byte{2}, 32),
+		Nonce: bytes.Repeat(
+			[]byte{1},
+			32,
+		), Profile: "otg@preview", Challenge: bytes.Repeat([]byte{2}, 32),
 	}))
 
 	const want = "25a68ec406d4ac5178c76c4362792d33c7bf8330af3efe1028db60d03a11860e"
@@ -975,29 +1393,103 @@ func TestMultiRevokeKeepsOtherScopesLastKey(t *testing.T) {
 	chip, _ := seedMulti(t)
 	h := multiImage(t, chip, true).Handler()
 
-	code, body := postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyPrime), Scope: scopePrimeName}, multiKeyCardano)
-	refused(t, "cardano key revokes prime's last key", code, body, errLastKeyOtherScope)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{
+			PublicKey: hostPub(multiKeyPrime),
+			Scope:     scopePrimeName,
+		},
+		multiKeyCardano,
+	)
+	refused(
+		t,
+		"cardano key revokes prime's last key",
+		code,
+		body,
+		errLastKeyOtherScope,
+	)
 
 	code, body = firstKey(t, h, scopeKey(0xb4), scopePrimeName)
-	refused(t, "unsigned prime key after the refused revoke", code, body, errFirstKeyHeld)
+	refused(
+		t,
+		"unsigned prime key after the refused revoke",
+		code,
+		body,
+		errFirstKeyHeld,
+	)
 
 	second := scopeKey(0xb3)
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyPrime)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName},
+		multiKeyPrime,
+	)
 	mustOK(t, "add a second prime key", code, body)
 
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(multiKeyPrime), Scope: scopePrimeName}, multiKeyCardano)
-	mustOK(t, "cardano key revokes a prime key while prime keeps one", code, body)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{
+			PublicKey: hostPub(multiKeyPrime),
+			Scope:     scopePrimeName,
+		},
+		multiKeyCardano,
+	)
+	mustOK(
+		t,
+		"cardano key revokes a prime key while prime keeps one",
+		code,
+		body,
+	)
 
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, multiKeyCardano)
-	refused(t, "cardano key revokes prime's remaining key", code, body, errLastKeyOtherScope)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName},
+		multiKeyCardano,
+	)
+	refused(
+		t,
+		"cardano key revokes prime's remaining key",
+		code,
+		body,
+		errLastKeyOtherScope,
+	)
 
-	code, body = postAs(t, h, RouteProvisionHostRevoke, HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName}, second)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostRevoke,
+		HostKeyRequest{PublicKey: hostPub(second), Scope: scopePrimeName},
+		second,
+	)
 	mustOK(t, "prime key revokes its own last key", code, body)
 
 	code, body = firstKey(t, h, scopeKey(0xb4), scopePrimeName)
-	refused(t, "unsigned prime key after prime revoked its own", code, body, errFirstKeyHeld)
+	refused(
+		t,
+		"unsigned prime key after prime revoked its own",
+		code,
+		body,
+		errFirstKeyHeld,
+	)
 
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb4)), Scope: scopePrimeName}, multiKeyCardano)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb4)),
+			Scope:     scopePrimeName,
+		},
+		multiKeyCardano,
+	)
 	mustOK(t, "cardano key adds prime's first key again", code, body)
 }
 
@@ -1022,10 +1514,28 @@ func TestMultiMigratedKeyKeepsEveryScope(t *testing.T) {
 	h := multiImage(t, chip, true).Handler()
 
 	// prime-mainnet: the key adds a replacement key for its scope
-	code, body := postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb2)), Scope: scopePrimeName}, k)
+	code, body := postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb2)),
+			Scope:     scopePrimeName,
+		},
+		k,
+	)
 	mustOK(t, "migrated key adds a prime-mainnet key", code, body)
 
 	// testnet: the same key still acts for its testnet registration
-	code, body = postAs(t, h, RouteProvisionHostKey, HostKeyRequest{PublicKey: hostPub(scopeKey(0xb3)), Scope: scopeTestnetName}, k)
+	code, body = postAs(
+		t,
+		h,
+		RouteProvisionHostKey,
+		HostKeyRequest{
+			PublicKey: hostPub(scopeKey(0xb3)),
+			Scope:     scopeTestnetName,
+		},
+		k,
+	)
 	mustOK(t, "migrated key adds a testnet key", code, body)
 }

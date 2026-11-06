@@ -83,7 +83,10 @@ func (q Question) Validate() error {
 	switch q.Kind {
 	case KindMultiSelect:
 		if q.Max < 1 || q.Min > q.Max || q.Max > n {
-			return invalidf("multi-select needs 0 <= min <= max <= %d and max >= 1", n)
+			return invalidf(
+				"multi-select needs 0 <= min <= max <= %d and max >= 1",
+				n,
+			)
 		}
 	case KindRanking:
 		if q.Min < 1 || q.Min > q.Max || q.Max > n {
@@ -138,7 +141,9 @@ func (s *RatingScale) validate() error {
 		set++
 	}
 	if set != 1 {
-		return invalidf("rating scale must be exactly one of grid, labels or levels")
+		return invalidf(
+			"rating scale must be exactly one of grid, labels or levels",
+		)
 	}
 	switch {
 	case s.Grid != nil:

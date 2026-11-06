@@ -92,7 +92,9 @@ func TestInspectCertificateValues(t *testing.T) {
 		&common.DeregistrationCertificate{Amount: 7},
 		&common.DeregistrationDrepCertificate{Amount: 8},
 	}
-	deposits, refunds, unresolvedDeposits, unresolvedRefunds, complete := inspectCertificateValues(certificates)
+	deposits, refunds, unresolvedDeposits, unresolvedRefunds, complete := inspectCertificateValues(
+		certificates,
+	)
 	if deposits != "20" || refunds != "15" {
 		t.Fatalf("deposit/refund totals = %s/%s, want 20/15", deposits, refunds)
 	}
@@ -107,12 +109,18 @@ func TestInspectCertificateValues(t *testing.T) {
 		t.Fatal("known certificate set reported incomplete value effects")
 	}
 
-	proposalTotal, complete := inspectProposalDeposit([]common.ProposalProcedure{
-		conway.ConwayProposalProcedure{PPDeposit: 9},
-		conway.ConwayProposalProcedure{PPDeposit: 11},
-	})
+	proposalTotal, complete := inspectProposalDeposit(
+		[]common.ProposalProcedure{
+			conway.ConwayProposalProcedure{PPDeposit: 9},
+			conway.ConwayProposalProcedure{PPDeposit: 11},
+		},
+	)
 	if !complete || proposalTotal != "20" {
-		t.Fatalf("proposal deposit total = %q, complete = %v, want 20/true", proposalTotal, complete)
+		t.Fatalf(
+			"proposal deposit total = %q, complete = %v, want 20/true",
+			proposalTotal,
+			complete,
+		)
 	}
 }
 
@@ -174,7 +182,9 @@ func TestMinFeeAcceptsProtocolCoinBoundaries(t *testing.T) {
 }
 
 func TestParseProtocolParams(t *testing.T) {
-	p, err := ParseProtocolParams([]byte(`{"txFeePerByte":44,"txFeeFixed":155381,"extra":"ignored"}`))
+	p, err := ParseProtocolParams(
+		[]byte(`{"txFeePerByte":44,"txFeeFixed":155381,"extra":"ignored"}`),
+	)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -212,7 +222,11 @@ func TestParseProtocolParamsRejectsOutOfRangeJSON(t *testing.T) {
 }
 
 func TestParseProtocolParamsAcceptsProtocolCoinBoundaries(t *testing.T) {
-	p, err := ParseProtocolParams([]byte(`{"txFeePerByte":18446744073709551615,"txFeeFixed":18446744073709551615}`))
+	p, err := ParseProtocolParams(
+		[]byte(
+			`{"txFeePerByte":18446744073709551615,"txFeeFixed":18446744073709551615}`,
+		),
+	)
 	if err != nil {
 		t.Fatalf("parse protocol Coin boundaries: %v", err)
 	}

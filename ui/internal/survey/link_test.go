@@ -56,7 +56,13 @@ func TestParseLink(t *testing.T) {
 			t.Parallel()
 			got, ok := ParseLink([]byte(tc.doc))
 			if ok != tc.ok || got != tc.want {
-				t.Fatalf("ParseLink = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
+				t.Fatalf(
+					"ParseLink = %+v, %v; want %+v, %v",
+					got,
+					ok,
+					tc.want,
+					tc.ok,
+				)
 			}
 		})
 	}

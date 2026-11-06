@@ -52,7 +52,11 @@ func newFakeTPM() *fakeTPM {
 
 func (f *fakeTPM) Available() (bool, string) { return f.available, f.reason }
 
-func (f *fakeTPM) Seal(secret []byte, password string, pcrBound bool) (*tpmpkg.Sealed, error) {
+func (f *fakeTPM) Seal(
+	secret []byte,
+	password string,
+	pcrBound bool,
+) (*tpmpkg.Sealed, error) {
 	if f.failSeal != nil {
 		return nil, f.failSeal
 	}
@@ -71,7 +75,10 @@ func (f *fakeTPM) Seal(secret []byte, password string, pcrBound bool) (*tpmpkg.S
 	}, nil
 }
 
-func (f *fakeTPM) Unseal(sealed *tpmpkg.Sealed, password string) ([]byte, error) {
+func (f *fakeTPM) Unseal(
+	sealed *tpmpkg.Sealed,
+	password string,
+) ([]byte, error) {
 	if f.failUnseal != nil {
 		return nil, f.failUnseal
 	}
@@ -140,7 +147,10 @@ func TestTPMProtectorWrongPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapTPM: %v", err)
 	}
-	if _, err := p.UnwrapTPM(sec, "wrong-password"); !errors.Is(err, ErrWrongPassword) {
+	if _, err := p.UnwrapTPM(sec, "wrong-password"); !errors.Is(
+		err,
+		ErrWrongPassword,
+	) {
 		t.Fatalf("UnwrapTPM wrong password = %v, want ErrWrongPassword", err)
 	}
 }
@@ -177,7 +187,9 @@ func TestTPMProtectorRejectsInvalidUnsealedVEKLength(t *testing.T) {
 		SRKTemplate: srkTemplateID,
 	}
 	if _, err := p.UnwrapTPM(sec, vaultPw); err == nil {
-		t.Fatal("UnwrapTPM should reject a TPM-unsealed VEK that is not vekLen bytes")
+		t.Fatal(
+			"UnwrapTPM should reject a TPM-unsealed VEK that is not vekLen bytes",
+		)
 	}
 }
 

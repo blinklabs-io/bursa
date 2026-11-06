@@ -55,9 +55,13 @@ func TestEnumerateAddresses_CountValidation(t *testing.T) {
 		t.Fatalf("expected error for count>1000")
 	}
 	if _, err := EnumerateAddresses(m, "", "preview", 0, maxAddressDerivationIndex, 2); err == nil {
-		t.Fatalf("expected error for range past maximum address derivation index")
+		t.Fatalf(
+			"expected error for range past maximum address derivation index",
+		)
 	}
 	if _, err := EnumerateAddresses(m, "", "preview", 0, maxAddressDerivationIndex+1, 1); err == nil {
-		t.Fatalf("expected error for start past maximum address derivation index")
+		t.Fatalf(
+			"expected error for start past maximum address derivation index",
+		)
 	}
 }

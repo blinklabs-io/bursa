@@ -234,7 +234,9 @@ func TestSignData_RejectsSpoofedAddress(t *testing.T) {
 
 	_, _, err := SignData(addr, []byte("payload"), lk)
 	if err == nil {
-		t.Fatalf("SignData must reject addresses that do not match the signing key")
+		t.Fatalf(
+			"SignData must reject addresses that do not match the signing key",
+		)
 	}
 }
 
@@ -255,7 +257,9 @@ func TestSignData_RejectsScriptPaymentBaseAddressStakeKey(t *testing.T) {
 
 	_, _, err := SignData(addr, []byte("payload"), stake)
 	if err == nil {
-		t.Fatalf("SignData must reject script-payment base addresses signed by stake key")
+		t.Fatalf(
+			"SignData must reject script-payment base addresses signed by stake key",
+		)
 	}
 }
 
@@ -333,8 +337,24 @@ func TestSignaturePayloadHashed(t *testing.T) {
 		t.Fatalf("SignData: %v", err)
 	}
 
-	protectedSig, _ := testCoseSign1Hex(t, lk, addr, payload, payload, true, true)
-	unprotectedSig, _ := testCoseSign1Hex(t, lk, addr, payload, payload, true, false)
+	protectedSig, _ := testCoseSign1Hex(
+		t,
+		lk,
+		addr,
+		payload,
+		payload,
+		true,
+		true,
+	)
+	unprotectedSig, _ := testCoseSign1Hex(
+		t,
+		lk,
+		addr,
+		payload,
+		payload,
+		true,
+		false,
+	)
 
 	tests := []struct {
 		name string
@@ -400,28 +420,43 @@ func TestVerifyData_TamperedPayloadFails(t *testing.T) {
 	}
 }
 
-func TestVerifyDataWithAddress_RejectsWrongKeyBeforePayloadMismatch(t *testing.T) {
+func TestVerifyDataWithAddress_RejectsWrongKeyBeforePayloadMismatch(
+	t *testing.T,
+) {
 	lk1 := testLoadedKey(make([]byte, 32))
 	lk2 := testLoadedKey(append(make([]byte, 31), 1))
 
-	sig, _, err := SignData(testEnterpriseAddress(t, lk1.VKey), []byte("original"), lk1)
+	sig, _, err := SignData(
+		testEnterpriseAddress(t, lk1.VKey),
+		[]byte("original"),
+		lk1,
+	)
 	if err != nil {
 		t.Fatalf("SignData lk1: %v", err)
 	}
-	_, key2, err := SignData(testEnterpriseAddress(t, lk2.VKey), []byte("x"), lk2)
+	_, key2, err := SignData(
+		testEnterpriseAddress(t, lk2.VKey),
+		[]byte("x"),
+		lk2,
+	)
 	if err != nil {
 		t.Fatalf("SignData lk2: %v", err)
 	}
 
 	ok, address, err := VerifyDataWithAddress(sig, key2, []byte("tampered"))
 	if err == nil {
-		t.Fatalf("VerifyDataWithAddress must reject a key mismatch before payload mismatch")
+		t.Fatalf(
+			"VerifyDataWithAddress must reject a key mismatch before payload mismatch",
+		)
 	}
 	if ok {
 		t.Fatalf("key mismatch must not verify")
 	}
 	if address != "" {
-		t.Fatalf("unverified protected address must not be returned, got %q", address)
+		t.Fatalf(
+			"unverified protected address must not be returned, got %q",
+			address,
+		)
 	}
 }
 
@@ -462,13 +497,19 @@ func TestVerifyData_WrongKeyFails(t *testing.T) {
 		t.Fatalf("SignData lk1: %v", err)
 	}
 	// Get key2's COSE_Key by signing anything with lk2 and taking its key output.
-	_, key2, err := SignData(testEnterpriseAddress(t, lk2.VKey), []byte("x"), lk2)
+	_, key2, err := SignData(
+		testEnterpriseAddress(t, lk2.VKey),
+		[]byte("x"),
+		lk2,
+	)
 	if err != nil {
 		t.Fatalf("SignData lk2: %v", err)
 	}
 	ok, err := VerifyData(sig, key2, payload)
 	if err == nil {
-		t.Fatalf("VerifyData must reject a key that does not match the protected address")
+		t.Fatalf(
+			"VerifyData must reject a key that does not match the protected address",
+		)
 	}
 	if ok {
 		t.Fatalf("signature must not verify under a different key")
@@ -536,8 +577,18 @@ func TestVerifyData_RejectsInvalidCoseKeyMetadata(t *testing.T) {
 		alg  int64
 		crv  int64
 	}{
-		{name: "wrong key type", kty: 2, alg: coseAlgEdDSA, crv: coseCrvEd25519},
-		{name: "wrong algorithm", kty: coseKtyOKP, alg: -7, crv: coseCrvEd25519},
+		{
+			name: "wrong key type",
+			kty:  2,
+			alg:  coseAlgEdDSA,
+			crv:  coseCrvEd25519,
+		},
+		{
+			name: "wrong algorithm",
+			kty:  coseKtyOKP,
+			alg:  -7,
+			crv:  coseCrvEd25519,
+		},
 		{name: "wrong curve", kty: coseKtyOKP, alg: coseAlgEdDSA, crv: 1},
 	}
 	for _, tt := range tests {

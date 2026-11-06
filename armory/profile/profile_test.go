@@ -246,7 +246,10 @@ func TestLastIssuedRoundTrip(t *testing.T) {
 	// the record limit holds for the longest name and reward address with
 	// four-digit counters
 	large := Profile{
-		Name: strings.Repeat("n", MaxNameLen), NetworkID: 1, Slot: MaxSlot, ColdKeyID: ^uint32(0),
+		Name: strings.Repeat(
+			"n",
+			MaxNameLen,
+		), NetworkID: 1, Slot: MaxSlot, ColdKeyID: ^uint32(0),
 		FloorSet: true, OpCertFloor: 9998, LastIssued: 9999, RewardAccount: "f1" + strings.Repeat("ff", 28),
 	}
 

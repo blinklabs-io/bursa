@@ -68,7 +68,11 @@ type Controller struct {
 //     dispatch runs closures inline, which is what the unit tests use.
 //   - terminate ends the webview run loop (webview.Terminate); this is the Quit
 //     path that lets the caller tear the whole stack down.
-func NewController(win WindowController, dispatch func(func()), terminate func()) *Controller {
+func NewController(
+	win WindowController,
+	dispatch func(func()),
+	terminate func(),
+) *Controller {
 	if dispatch == nil {
 		dispatch = func(f func()) { f() }
 	}

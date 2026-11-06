@@ -33,7 +33,11 @@ type ArmoryVerifier struct {
 // NewArmoryVerifier pins the device identity public key.
 func NewArmoryVerifier(identity ed25519.PublicKey) (*ArmoryVerifier, error) {
 	if len(identity) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("armory identity key must be %d bytes, got %d", ed25519.PublicKeySize, len(identity))
+		return nil, fmt.Errorf(
+			"armory identity key must be %d bytes, got %d",
+			ed25519.PublicKeySize,
+			len(identity),
+		)
 	}
 	if bytes.Equal(identity, make([]byte, ed25519.PublicKeySize)) {
 		return nil, errors.New("armory identity key is all zeros")
@@ -42,9 +46,15 @@ func NewArmoryVerifier(identity ed25519.PublicKey) (*ArmoryVerifier, error) {
 }
 
 // Verify implements AttestationVerifier.
-func (v *ArmoryVerifier) Verify(_ context.Context, evidence, binding []byte) error {
-	if len(evidence) != ed25519.SignatureSize || !ed25519.Verify(v.identity, binding, evidence) {
-		return errors.New("armory inventory is not signed by the pinned identity key")
+func (v *ArmoryVerifier) Verify(
+	_ context.Context,
+	evidence, binding []byte,
+) error {
+	if len(evidence) != ed25519.SignatureSize ||
+		!ed25519.Verify(v.identity, binding, evidence) {
+		return errors.New(
+			"armory inventory is not signed by the pinned identity key",
+		)
 	}
 	return nil
 }

@@ -170,7 +170,12 @@ func TestServeServiceWatchdogDoesNotLeak(t *testing.T) {
 			return // settled back to baseline
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("goroutines did not settle: baseline %d, now %d (leaked ~%d)", base, got, got-base)
+			t.Fatalf(
+				"goroutines did not settle: baseline %d, now %d (leaked ~%d)",
+				base,
+				got,
+				got-base,
+			)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -246,8 +251,11 @@ func TestServeKeyMultipleSubscribersReceiveIntactKey(t *testing.T) {
 	if rp1.Period != 6 || rp2.Period != 6 {
 		t.Fatalf("re-push periods = %d,%d want 6,6", rp1.Period, rp2.Period)
 	}
-	if !nonZero(rp1.KESSignKey) || !bytes.Equal(rp1.KESSignKey, rp2.KESSignKey) {
-		t.Fatal("broadcast delivered a zeroed or divergent signing key across subscribers")
+	if !nonZero(rp1.KESSignKey) ||
+		!bytes.Equal(rp1.KESSignKey, rp2.KESSignKey) {
+		t.Fatal(
+			"broadcast delivered a zeroed or divergent signing key across subscribers",
+		)
 	}
 }
 
@@ -283,7 +291,14 @@ func TestServiceSignMode(t *testing.T) {
 
 	// Each request carries a header body whose slot lies in the period it asks
 	// for, so the period rules, not header validation, decide the outcome.
-	spec := headerSpec{slot: 52, issuer: cold.pub, hotVkey: vkey, sequence: 1, kesPeriod: 3, coldSig: opCertColdSig(t, opcert)}
+	spec := headerSpec{
+		slot:      52,
+		issuer:    cold.pub,
+		hotVkey:   vkey,
+		sequence:  1,
+		kesPeriod: 3,
+		coldSig:   opCertColdSig(t, opcert),
+	}
 	msg := spec.encode(t)
 	if err := writeFrame(conn, SignRequest{Type: "sign_request", Period: 5, Message: msg}); err != nil {
 		t.Fatalf("write sign request: %v", err)
@@ -338,7 +353,11 @@ func TestServiceSignMode(t *testing.T) {
 		t.Fatalf("read untyped response: %v", err)
 	}
 	if untyped.Error == "" || len(untyped.Signature) != 0 {
-		t.Fatalf("untyped message was signed: err=%q sig=%d bytes", untyped.Error, len(untyped.Signature))
+		t.Fatalf(
+			"untyped message was signed: err=%q sig=%d bytes",
+			untyped.Error,
+			len(untyped.Signature),
+		)
 	}
 }
 
@@ -373,7 +392,9 @@ func TestServeServiceShutdownWithIdleConnection(t *testing.T) {
 			t.Fatalf("ServeService returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("ServeService did not return within 2s of an idle connection outliving shutdown")
+		t.Fatal(
+			"ServeService did not return within 2s of an idle connection outliving shutdown",
+		)
 	}
 }
 
@@ -414,6 +435,8 @@ func TestServeServiceListenerCloseUnblocksIdleHandler(t *testing.T) {
 		// Any return (with or without an Accept error) is fine; what matters
 		// is that it doesn't hang on the idle handler.
 	case <-time.After(2 * time.Second):
-		t.Fatal("ServeService did not return within 2s of a direct listener close with an idle connection")
+		t.Fatal(
+			"ServeService did not return within 2s of a direct listener close with an idle connection",
+		)
 	}
 }

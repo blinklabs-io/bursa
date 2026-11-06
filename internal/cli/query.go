@@ -33,7 +33,11 @@ type (
 	queryTipRunner   func(ctx context.Context, socketPath, network string) (*txbuilder.TipQueryResult, error)
 )
 
-func defaultQueryPool(ctx context.Context, socketPath, network string, poolID lcommon.PoolId) (*txbuilder.PoolQueryResult, error) {
+func defaultQueryPool(
+	ctx context.Context,
+	socketPath, network string,
+	poolID lcommon.PoolId,
+) (*txbuilder.PoolQueryResult, error) {
 	chain := txbuilder.NewN2C(socketPath, network)
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
@@ -42,7 +46,10 @@ func defaultQueryPool(ctx context.Context, socketPath, network string, poolID lc
 	return chain.QueryPool(ctx, poolID, network)
 }
 
-func defaultQueryStake(ctx context.Context, socketPath, network, address string) (*txbuilder.StakeAddressQueryResult, error) {
+func defaultQueryStake(
+	ctx context.Context,
+	socketPath, network, address string,
+) (*txbuilder.StakeAddressQueryResult, error) {
 	chain := txbuilder.NewN2C(socketPath, network)
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
@@ -51,7 +58,10 @@ func defaultQueryStake(ctx context.Context, socketPath, network, address string)
 	return chain.QueryStakeAddress(ctx, address, network)
 }
 
-func defaultQueryUtxo(ctx context.Context, socketPath, network, address string) ([]txbuilder.UTxOQueryResult, error) {
+func defaultQueryUtxo(
+	ctx context.Context,
+	socketPath, network, address string,
+) ([]txbuilder.UTxOQueryResult, error) {
 	chain := txbuilder.NewN2C(socketPath, network)
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
@@ -60,7 +70,10 @@ func defaultQueryUtxo(ctx context.Context, socketPath, network, address string) 
 	return chain.QueryUTxOs(ctx, address)
 }
 
-func defaultQueryTip(ctx context.Context, socketPath, network string) (*txbuilder.TipQueryResult, error) {
+func defaultQueryTip(
+	ctx context.Context,
+	socketPath, network string,
+) (*txbuilder.TipQueryResult, error) {
 	chain := txbuilder.NewN2C(socketPath, network)
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
@@ -70,9 +83,14 @@ func defaultQueryTip(ctx context.Context, socketPath, network string) (*txbuilde
 }
 
 // queryContext bounds a query command by --timeout, which must be positive.
-func queryContext(timeoutSeconds int64) (context.Context, context.CancelFunc, error) {
+func queryContext(
+	timeoutSeconds int64,
+) (context.Context, context.CancelFunc, error) {
 	if timeoutSeconds <= 0 {
-		return nil, nil, fmt.Errorf("--timeout must be positive, got %d", timeoutSeconds)
+		return nil, nil, fmt.Errorf(
+			"--timeout must be positive, got %d",
+			timeoutSeconds,
+		)
 	}
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
@@ -93,11 +111,25 @@ func writeJSONOutput(data interface{}, outFile string) error {
 	return os.WriteFile(outFile, enc, 0o600)
 }
 
-func RunQueryPool(socketPath, network, poolID, outFile string, timeoutSeconds int64) error {
-	return runQueryPool(socketPath, network, poolID, outFile, timeoutSeconds, defaultQueryPool)
+func RunQueryPool(
+	socketPath, network, poolID, outFile string,
+	timeoutSeconds int64,
+) error {
+	return runQueryPool(
+		socketPath,
+		network,
+		poolID,
+		outFile,
+		timeoutSeconds,
+		defaultQueryPool,
+	)
 }
 
-func runQueryPool(socketPath, network, poolID, outFile string, timeoutSeconds int64, runner queryPoolRunner) error {
+func runQueryPool(
+	socketPath, network, poolID, outFile string,
+	timeoutSeconds int64,
+	runner queryPoolRunner,
+) error {
 	if socketPath == "" {
 		return errors.New("--socket-path required")
 	}
@@ -129,11 +161,25 @@ func runQueryPool(socketPath, network, poolID, outFile string, timeoutSeconds in
 	return writeJSONOutput(res, outFile)
 }
 
-func RunQueryStakeAddress(socketPath, network, address, outFile string, timeoutSeconds int64) error {
-	return runQueryStakeAddress(socketPath, network, address, outFile, timeoutSeconds, defaultQueryStake)
+func RunQueryStakeAddress(
+	socketPath, network, address, outFile string,
+	timeoutSeconds int64,
+) error {
+	return runQueryStakeAddress(
+		socketPath,
+		network,
+		address,
+		outFile,
+		timeoutSeconds,
+		defaultQueryStake,
+	)
 }
 
-func runQueryStakeAddress(socketPath, network, address, outFile string, timeoutSeconds int64, runner queryStakeRunner) error {
+func runQueryStakeAddress(
+	socketPath, network, address, outFile string,
+	timeoutSeconds int64,
+	runner queryStakeRunner,
+) error {
 	if socketPath == "" {
 		return errors.New("--socket-path required")
 	}
@@ -162,11 +208,25 @@ func runQueryStakeAddress(socketPath, network, address, outFile string, timeoutS
 	return writeJSONOutput(res, outFile)
 }
 
-func RunQueryUtxo(socketPath, network, address, outFile string, timeoutSeconds int64) error {
-	return runQueryUtxo(socketPath, network, address, outFile, timeoutSeconds, defaultQueryUtxo)
+func RunQueryUtxo(
+	socketPath, network, address, outFile string,
+	timeoutSeconds int64,
+) error {
+	return runQueryUtxo(
+		socketPath,
+		network,
+		address,
+		outFile,
+		timeoutSeconds,
+		defaultQueryUtxo,
+	)
 }
 
-func runQueryUtxo(socketPath, network, address, outFile string, timeoutSeconds int64, runner queryUtxoRunner) error {
+func runQueryUtxo(
+	socketPath, network, address, outFile string,
+	timeoutSeconds int64,
+	runner queryUtxoRunner,
+) error {
 	if socketPath == "" {
 		return errors.New("--socket-path required")
 	}
@@ -195,11 +255,24 @@ func runQueryUtxo(socketPath, network, address, outFile string, timeoutSeconds i
 	return writeJSONOutput(res, outFile)
 }
 
-func RunQueryTip(socketPath, network, outFile string, timeoutSeconds int64) error {
-	return runQueryTip(socketPath, network, outFile, timeoutSeconds, defaultQueryTip)
+func RunQueryTip(
+	socketPath, network, outFile string,
+	timeoutSeconds int64,
+) error {
+	return runQueryTip(
+		socketPath,
+		network,
+		outFile,
+		timeoutSeconds,
+		defaultQueryTip,
+	)
 }
 
-func runQueryTip(socketPath, network, outFile string, timeoutSeconds int64, runner queryTipRunner) error {
+func runQueryTip(
+	socketPath, network, outFile string,
+	timeoutSeconds int64,
+	runner queryTipRunner,
+) error {
 	if socketPath == "" {
 		return errors.New("--socket-path required")
 	}

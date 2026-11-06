@@ -12,7 +12,9 @@ import (
 
 // ErrImportedAuxiliaryData marks an imported transaction whose auxiliary data
 // was not built and reviewed through a structured Bursa flow.
-var ErrImportedAuxiliaryData = errors.New("imported transactions with auxiliary data are unsupported")
+var ErrImportedAuxiliaryData = errors.New(
+	"imported transactions with auxiliary data are unsupported",
+)
 
 // RejectImportedAuxiliaryData keeps imported signing paths from authorizing
 // opaque metadata. Callers wrap the result with their own invalid-transaction
@@ -31,7 +33,8 @@ func RejectImportedAuxiliaryData(body *conway.ConwayTransactionBody) error {
 // bearing this wallet's own pubkey) is rejected here rather than being trusted
 // by key-hash alone.
 func Valid(w lcommon.VkeyWitness, msg []byte) bool {
-	if len(w.Vkey) != ed25519.PublicKeySize || len(w.Signature) != ed25519.SignatureSize {
+	if len(w.Vkey) != ed25519.PublicKeySize ||
+		len(w.Signature) != ed25519.SignatureSize {
 		return false
 	}
 	return ed25519.Verify(ed25519.PublicKey(w.Vkey), msg, w.Signature)

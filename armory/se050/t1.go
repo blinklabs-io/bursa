@@ -136,12 +136,15 @@ func crc16(data []byte) uint16 {
 
 func frame(pcb byte, data []byte) []byte {
 	f := make([]byte, 0, 3+len(data)+2)
-	f = append(f, nadHostToSE, pcb, byte(len(data))) //nolint:gosec // maxFrameData < 256
+	dataLen := byte(len(data)) //nolint:gosec // maxFrameData < 256
+	f = append(f, nadHostToSE, pcb, dataLen)
 	f = append(f, data...)
 	crc := crc16(f)
 
 	// the CRC is transmitted least significant byte first
-	return append(f, byte(crc), byte(crc>>8)) //nolint:gosec // uint16 truncated to bytes by design
+	crcLo := byte(crc)      //nolint:gosec // uint16 truncated to bytes by design
+	crcHi := byte(crc >> 8) //nolint:gosec // uint16 truncated to bytes by design
+	return append(f, crcLo, crcHi)
 }
 
 // writeFrame retries until the SE050 accepts the frame, as it NACKs its
@@ -156,7 +159,10 @@ func (t *T1) writeFrame(f []byte) (err error) {
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("se050: write failed: %w", errors.Join(ErrTimeout, err))
+			return fmt.Errorf(
+				"se050: write failed: %w",
+				errors.Join(ErrTimeout, err),
+			)
 		}
 
 		t.sleep(t.mpot)
@@ -172,7 +178,10 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 		hdr, err := t.bus.Read(3)
 		if err != nil {
 			if time.Now().After(deadline) {
-				return 0, nil, fmt.Errorf("se050: read failed: %w", errors.Join(ErrTimeout, err))
+				return 0, nil, fmt.Errorf(
+					"se050: read failed: %w",
+					errors.Join(ErrTimeout, err),
+				)
 			}
 
 			t.sleep(t.mpot)
@@ -180,14 +189,22 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 		}
 
 		if hdr[0] != nadSEToHost {
-			return 0, nil, fmt.Errorf("%w: invalid NAD %#02x", errCorrupt, hdr[0])
+			return 0, nil, fmt.Errorf(
+				"%w: invalid NAD %#02x",
+				errCorrupt,
+				hdr[0],
+			)
 		}
 
 		pcb = hdr[1]
 		n := int(hdr[2])
 
 		if n > maxFrameData {
-			return 0, nil, fmt.Errorf("%w: invalid frame length %d", errCorrupt, n)
+			return 0, nil, fmt.Errorf(
+				"%w: invalid frame length %d",
+				errCorrupt,
+				n,
+			)
 		}
 
 		data = []byte{}
@@ -205,7 +222,9 @@ func (t *T1) readFrame() (pcb byte, data []byte, err error) {
 
 		crc := crc16(append(hdr, data...))
 
-		if trailer[0] != byte(crc) || trailer[1] != byte(crc>>8) { //nolint:gosec // uint16 truncated to bytes by design
+		crcLo := byte(crc)      //nolint:gosec // uint16 truncated to bytes by design
+		crcHi := byte(crc >> 8) //nolint:gosec // uint16 truncated to bytes by design
+		if trailer[0] != crcLo || trailer[1] != crcHi {
 			return 0, nil, fmt.Errorf("%w: CRC mismatch", errCorrupt)
 		}
 
@@ -239,7 +258,10 @@ func (t *T1) SoftReset() (atr *ATR, err error) {
 	}
 
 	if pcb != sSoftResetResponse {
-		return nil, fmt.Errorf("se050: unexpected soft reset response PCB %#02x", pcb)
+		return nil, fmt.Errorf(
+			"se050: unexpected soft reset response PCB %#02x",
+			pcb,
+		)
 	}
 
 	if atr, err = parseATR(data); err != nil {
@@ -349,7 +371,12 @@ func (t *T1) exchange(f []byte) (pcb byte, data []byte, err error) {
 		}
 
 		if attempt == maxAttempts {
-			return 0, nil, fmt.Errorf("%w: last error: %w, PCB %#02x", errRetries, err, pcb)
+			return 0, nil, fmt.Errorf(
+				"%w: last error: %w, PCB %#02x",
+				errRetries,
+				err,
+				pcb,
+			)
 		}
 
 		if code == 0 {
@@ -430,8 +457,12 @@ func (t *T1) transceive(apdu []byte) (resp []byte, err error) {
 
 		// the SE acknowledges each chained block with an R-block naming
 		// the next sequence number
-		if !isRBlock(pcb) || pcb&rBlockErr != 0 || len(data) != 0 || pcb>>4&1 != t.sendSeq^1 {
-			return nil, fmt.Errorf("se050: expected R-block acknowledgement, got PCB %#02x", pcb)
+		if !isRBlock(pcb) || pcb&rBlockErr != 0 || len(data) != 0 ||
+			pcb>>4&1 != t.sendSeq^1 {
+			return nil, fmt.Errorf(
+				"se050: expected R-block acknowledgement, got PCB %#02x",
+				pcb,
+			)
 		}
 
 		t.sendSeq ^= 1
@@ -457,7 +488,10 @@ func (t *T1) transceive(apdu []byte) (resp []byte, err error) {
 		}
 
 		if !isIBlock(pcb) {
-			return nil, fmt.Errorf("se050: expected I-block, got PCB %#02x", pcb)
+			return nil, fmt.Errorf(
+				"se050: expected I-block, got PCB %#02x",
+				pcb,
+			)
 		}
 	}
 }

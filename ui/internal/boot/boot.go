@@ -70,7 +70,11 @@ import (
 // opaquely and this bridges the two types.
 type scriptVault struct{ v *vault.Vault }
 
-func (s scriptVault) AddScriptWallet(id, name, network string, w multisig.ScriptWallet, vaultPassword string) error {
+func (s scriptVault) AddScriptWallet(
+	id, name, network string,
+	w multisig.ScriptWallet,
+	vaultPassword string,
+) error {
 	_, err := s.v.AddScriptWallet(id, name, network, vault.ScriptMeta{
 		Policy:        w.Policy,
 		ScriptCBOR:    w.ScriptCBOR,
@@ -141,7 +145,11 @@ func (s scriptAccounts) Get(id string) (multisig.Account, error) {
 func scriptAccountFromMeta(m vault.WalletMeta) (multisig.Account, error) {
 	var policy multisig.Policy
 	if err := json.Unmarshal(m.Script.Policy, &policy); err != nil {
-		return multisig.Account{}, fmt.Errorf("wallet %q: decode multi-signature policy: %w", m.Name, err)
+		return multisig.Account{}, fmt.Errorf(
+			"wallet %q: decode multi-signature policy: %w",
+			m.Name,
+			err,
+		)
 	}
 	return multisig.Account{
 		ID:            m.ID,
@@ -300,9 +308,12 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		cfg.Addr = "127.0.0.1:0"
 	}
 	remoteConfigured := cfg.RemoteSubmission != (RemoteSubmissionConfig{})
-	if remoteConfigured && (cfg.RemoteSubmission.Addr == "" || cfg.RemoteSubmission.PublicURL == "" ||
-		cfg.RemoteSubmission.TLSCertFile == "" || cfg.RemoteSubmission.TLSKeyFile == "") {
-		return nil, errors.New("remote submission requires address, public URL, TLS certificate, and TLS key")
+	if remoteConfigured &&
+		(cfg.RemoteSubmission.Addr == "" || cfg.RemoteSubmission.PublicURL == "" ||
+			cfg.RemoteSubmission.TLSCertFile == "" || cfg.RemoteSubmission.TLSKeyFile == "") {
+		return nil, errors.New(
+			"remote submission requires address, public URL, TLS certificate, and TLS key",
+		)
 	}
 	logger := cfg.Logger
 	if logger == nil {
@@ -327,7 +338,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// The lean-node (history-expiry) profile is a persisted, user-facing setting
 	// (the source of truth). LeanDefault only seeds the first-run default; once a
 	// value is persisted it is honored and the seed is ignored.
-	settingsStore, err := settings.Load(filepath.Join(cfg.DataDir, "settings.json"))
+	settingsStore, err := settings.Load(
+		filepath.Join(cfg.DataDir, "settings.json"),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
@@ -341,10 +354,15 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	contactsStore := contacts.NewPersistenceDisabled()
 	if !cfg.ContactsPersistenceDisabled {
 		var contactsWarn error
-		contactsStore, contactsWarn = contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
+		contactsStore, contactsWarn = contacts.LoadOrEmpty(
+			filepath.Join(cfg.DataDir, "contacts.json"),
+		)
 		if contactsWarn != nil {
-			logger.Warn("address book could not be loaded; continuing with an empty one",
-				"error", contactsWarn)
+			logger.Warn(
+				"address book could not be loaded; continuing with an empty one",
+				"error",
+				contactsWarn,
+			)
 		}
 	}
 
@@ -369,7 +387,10 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// The wallet queries the node's own loopback Blockfrost endpoint. The same
 	// client also verifies pasted pool/DRep IDs and reads protocol params for the
 	// staking flow.
-	chainClient := chain.NewClient(blockfrostPort, chain.WithDingoDataDir(nodeDataDir))
+	chainClient := chain.NewClient(
+		blockfrostPort,
+		chain.WithDingoDataDir(nodeDataDir),
+	)
 	walletSvc := wallet.NewService(chainClient)
 
 	// Node-local wallet-activity detector: diffs the active wallet's confirmed
@@ -416,7 +437,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// Native multi-sig accounts are persisted under the data dir; signing uses
 	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
 	multisigStorePath := filepath.Join(cfg.DataDir, "multisig.json")
-	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, scriptAccounts{v: vlt})
+	multisigSvc := multisig.NewService(
+		chainCtx,
+		vaultKeystore{v: vlt},
+		scriptAccounts{v: vlt},
+	)
 
 	// Multi-signature accounts predate the vault and were kept in a plain file
 	// beside it. Move them in on unlock, so they are behind the vault password
@@ -425,11 +450,16 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// which is why this reports a count and logs its own trouble rather than
 	// propagating an error that would block entry to the wallet.
 	migrateScripts := func(vaultPassword string) int {
-		n, err := multisig.MigrateStoreToVault(multisigStorePath, scriptVault{v: vlt}, vaultPassword)
+		n, err := multisig.MigrateStoreToVault(
+			multisigStorePath,
+			scriptVault{v: vlt},
+			vaultPassword,
+		)
 		if err != nil {
 			logger.Warn(
 				"multi-signature accounts not migrated into the vault; the store is intact and this will retry",
-				"error", err,
+				"error",
+				err,
 			)
 		} else if n > 0 {
 			logger.Info("migrated multi-signature accounts into the vault", "count", n)
@@ -491,7 +521,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			Chain: chainClient, Units: nftUnits, DataDir: cfg.DataDir, Logger: logger,
 		})
 		if nftErr != nil {
-			logger.Warn("nft: service unavailable, NFT media disabled", "err", nftErr)
+			logger.Warn(
+				"nft: service unavailable, NFT media disabled",
+				"err",
+				nftErr,
+			)
 		}
 	}
 
@@ -512,13 +546,19 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	}
 	var remoteListener net.Listener
 	if remoteConfigured {
-		certificate, certErr := tls.LoadX509KeyPair(cfg.RemoteSubmission.TLSCertFile, cfg.RemoteSubmission.TLSKeyFile)
+		certificate, certErr := tls.LoadX509KeyPair(
+			cfg.RemoteSubmission.TLSCertFile,
+			cfg.RemoteSubmission.TLSKeyFile,
+		)
 		if certErr != nil {
 			_ = listener.Close()
 			if nftSvc != nil {
 				_ = nftSvc.Close()
 			}
-			return nil, fmt.Errorf("load remote submission TLS identity: %w", certErr)
+			return nil, fmt.Errorf(
+				"load remote submission TLS identity: %w",
+				certErr,
+			)
 		}
 		plainListener, listenErr := net.Listen("tcp", cfg.RemoteSubmission.Addr)
 		if listenErr != nil {
@@ -526,7 +566,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			if nftSvc != nil {
 				_ = nftSvc.Close()
 			}
-			return nil, fmt.Errorf("bind remote submission %q: %w", cfg.RemoteSubmission.Addr, listenErr)
+			return nil, fmt.Errorf(
+				"bind remote submission %q: %w",
+				cfg.RemoteSubmission.Addr,
+				listenErr,
+			)
 		}
 		remoteListener = tls.NewListener(plainListener, &tls.Config{
 			Certificates: []tls.Certificate{certificate},
@@ -591,7 +635,10 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
 	}
 	if remoteSubmitSvc != nil {
-		handlerOpts = append(handlerOpts, api.WithRemoteSubmission(remoteSubmitSvc, connectorSvc))
+		handlerOpts = append(
+			handlerOpts,
+			api.WithRemoteSubmission(remoteSubmitSvc, connectorSvc),
+		)
 	}
 	if nftSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithNFTs(nftSvc))
@@ -616,8 +663,13 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	}
 	srvErr := make(chan error, 1)
 	go func() {
-		logger.Info("control surface listening", "addr", listener.Addr().String())
-		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Info(
+			"control surface listening",
+			"addr",
+			listener.Addr().String(),
+		)
+		if err := srv.Serve(listener); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
 			srvErr <- err
 		}
 	}()
@@ -631,8 +683,13 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			IdleTimeout:       30 * time.Second,
 		}
 		go func() {
-			logger.Info("remote submission listener ready", "addr", remoteListener.Addr().String())
-			if err := remoteSrv.Serve(remoteListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Info(
+				"remote submission listener ready",
+				"addr",
+				remoteListener.Addr().String(),
+			)
+			if err := remoteSrv.Serve(remoteListener); err != nil &&
+				!errors.Is(err, http.ErrServerClosed) {
 				srvErr <- err
 			}
 		}()
@@ -685,7 +742,10 @@ func (a *App) Stop() error {
 	// A detached submission can run for up to submissionctx.Timeout after its
 	// request is gone; draining must outlast it, or Shutdown gives up on a
 	// broadcast that is still bounded and about to finish.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), submissionctx.Timeout+5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		submissionctx.Timeout+5*time.Second,
+	)
 	defer cancel()
 	var err error
 	if a.remoteSrv != nil {
@@ -844,7 +904,10 @@ func (g genesisAdapter) Genesis(ctx context.Context) (poolops.Genesis, error) {
 // pool registered within the cache lifetime and so add a deposit to an update.
 type poolRegistryAdapter struct{ c *chain.Client }
 
-func (p poolRegistryAdapter) PoolRegistered(ctx context.Context, poolID string) (bool, error) {
+func (p poolRegistryAdapter) PoolRegistered(
+	ctx context.Context,
+	poolID string,
+) (bool, error) {
 	_, err := p.c.PoolUncached(ctx, poolID)
 	if errors.Is(err, chain.ErrNotFound) {
 		return false, nil
@@ -863,7 +926,10 @@ type tipAdapter struct{ sup *supervisor.Supervisor }
 func (t tipAdapter) TipSlot() (uint64, error) {
 	st := t.sup.Status()
 	if st.State != supervisor.StateReady {
-		return 0, fmt.Errorf("node is not synced (state: %s); wait for it to reach 'ready' before issuing opcerts", st.State)
+		return 0, fmt.Errorf(
+			"node is not synced (state: %s); wait for it to reach 'ready' before issuing opcerts",
+			st.State,
+		)
 	}
 	return st.Tip, nil
 }
@@ -875,7 +941,10 @@ func (t tipAdapter) TipSlot() (uint64, error) {
 // in place and starts the node from an empty directory, which resyncs. Either
 // location failing to stat is an error instead: creating the node directory
 // would end the one-time move, so the decision is left to a later start.
-func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, error) {
+func prepareNodeDataDir(
+	dataDir, nodeDir string,
+	logger *slog.Logger,
+) (string, error) {
 	legacy := filepath.Join(dataDir, "db")
 	if nodeDir == "" || nodeDir == legacy {
 		return legacy, nil
@@ -888,14 +957,29 @@ func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, e
 		switch {
 		case legacyErr == nil:
 			if err := os.MkdirAll(filepath.Dir(nodeDir), 0o700); err != nil {
-				return "", fmt.Errorf("create node data dir parent %q: %w", nodeDir, err)
+				return "", fmt.Errorf(
+					"create node data dir parent %q: %w",
+					nodeDir,
+					err,
+				)
 			}
 			if err := os.Rename(legacy, nodeDir); err != nil {
-				logger.Warn("could not move the node database to its own directory; it will resync",
-					"from", legacy, "to", nodeDir, "error", err)
+				logger.Warn(
+					"could not move the node database to its own directory; it will resync",
+					"from",
+					legacy,
+					"to",
+					nodeDir,
+					"error",
+					err,
+				)
 			}
 		case !errors.Is(legacyErr, os.ErrNotExist):
-			return "", fmt.Errorf("inspect legacy node database %q: %w", legacy, legacyErr)
+			return "", fmt.Errorf(
+				"inspect legacy node database %q: %w",
+				legacy,
+				legacyErr,
+			)
 		}
 	default:
 		return "", fmt.Errorf("inspect node data dir %q: %w", nodeDir, err)

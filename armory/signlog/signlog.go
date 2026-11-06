@@ -82,7 +82,9 @@ const (
 var (
 	// ErrBlank is returned for a blank medium when the head store says
 	// entries or a header exist.
-	ErrBlank = errors.New("signlog: blank medium but the head store is initialised")
+	ErrBlank = errors.New(
+		"signlog: blank medium but the head store is initialised",
+	)
 	// ErrNotBlank is returned when a medium with a blank header holds data
 	// in its record slots: Open formats only an all-zero medium.
 	ErrNotBlank = errors.New("signlog: medium to format is not all zero")
@@ -90,7 +92,9 @@ var (
 	// fails its checksum where one was required to be valid.
 	ErrCorrupt = errors.New("signlog: corrupt medium")
 	// ErrWrongDevice is returned when the medium belongs to another identity.
-	ErrWrongDevice = errors.New("signlog: medium belongs to a different device identity")
+	ErrWrongDevice = errors.New(
+		"signlog: medium belongs to a different device identity",
+	)
 	// ErrRollback is returned when the medium is behind the head store: an
 	// older copy of the card or a truncated record.
 	ErrRollback = errors.New("signlog: medium is behind the head store")
@@ -99,7 +103,9 @@ var (
 	ErrAhead = errors.New("signlog: medium is ahead of the head store")
 	// ErrHashMismatch is returned when the latest entry's hash differs from
 	// the head store's.
-	ErrHashMismatch = errors.New("signlog: latest entry does not match the head store")
+	ErrHashMismatch = errors.New(
+		"signlog: latest entry does not match the head store",
+	)
 	// ErrFull is returned when no record slot is left.
 	ErrFull = errors.New("signlog: medium is full")
 	// ErrBadSignature is returned when an entry or the header signature does
@@ -206,7 +212,11 @@ type Log struct {
 type KeySigner struct{ key ed25519.PrivateKey }
 
 // NewKeySigner returns an Identity that signs with key.
-func NewKeySigner(key ed25519.PrivateKey) *KeySigner { return &KeySigner{key: key} }
+func NewKeySigner(
+	key ed25519.PrivateKey,
+) *KeySigner {
+	return &KeySigner{key: key}
+}
 
 // Public implements Identity.
 func (k *KeySigner) Public() ed25519.PublicKey {

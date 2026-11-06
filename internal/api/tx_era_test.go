@@ -36,7 +36,12 @@ const babbageTxHex = "84a3008001800200a0f5f6"
 const babbageTxEnvelope = `{"type":"Tx BabbageEra","description":"","cborHex":"` +
 	babbageTxHex + `"}`
 
-func postTx(t *testing.T, handler http.HandlerFunc, path string, body any) (int, []byte) {
+func postTx(
+	t *testing.T,
+	handler http.HandlerFunc,
+	path string,
+	body any,
+) (int, []byte) {
 	t.Helper()
 	reqBody, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -95,18 +100,28 @@ func TestHandleTxBabbageEnvelopeKeepsEra(t *testing.T) {
 	require.False(t, vkeyWitnessesTagged(t, signed.TxCbor),
 		"sign wrapped Babbage vkey witnesses in tag 258")
 
-	status, body = postTx(t, handleTxWitness, "/api/tx/witness", TxWitnessRequest{
-		TxCbor:     babbageTxEnvelope,
-		SigningKey: skey,
-	})
+	status, body = postTx(
+		t,
+		handleTxWitness,
+		"/api/tx/witness",
+		TxWitnessRequest{
+			TxCbor:     babbageTxEnvelope,
+			SigningKey: skey,
+		},
+	)
 	require.Equal(t, http.StatusOK, status, "body: %s", body)
 	var wit TxWitnessResponse
 	require.NoError(t, json.Unmarshal(body, &wit))
 
-	status, body = postTx(t, handleTxAssemble, "/api/tx/assemble", TxAssembleRequest{
-		TxCbor:    babbageTxEnvelope,
-		Witnesses: []string{wit.Witness},
-	})
+	status, body = postTx(
+		t,
+		handleTxAssemble,
+		"/api/tx/assemble",
+		TxAssembleRequest{
+			TxCbor:    babbageTxEnvelope,
+			Witnesses: []string{wit.Witness},
+		},
+	)
 	require.Equal(t, http.StatusOK, status, "body: %s", body)
 	var assembled TxCborResponse
 	require.NoError(t, json.Unmarshal(body, &assembled))
@@ -116,19 +131,40 @@ func TestHandleTxBabbageEnvelopeKeepsEra(t *testing.T) {
 
 func TestHandleTxAmbiguousEraRejected(t *testing.T) {
 	skey := testSigningKeyJSON(t)
-	zeroWitness := "825820" + strings.Repeat("00", 32) + "5840" + strings.Repeat("00", 64)
+	zeroWitness := "825820" + strings.Repeat(
+		"00",
+		32,
+	) + "5840" + strings.Repeat(
+		"00",
+		64,
+	)
 
 	status, body := postTx(t, handleTxSign, "/api/tx/sign", TxSignRequest{
 		TxCbor:      babbageTxHex,
 		SigningKeys: []string{skey},
 	})
 	require.Equal(t, http.StatusBadRequest, status, "body: %s", body)
-	require.Contains(t, string(body), "Tx ConwayEra", "error must name an era-typed envelope")
+	require.Contains(
+		t,
+		string(body),
+		"Tx ConwayEra",
+		"error must name an era-typed envelope",
+	)
 
-	status, body = postTx(t, handleTxAssemble, "/api/tx/assemble", TxAssembleRequest{
-		TxCbor:    babbageTxHex,
-		Witnesses: []string{zeroWitness},
-	})
+	status, body = postTx(
+		t,
+		handleTxAssemble,
+		"/api/tx/assemble",
+		TxAssembleRequest{
+			TxCbor:    babbageTxHex,
+			Witnesses: []string{zeroWitness},
+		},
+	)
 	require.Equal(t, http.StatusBadRequest, status, "body: %s", body)
-	require.Contains(t, string(body), "Tx ConwayEra", "error must name an era-typed envelope")
+	require.Contains(
+		t,
+		string(body),
+		"Tx ConwayEra",
+		"error must name an era-typed envelope",
+	)
 }

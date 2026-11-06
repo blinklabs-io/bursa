@@ -74,7 +74,9 @@ func (n *N2CChain) Close() error {
 
 // session returns the open connection, or dials one for a single call when
 // Open was not used.
-func (n *N2CChain) session(ctx context.Context) (*ouroboros.Connection, func(), error) {
+func (n *N2CChain) session(
+	ctx context.Context,
+) (*ouroboros.Connection, func(), error) {
 	if n.conn != nil {
 		return n.conn, func() {}, nil
 	}
@@ -121,7 +123,8 @@ func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
 	done := make(chan error, 1)
 	go func() {
 		// socketPath is a UNIX socket path, or host:port for a socket proxy.
-		if strings.Contains(n.socketPath, ":") && !strings.Contains(n.socketPath, "/") {
+		if strings.Contains(n.socketPath, ":") &&
+			!strings.Contains(n.socketPath, "/") {
 			dialErr = conn.Dial("tcp", n.socketPath)
 		} else {
 			dialErr = conn.Dial("unix", n.socketPath)
@@ -140,7 +143,10 @@ func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
 	return conn, nil
 }
 
-func (n *N2CChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error) {
+func (n *N2CChain) GetUTxOs(
+	ctx context.Context,
+	address string,
+) ([]UTxO, error) {
 	conn, release, err := n.session(ctx)
 	if err != nil {
 		return nil, err
@@ -151,7 +157,9 @@ func (n *N2CChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error)
 	if err != nil {
 		return nil, err
 	}
-	res, err := conn.LocalStateQuery().Client.GetUTxOByAddress([]lcommon.Address{addr})
+	res, err := conn.LocalStateQuery().Client.GetUTxOByAddress(
+		[]lcommon.Address{addr},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +183,9 @@ func (n *N2CChain) GetUTxOs(ctx context.Context, address string) ([]UTxO, error)
 	return result, nil
 }
 
-func (n *N2CChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
+func (n *N2CChain) GetProtocolParameters(
+	ctx context.Context,
+) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
 	conn, release, err := n.session(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -191,10 +201,15 @@ func (n *N2CChain) GetProtocolParameters(ctx context.Context) (*bursa.ProtocolPa
 
 // conwayParams converts the node's current protocol parameters. Build only
 // produces Conway transactions, so a node in any other era is an error.
-func conwayParams(pp any) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
+func conwayParams(
+	pp any,
+) (*bursa.ProtocolParams, *ProtocolParametersExtra, error) {
 	p, ok := pp.(*conway.ConwayProtocolParameters)
 	if !ok {
-		return nil, nil, fmt.Errorf("node is not in the Conway era (protocol parameters %T)", pp)
+		return nil, nil, fmt.Errorf(
+			"node is not in the Conway era (protocol parameters %T)",
+			pp,
+		)
 	}
 	feeA := uint64(p.MinFeeA)
 	feeB := uint64(p.MinFeeB)
@@ -225,14 +240,19 @@ func (n *N2CChain) GetSlot(ctx context.Context) (uint64, error) {
 	return pt.Slot, nil
 }
 
-func (n *N2CChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) (bool, error) {
+func (n *N2CChain) GetPoolRegistration(
+	ctx context.Context,
+	poolKeyHash []byte,
+) (bool, error) {
 	conn, release, err := n.session(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer release()
 	poolId := lcommon.PoolId(poolKeyHash)
-	params, err := conn.LocalStateQuery().Client.GetStakePoolParams([]lcommon.PoolId{poolId})
+	params, err := conn.LocalStateQuery().Client.GetStakePoolParams(
+		[]lcommon.PoolId{poolId},
+	)
 	if err != nil {
 		return false, err
 	}
@@ -244,7 +264,10 @@ func (n *N2CChain) GetPoolRegistration(ctx context.Context, poolKeyHash []byte) 
 	return false, nil
 }
 
-func (n *N2CChain) GetStakeDelegDeposits(ctx context.Context, creds []lcommon.Credential) (map[StakeCredentialKey]uint64, error) {
+func (n *N2CChain) GetStakeDelegDeposits(
+	ctx context.Context,
+	creds []lcommon.Credential,
+) (map[StakeCredentialKey]uint64, error) {
 	if len(creds) == 0 {
 		return map[StakeCredentialKey]uint64{}, nil
 	}

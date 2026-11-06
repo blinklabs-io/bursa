@@ -140,7 +140,15 @@ func TestCIPDefinitionVectors(t *testing.T) {
 	single := decodeVector(t, "survey-single-choice.json").Definitions[0]
 	equal(t, []Role{RoleStakeholder}, single.Roles)
 	equal(t, uint64(504), single.EndEpoch)
-	equal(t, Question{Kind: KindSingleChoice, Prompt: "Should CIP-0136 be included?", Options: []string{"YES", "NO", "ABSTAIN"}}, single.Questions[0])
+	equal(
+		t,
+		Question{
+			Kind:    KindSingleChoice,
+			Prompt:  "Should CIP-0136 be included?",
+			Options: []string{"YES", "NO", "ABSTAIN"},
+		},
+		single.Questions[0],
+	)
 
 	// Vector 2: min_selections 0 makes an empty selection a valid answer.
 	multi := decodeVector(t, "survey-multi-select.json").Definitions[0]
@@ -149,7 +157,12 @@ func TestCIPDefinitionVectors(t *testing.T) {
 	equal(t, uint64(0), q.Min)
 	equal(t, uint64(4), q.Max)
 	equal(t, "Which CIPs should be shortlisted for Dijkstra?", q.Prompt)
-	noErr(t, multi.CheckAnswers([]Answer{{Kind: KindMultiSelect, Question: 0, Indices: []uint64{}}}))
+	noErr(
+		t,
+		multi.CheckAnswers(
+			[]Answer{{Kind: KindMultiSelect, Question: 0, Indices: []uint64{}}},
+		),
+	)
 
 	// Vector 3: numeric range for DRep, SPO and CC.
 	numeric := decodeVector(t, "survey-numeric-range.json").Definitions[0]
@@ -168,7 +181,11 @@ func TestCIPDefinitionVectors(t *testing.T) {
 	same := decodeVector(t, "survey-multi-question-same-type.json").Definitions[0]
 	equal(t, []QuestionKind{KindNumericRange, KindNumericRange}, kindsOf(same))
 	mixed := decodeVector(t, "survey-multi-question-mixed-type.json").Definitions[0]
-	equal(t, []QuestionKind{KindMultiSelect, KindSingleChoice, KindNumericRange}, kindsOf(mixed))
+	equal(
+		t,
+		[]QuestionKind{KindMultiSelect, KindSingleChoice, KindNumericRange},
+		kindsOf(mixed),
+	)
 
 	// Vector 7: mixed eligibility, no weighting.
 	shared := decodeVector(t, "survey-mixed-role-shared.json").Definitions[0]
@@ -188,18 +205,37 @@ func TestCIPResponseVectors(t *testing.T) {
 	first := func(name string) Response { return decodeVector(t, name).Responses[0] }
 
 	// Vectors 8-11, 13, 14: answer items per question type.
-	equal(t, Answer{Kind: KindSingleChoice, Question: 0, Choice: 0}, first("response-single-choice.json").Answers[0])
-	equal(t, Answer{Kind: KindMultiSelect, Question: 0, Indices: []uint64{1, 3}}, first("response-multi-select.json").Answers[0])
+	equal(
+		t,
+		Answer{Kind: KindSingleChoice, Question: 0, Choice: 0},
+		first("response-single-choice.json").Answers[0],
+	)
+	equal(
+		t,
+		Answer{Kind: KindMultiSelect, Question: 0, Indices: []uint64{1, 3}},
+		first("response-multi-select.json").Answers[0],
+	)
 	empty := first("response-multi-select-empty.json").Answers[0]
 	equal(t, KindMultiSelect, empty.Kind)
-	isTrue(t, empty.Indices != nil && len(empty.Indices) == 0) // present and empty: "none selected", not an abstain
-	equal(t, Answer{Kind: KindNumericRange, Question: 0, Number: 325}, first("response-numeric-range.json").Answers[0])
+	isTrue(
+		t,
+		empty.Indices != nil && len(empty.Indices) == 0,
+	) // present and empty: "none selected", not an abstain
+	equal(
+		t,
+		Answer{Kind: KindNumericRange, Question: 0, Number: 325},
+		first("response-numeric-range.json").Answers[0],
+	)
 
 	var kinds []QuestionKind
 	for _, a := range first("response-multi-question-mixed-type.json").Answers {
 		kinds = append(kinds, a.Kind)
 	}
-	equal(t, []QuestionKind{KindMultiSelect, KindSingleChoice, KindNumericRange}, kinds)
+	equal(
+		t,
+		[]QuestionKind{KindMultiSelect, KindSingleChoice, KindNumericRange},
+		kinds,
+	)
 
 	// Vector 12: a custom answer is an opaque metadatum.
 	custom := first("response-custom-method.json").Answers[0]
@@ -208,10 +244,16 @@ func TestCIPResponseVectors(t *testing.T) {
 
 	// Each response checks out against the definition it targets.
 	multi := decodeVector(t, "survey-multi-select.json").Definitions[0]
-	noErr(t, multi.CheckAnswers(first("response-multi-select-empty.json").Answers))
+	noErr(
+		t,
+		multi.CheckAnswers(first("response-multi-select-empty.json").Answers),
+	)
 	noErr(t, multi.CheckAnswers(first("response-multi-select.json").Answers))
 	numeric := decodeVector(t, "survey-numeric-range.json").Definitions[0]
-	noErr(t, numeric.CheckAnswers(first("response-numeric-range.json").Answers)) // 325 on [10, 1000] step 5
+	noErr(
+		t,
+		numeric.CheckAnswers(first("response-numeric-range.json").Answers),
+	) // 325 on [10, 1000] step 5
 }
 
 // The CIP's "latest valid response wins" behaviour vector: both responses share
@@ -227,12 +269,26 @@ func TestCIPLatestValidResponseWinsVector(t *testing.T) {
 	equal(t, older.Role, latest.Role)
 
 	tally := def.Aggregate([]Observed{
-		{TxHash: "latest", Pos: Position{Height: 120100005, TxIndex: 0}, Epoch: 400, Response: latest},
-		{TxHash: "older", Pos: Position{Height: 120100000, TxIndex: 2}, Epoch: 400, Response: older},
+		{
+			TxHash:   "latest",
+			Pos:      Position{Height: 120100005, TxIndex: 0},
+			Epoch:    400,
+			Response: latest,
+		},
+		{
+			TxHash:   "older",
+			Pos:      Position{Height: 120100000, TxIndex: 2},
+			Epoch:    400,
+			Response: older,
+		},
 	})
 	rt := roleTally(t, tally, RoleStakeholder)
 	equal(t, uint64(1), rt.Responses)
-	equal(t, latest.Answers, []Answer{{Kind: KindSingleChoice, Question: 0, Choice: 0}})
+	equal(
+		t,
+		latest.Answers,
+		[]Answer{{Kind: KindSingleChoice, Question: 0, Choice: 0}},
+	)
 	equal(t, uint64(1), rt.Questions[0].Options[0].Count)
 	equal(t, "superseded by a later response", reasons(tally)["older"])
 }
@@ -246,7 +302,13 @@ func TestCIPCancellationVector(t *testing.T) {
 
 func TestCIPGovernanceAnchorLinkVector(t *testing.T) {
 	t.Parallel()
-	link, err := os.ReadFile(filepath.Join("testdata", "cip179", "governance-action-anchor-survey-link.json"))
+	link, err := os.ReadFile(
+		filepath.Join(
+			"testdata",
+			"cip179",
+			"governance-action-anchor-survey-link.json",
+		),
+	)
 	noErr(t, err)
 	// The example is the cip179 object; it lives inside the CIP-108 body.
 	doc := []byte(`{"body":{"title":"t","cip179":` + string(link) + `}}`)

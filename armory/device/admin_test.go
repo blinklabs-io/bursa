@@ -38,7 +38,13 @@ func rawPost(h http.Handler, path string, body []byte) (int, []byte) {
 }
 
 // postAs sends req to h signed by key, with a challenge h issued.
-func postAs(t *testing.T, h http.Handler, path string, req any, key ed25519.PrivateKey) (int, []byte) {
+func postAs(
+	t *testing.T,
+	h http.Handler,
+	path string,
+	req any,
+	key ed25519.PrivateKey,
+) (int, []byte) {
 	t.Helper()
 
 	code, b := rawPost(h, "/v1/challenge", []byte("{}"))
@@ -82,7 +88,13 @@ func requestFor(t *testing.T, s *Service, route string) any {
 
 	h := s.ProvisioningHandler()
 
-	code, b := postAs(t, h, RouteProvisionIdentity, IdentityRequest{}, testHostKey)
+	code, b := postAs(
+		t,
+		h,
+		RouteProvisionIdentity,
+		IdentityRequest{},
+		testHostKey,
+	)
 	if code != http.StatusOK {
 		t.Fatalf("identity: %d %s", code, b)
 	}
@@ -94,7 +106,12 @@ func requestFor(t *testing.T, s *Service, route string) any {
 
 	id := hex.EncodeToString(ident.PublicKey)
 	chain := uint64(1)
-	cold := ColdRequest{ColdKeyID: testColdID + 1, SigningKey: secretHex(append([]byte{0x58, 0x20}, bytes.Repeat([]byte{0x11}, 32)...))}
+	cold := ColdRequest{
+		ColdKeyID: testColdID + 1,
+		SigningKey: secretHex(
+			append([]byte{0x58, 0x20}, bytes.Repeat([]byte{0x11}, 32)...),
+		),
+	}
 
 	switch route {
 	case RouteProvisionProfile:
@@ -102,11 +119,19 @@ func requestFor(t *testing.T, s *Service, route string) any {
 			t.Fatalf("cold key: %d %s", code, b)
 		}
 
-		return ProvisionRequest{Name: "other@preview", Slot: 1, ColdKeyID: testColdID + 1, ChainCounter: &chain}
+		return ProvisionRequest{
+			Name:         "other@preview",
+			Slot:         1,
+			ColdKeyID:    testColdID + 1,
+			ChainCounter: &chain,
+		}
 	case RouteProvisionFloor:
 		return FloorRequest{Profile: "otg@preview", ChainCounter: 0}
 	case RouteProvisionReward:
-		return RewardRequest{Profile: "otg@preview", RewardAccount: strings.Repeat("e0", 29)}
+		return RewardRequest{
+			Profile:       "otg@preview",
+			RewardAccount: strings.Repeat("e0", 29),
+		}
 	case RouteProvisionPins:
 		return setPinsReq()
 	case RouteProvisionCold:
@@ -230,7 +255,12 @@ func TestAdminSignatureBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		body, err := SignAdminRequest(route, jsonOf(t, req), testHostKey, ch.Challenge)
+		body, err := SignAdminRequest(
+			route,
+			jsonOf(t, req),
+			testHostKey,
+			ch.Challenge,
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -258,13 +288,23 @@ func TestAdminSignatureBinding(t *testing.T) {
 	}
 
 	cross := FloorRequest{Profile: "otg@preview", HostAuth: HostAuth{
-		Challenge:     ch.Challenge,
-		HostKey:       testHostKey.Public().(ed25519.PublicKey),
-		HostSignature: ed25519.Sign(testHostKey, AdminBinding(RouteProvisionReward, canonical, ch.Challenge)),
+		Challenge: ch.Challenge,
+		HostKey:   testHostKey.Public().(ed25519.PublicKey),
+		HostSignature: ed25519.Sign(
+			testHostKey,
+			AdminBinding(RouteProvisionReward, canonical, ch.Challenge),
+		),
 	}}
 
-	if code, b := rawPost(h, RouteProvisionFloor, jsonOf(t, cross)); !strings.Contains(string(b), "host signature does not verify") {
-		t.Errorf("signature for /provision/reward on /provision/floor: %d %s", code, b)
+	if code, b := rawPost(h, RouteProvisionFloor, jsonOf(t, cross)); !strings.Contains(
+		string(b),
+		"host signature does not verify",
+	) {
+		t.Errorf(
+			"signature for /provision/reward on /provision/floor: %d %s",
+			code,
+			b,
+		)
 	}
 
 	// another body
@@ -349,7 +389,12 @@ func TestFirstHostKeyVoidsBootstrapChallenges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	signed, err := SignAdminRequest(RouteProvisionFloor, jsonOf(t, FloorRequest{Profile: "otg@preview"}), testHostKey, ch.Challenge)
+	signed, err := SignAdminRequest(
+		RouteProvisionFloor,
+		jsonOf(t, FloorRequest{Profile: "otg@preview"}),
+		testHostKey,
+		ch.Challenge,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,8 +408,13 @@ func TestFirstHostKeyVoidsBootstrapChallenges(t *testing.T) {
 	}
 
 	code, body := rawPost(h, RouteProvisionFloor, signed)
-	if code == http.StatusOK || !strings.Contains(string(body), "unknown or used challenge") {
-		t.Fatalf("bootstrap request replayed after the first host key: %d %s", code, body)
+	if code == http.StatusOK ||
+		!strings.Contains(string(body), "unknown or used challenge") {
+		t.Fatalf(
+			"bootstrap request replayed after the first host key: %d %s",
+			code,
+			body,
+		)
 	}
 
 	if code, body := postAs(t, h, RouteProvisionFloor, FloorRequest{Profile: "otg@preview"}, testHostKey); code != http.StatusOK {
@@ -427,7 +477,13 @@ func TestWipeDeviceUnsignedWithHostKey(t *testing.T) {
 	s, chip := newHostAuthService(t)
 	h := s.WipeHandler()
 
-	code, b := postAs(t, s.ProvisioningHandler(), RouteProvisionIdentity, IdentityRequest{}, testHostKey)
+	code, b := postAs(
+		t,
+		s.ProvisioningHandler(),
+		RouteProvisionIdentity,
+		IdentityRequest{},
+		testHostKey,
+	)
 	if code != http.StatusOK {
 		t.Fatalf("identity: %d %s", code, b)
 	}
@@ -445,7 +501,8 @@ func TestWipeDeviceUnsignedWithHostKey(t *testing.T) {
 			req = WipeSignLogRequest{IdentityPublicKey: id}
 		}
 
-		if code, body := rawPost(h, route, jsonOf(t, req)); code != http.StatusOK && !strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		if code, body := rawPost(h, route, jsonOf(t, req)); code != http.StatusOK &&
+			!strings.Contains(string(body), errHostKeyUnknown.Error()) {
 			t.Errorf("%s refused for another reason: %s", route, body)
 		} else if code == http.StatusOK {
 			t.Errorf("%s accepted unsigned", route)
@@ -490,7 +547,13 @@ func TestAdminRefusesUnreadableHostKeys(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			code, body := postAs(t, handlerFor(s2, route), route, req, testHostKey)
+			code, body := postAs(
+				t,
+				handlerFor(s2, route),
+				route,
+				req,
+				testHostKey,
+			)
 			if code == http.StatusOK {
 				t.Fatalf("accepted over an unreadable host key list: %s", body)
 			}
@@ -534,7 +597,10 @@ func TestUnsignedProvisioningLocked(t *testing.T) {
 	}
 
 	// a key of another scope closes it too
-	if err := open(imageOn(t, chip, 1, "")); !errors.Is(err, errProvisioningClosed) {
+	if err := open(imageOn(t, chip, 1, "")); !errors.Is(
+		err,
+		errProvisioningClosed,
+	) {
 		t.Fatalf("beside a key of another scope: %v", err)
 	}
 
@@ -553,8 +619,12 @@ func TestAdminBindingVector(t *testing.T) {
 
 	chain := uint64(7)
 	req := &ProvisionRequest{
-		HostAuth: HostAuth{Challenge: []byte{9}, HostKey: []byte{9}, HostSignature: []byte{9}},
-		Name:     "otg@preview", Slot: 1, ColdKeyID: 538247424, ChainCounter: &chain, RewardAccount: "e0",
+		HostAuth: HostAuth{
+			Challenge:     []byte{9},
+			HostKey:       []byte{9},
+			HostSignature: []byte{9},
+		},
+		Name: "otg@preview", Slot: 1, ColdKeyID: 538247424, ChainCounter: &chain, RewardAccount: "e0",
 	}
 
 	canonical, err := canonicalRequest(req)
@@ -571,7 +641,13 @@ func TestAdminBindingVector(t *testing.T) {
 		t.Fatal("canonicalRequest did not restore the authentication fields")
 	}
 
-	got := hex.EncodeToString(AdminBinding(RouteProvisionProfile, canonical, bytes.Repeat([]byte{3}, 32)))
+	got := hex.EncodeToString(
+		AdminBinding(
+			RouteProvisionProfile,
+			canonical,
+			bytes.Repeat([]byte{3}, 32),
+		),
+	)
 	if got != adminBindingVector {
 		t.Fatalf("AdminBinding = %s", got)
 	}
