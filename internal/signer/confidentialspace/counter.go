@@ -254,6 +254,12 @@ func applyOpCertNext(
 	if issue >= math.MaxUint64-1 {
 		return counterState{}, 0, opcertrule.ErrOutOfRange
 	}
+	// A chain counter that lags explicit issues would reissue an earlier
+	// number, whose KES period is not recorded, and lower the last issued
+	// number. Refuse it as a possible backdate.
+	if issue < last {
+		return counterState{}, 0, opcertrule.ErrKESBackdated
+	}
 	if err := opcertrule.CheckPeriod(
 		issue,
 		last,

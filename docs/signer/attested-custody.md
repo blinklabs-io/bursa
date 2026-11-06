@@ -266,8 +266,10 @@ Cloud Storage counter object:
   or above the last issued number ("chain counter above the last counter the
   device issued"); the signer maps both to HTTP 409. It also refuses
   reissuing the last number at a lower KES period ("KES period below the
-  logged opcert at this counter"). Repeating the recorded request signs
-  again without a write.
+  logged opcert at this counter"), and with the same text a chain counter
+  that would issue a number below the last issued one, whose KES period is
+  not recorded, so the last issued number never decreases. Repeating the
+  recorded request signs again without a write.
 
 The counter object keeps its version. It gains `opcert_floor`, `last_issued`
 and `last_issued_period`, omitted while zero, so an object written earlier

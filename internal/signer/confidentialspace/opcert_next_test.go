@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/opcertrule"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 )
 
@@ -426,4 +427,53 @@ func TestOpCertNextOutOfRange(t *testing.T) {
 		nextRequest(w, 1, math.MaxUint64, 10),
 		"chain counter out of range",
 	)
+}
+
+// A chain counter that lags explicit issues would reissue an earlier number
+// whose KES period is not recorded. It is refused and leaves the state as it
+// was, so the last issued number never decreases.
+func TestOpCertNextRefusesNumberBelowLastIssued(t *testing.T) {
+	t.Parallel()
+	cur := counterState{
+		Version:          counterStateVersion,
+		NextIssueNumber:  7,
+		LastIssued:       6,
+		LastIssuedPeriod: 60,
+	}
+	if _, _, err := applyOpCertNext(cur, 3, 10); !errors.Is(
+		err,
+		opcertrule.ErrKESBackdated,
+	) {
+		t.Fatalf("chain 3 after explicit issue 6: err = %v", err)
+	}
+	for chain, want := range map[uint64]uint64{5: 6, 6: 7} {
+		next, issue, err := applyOpCertNext(cur, chain, 60)
+		if err != nil || issue != want {
+			t.Fatalf("chain %d: issue %d err %v", chain, issue, err)
+		}
+		if next.LastIssued < cur.LastIssued {
+			t.Fatalf("chain %d lowered last issued: %+v", chain, next)
+		}
+	}
+
+	w := cloudWorkload(t, &memoryStore{}, &memoryCounterObject{})
+	for i := range 7 {
+		payload := lcommon.OpCertSignableBytes(
+			bytes.Repeat([]byte{0x23}, 32), uint64(i), 60,
+		)
+		resp, err := w.Sign(t.Context(), backend.AttestedRequest{
+			Version: backend.AttestedProtocol,
+			Purpose: backend.PurposeOpCert,
+			KeyHash: w.hash.String(),
+			Role:    backend.KeyTypePool,
+			Nonce:   bytes.Repeat([]byte{byte(10 + i)}, 32),
+			Payload: payload,
+		})
+		if err != nil || resp.Error != "" {
+			t.Fatalf("explicit issue %d: %+v err=%v", i, resp, err)
+		}
+	}
+	requireRefused(t, w, nextRequest(w, 1, 3, 10), refusalBackdated)
+	// the pool forges with the explicitly issued 6: renewal still works
+	requireIssued(t, w, nextRequest(w, 2, 6, 60), 7)
 }
