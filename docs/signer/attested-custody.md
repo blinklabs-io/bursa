@@ -485,9 +485,11 @@ exported or backed up, so a lost or broken device would lose the pool for
 good. A cold key is always created off the device, kept in a backup, and
 imported, so the pool can move to a replacement device.
 
-The device zeroes the request buffer and the decoded key once the request is
-done. Copies held by the host and the transport, and by the host tool that
-sent it, are outside that.
+Before `armory-pool` reads a cold or owner signing key from standard input, it
+requires `-identity` and sends a fresh nonce to `/v1/identity`. The
+device signs the nonce and its public identity under the pinned identity key.
+The tool sends the private-key request only after that proof verifies. The
+device zeroes the request buffer and the decoded key once the request is done.
 
 ### Provisioning and wipe authentication
 
@@ -636,8 +638,8 @@ request for its public key:
 ```sh
 armory-pool host-key -out host.skey > host-key.pub
 armory-pool -host-key host.skey provision host-key < host-key.pub
-armory-pool -host-key host.skey provision cold < cold-request.json
-armory-pool -host-key host.skey provision profile < profile-request.json
+armory-pool -identity "$IDENTITY" -host-key host.skey provision cold < cold-request.json
+armory-pool -identity "$IDENTITY" -host-key host.skey provision profile < profile-request.json
 armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
@@ -661,7 +663,9 @@ chain: a log with entries of several scopes verifies as one chain.
 `host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile`,
 `cold` or `signlog`. Without `-host-key` a request is sent unsigned, which the device
 accepts only in the bootstrap state, and always for `wipe device` and `wipe
-objects`. Register the first host key before the other provisioning steps.
+objects`. `provision cold` and `provision profile` require the pinned
+`-identity`. Register the first host key and provision the identity before
+importing private keys.
 
 ### Signing log
 

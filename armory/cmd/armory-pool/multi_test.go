@@ -117,6 +117,9 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 		t.Fatal("a device-wide request picked a key with no scope named")
 	}
 
+	identityHex := hex.EncodeToString(ident.PublicKey)
+	keys = append(keys, "-identity", identityHex)
+
 	seed := hex.EncodeToString(bytes.Repeat([]byte{0x61}, 32))
 	cold := `{"cold_key_id":` + "551878673" + `,"signing_key":"5820` + seed + `"}`
 
@@ -160,6 +163,8 @@ func TestMultiImageWithScopedHostKeys(t *testing.T) {
 	_, err = adminRun(
 		srv,
 		strings.Replace(profileReq, "otg@preview", "x@preview", 1),
+		"-identity",
+		identityHex,
 		"-host-key",
 		filepath.Join(dir, "prime-mainnet.key"),
 		"provision",

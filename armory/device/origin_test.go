@@ -120,6 +120,7 @@ func TestRoutesRefuseForeignRequests(t *testing.T) {
 			"/v1/signlog",
 		},
 		"provisioning": {
+			RouteIdentityProof,
 			"/provision/identity",
 			"/provision/host-key",
 			"/provision/reward",

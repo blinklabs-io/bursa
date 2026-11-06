@@ -30,6 +30,9 @@ import (
 // from every other signature the host key could make.
 const adminDomain = "bursa-armory-admin/1"
 
+// RouteIdentityProof serves a nonce-bound proof from the device identity key.
+const RouteIdentityProof = "/v1/identity"
+
 // Provisioning and wipe routes that require host authentication once a host
 // key is registered.
 const (
@@ -105,6 +108,19 @@ func AdminRoutes() map[string]bool {
 	}
 
 	return routes
+}
+
+// AdminRouteContainsSecrets reports whether route can carry private key
+// material that must only be sent to an authenticated device.
+func AdminRouteContainsSecrets(route string) bool {
+	mk, ok := adminRequests[route]
+	if !ok {
+		return false
+	}
+
+	_, ok = mk().(secretHolder)
+
+	return ok
 }
 
 // secretHolder is a request that carries private keys.

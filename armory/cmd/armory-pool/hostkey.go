@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -130,6 +131,35 @@ func readAdminRequest(in io.Reader) ([]byte, error) {
 	return body, nil
 }
 
+// authenticateDevice proves that c reaches the device holding identity before
+// a private key is read from the request input.
+func authenticateDevice(c *client, identity ed25519.PublicKey) error {
+	nonce, err := randomNonce()
+	if err != nil {
+		return err
+	}
+
+	var resp device.IdentityProofResponse
+
+	if err = c.post(device.RouteIdentityProof, device.IdentityProofRequest{Nonce: nonce}, &resp); err != nil {
+		return err
+	}
+
+	if resp.Version != device.Protocol ||
+		!bytes.Equal(resp.PublicKey, identity) ||
+		!ed25519.Verify(
+			identity,
+			device.IdentityBinding(nonce, resp.PublicKey),
+			resp.Attestation,
+		) {
+		return errors.New(
+			"device identity proof does not verify under the pinned identity key",
+		)
+	}
+
+	return nil
+}
+
 // adminRequest posts the JSON request on in to a provisioning or wipe route
 // and prints the device's answer. With a host key it fetches a challenge and
 // signs the request, as a device holding a host key requires; without one the
@@ -137,7 +167,7 @@ func readAdminRequest(in io.Reader) ([]byte, error) {
 // key, and always for /wipe/device and /wipe/objects.
 func adminRequest(
 	c *client,
-	route, hostKeyFile string,
+	route, hostKeyFile, identityHex string,
 	in io.Reader,
 	out io.Writer,
 ) error {
@@ -147,25 +177,44 @@ func adminRequest(
 		return fmt.Errorf("unknown route %s", route)
 	}
 
+	var hostKey ed25519.PrivateKey
+
+	if hostKeyFile != "" && signed {
+		var err error
+
+		hostKey, err = readHostKey(hostKeyFile)
+		if err != nil {
+			return err
+		}
+	}
+
+	if device.AdminRouteContainsSecrets(route) {
+		identity, err := hex.DecodeString(identityHex)
+		if err != nil || len(identity) != ed25519.PublicKeySize {
+			return errors.New(
+				"-identity must be the 32-byte identity public key in hex for private-key provisioning",
+			)
+		}
+
+		if err = authenticateDevice(c, identity); err != nil {
+			return err
+		}
+	}
+
 	body, err := readAdminRequest(in)
 	if err != nil {
 		return err
 	}
 
 	// the device wipe and the object listing are never signed
-	if hostKeyFile != "" && signed {
-		key, err := readHostKey(hostKeyFile)
-		if err != nil {
-			return err
-		}
-
+	if hostKey != nil {
 		var ch device.ChallengeResponse
 
 		if err = c.post("/v1/challenge", struct{}{}, &ch); err != nil {
 			return err
 		}
 
-		if body, err = device.SignAdminRequest(route, body, key, ch.Challenge); err != nil {
+		if body, err = device.SignAdminRequest(route, body, hostKey, ch.Challenge); err != nil {
 			return err
 		}
 	}

@@ -653,5 +653,25 @@ func TestAdminBindingVector(t *testing.T) {
 	}
 }
 
+func TestAdminRouteContainsSecrets(t *testing.T) {
+	t.Parallel()
+
+	for route := range adminRequests {
+		want := route == RouteProvisionCold || route == RouteProvisionProfile
+		if got := AdminRouteContainsSecrets(route); got != want {
+			t.Errorf(
+				"AdminRouteContainsSecrets(%q) = %t, want %t",
+				route,
+				got,
+				want,
+			)
+		}
+	}
+
+	if AdminRouteContainsSecrets("/provision/not-a-route") {
+		t.Fatal("unknown route reported as secret-bearing")
+	}
+}
+
 // adminBindingVector was computed independently of AdminBinding.
 const adminBindingVector = "c73665362e27aa398646a9469c18a09656072edacc0df51b7e2e7f86490dae35"

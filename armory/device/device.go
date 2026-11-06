@@ -193,6 +193,20 @@ type IdentityResponse struct {
 	PublicKey []byte `json:"public_key"`
 }
 
+// IdentityProofRequest asks the device to prove possession of its pinned
+// identity key for a fresh nonce.
+type IdentityProofRequest struct {
+	Nonce []byte `json:"nonce"`
+}
+
+// IdentityProofResponse binds the pinned identity to a protocol version and
+// the request nonce.
+type IdentityProofResponse struct {
+	Version     string `json:"version"`
+	PublicKey   []byte `json:"public_key"`
+	Attestation []byte `json:"attestation"`
+}
+
 // Service holds the chip session and profile cache. Every chip access holds
 // mu, which the caller shares with anything else using the session.
 type Service struct {
@@ -431,6 +445,7 @@ func (s *Service) signingRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) provisioningRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST "+RouteIdentityProof, handle(s, s.identityProof))
 	mux.HandleFunc(
 		"POST "+RouteProvisionProfile,
 		handleAdmin(s, RouteProvisionProfile, s.provisionProfile),
@@ -1236,4 +1251,32 @@ func (s *Service) provisionIdentity() (IdentityResponse, error) {
 	}
 
 	return IdentityResponse{PublicKey: pub}, nil
+}
+
+func (s *Service) identityProof(
+	req IdentityProofRequest,
+) (IdentityProofResponse, error) {
+	if len(req.Nonce) == 0 || len(req.Nonce) > maxNonce {
+		return IdentityProofResponse{}, errors.New("invalid nonce")
+	}
+
+	pub, err := s.chip.PublicKeyEd25519(profile.IdentityKeyID)
+	if err != nil {
+		s.logf("read identity public key: %v", err)
+
+		return IdentityProofResponse{}, errDevice
+	}
+
+	resp := IdentityProofResponse{Version: Protocol, PublicKey: pub}
+	resp.Attestation, err = s.chip.SignEd25519(
+		profile.IdentityKeyID,
+		IdentityBinding(req.Nonce, pub),
+	)
+	if err != nil {
+		s.logf("sign identity proof: %v", err)
+
+		return IdentityProofResponse{}, errDevice
+	}
+
+	return resp, nil
 }

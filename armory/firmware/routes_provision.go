@@ -47,6 +47,7 @@ func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
 	// registered; /v1/challenge issues their challenges
 	http.Handle("/provision/", svc.ProvisioningHandler())
 	http.Handle("/v1/challenge", svc.ProvisioningHandler())
+	http.Handle(device.RouteIdentityProof, svc.ProvisioningHandler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready
 	// for the next image

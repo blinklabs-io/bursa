@@ -338,6 +338,86 @@ func TestProvisionIdentity(t *testing.T) {
 	}
 }
 
+func TestIdentityProofAttestsNonce(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	n := nonce(0x91)
+	code, body := post(t, s, RouteProvisionIdentity, IdentityRequest{})
+	if code != http.StatusOK {
+		t.Fatalf("provision identity: %d %s", code, body)
+	}
+
+	code, body = post(t, s, RouteIdentityProof, IdentityProofRequest{Nonce: n})
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, body)
+	}
+
+	var resp IdentityProofResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Version != Protocol {
+		t.Fatalf("version = %q, want %q", resp.Version, Protocol)
+	}
+
+	if !ed25519.Verify(
+		resp.PublicKey,
+		IdentityBinding(n, resp.PublicKey),
+		resp.Attestation,
+	) {
+		t.Fatal("identity attestation does not verify")
+	}
+
+	tampered := bytes.Clone(n)
+	tampered[0] ^= 1
+
+	if ed25519.Verify(
+		resp.PublicKey,
+		IdentityBinding(tampered, resp.PublicKey),
+		resp.Attestation,
+	) {
+		t.Fatal("identity attestation verifies for another nonce")
+	}
+}
+
+func TestIdentityProofRejectsOversizedNonce(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	code, _ := post(
+		t,
+		s,
+		RouteIdentityProof,
+		IdentityProofRequest{Nonce: make([]byte, maxNonce+1)},
+	)
+
+	if code == http.StatusOK {
+		t.Fatal("oversized identity nonce accepted")
+	}
+}
+
+func TestIdentityProofDoesNotCreateIdentity(t *testing.T) {
+	t.Parallel()
+
+	s, chip := newTestService(t)
+	code, _ := post(
+		t,
+		s,
+		RouteIdentityProof,
+		IdentityProofRequest{Nonce: nonce(0x92)},
+	)
+
+	if code == http.StatusOK {
+		t.Fatal("identity proof succeeded before identity provisioning")
+	}
+
+	if _, err := chip.PublicKeyEd25519(profile.IdentityKeyID); err == nil {
+		t.Fatal("identity proof created an identity key")
+	}
+}
+
 func TestInventory(t *testing.T) {
 	s, chip := newTestService(t)
 	provisionTestProfile(t, s)
