@@ -9,6 +9,7 @@
 package nitro
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
@@ -20,6 +21,14 @@ import (
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 )
+
+func cloneEnvelope(env Envelope) Envelope {
+	env.PublicKey = bytes.Clone(env.PublicKey)
+	env.EncryptedDataKey = bytes.Clone(env.EncryptedDataKey)
+	env.Ciphertext = bytes.Clone(env.Ciphertext)
+	env.Nonce = bytes.Clone(env.Nonce)
+	return env
+}
 
 const dataKeySize = 32
 

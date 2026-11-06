@@ -252,6 +252,56 @@ func TestProvisionRejectsUnapprovedRequestBeforeKMS(t *testing.T) {
 	}
 }
 
+func TestProvisionReplayReturnsOriginalEnvelopeBeforeKMS(t *testing.T) {
+	service, kms, _ := newTestService(t, testEvidence(t, 1))
+	request := testProvisionRequest()
+	first, err := service.Provision(context.Background(), &request)
+	require.NoError(t, err)
+	kms.calls = 0
+
+	second, err := service.Provision(context.Background(), &request)
+	require.NoError(t, err)
+	if !bytes.Equal(second.Envelope.PublicKey, first.Envelope.PublicKey) {
+		t.Fatal("replayed provisioning authorization replaced the active pool key")
+	}
+	require.Equal(t, first.Envelope, second.Envelope)
+	require.Zero(t, kms.calls)
+
+	inventory, err := service.Inventory(context.Background(), &InventoryRequest{
+		Version: Protocol,
+		Nonce:   make([]byte, requestNonceSize),
+	})
+	require.NoError(t, err)
+	require.Equal(t, first.Envelope.PublicKey, inventory.Keys[0].PublicKey)
+}
+
+func TestReloadRefusesDifferentActivePoolKey(t *testing.T) {
+	evidence := testEvidence(t, 1)
+	active, _, _ := newTestService(t, evidence)
+	first := provisionTestKey(t, active)
+	replayed, _, _ := newTestService(t, evidence)
+	second := provisionTestKey(t, replayed)
+	require.NotEqual(t, first.PublicKey, second.PublicKey)
+
+	_, err := active.Reload(context.Background(), &ReloadRequest{
+		Version:     Protocol,
+		Region:      "us-east-1",
+		Credentials: testCredentials,
+		Envelope:    second,
+	})
+	if err == nil {
+		t.Fatal("reload replaced the active pool key")
+	}
+	require.ErrorIs(t, err, ErrProtocol)
+
+	inventory, err := active.Inventory(context.Background(), &InventoryRequest{
+		Version: Protocol,
+		Nonce:   make([]byte, requestNonceSize),
+	})
+	require.NoError(t, err)
+	require.Equal(t, first.PublicKey, inventory.Keys[0].PublicKey)
+}
+
 func TestProvisionRejectsDebugAttestationBeforeKMS(t *testing.T) {
 	service, kms, _ := newTestService(t, testEvidence(t, 0))
 	request := testProvisionRequest()

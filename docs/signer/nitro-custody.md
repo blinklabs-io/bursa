@@ -100,6 +100,9 @@ Ed25519 signature before creating a KMS client, so changing the key, account,
 region, role, or protocol fails before any KMS operation. A deployment can use
 the same measured authority public key for multiple explicitly signed KMS keys
 without making the host or its AWS credentials an authorization source.
+The enclave returns the original envelope when an accepted provisioning request
+is repeated, and refuses to reload a different key while one is active. A
+replayed authorization therefore cannot replace the active pool key.
 
 ## KMS recipient policy
 

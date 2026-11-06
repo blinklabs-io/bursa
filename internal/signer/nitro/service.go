@@ -38,6 +38,7 @@ type Service struct {
 	provisionAuthority ed25519.PublicKey
 	key                ed25519.PrivateKey
 	pub                ed25519.PublicKey
+	envelope           Envelope
 	seen               map[[requestNonceSize]byte]struct{}
 	counter            uint64
 	hasCounter         bool
@@ -123,6 +124,17 @@ func (s *Service) Provision(
 			ErrProtocol,
 		)
 	}
+	s.mu.Lock()
+	if len(s.key) != 0 || len(s.pub) != 0 {
+		env := cloneEnvelope(s.envelope)
+		matches := env.KMSKeyID == req.KMSKeyID && env.Role == req.Role
+		s.mu.Unlock()
+		if !matches {
+			return nil, fmt.Errorf("%w: pool cold key is already loaded", ErrProtocol)
+		}
+		return &ProvisionResponse{Version: Protocol, Envelope: env}, nil
+	}
+	s.mu.Unlock()
 	kms, err := s.kms(req.Region, req.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("create KMS client: %w", err)
@@ -166,14 +178,14 @@ func (s *Service) Provision(
 		clear(key)
 		return nil, fmt.Errorf("wrap pool cold key: %w", err)
 	}
-	s.install(key, pub)
+	s.install(key, pub, env)
 	clear(key)
 	return &ProvisionResponse{Version: Protocol, Envelope: env}, nil
 }
 
-// Reload recovers a wrapped key through recipient-attested KMS and atomically
-// replaces the active key. Failed reloads preserve the active key and its
-// replay and counter state.
+// Reload recovers a wrapped key through recipient-attested KMS. An already
+// loaded service accepts only the same public key, preserving its replay and
+// counter state.
 func (s *Service) Reload(
 	ctx context.Context,
 	req *ReloadRequest,
@@ -185,6 +197,12 @@ func (s *Service) Reload(
 	}
 	if err := validateEnvelope(req.Envelope); err != nil {
 		return nil, err
+	}
+	s.mu.Lock()
+	activePublicKey := bytes.Clone(s.pub)
+	s.mu.Unlock()
+	if len(activePublicKey) != 0 && !bytes.Equal(activePublicKey, req.Envelope.PublicKey) {
+		return nil, fmt.Errorf("%w: a different pool cold key is already loaded", ErrProtocol)
 	}
 	if err := validateKMSRequest(req.Region, req.Envelope.KMSKeyID, req.Credentials); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrProtocol, err)
@@ -228,7 +246,7 @@ func (s *Service) Reload(
 			ErrEnvelope,
 		)
 	}
-	s.install(key, pub)
+	s.install(key, pub, req.Envelope)
 	clear(key)
 	return &ReloadResponse{Version: Protocol, PublicKey: bytes.Clone(pub)}, nil
 }
@@ -317,13 +335,14 @@ func (s *Service) Sign(
 	}, nil
 }
 
-func (s *Service) install(key ed25519.PrivateKey, pub ed25519.PublicKey) {
+func (s *Service) install(key ed25519.PrivateKey, pub ed25519.PublicKey, env Envelope) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sameKey := bytes.Equal(s.pub, pub)
 	clear(s.key)
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
+	s.envelope = cloneEnvelope(env)
 	if !sameKey {
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0
