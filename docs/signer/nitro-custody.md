@@ -14,9 +14,9 @@ operation remain in the enclave.
 
 | Component | Responsibilities | Secret material available |
 |-----------|------------------|---------------------------|
-| `bursa signer` | caller authentication, policy, opcert counter watermark, response signature verification | none |
+| `bursa signer` | caller authentication, policy, opcert counter watermark, response signature verification, signing each enclave request with the signer authority key | signer authority private key (`host_key_file`) |
 | `bursa nitro proxy` on the parent instance | authenticate to enclave gRPC with a dedicated client certificate, read/write one existing Secrets Manager secret, fetch temporary role credentials, relay an offline provisioning authorization, bridge the signer socket to enclave gRPC, forward opaque KMS TLS bytes to the configured regional endpoint | proxy client key, temporary AWS credentials, provisioning signature and wrapped envelope |
-| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, verify provisioning against the measured image's authority key, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, provisioning authority public key, data key and cold key in enclave memory |
+| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, verify provisioning against the measured image's authority key, verify the signer authority's signature and a one-time challenge on each signing request, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, provisioning and signer authority public keys, data key and cold key in enclave memory |
 
 The host proxy has no operation that returns a plaintext key. The envelope in
 Secrets Manager contains the pool role, public key, KMS key ARN, KMS

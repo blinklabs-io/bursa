@@ -65,6 +65,11 @@ func nitroEnclaveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if bytes.Equal(provisionAuthority, signerAuthority) {
+				return errors.New(
+					"provisioning and signer authorities must differ",
+				)
+			}
 			serverOptions, err := nitro.RPCServerOptions(
 				nitro.RPCServerTLSConfig{
 					CertificateFile: serverCertFile,

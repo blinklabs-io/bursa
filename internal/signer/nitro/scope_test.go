@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/stretchr/testify/require"
@@ -99,6 +100,20 @@ func TestServiceRequiresSignerAuthorization(t *testing.T) {
 	_, err = service.Sign(context.Background(), &request)
 	require.ErrorContains(t, err, "signer authorization invalid")
 
+	challenge, err = service.Challenge(
+		context.Background(),
+		&ChallengeRequest{Version: Protocol},
+	)
+	require.NoError(t, err)
+	request.Challenge = challenge.Challenge
+	request.HostKey = testSignerAuthority.Public().(ed25519.PublicKey)
+	request.HostSignature = ed25519.Sign(
+		other,
+		backend.AttestedRequestBinding(request),
+	)
+	_, err = service.Sign(context.Background(), &request)
+	require.ErrorContains(t, err, "signer authorization invalid")
+
 	authorizeTestRequest(t, service, &request)
 	response, err := service.Sign(context.Background(), &request)
 	require.NoError(t, err)
@@ -106,6 +121,32 @@ func TestServiceRequiresSignerAuthorization(t *testing.T) {
 		t,
 		ed25519.Verify(env.PublicKey, request.Payload, response.Signature),
 	)
+}
+
+func TestServiceExpiresUnusedChallenges(t *testing.T) {
+	service, _, _ := newTestService(t, testEvidence(t, 7))
+	current := time.Unix(1_000, 0)
+	service.now = func() time.Time { return current }
+	for range maxSeenNonces {
+		_, err := service.Challenge(
+			context.Background(),
+			&ChallengeRequest{Version: Protocol},
+		)
+		require.NoError(t, err)
+	}
+	_, err := service.Challenge(
+		context.Background(),
+		&ChallengeRequest{Version: Protocol},
+	)
+	require.ErrorContains(t, err, "challenge cache is full")
+
+	current = current.Add(challengeTTL)
+	_, err = service.Challenge(
+		context.Background(),
+		&ChallengeRequest{Version: Protocol},
+	)
+	require.NoError(t, err)
+	require.Len(t, service.challenges, 1)
 }
 
 func TestProxyRefusesProfiledInventory(t *testing.T) {

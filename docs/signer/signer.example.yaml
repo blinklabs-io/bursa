@@ -119,7 +119,7 @@ signer:
     # - name: "nitro"
     #   type: "nitro"
     #   address: "unix:///run/bursa/enclave.sock"
-    #   host_key_file: "/etc/bursa/nitro-signer-host.skey"
+    #   host_key_file: "/etc/bursa/signer/nitro-host.skey"
     #   root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     #   pcrs:
     #     0: "<96 hex chars: PCR0 of the EIF>"

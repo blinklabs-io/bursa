@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -26,6 +27,10 @@ import (
 const (
 	requestNonceSize = 32
 	maxSeenNonces    = 65536
+	// challengeTTL bounds how long an unused challenge occupies the cache.
+	// Challenge is reachable without signer authorization, so a host that
+	// requests challenges and never signs must not exhaust capacity forever.
+	challengeTTL = time.Minute
 )
 
 // Service owns the active plaintext key and performs every cryptographic
@@ -40,7 +45,8 @@ type Service struct {
 	key                ed25519.PrivateKey
 	pub                ed25519.PublicKey
 	envelope           Envelope
-	challenges         map[[requestNonceSize]byte]struct{}
+	challenges         map[[requestNonceSize]byte]time.Time
+	now                func() time.Time
 	seen               map[[requestNonceSize]byte]struct{}
 	counter            uint64
 	hasCounter         bool
@@ -67,7 +73,8 @@ func NewService(
 		recipient: recipient, kms: kms,
 		provisionAuthority: bytes.Clone(provisionAuthority),
 		signerAuthority:    bytes.Clone(signerAuthority),
-		challenges:         make(map[[requestNonceSize]byte]struct{}),
+		challenges:         make(map[[requestNonceSize]byte]time.Time),
+		now:                time.Now,
 		seen:               make(map[[requestNonceSize]byte]struct{}),
 	}, nil
 }
@@ -313,10 +320,18 @@ func (s *Service) Challenge(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
+	if len(s.challenges) >= maxSeenNonces {
+		for k, expires := range s.challenges {
+			if !now.Before(expires) {
+				delete(s.challenges, k)
+			}
+		}
+	}
 	if len(s.challenges) >= maxSeenNonces {
 		return nil, fmt.Errorf("%w: challenge cache is full", ErrProtocol)
 	}
-	s.challenges[challenge] = struct{}{}
+	s.challenges[challenge] = now.Add(challengeTTL)
 	return &ChallengeResponse{
 		Version:   backend.AttestedProtocol,
 		Challenge: bytes.Clone(challenge[:]),
@@ -356,13 +371,17 @@ func (s *Service) Sign(
 		return nil, fmt.Errorf("%w: signer challenge is required", ErrProtocol)
 	}
 	copy(challenge[:], req.Challenge)
-	if _, exists := s.challenges[challenge]; !exists {
+	expires, exists := s.challenges[challenge]
+	if !exists {
 		return nil, fmt.Errorf(
 			"%w: signer challenge is unknown or used",
 			ErrProtocol,
 		)
 	}
 	delete(s.challenges, challenge)
+	if !s.now().Before(expires) {
+		return nil, fmt.Errorf("%w: signer challenge expired", ErrProtocol)
+	}
 	if !bytes.Equal(req.HostKey, s.signerAuthority) ||
 		len(req.HostSignature) != ed25519.SignatureSize ||
 		!ed25519.Verify(s.signerAuthority, backend.AttestedRequestBinding(*req), req.HostSignature) {
@@ -403,7 +422,7 @@ func (s *Service) install(
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
 	s.envelope = cloneEnvelope(env)
-	s.challenges = make(map[[requestNonceSize]byte]struct{})
+	s.challenges = make(map[[requestNonceSize]byte]time.Time)
 	if !sameKey {
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0
