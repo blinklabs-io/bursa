@@ -1399,17 +1399,30 @@ func TestHandleSign_ProfileRouting(t *testing.T) {
 	}
 
 	// GET /v1/keys/{hash} routes the same way.
-	get := func(query string) int {
+	get := func(query string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/v1/keys/"+h.String()+query, nil)
 		req.SetPathValue("hash", h.String())
 		rr := httptest.NewRecorder()
 		srv.handleGetKey(rr, req)
-		return rr.Code
+		return rr
 	}
-	if got := get(""); got != http.StatusBadRequest {
-		t.Fatalf("get without profile: want 400, got %d", got)
+	if rr := get(""); rr.Code != http.StatusBadRequest {
+		t.Fatalf("get without profile: want 400, got %d", rr.Code)
 	}
-	if got := get("?profile=otg@musashi"); got != http.StatusOK {
-		t.Fatalf("get with profile: want 200, got %d", got)
+	for _, tc := range []struct{ profile, backend string }{
+		{"otg@preview", "dev-preview"},
+		{"otg@musashi", "dev-musashi"},
+	} {
+		rr := get("?profile=" + tc.profile)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("get with profile %s: want 200, got %d", tc.profile, rr.Code)
+		}
+		var info KeyInfo
+		if err := json.NewDecoder(rr.Body).Decode(&info); err != nil {
+			t.Fatalf("decode key info for %s: %v", tc.profile, err)
+		}
+		if info.Backend != tc.backend {
+			t.Fatalf("backend for %s: want %s, got %s", tc.profile, tc.backend, info.Backend)
+		}
 	}
 }

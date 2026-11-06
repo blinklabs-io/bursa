@@ -242,8 +242,10 @@ func TestProfiledRouting_Coordinator(t *testing.T) {
 	})
 	t.Run("nothing recorded", func(t *testing.T) {
 		for _, scope := range []string{"opcert-chain-floor", "opcert-chain-issued", "opcert-counter"} {
-			if _, ok, _ := wm.CounterFor(ctx, k.hash, scope); ok {
-				t.Errorf("refused request recorded scope %q", scope)
+			for _, suffix := range []string{"", "|" + profPreview, "|" + profMusashi} {
+				if _, ok, err := wm.CounterFor(ctx, k.hash, scope+suffix); err != nil || ok {
+					t.Errorf("refused request recorded scope %q: ok=%v err=%v", scope+suffix, ok, err)
+				}
 			}
 		}
 	})
