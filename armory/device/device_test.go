@@ -16,6 +16,7 @@ package device
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa/armory/profile"
 	"github.com/blinklabs-io/gouroboros/ledger"
@@ -134,7 +136,9 @@ func (c *fakeChip) SignEd25519(id uint32, msg []byte) ([]byte, error) {
 		return nil, errors.New("no key")
 	}
 
-	c.signs++
+	if id != profile.IdentityKeyID {
+		c.signs++
+	}
 
 	return ed25519.Sign(k, msg), nil
 }
@@ -197,11 +201,107 @@ func post(t *testing.T, s *Service, path string, req any) (int, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if AdminRouteContainsSecrets(path) && testRequestContainsSecrets(path, b) {
+		b = encryptAdminTestRequest(t, s, path, b)
+	}
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, jsonRequest(path, bytes.NewReader(b)))
 
 	return w.Code, w.Body.Bytes()
+}
+
+func testRequestContainsSecrets(route string, body []byte) bool {
+	mk := adminRequests[route]
+	if mk == nil {
+		return false
+	}
+	req := mk()
+	if err := json.Unmarshal(body, req); err != nil {
+		return false
+	}
+	holder := req.(secretHolder)
+	for _, secret := range holder.secrets() {
+		if len(*secret) != 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
+func encryptAdminTestRequest(
+	t *testing.T,
+	s *Service,
+	route string,
+	body []byte,
+) []byte {
+	t.Helper()
+
+	chip, ok := s.chip.(*fakeChip)
+	if !ok {
+		t.Fatal("test service does not use a fake chip")
+	}
+	failExists := chip.failExists
+	chip.failExists = false
+	defer func() { chip.failExists = failExists }()
+	if _, ok = chip.keys[profile.IdentityKeyID]; !ok {
+		chip.keys[profile.IdentityKeyID] = ed25519.NewKeyFromSeed(
+			bytes.Repeat([]byte{0x79}, ed25519.SeedSize),
+		)
+	}
+	code, response := post(t, s, "/v1/challenge", struct{}{})
+	if code != http.StatusOK {
+		t.Fatalf("admin channel challenge: %d %s", code, response)
+	}
+	var challenge ChallengeResponse
+	if err := json.Unmarshal(response, &challenge); err != nil {
+		t.Fatal(err)
+	}
+	hostPrivate, err := ecdh.X25519().NewPrivateKey(
+		bytes.Repeat([]byte{0x71}, x25519KeySize),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofRequest := IdentityProofRequest{
+		Version:       Protocol,
+		Route:         route,
+		Challenge:     challenge.Challenge,
+		HostPublicKey: hostPrivate.PublicKey().Bytes(),
+	}
+	code, response = post(t, s, RouteIdentityProof, proofRequest)
+	if code != http.StatusOK {
+		t.Fatalf("admin channel identity proof: %d %s", code, response)
+	}
+	var proof IdentityProofResponse
+	if err = json.Unmarshal(response, &proof); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := s.chip.PublicKeyEd25519(profile.IdentityKeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, err := NewAdminChannel(
+		route,
+		identity,
+		proofRequest,
+		proof,
+		hostPrivate,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := channel.Seal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return wire
 }
 
 func provisionTestProfile(t *testing.T, s *Service) ProvisionResponse {
@@ -338,17 +438,43 @@ func TestProvisionIdentity(t *testing.T) {
 	}
 }
 
-func TestIdentityProofAttestsNonce(t *testing.T) {
+func testIdentityProofRequest(t *testing.T, s *Service) IdentityProofRequest {
+	t.Helper()
+
+	code, body := post(t, s, "/v1/challenge", struct{}{})
+	if code != http.StatusOK {
+		t.Fatalf("challenge: %d %s", code, body)
+	}
+	var challenge ChallengeResponse
+	if err := json.Unmarshal(body, &challenge); err != nil {
+		t.Fatal(err)
+	}
+	hostPrivate, err := ecdh.X25519().NewPrivateKey(
+		bytes.Repeat([]byte{0x91}, x25519KeySize),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return IdentityProofRequest{
+		Version:       Protocol,
+		Route:         RouteProvisionCold,
+		Challenge:     challenge.Challenge,
+		HostPublicKey: hostPrivate.PublicKey().Bytes(),
+	}
+}
+
+func TestIdentityProofAttestsAdminChannel(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newTestService(t)
-	n := nonce(0x91)
 	code, body := post(t, s, RouteProvisionIdentity, IdentityRequest{})
 	if code != http.StatusOK {
 		t.Fatalf("provision identity: %d %s", code, body)
 	}
 
-	code, body = post(t, s, RouteIdentityProof, IdentityProofRequest{Nonce: n})
+	req := testIdentityProofRequest(t, s)
+	code, body = post(t, s, RouteIdentityProof, req)
 	if code != http.StatusOK {
 		t.Fatalf("%d %s", code, body)
 	}
@@ -364,43 +490,77 @@ func TestIdentityProofAttestsNonce(t *testing.T) {
 
 	if !ed25519.Verify(
 		resp.PublicKey,
-		IdentityBinding(n, resp.PublicKey),
+		IdentityBinding(req, resp.PublicKey, resp.EncryptionPublicKey),
 		resp.Attestation,
 	) {
 		t.Fatal("identity attestation does not verify")
 	}
 
-	tampered := bytes.Clone(n)
-	tampered[0] ^= 1
+	tampered := req
+	tampered.Route = RouteProvisionProfile
 
 	if ed25519.Verify(
 		resp.PublicKey,
-		IdentityBinding(tampered, resp.PublicKey),
+		IdentityBinding(
+			tampered,
+			resp.PublicKey,
+			resp.EncryptionPublicKey,
+		),
 		resp.Attestation,
 	) {
 		t.Fatal("identity attestation verifies for another nonce")
 	}
 }
 
-func TestIdentityProofRejectsOversizedNonce(t *testing.T) {
+func TestIdentityProofRejectsOversizedChallenge(t *testing.T) {
 	t.Parallel()
 
 	s, _ := newTestService(t)
-
-	// provisioned, so the nonce size is the only reason left to refuse
-	if code, _ := post(t, s, RouteProvisionIdentity, IdentityRequest{}); code != http.StatusOK {
-		t.Fatalf("provision identity: status %d", code)
+	code, body := post(t, s, RouteProvisionIdentity, IdentityRequest{})
+	if code != http.StatusOK {
+		t.Fatalf("provision identity: %d %s", code, body)
 	}
-
-	code, _ := post(
+	req := testIdentityProofRequest(t, s)
+	req.Challenge = make([]byte, challengeSize+1)
+	code, body = post(
 		t,
 		s,
 		RouteIdentityProof,
-		IdentityProofRequest{Nonce: make([]byte, maxNonce+1)},
+		req,
 	)
+	if code != http.StatusBadRequest ||
+		!strings.Contains(string(body), "unknown or used challenge") {
+		t.Fatalf("oversized identity challenge: %d %s", code, body)
+	}
+}
 
-	if code < 400 || code >= 500 {
-		t.Fatalf("oversized identity nonce: status %d, want 4xx", code)
+func TestIdentityProofRateLimitBoundsChipWork(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	code, body := post(t, s, RouteProvisionIdentity, IdentityRequest{})
+	if code != http.StatusOK {
+		t.Fatalf("provision identity: %d %s", code, body)
+	}
+	req := testIdentityProofRequest(t, s)
+	for range identityProofBurst {
+		code, body = post(t, s, RouteIdentityProof, req)
+		if code != http.StatusOK {
+			t.Fatalf("identity proof within burst: %d %s", code, body)
+		}
+	}
+	code, body = post(t, s, RouteIdentityProof, req)
+	if code != http.StatusBadRequest ||
+		!strings.Contains(string(body), errIdentityProofBusy.Error()) {
+		t.Fatalf("identity proof over burst: %d %s", code, body)
+	}
+
+	now = now.Add(identityProofWindow)
+	code, body = post(t, s, RouteIdentityProof, req)
+	if code != http.StatusOK {
+		t.Fatalf("identity proof after window: %d %s", code, body)
 	}
 }
 
@@ -408,15 +568,17 @@ func TestIdentityProofDoesNotCreateIdentity(t *testing.T) {
 	t.Parallel()
 
 	s, chip := newTestService(t)
-	code, _ := post(
+	req := testIdentityProofRequest(t, s)
+	code, body := post(
 		t,
 		s,
 		RouteIdentityProof,
-		IdentityProofRequest{Nonce: nonce(0x92)},
+		req,
 	)
 
-	if code == http.StatusOK {
-		t.Fatal("identity proof succeeded before identity provisioning")
+	if code != http.StatusBadRequest ||
+		!strings.Contains(string(body), errIdentityNotProvisioned.Error()) {
+		t.Fatalf("identity proof before provisioning: %d %s", code, body)
 	}
 
 	if _, err := chip.PublicKeyEd25519(profile.IdentityKeyID); err == nil {

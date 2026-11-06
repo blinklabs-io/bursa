@@ -634,6 +634,26 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 
 		route := "/" + sub + "/" + sf.Arg(0)
+		c := newClient(*base, *source)
+
+		var channel *device.AdminChannel
+		var err error
+		if device.AdminRouteContainsSecrets(route) {
+			identity, decodeErr := hex.DecodeString(*identityHex)
+			if decodeErr != nil || len(identity) != ed25519.PublicKeySize {
+				return errors.New(
+					"-identity must be the 32-byte identity public key in hex for private-key provisioning",
+				)
+			}
+			channel, err = authenticateDevice(
+				c,
+				ed25519.PublicKey(identity),
+				route,
+			)
+			if err != nil {
+				return err
+			}
+		}
 
 		file, in, err := adminKeyFile(
 			route,
@@ -647,10 +667,10 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 
 		return adminRequest(
-			newClient(*base, *source),
+			c,
 			route,
 			file,
-			*identityHex,
+			channel,
 			in,
 			stdout,
 		)

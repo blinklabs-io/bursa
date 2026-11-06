@@ -30,25 +30,19 @@ import (
 const buildMode = "provisioning build: signing endpoints are not served"
 
 // routes serves provisioning only: key import, profiles, the reward account,
-// the opcert floor and reset. /pubkey returns the key the legacy /provision
-// imported, not the identity key.
+// the opcert floor and reset. /pubkey returns the legacy cold-key object, not
+// the identity key.
 func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
-	// the unsigned cold key import cannot carry a host signature, so it is
-	// closed once a host key is registered; /provision/cold takes its place.
-	// The check runs under the lock the import holds, which the service
-	// shares, so a host key registered meanwhile cannot let it through.
-	s.importOpen = svc.UnsignedProvisioningLocked
 	// a multi image takes the device's first host key here, unsigned; no
 	// other image does
 	svc.AllowFirstHostKey()
-	http.HandleFunc("/provision", s.provision)
 	http.HandleFunc("/pubkey", s.publicKey)
-	// the provisioning requests are signed by a host key once one is
-	// registered; /v1/challenge issues their challenges
+	// provisioning requests are signed by a host key once one is registered;
+	// /v1/challenge issues their challenges. /v1/identity is unsigned: the
+	// identity signature authenticates an ephemeral key that encrypts private
+	// key provisioning requests.
 	http.Handle("/provision/", svc.ProvisioningHandler())
 	http.Handle("/v1/challenge", svc.ProvisioningHandler())
-	// the identity proof is unsigned and always served: it is a nonce-bound
-	// signature, not gated by a host key
 	http.Handle(device.RouteIdentityProof, svc.ProvisioningHandler())
 
 	// a cold reset returns an unflashed board to USB recovery mode, ready

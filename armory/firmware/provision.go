@@ -30,14 +30,9 @@ import (
 // test range so bring-up cleanup can never delete it.
 const coldKeyID uint32 = 0x20e50010
 
-// cardano-cli encodes a 32-byte Ed25519 signing key as a CBOR byte string:
-// major type 2, one-byte length (0x58), length 32 (0x20).
-var cborBytes32 = []byte{0x58, 0x20}
-
 var errNotOpen = errors.New("SE050 not available")
 
-// legacy serves the cold key import and, in testnet builds, /sign.
-var legacy signer
+var firmwareSigner signer
 
 // signer serializes access to the SE050 session, which bring-up opens.
 type signer struct {
@@ -46,9 +41,6 @@ type signer struct {
 	// record logs a signature before it is made; /sign in testnet builds
 	// signs only when it returns nil
 	record func(msg []byte) error
-	// importOpen, when set, is checked with the lock held before
-	// /provision imports a key; the import is refused unless it returns nil
-	importOpen func() error
 }
 
 func (s *signer) set(se *se050.SE050) {
@@ -66,70 +58,6 @@ func readHexBody(r *http.Request, max int) ([]byte, error) {
 	}
 
 	return hex.DecodeString(string(bytes.TrimSpace(body)))
-}
-
-// provision imports a cardano-cli cborHex signing key as the persistent cold
-// key. The request body and seed are never logged or echoed: errors are
-// generic and the response carries only the public key.
-func (s *signer) provision(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", http.StatusMethodNotAllowed)
-		return
-	}
-
-	key, err := readHexBody(r, len(cborBytes32)+32)
-
-	if err != nil || len(key) != len(cborBytes32)+32 ||
-		!bytes.Equal(key[:2], cborBytes32) {
-		clear(key)
-		http.Error(
-			w,
-			"expected cborHex of a 32-byte Ed25519 signing key",
-			http.StatusBadRequest,
-		)
-		return
-	}
-
-	seed := key[2:]
-	defer clear(key)
-
-	s.Lock()
-	defer s.Unlock()
-
-	if s.se == nil {
-		http.Error(w, errNotOpen.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
-	if s.importOpen != nil {
-		if err = s.importOpen(); err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
-			return
-		}
-	}
-
-	exists, err := s.se.Exists(coldKeyID)
-
-	if err != nil {
-		http.Error(
-			w,
-			fmt.Sprintf("exist check: %v", err),
-			http.StatusInternalServerError,
-		)
-		return
-	}
-
-	if exists {
-		http.Error(w, "cold key already provisioned", http.StatusConflict)
-		return
-	}
-
-	if err = s.se.ImportEd25519(coldKeyID, seed, false); err != nil {
-		http.Error(w, "import failed", http.StatusInternalServerError)
-		return
-	}
-
-	s.writePublicKey(w)
 }
 
 func (s *signer) writePublicKey(w http.ResponseWriter) {

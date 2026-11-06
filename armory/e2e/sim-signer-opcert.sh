@@ -89,13 +89,13 @@ cold_request() {
 	rm -f "$W/cold.key"
 }
 
-status=$(cold_request |
-	curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @- "http://$SIM_ADDR/provision/cold") ||
-	fail "unsigned cold import request did not complete"
-case "$status" in
-4??) ;;
-*) fail "an unsigned cold import returned $status after a host key was registered, want 4xx" ;;
-esac
+UNSIGNED_STATUS=$(cold_request |
+	curl -sS -o "$W/unsigned-cold.out" -w '%{http_code}' \
+		-H 'Content-Type: application/json' --data-binary @- \
+		"http://$SIM_ADDR/provision/cold") || fail "unsigned cold import request failed"
+[ "$UNSIGNED_STATUS" = 400 ] || fail "unsigned cold import returned HTTP $UNSIGNED_STATUS"
+grep -q 'private-key provisioning request must be encrypted' "$W/unsigned-cold.out" ||
+	fail "unsigned cold import failed for an unexpected reason"
 pass "unsigned request refused once a host key exists"
 
 echo '{}' | pool -host-key "$W/host.skey" provision identity > "$W/identity.json"

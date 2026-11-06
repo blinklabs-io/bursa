@@ -37,15 +37,22 @@ type KeyInfo struct {
 	PublicKey []byte `json:"public_key"`
 }
 
-// IdentityBinding is the digest the device identity key signs to prove the
-// holder of the identity key answered a fresh host nonce. It does not bind the
-// connection that carries a later request, so an on-path relay can forward the
-// proof; the link to the device must be trusted.
-func IdentityBinding(nonce, publicKey []byte) []byte {
+// IdentityBinding is the digest the device identity key signs to authenticate
+// an ephemeral encryption key for one private-key provisioning route.
+func IdentityBinding(
+	req IdentityProofRequest,
+	publicKey, encryptionPublicKey []byte,
+) []byte {
 	h := sha256.New()
 
 	for _, field := range [][]byte{
-		[]byte(identityDomain), []byte(Protocol), nonce, publicKey,
+		[]byte(identityDomain),
+		[]byte(Protocol),
+		[]byte(req.Route),
+		req.Challenge,
+		req.HostPublicKey,
+		encryptionPublicKey,
+		publicKey,
 	} {
 		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
 		h.Write(field)

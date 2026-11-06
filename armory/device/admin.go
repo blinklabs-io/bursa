@@ -19,7 +19,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,7 +29,7 @@ import (
 // from every other signature the host key could make.
 const adminDomain = "bursa-armory-admin/1"
 
-// RouteIdentityProof serves a nonce-bound proof from the device identity key.
+// RouteIdentityProof authenticates a one-use private-key provisioning channel.
 const RouteIdentityProof = "/v1/identity"
 
 // Provisioning and wipe routes that require host authentication once a host
@@ -238,6 +237,10 @@ func handleAdmin[Req any, P interface {
 	*Req
 	hostAuthed
 }, Resp any](s *Service, route string, fn func(Req) (Resp, error)) http.HandlerFunc {
+	if AdminRouteContainsSecrets(route) {
+		return handleEncryptedAdmin[Req, P](s, route, fn)
+	}
+
 	return handle(s, func(req Req) (Resp, error) {
 		var zero Resp
 
@@ -252,40 +255,97 @@ func handleAdmin[Req any, P interface {
 	})
 }
 
-// errProvisioningClosed refuses the firmware's unsigned cold key import once
-// a host key is registered.
-var errProvisioningClosed = errors.New(
-	"a host key is registered: send a signed /provision/cold request",
-)
+func handleEncryptedAdmin[Req any, P interface {
+	*Req
+	hostAuthed
+}, Resp any](s *Service, route string, fn func(Req) (Resp, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !allowed(w, r, Address) {
+			return
+		}
 
-// errUnsignedImportMulti refuses the firmware's unsigned cold key import in a
-// multi image, which has none.
-var errUnsignedImportMulti = errors.New(
-	"a multi image takes no unsigned cold key import: add the scope's first host key with /provision/host-key, then send a signed /provision/cold request",
-)
+		wire, err := io.ReadAll(
+			http.MaxBytesReader(w, r.Body, maxEncryptedRequest),
+		)
+		if err != nil {
+			http.Error(w, errMalformedRequest.Error(), http.StatusBadRequest)
+			return
+		}
+		defer clear(wire)
 
-// UnsignedProvisioningLocked reports why provisioning requests cannot be taken
-// unsigned, or nil when they can: no host key of any network or chain is
-// registered, the stored list is readable and the image is not a multi image,
-// which has no unsigned import. The firmware's unsigned cold key import
-// (/provision) is served only then. The caller holds the lock
-// passed to New across this check and the import, so a host key registered
-// in between cannot let the import through.
-func (s *Service) UnsignedProvisioningLocked() error {
-	switch {
-	case s.chip == nil:
-		return errNoChip
-	case s.hostKeysBad:
-		return errHostKeysBad
-	case s.multi():
-		// a multi image authenticates every request, so there is no
-		// unsigned import; the first key of a scope is its way in
-		return errUnsignedImportMulti
-	case len(s.hostEntries) > 0:
-		return errProvisioningClosed
+		var fields map[string]json.RawMessage
+		if err = json.Unmarshal(wire, &fields); err != nil {
+			http.Error(w, errMalformedRequest.Error(), http.StatusBadRequest)
+			return
+		}
+		_, encrypted := fields["ciphertext"]
+		if !encrypted && len(wire) > maxRequest {
+			http.Error(w, errMalformedRequest.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.chip == nil {
+			http.Error(w, errNoChip.Error(), http.StatusServiceUnavailable)
+			return
+		}
+
+		body := wire
+		if encrypted {
+			var request EncryptedAdminRequest
+			dec := json.NewDecoder(bytes.NewReader(wire))
+			dec.DisallowUnknownFields()
+			if err = dec.Decode(&request); err != nil ||
+				dec.Decode(&struct{}{}) != io.EOF {
+				http.Error(
+					w,
+					errMalformedRequest.Error(),
+					http.StatusBadRequest,
+				)
+				return
+			}
+			body, err = s.openAdminRequest(route, request)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		defer clear(body)
+
+		var req Req
+		if err = decodeSecretRequest(body, P(&req)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer clearSecrets(P(&req))
+		if !encrypted {
+			for _, secret := range any(P(&req)).(secretHolder).secrets() {
+				if len(*secret) != 0 {
+					http.Error(
+						w,
+						"private-key provisioning request must be encrypted",
+						http.StatusBadRequest,
+					)
+					return
+				}
+			}
+		}
+		defer func() { s.caller = caller{} }()
+
+		if err = s.authorizeAdmin(route, P(&req)); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp, err := fn(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
 	}
-
-	return nil
 }
 
 // authorizeAdmin checks req's host authentication for route.

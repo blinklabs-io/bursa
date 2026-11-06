@@ -71,7 +71,7 @@ func newLogRig(t *testing.T, slots uint64) *logRig {
 
 	var cold device.ColdResponse
 
-	devicePost(t, srv, "/provision/cold", device.ColdRequest{
+	devicePostSecret(t, srv, "/provision/cold", id.PublicKey, device.ColdRequest{
 		ColdKeyID: coldID, SigningKey: append([]byte{0x58, 0x20}, bytes.Repeat([]byte{0x42}, 32)...),
 	}, &cold)
 

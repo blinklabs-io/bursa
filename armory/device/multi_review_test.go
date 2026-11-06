@@ -18,28 +18,9 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"testing"
 )
-
-// A multi image has no unsigned cold key import even before any host key is
-// registered, and says so instead of claiming a key is registered.
-func TestMultiUnsignedImportRefusalNamesFirstKey(t *testing.T) {
-	t.Parallel()
-
-	s := multiImage(t, newFakeChip(), true)
-	if err := s.UnsignedProvisioningLocked(); !errors.Is(
-		err,
-		errUnsignedImportMulti,
-	) {
-		t.Fatalf(
-			"UnsignedProvisioningLocked = %v, want %v",
-			err,
-			errUnsignedImportMulti,
-		)
-	}
-}
 
 // otherChainKey is registered by an image of a chain the multi image does not
 // serve, then for scope by its own single-scope image.

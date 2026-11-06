@@ -143,6 +143,35 @@ func devicePost(
 	}
 }
 
+func devicePostSecret(
+	t *testing.T,
+	srv *httptest.Server,
+	path string,
+	identity ed25519.PublicKey,
+	req, resp any,
+) {
+	t.Helper()
+
+	channel, err := authenticateDevice(
+		newClient(srv.URL, ""),
+		identity,
+		path,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(body)
+	encrypted, err := channel.Seal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devicePost(t, srv, path, encrypted, resp)
+}
+
 // newRig serves a real device.Service on a fake chip, provisioned through its
 // own endpoints: identity, cold key import and profile (chain counter 3).
 func newRig(t *testing.T) *rig {
@@ -170,7 +199,7 @@ func newRig(t *testing.T) *rig {
 
 	var cold device.ColdResponse
 
-	devicePost(t, srv, "/provision/cold", device.ColdRequest{
+	devicePostSecret(t, srv, "/provision/cold", id.PublicKey, device.ColdRequest{
 		ColdKeyID: coldID, SigningKey: append([]byte{0x58, 0x20}, bytes.Repeat([]byte{0x42}, 32)...),
 	}, &cold)
 

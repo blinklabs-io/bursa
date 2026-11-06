@@ -260,7 +260,7 @@ func TestRoutesAcceptDeviceHostAndJSONParameters(t *testing.T) {
 	}
 }
 
-// Guard fronts the legacy firmware routes, which are not JSON handlers.
+// Guard fronts firmware routes that are not JSON handlers.
 func TestGuardRefusesForeignRequests(t *testing.T) {
 	t.Parallel()
 

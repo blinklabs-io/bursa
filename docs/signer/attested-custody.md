@@ -485,16 +485,22 @@ exported or backed up, so a lost or broken device would lose the pool for
 good. A cold key is always created off the device, kept in a backup, and
 imported, so the pool can move to a replacement device.
 
-Before `armory-pool` sends a cold or owner signing key to the device, it
-requires `-identity` and sends a fresh nonce to `/v1/identity`. The
-device signs the nonce and its public identity under the pinned identity key.
-The tool sends the private-key request only after that proof verifies; with
-`-host-key-dir` it has already read the request from standard input to resolve
-its scope. The proof does not bind the connection, so an on-path relay could
-forward it and then receive the key: the link to the device must be trusted.
-The device zeroes the request buffer and the decoded key once the request is
-done. Copies held by the host, transport, and host tool that sent the request
-are outside that.
+Before `armory-pool` reads a cold or owner signing key from standard input, it
+requires `-identity`, obtains a one-time challenge, and sends its ephemeral
+X25519 public key to `/v1/identity`. The device signs the route, challenge, both
+ephemeral encryption keys, and its public identity under the pinned identity
+key. The tool verifies that proof before reading the request, then encrypts the
+complete request to the authenticated device key. A forwarding or substituted
+HTTP endpoint sees only ciphertext.
+
+The device zeroes its decrypted request buffer and decoded key after the
+request. `armory-pool` clears the explicit plaintext request buffer after
+encryption; host JSON processing and transport layers can retain copies outside
+the device's zeroization boundary.
+
+The provisioning firmware accepts private keys only through the encrypted
+`/provision/cold` and `/provision/profile` requests. It does not serve the
+legacy plaintext `/provision` import.
 
 ### Provisioning and wipe authentication
 
@@ -515,8 +521,8 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
-  unsigned. The firmware's unsigned `POST /provision` cold key import is
-  refused too; use a signed `/provision/cold`.
+  unsigned. Private-key requests also use the identity-authenticated encrypted
+  channel described above.
 - The signature is an Ed25519 signature over `AdminBinding`: the domain
   `bursa-armory-admin/1`, the route, the request as the device's Go types
   encode it with the three fields empty and each private key (`signing_key`
@@ -526,7 +532,8 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   exact key while the key never passes through the JSON encoder used for the
   binding. The challenge is one-time.
 - The device's last host key cannot be revoked: an empty list is the
-  bootstrap state, which accepts unsigned provisioning and key enrollment.
+  bootstrap state, which accepts provisioning without a host signature and
+  permits the first host-key enrollment.
   Add the replacement key first, then revoke the old one; only a device wipe
   returns to the bootstrap state.
 - A host key list the device cannot read refuses every authenticated route,
@@ -611,8 +618,8 @@ are unchanged. `TESTNET=1` is refused with it.
 - Not changed: `/wipe/device`, which stays confirmed by the identity public
   key alone as the recovery path when every host key is lost, and
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
-  The unsigned firmware `/provision` cold key import is closed in a multi
-  image: import cold keys with a signed `/provision/cold`.
+  Cold and owner private keys use the same encrypted provisioning routes in
+  single-scope and multi images.
 - No downgrade. An image older than this one does not know the second cold
   key block (`0x20e50600`-`0x20e5060f`) or the ownership record: its
   `/wipe/device` leaves them on the chip, and it imports into an object

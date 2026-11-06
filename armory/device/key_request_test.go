@@ -299,11 +299,14 @@ func TestSecretHexDecodesEscapes(t *testing.T) {
 
 	s, _, _ := newLoggedService(t)
 
+	raw := []byte(
+		`{"cold_key_id":551878673,"signing_key":"` + escapeHex(key) + `"}`,
+	)
+	wire := encryptAdminTestRequest(t, s, RouteProvisionCold, raw)
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/provision/cold",
-		strings.NewReader(
-			`{"cold_key_id":551878673,"signing_key":"`+escapeHex(key)+`"}`),
+		bytes.NewReader(wire),
 	)
 	setDeviceHeaders(req)
 
