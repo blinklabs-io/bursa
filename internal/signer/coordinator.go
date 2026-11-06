@@ -114,10 +114,19 @@ func profileFromContext(ctx context.Context) string {
 // under several profiles never shares a signing history across them. A key
 // with no profile keeps scope unchanged.
 func profileScope(ref backend.KeyRef, scope string) string {
-	if p, ok := ref.(backend.Profiled); ok && p.Profile() != "" {
-		return scope + "|" + p.Profile()
+	if p, ok := ref.(backend.Profiled); ok {
+		return scopeForProfile(scope, p.Profile())
 	}
 	return scope
+}
+
+// scopeForProfile is scope under profile; an empty profile leaves it
+// unchanged.
+func scopeForProfile(scope, profile string) string {
+	if profile == "" {
+		return scope
+	}
+	return scope + "|" + profile
 }
 
 // keyLogger returns the logger for decisions about a resolved key. It names the

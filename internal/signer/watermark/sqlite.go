@@ -289,6 +289,9 @@ func sqliteCounterUpsert(op CounterOp) (string, []any) {
 		extra = []any{counterEncode(op.Min)}
 	case CounterStrict:
 		guard = `excluded.counter > counter_watermark.counter`
+	case CounterEqual:
+		// checked by its own read, never upserted
+		guard = `false`
 	default:
 		guard = `false`
 	}
@@ -314,6 +317,12 @@ func (s *SqliteWatermark) CheckAndCommitCounters(
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, op := range ops {
+		if op.Kind == CounterEqual {
+			if err := sqliteRequireCounter(ctx, tx, key, op); err != nil {
+				return err
+			}
+			continue
+		}
 		q, extra := sqliteCounterUpsert(op)
 		want := counterEncode(op.Value)
 		var have string
@@ -328,6 +337,33 @@ func (s *SqliteWatermark) CheckAndCommitCounters(
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("counter watermark commit: %w", err)
+	}
+	return nil
+}
+
+// sqliteRequireCounter checks a CounterEqual op inside tx. The insert of a
+// missing record at 0 is a write, so the transaction holds SQLite's write lock
+// before it reads, and a reset in another process cannot slip in between.
+func sqliteRequireCounter(
+	ctx context.Context,
+	tx *sql.Tx,
+	key backend.KeyHash,
+	op CounterOp,
+) error {
+	rk := recordKey(key, op.Scope)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO counter_watermark (record_key, counter) VALUES (?, ?)`,
+		rk, counterEncode(0)); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	var have string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT counter FROM counter_watermark WHERE record_key = ?`,
+		rk).Scan(&have); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	if have != counterEncode(op.Value) {
+		return &CounterRegressionError{Scope: op.Scope}
 	}
 	return nil
 }

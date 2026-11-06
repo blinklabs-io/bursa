@@ -125,7 +125,8 @@ type CounterWatermark interface {
 	// op applies the same rule as the single-scope method of its Kind, and
 	// the first refused op in argument order is reported. Ops must name
 	// distinct scopes. The SQL stores lock rows in argument order, so callers
-	// must pass ops in one consistent order per scope set.
+	// must pass ops in one consistent order per scope set, a CounterEqual
+	// generation first.
 	CheckAndCommitCounters(
 		ctx context.Context,
 		key backend.KeyHash,
@@ -146,6 +147,13 @@ const (
 	// CounterFloorFrom records Value if no record exists or
 	// Min <= stored <= Value.
 	CounterFloorFrom
+	// CounterEqual records nothing. It requires the stored value, counted as
+	// 0 when no record exists, to equal Value, and the SQL stores hold that
+	// record locked against a concurrent AdminResetCounters bump until the
+	// transaction ends. The record is created at 0 if absent. It is a
+	// generation fence: pass it first, so every writer locks the generation
+	// before any other row.
+	CounterEqual
 )
 
 // CounterOp is one scope's check-and-record within CheckAndCommitCounters.
@@ -159,6 +167,9 @@ type CounterOp struct {
 
 // allows reports whether the op accepts the stored value (none when !exists).
 func (o CounterOp) allows(stored uint64, exists bool) bool {
+	if o.Kind == CounterEqual {
+		return !exists && o.Value == 0 || exists && stored == o.Value
+	}
 	if !exists {
 		return true
 	}
@@ -169,6 +180,8 @@ func (o CounterOp) allows(stored uint64, exists bool) bool {
 		return o.Value >= stored && stored >= o.Min
 	case CounterStrict:
 		return o.Value > stored
+	case CounterEqual:
+		return false // returned above
 	default:
 		return false
 	}
@@ -198,7 +211,7 @@ func validateCounterOps(ops []CounterOp) error {
 	}
 	seen := make(map[string]struct{}, len(ops))
 	for _, o := range ops {
-		if o.Kind < CounterStrict || o.Kind > CounterFloorFrom {
+		if o.Kind < CounterStrict || o.Kind > CounterEqual {
 			return fmt.Errorf("counter watermark: unknown op kind %d", o.Kind)
 		}
 		if _, dup := seen[o.Scope]; dup {
@@ -395,7 +408,9 @@ func (m *MemWatermark) CheckAndCommitCounters(
 		}
 	}
 	for _, o := range ops {
-		m.counters[recordKey(key, o.Scope)] = o.Value
+		if o.Kind != CounterEqual {
+			m.counters[recordKey(key, o.Scope)] = o.Value
+		}
 	}
 	return nil
 }

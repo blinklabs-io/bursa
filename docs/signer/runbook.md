@@ -299,6 +299,86 @@ key served by a profiled backend, `<hash>|opcert-chain-issued|<profile>`) from
 `signer_counter_watermark` (Postgres) or `counter_watermark` (SQLite), and
 resume requests.
 
+#### Failover and failback of an opcert signer
+
+Opcert counter records live in the watermark store. Signers that share one
+store share these records, so this procedure applies only to signers with
+independent stores; do not reset a healthy replica on a shared store.
+
+If signer A issued counter 9 and the pool then renewed through signer B,
+which has its own store, issued 10 and forged with it, the chain is at 10
+while A still records 9 as issued. With `mode: enforce`, A refuses a
+`chain_counter` of 10 as above the last counter issued, and an armory device
+refuses it the same way. With `mode: warn`, A logs the conflict and signs
+without changing its records.
+
+Reset A's records to the current chain counter before failing back. The
+reset is fenced against in-flight opcert requests: it bumps a per-key reset
+generation (`opcert-chain-reset-gen`) in the same transaction, and a request
+that read the records before the reset and commits after it is refused with a
+conflict (HTTP 409) and returns no signature, so it cannot overwrite the
+reset's floor or recreate `opcert-chain-issued`. The caller retries. Pausing
+the renewal for that pool around the reset is still advisable, to avoid
+refused requests, but is not required for safety:
+
+```
+bursa signer counter-reset --config signer.yaml \
+  --key <56-character cold key hash> --chain-counter 10 --yes
+```
+
+Without `--yes` it opens the store read-only, prints the records and the
+change, writes no records, and exits non-zero. For a `file` store in WAL mode
+SQLite may still create its own `-wal` and `-shm` files beside the store,
+which hold no records; the dry run fails with an error naming the directory
+when it cannot. It sets `opcert-chain-floor` to the reported counter, lower or
+higher than the stored value, and deletes `opcert-chain-issued`, in one
+transaction that also bumps `opcert-chain-reset-gen`. It leaves `opcert-counter` (explicit `issue_counter` requests)
+and the tx and cip8 watermarks alone, and refuses a `mem` store, watermark
+`mode: off`, and a `file` store path that does not exist. It is a local command with no API route.
+
+A key served by a profiled backend keeps these records under its profile
+(see Profile routing). Reset them with `--profile`, naming that backend's
+`profile`:
+
+```
+bursa signer counter-reset --config signer.yaml --profile otg@preview \
+  --key <56-character cold key hash> --chain-counter 10 --yes
+```
+
+It sets `opcert-chain-floor|<profile>`, deletes `opcert-chain-issued|<profile>`
+and bumps `opcert-chain-reset-gen|<profile>`, so only requests under that
+profile are fenced. The same transaction deletes the key's
+`opcert-chain-issued` record written before profile scoping: while the
+profile's backend is the key's only holder the signer reads it whenever the
+profile has no issued record, and it would refuse the failback again. With
+several holders it is not read, and those rows are migrated before a second
+profile is added. The floor written before profile scoping is left alone, as
+the new floor under the profile is read in its place.
+
+`--profile` must be the `profile` of a nitro, confidential-space or armory
+backend in the config. When the config has any such backend, the command
+refuses to run without `--profile`, since an unprofiled reset would neither
+clear the key's records nor fence its requests. For a key served by a backend
+without a profile in such a config, pass `--unprofiled` instead. Configs with
+no profiled backend need neither flag.
+
+The reset trusts the chain counter you report, as the device's floor reset
+does. Read it from the chain (the counter of the pool's last forged block)
+and not from another signer.
+
+An armory device keeps its own floor. Reset it separately with the
+`/provision/floor` admin route, which sets the floor and clears the last
+issued counter (see the `opcert-check` command for how the device records
+them).
+
+Order:
+
+1. Stop issuing through the old path (signer A and its device).
+2. Renew through the new path (signer B).
+3. Before failing back, with no opcert request for the key in flight, read
+   the chain counter, then reset both the device and signer A to it.
+4. Resume issuing through A; its next opcert is `chain_counter + 1`.
+
 ### Profile routing
 
 One cold key may be held by several armory backends, each with its own

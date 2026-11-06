@@ -467,5 +467,6 @@ key.`,
 		&configFile, "config", "",
 		"path to YAML config file (env: BURSA_CONFIG)",
 	)
+	cmd.AddCommand(signerCounterResetCommand())
 	return cmd
 }

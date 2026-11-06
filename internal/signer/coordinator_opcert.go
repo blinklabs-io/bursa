@@ -52,6 +52,15 @@ const opcertChainFloorScope = "opcert-chain-floor"
 // neither bound applies until the next opcert sets it.
 const opcertChainIssuedScope = "opcert-chain-issued"
 
+// opcertResetGenScope is the per-key reset generation, bumped by the counter
+// reset in the transaction that sets the floor and clears the issued record.
+// A request reads it before its pre-sign checks and its commit requires it
+// unchanged, so a reset in between refuses the request instead of letting it
+// overwrite the reset's records. No record counts as generation 0. The commit
+// locks it before the form and issued records, as the reset does. Like the
+// other records it is per profile for a key served by a profiled backend.
+const opcertResetGenScope = "opcert-chain-reset-gen"
+
 // opcertCounterRule is the anti-double-sign check for one request: the value
 // recorded under scope, and whether an equal value is accepted.
 type opcertCounterRule struct {
@@ -68,15 +77,16 @@ func (r opcertCounterRule) stale(stored uint64) bool {
 	return r.value <= stored
 }
 
-func (r opcertCounterRule) commit(
-	ctx context.Context,
-	cw watermark.CounterWatermark,
-	hash backend.KeyHash,
-) error {
+// op is the form record's commit op.
+func (r opcertCounterRule) op() watermark.CounterOp {
 	if r.floor {
-		return cw.CheckAndRaiseFloor(ctx, hash, r.scope, r.value)
+		return watermark.CounterOp{
+			Scope: r.scope, Value: r.value, Kind: watermark.CounterFloor,
+		}
 	}
-	return cw.CheckAndCommitCounter(ctx, hash, r.scope, r.value)
+	return watermark.CounterOp{
+		Scope: r.scope, Value: r.value, Kind: watermark.CounterStrict,
+	}
 }
 
 // conflict describes a refused value for the error returned to the caller.
@@ -307,6 +317,7 @@ func (c *Coordinator) signOpCert(
 	formScope := rule.scope
 	rule.scope = profileScope(ref, rule.scope)
 	issuedScope := profileScope(ref, opcertChainIssuedScope)
+	genScope := profileScope(ref, opcertResetGenScope)
 
 	if dec := c.deps.Policy.EvaluateOpCert(hash, policy.WithBackend(ref.Backend())); !dec.Allow {
 		logger.Info(
@@ -357,6 +368,8 @@ func (c *Coordinator) signOpCert(
 	var (
 		counterWM               watermark.CounterWatermark
 		counterConflictReported bool
+		// resetGen is the reset generation read before the pre-sign checks
+		resetGen uint64
 		// issuedConflict marks a request outside the issued record's bounds
 		// that warn mode signs anyway; it leaves every record unchanged.
 		issuedConflict bool
@@ -381,6 +394,29 @@ func (c *Coordinator) signOpCert(
 			)
 		}
 		counterWM = cw
+		// read first: any later check is then covered by the commit's
+		// generation check
+		gen, _, gerr := cw.CounterFor(ctx, hash, genScope)
+		if gerr != nil {
+			logger.Info(
+				"sign",
+				"type",
+				"opcert",
+				"caller-key",
+				hash.String(),
+				"result",
+				"error",
+				"reason",
+				gerr.Error(),
+			)
+			c.deps.Metrics.observe("opcert", string(CodeBackend))
+			c.deps.Metrics.observeBackendError("watermark")
+			return nil, CodeBackend, fmt.Errorf(
+				"opcert counter lookup: %w",
+				gerr,
+			)
+		}
+		resetGen = gen
 		stored, exists, cerr := c.opcertCounterFor(ctx, cw, hash, ref, formScope)
 		if cerr != nil {
 			logger.Info(
@@ -684,13 +720,12 @@ func (c *Coordinator) signOpCert(
 	// chain counter, as a concurrent issue_counter request on a key with no
 	// record could have written one there after the pre-sign check.
 	if counterWM != nil && !issuedConflict {
-		formOp := watermark.CounterOp{
-			Scope: rule.scope,
-			Value: rule.value,
-			Kind:  watermark.CounterStrict,
-		}
-		if rule.floor {
-			formOp.Kind = watermark.CounterFloor
+		formOp := rule.op()
+		// the generation is locked first, then the form record, then issued
+		genOp := watermark.CounterOp{
+			Scope: genScope,
+			Value: resetGen,
+			Kind:  watermark.CounterEqual,
 		}
 		var werr error
 		if recordIssued {
@@ -703,13 +738,52 @@ func (c *Coordinator) signOpCert(
 				issuedOp.Kind = watermark.CounterFloorFrom
 				issuedOp.Min = rule.value
 			}
-			werr = counterWM.CheckAndCommitCounters(ctx, hash, formOp, issuedOp)
+			werr = counterWM.CheckAndCommitCounters(
+				ctx, hash, genOp, formOp, issuedOp,
+			)
 		} else {
-			werr = rule.commit(ctx, counterWM, hash)
+			werr = counterWM.CheckAndCommitCounters(ctx, hash, genOp, formOp)
 		}
 		var regression *watermark.CounterRegressionError
 		switch {
 		case werr == nil:
+		case errors.As(werr, &regression) && regression.Scope == genScope:
+			// a counter reset ran after the pre-sign checks: its records
+			// stand, and this request records nothing
+			c.deps.Metrics.observeWatermarkConflict()
+			if c.deps.WMMode == watermark.ModeEnforce {
+				logger.Info(
+					"sign",
+					"type",
+					"opcert",
+					"caller-key",
+					hash.String(),
+					"issue-counter",
+					issueCounter,
+					"result",
+					"denied",
+					"reason",
+					"counter reset detected at commit",
+				)
+				c.deps.Metrics.observe("opcert", string(CodeConflict))
+				c.deps.Metrics.observeDeny(string(CodeConflict))
+				return nil, CodeConflict, errors.New(
+					"opcert counters for this cold key were reset while the request was in flight, retry",
+				)
+			}
+			logger.Warn(
+				"sign",
+				"type",
+				"opcert",
+				"caller-key",
+				hash.String(),
+				"issue-counter",
+				issueCounter,
+				"result",
+				"warn",
+				"reason",
+				"counter reset detected at commit (warn mode)",
+			)
 		case errors.As(werr, &regression) && regression.Scope == issuedScope:
 			c.deps.Metrics.observeWatermarkConflict()
 			if c.deps.WMMode == watermark.ModeEnforce {
