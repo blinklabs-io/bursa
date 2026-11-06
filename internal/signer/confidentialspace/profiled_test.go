@@ -81,6 +81,20 @@ func twoProfiles(t *testing.T) (*Workload, map[string]*memoryCounterObject) {
 	return w, objs
 }
 
+// profileObject returns the counter object of profile.
+func profileObject(
+	t *testing.T,
+	objs map[string]*memoryCounterObject,
+	profile string,
+) *memoryCounterObject {
+	t.Helper()
+	obj, ok := objs[profile]
+	if !ok || obj == nil {
+		t.Fatalf("no counter object for profile %q", profile)
+	}
+	return obj
+}
+
 func profiledRequest(
 	w *Workload,
 	profile string,
@@ -183,7 +197,7 @@ func TestProfiledRefusals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			w, objs := twoProfiles(t)
-			before := objs[profileMainnet].data
+			before := profileObject(t, objs, profileMainnet).data
 			req := profiledRequest(
 				w,
 				profileMainnet,
@@ -199,7 +213,10 @@ func TestProfiledRefusals(t *testing.T) {
 				resp.BindingSignature != nil {
 				t.Fatalf("response=%+v err=%v", resp, err)
 			}
-			if !bytes.Equal(before, objs[profileMainnet].data) {
+			if !bytes.Equal(
+				before,
+				profileObject(t, objs, profileMainnet).data,
+			) {
 				t.Fatal("refused request changed the counter state")
 			}
 			// the refusal consumed neither the nonce nor the counter
@@ -326,13 +343,13 @@ func TestProfiledStateIsBoundToItsProfile(t *testing.T) {
 		0,
 	)
 	var state map[string]any
-	if err := json.Unmarshal(objs[profileMainnet].data, &state); err != nil {
+	if err := json.Unmarshal(profileObject(t, objs, profileMainnet).data, &state); err != nil {
 		t.Fatal(err)
 	}
 	if state["profile"] != profileMainnet {
 		t.Fatalf(
 			"stored state does not name its profile: %s",
-			objs[profileMainnet].data,
+			profileObject(t, objs, profileMainnet).data,
 		)
 	}
 	// the mainnet object presented as the preview counter is refused
@@ -455,13 +472,13 @@ func TestProfileCounterCreationNeedsOptIn(t *testing.T) {
 	if _, _, err := profiledWorkload(t, envelopes, objs, false); err == nil {
 		t.Fatal("a new profile counter was created without the opt-in")
 	}
-	if objs[profilePreview].data != nil {
+	if profileObject(t, objs, profilePreview).data != nil {
 		t.Fatal("refused start wrote the counter")
 	}
 	if _, _, err := profiledWorkload(t, envelopes, objs, true); err != nil {
 		t.Fatal(err)
 	}
-	if objs[profilePreview].data == nil {
+	if profileObject(t, objs, profilePreview).data == nil {
 		t.Fatal("opt-in did not create the profile counter")
 	}
 }
@@ -648,7 +665,7 @@ func TestProxyProfileSwapIsRefused(t *testing.T) {
 	if !errors.Is(err, backend.ErrInvalidSignature) {
 		t.Fatalf("swapped profile: err = %v, want ErrInvalidSignature", err)
 	}
-	if objs[profileMainnet].data == nil {
+	if profileObject(t, objs, profileMainnet).data == nil {
 		t.Fatal("mainnet counter missing")
 	}
 

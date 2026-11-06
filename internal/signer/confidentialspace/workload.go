@@ -170,9 +170,14 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 		key.priv.Public().(ed25519.PublicKey)...)
 	hash := backend.HashPublicKey(pub)
 	for _, profile := range slices.Sorted(maps.Keys(counters)) {
+		counter, ok := counters[profile]
+		if !ok {
+			wipe(key.priv)
+			return nil, fmt.Errorf("profile %q has no counter store", profile)
+		}
 		allowCreate := key.pending ||
 			(profile != "" && cfg.CreateProfileCounters)
-		if err := counters[profile].Prepare(ctx, hash, allowCreate); err != nil {
+		if err := counter.Prepare(ctx, hash, allowCreate); err != nil {
 			wipe(key.priv)
 			if profile != "" {
 				return nil, fmt.Errorf(
