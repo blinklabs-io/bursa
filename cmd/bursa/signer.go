@@ -230,6 +230,13 @@ key.`,
 			)
 			defer stop()
 
+			if err := signer.CheckBackendWatermark(
+				cfg.Signer.Backends,
+				cfg.Signer.Watermark,
+			); err != nil {
+				logger.Error("invalid watermark for backend", "error", err)
+				os.Exit(1)
+			}
 			backends, err := signer.BuildBackends(ctx, cfg.Signer.Backends)
 			if err != nil {
 				logger.Error("failed to build backends", "error", err)
