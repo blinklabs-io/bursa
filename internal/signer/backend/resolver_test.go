@@ -134,7 +134,7 @@ func mkSharedKey(t *testing.T, names ...string) ([]*SoftwareBackend, KeyHash) {
 		t.Fatalf("keygen: %v", err)
 	}
 	lk := &bursa.LoadedKey{SKey: []byte(priv), VKey: priv.Public().(ed25519.PublicKey)}
-	var out []*SoftwareBackend
+	out := make([]*SoftwareBackend, 0, len(names))
 	var h KeyHash
 	for _, n := range names {
 		b := NewSoftwareBackend(n)
