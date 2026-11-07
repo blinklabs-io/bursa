@@ -350,10 +350,9 @@ jobs:
           unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
             APPLE_KEYCHAIN_PASSWORD APPLE_ID \
             APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
-          umask 077
           trap 'rm -f apple_certificate.p12' EXIT
           echo "Decoding and importing Apple certificate..."
-          printf '%s' "${apple_certificate}" | base64 --decode -o apple_certificate.p12
+          (umask 077 && printf '%s' "${apple_certificate}" | base64 --decode -o apple_certificate.p12)
           apple_certificate=''
           SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=create \
             SECRET_KEYCHAIN=build.keychain \
@@ -582,12 +581,13 @@ jobs:
             APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD \
             APPLE_KEYCHAIN_PASSWORD APPLE_ID \
             APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
-          umask 077
+          # umask 077 covers only the decoded .p12 files: build-pkg.sh below
+          # must create the app bundle world-readable and executable.
           trap 'rm -f apple_app.p12 apple_installer.p12' EXIT
 
           if [ "${IS_SIGNED_RUN}" = "true" ] && [ -n "${apple_certificate}" ]; then
             echo "::group::Import Apple Developer ID certificate(s)"
-            printf '%s' "${apple_certificate}" | base64 --decode -o apple_app.p12
+            (umask 077 && printf '%s' "${apple_certificate}" | base64 --decode -o apple_app.p12)
             apple_certificate=''
 
             SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=create \
@@ -609,7 +609,7 @@ jobs:
 
             # Installer cert (NEW, optional) signs the .pkg. Absent => unsigned pkg.
             if [ -n "${apple_installer_certificate}" ]; then
-              printf '%s' "${apple_installer_certificate}" | base64 --decode -o apple_installer.p12
+              (umask 077 && printf '%s' "${apple_installer_certificate}" | base64 --decode -o apple_installer.p12)
               apple_installer_certificate=''
               P12_PASSWORD="${apple_installer_certificate_password}" \
                 P12_PATH=apple_installer.p12 \
