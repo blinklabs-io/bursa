@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/armory/device"
 	"github.com/blinklabs-io/bursa/armory/profile"
 	"github.com/blinklabs-io/bursa/armory/signlog"
 )
@@ -190,10 +191,13 @@ func TestBuildImages(t *testing.T) {
 		want        int
 	}{
 		{"provision", "/v1/challenge", http.StatusOK},
+		{"provision", device.RouteIdentityProof, http.StatusBadRequest},
 		{"provision", "/v1/sign", http.StatusNotFound},
 		{"wipe", "/v1/challenge", http.StatusOK},
+		{"wipe", device.RouteIdentityProof, http.StatusNotFound},
 		{"wipe", "/provision/identity", http.StatusNotFound},
 		{"sign", "/v1/challenge", http.StatusOK},
+		{"sign", device.RouteIdentityProof, http.StatusNotFound},
 		{"sign", "/provision/identity", http.StatusNotFound},
 	}
 

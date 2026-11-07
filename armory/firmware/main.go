@@ -97,7 +97,7 @@ func main() {
 
 	// one lock for the SE050 session, shared by every endpoint
 	mu := &sync.Mutex{}
-	s := &legacy
+	s := &firmwareSigner
 	s.Mutex = mu
 	svc := device.New(mu, report.Logf)
 	s.record = svc.RecordRaw
@@ -134,7 +134,7 @@ func main() {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    maxHeaderBytes,
-		// the legacy routes are not JSON handlers, so the whole mux is guarded
+		// non-JSON firmware routes share the same origin guard
 		Handler: device.Guard(device.Address, http.DefaultServeMux),
 	}
 

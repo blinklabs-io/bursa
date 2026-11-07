@@ -20,6 +20,7 @@ package device
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
@@ -53,7 +54,18 @@ var (
 	errNoChip      = errors.New("SE050 not available")
 	errDevice      = errors.New("device error")
 	errUnknown     = errors.New("unknown profile")
-	errUnsupported = errors.New("device signs only tx-body and opcert-next")
+	errUnsupported = errors.New(
+		"device signs only tx-body and opcert-next",
+	)
+	errIdentityNotProvisioned = errors.New("identity key not provisioned")
+	errIdentityProofBusy      = errors.New("identity proof rate limit exceeded")
+)
+
+const (
+	// The identity proof limit is device-wide: an unauthenticated peer on the
+	// link can exhaust it and delay provisioning until the window passes.
+	identityProofBurst  = 64
+	identityProofWindow = 10 * time.Second
 )
 
 // Chip is the SE050 subset the service uses.
@@ -193,6 +205,23 @@ type IdentityResponse struct {
 	PublicKey []byte `json:"public_key"`
 }
 
+// IdentityProofRequest asks the device to authenticate an ephemeral encryption
+// key for one private-key provisioning request.
+type IdentityProofRequest struct {
+	Version       string `json:"version"`
+	Route         string `json:"route"`
+	Challenge     []byte `json:"challenge"`
+	HostPublicKey []byte `json:"host_public_key"`
+}
+
+// IdentityProofResponse binds the pinned identity to the channel transcript.
+type IdentityProofResponse struct {
+	Version             string `json:"version"`
+	PublicKey           []byte `json:"public_key"`
+	EncryptionPublicKey []byte `json:"encryption_public_key"`
+	Attestation         []byte `json:"attestation"`
+}
+
 // Service holds the chip session and profile cache. Every chip access holds
 // mu, which the caller shares with anything else using the session.
 type Service struct {
@@ -219,6 +248,8 @@ type Service struct {
 	challengeKey   []byte
 	usedChallenges map[[challengeSize]byte]struct{}
 	usedOrder      []usedChallenge
+	proofWindow    time.Time
+	proofCount     uint8
 	// now replaces time.Now in tests
 	now func() time.Time
 	// network, when fixed, is the only network id whose profiles this
@@ -431,6 +462,7 @@ func (s *Service) signingRoutes(mux *http.ServeMux) {
 }
 
 func (s *Service) provisioningRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST "+RouteIdentityProof, handle(s, s.identityProof))
 	mux.HandleFunc(
 		"POST "+RouteProvisionProfile,
 		handleAdmin(s, RouteProvisionProfile, s.provisionProfile),
@@ -1256,4 +1288,76 @@ func (s *Service) provisionIdentity() (IdentityResponse, error) {
 	}
 
 	return IdentityResponse{PublicKey: pub}, nil
+}
+
+func (s *Service) identityProof(
+	req IdentityProofRequest,
+) (IdentityProofResponse, error) {
+	if req.Version != Protocol || !AdminRouteContainsSecrets(req.Route) ||
+		len(req.HostPublicKey) != x25519KeySize {
+		return IdentityProofResponse{}, errors.New(
+			"invalid identity proof request",
+		)
+	}
+	if err := s.validateChallenge(req.Challenge); err != nil {
+		return IdentityProofResponse{}, err
+	}
+	if _, err := ecdh.X25519().NewPublicKey(req.HostPublicKey); err != nil {
+		return IdentityProofResponse{}, errors.New(
+			"invalid identity proof request",
+		)
+	}
+	now := s.clock()
+	if s.proofWindow.IsZero() || now.Before(s.proofWindow) ||
+		now.Sub(s.proofWindow) >= identityProofWindow {
+		s.proofWindow = now
+		s.proofCount = 0
+	}
+	if s.proofCount >= identityProofBurst {
+		return IdentityProofResponse{}, errIdentityProofBusy
+	}
+	s.proofCount++
+
+	exists, err := s.chip.Exists(profile.IdentityKeyID)
+	if err != nil {
+		s.logf("check identity public key: %v", err)
+		return IdentityProofResponse{}, errDevice
+	}
+	if !exists {
+		return IdentityProofResponse{}, errIdentityNotProvisioned
+	}
+
+	pub, err := s.chip.PublicKeyEd25519(profile.IdentityKeyID)
+	if err != nil {
+		s.logf("read identity public key: %v", err)
+
+		return IdentityProofResponse{}, errDevice
+	}
+	privateKey, err := deriveAdminPrivate(
+		s.challengeKey,
+		req.Route,
+		req.Challenge,
+		req.HostPublicKey,
+	)
+	if err != nil {
+		return IdentityProofResponse{}, errDevice
+	}
+	encryptionPublicKey := privateKey.PublicKey().Bytes()
+
+	resp := IdentityProofResponse{
+		Version:             Protocol,
+		PublicKey:           pub,
+		EncryptionPublicKey: encryptionPublicKey,
+	}
+	resp.Attestation, err = s.chip.SignEd25519(
+		profile.IdentityKeyID,
+		IdentityBinding(req, pub, encryptionPublicKey),
+	)
+	if err != nil {
+		s.logf("sign identity proof: %v", err)
+
+		return IdentityProofResponse{}, errDevice
+	}
+
+	return resp, nil
 }

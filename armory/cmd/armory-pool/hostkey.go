@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -130,6 +131,39 @@ func readAdminRequest(in io.Reader) ([]byte, error) {
 	return body, nil
 }
 
+// authenticateDevice establishes a one-use encrypted channel authenticated by
+// the pinned device identity before a private key is read from request input.
+func authenticateDevice(
+	c *client,
+	identity ed25519.PublicKey,
+	route string,
+) (*device.AdminChannel, error) {
+	var challenge device.ChallengeResponse
+	if err := c.post("/v1/challenge", struct{}{}, &challenge); err != nil {
+		return nil, err
+	}
+	if challenge.Version != device.Protocol {
+		return nil, errors.New("device returned an invalid channel challenge")
+	}
+
+	hostPrivate, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	req := device.IdentityProofRequest{
+		Version:       device.Protocol,
+		Route:         route,
+		Challenge:     challenge.Challenge,
+		HostPublicKey: hostPrivate.PublicKey().Bytes(),
+	}
+	var resp device.IdentityProofResponse
+	if err = c.post(device.RouteIdentityProof, req, &resp); err != nil {
+		return nil, err
+	}
+
+	return device.NewAdminChannel(route, identity, req, resp, hostPrivate)
+}
+
 // adminRequest posts the JSON request on in to a provisioning or wipe route
 // and prints the device's answer. With a host key it fetches a challenge and
 // signs the request, as a device holding a host key requires; without one the
@@ -138,6 +172,7 @@ func readAdminRequest(in io.Reader) ([]byte, error) {
 func adminRequest(
 	c *client,
 	route, hostKeyFile string,
+	channel *device.AdminChannel,
 	in io.Reader,
 	out io.Writer,
 ) error {
@@ -147,25 +182,48 @@ func adminRequest(
 		return fmt.Errorf("unknown route %s", route)
 	}
 
+	var hostKey ed25519.PrivateKey
+
+	if hostKeyFile != "" && signed {
+		var err error
+
+		hostKey, err = readHostKey(hostKeyFile)
+		if err != nil {
+			return err
+		}
+	}
+
+	if device.AdminRouteContainsSecrets(route) && channel == nil {
+		return errors.New("authenticated admin channel is required")
+	}
+
 	body, err := readAdminRequest(in)
 	if err != nil {
 		return err
 	}
+	defer clear(body)
 
 	// the device wipe and the object listing are never signed
-	if hostKeyFile != "" && signed {
-		key, err := readHostKey(hostKeyFile)
-		if err != nil {
-			return err
-		}
-
+	if hostKey != nil {
 		var ch device.ChallengeResponse
 
 		if err = c.post("/v1/challenge", struct{}{}, &ch); err != nil {
 			return err
 		}
 
-		if body, err = device.SignAdminRequest(route, body, key, ch.Challenge); err != nil {
+		if body, err = device.SignAdminRequest(route, body, hostKey, ch.Challenge); err != nil {
+			return err
+		}
+	}
+
+	if channel != nil {
+		encrypted, sealErr := channel.Seal(body)
+		if sealErr != nil {
+			return sealErr
+		}
+		clear(body)
+		body, err = json.Marshal(encrypted)
+		if err != nil {
 			return err
 		}
 	}

@@ -43,19 +43,21 @@ func TestMultiKeepsLegacyProfile(t *testing.T) {
 	old := imageOn(t, chip, 0, "")
 	counter := uint64(3)
 
-	code, body := rawPost(
-		old.Handler(),
+	code, body := post(
+		t,
+		old,
 		RouteProvisionCold,
-		jsonOf(t, coldReq(0x20e5001d, 0x92)),
+		coldReq(0x20e5001d, 0x92),
 	)
 	mustOK(t, "cold key on the testnet image", code, body)
 
-	code, body = rawPost(
-		old.Handler(),
+	code, body = post(
+		t,
+		old,
 		RouteProvisionProfile,
-		jsonOf(t, ProvisionRequest{
+		ProvisionRequest{
 			Name: "old@preview", Slot: 0, ColdKeyID: 0x20e5001d, ChainCounter: &counter,
-		}),
+		},
 	)
 	mustOK(t, "profile on the testnet image", code, body)
 

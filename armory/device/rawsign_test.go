@@ -31,7 +31,7 @@ func TestSignRawNeverUsesColdKey(t *testing.T) {
 	}
 
 	// a mainnet cold key imported into the first slot, with no profile record
-	// and no SetChip: the state after a legacy /provision or /provision/cold
+	// and no SetChip
 	chip := newFakeChip()
 	cold := chip.keys[coldKeyFirst].Public().(ed25519.PublicKey)
 	msg := []byte("raw message")

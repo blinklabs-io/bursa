@@ -1266,19 +1266,6 @@ func TestMultiKeepsExistingTestnetDevice(t *testing.T) {
 	}
 }
 
-// A multi image has no unsigned cold key import, and its signing log read is
-// device-wide.
-func TestMultiClosesUnsignedImport(t *testing.T) {
-	t.Parallel()
-
-	s := multiImage(t, newFakeChip(), true)
-	if err := s.UnsignedProvisioningLocked(); err == nil {
-		t.Fatal(
-			"a multi image takes an unsigned cold key import with no host key registered",
-		)
-	}
-}
-
 func TestMultiSignLogReadIsDeviceWide(t *testing.T) {
 	t.Parallel()
 

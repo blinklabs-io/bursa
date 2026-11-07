@@ -32,8 +32,8 @@ const maxSignable = 128
 const testnetSign = "testnet bring-up build: unauthenticated /sign is served; never use it with keys that matter"
 
 func init() {
-	http.HandleFunc("/sign", (&legacy).sign)
-	http.HandleFunc("/pubkey", (&legacy).rawPublicKey)
+	http.HandleFunc("/sign", (&firmwareSigner).sign)
+	http.HandleFunc("/pubkey", (&firmwareSigner).rawPublicKey)
 }
 
 // rawPublicKey returns the public key of the key /sign signs with, which is

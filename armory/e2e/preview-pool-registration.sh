@@ -151,8 +151,9 @@ need_build() {
 
 q() { "$BURSA" query "$@" --socket-path "$SOCKET" --network $NET; }
 # provision sends a provisioning request from stdin, signed by the host key once
-# one is registered.
-provision() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" ${HOST_KEY:+-host-key "$HOST_KEY"} provision "$@"; }
+# one is registered. Private-key requests authenticate the pinned device before
+# reading stdin.
+provision() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" ${HOST_KEY:+-host-key "$HOST_KEY"} provision "$@"; }
 armory() { "$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" -identity "$IDENTITY" -profile "$PROFILE" ${HOST_KEY:+-host-key "$HOST_KEY"} "$@"; }
 
 # submit builds, witnesses, assembles and submits one transaction.

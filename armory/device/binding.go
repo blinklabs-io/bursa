@@ -27,10 +27,38 @@ const Protocol = "bursa-attested-signer/1"
 // stays at Protocol.
 const ProtocolSummary = "bursa-attested-signer/2"
 
+// identityDomain separates device identity proofs from every other identity
+// key signature.
+const identityDomain = "bursa-armory-identity/1"
+
 // KeyInfo is one key in an inventory.
 type KeyInfo struct {
 	Role      string `json:"role"`
 	PublicKey []byte `json:"public_key"`
+}
+
+// IdentityBinding is the digest the device identity key signs to authenticate
+// an ephemeral encryption key for one private-key provisioning route.
+func IdentityBinding(
+	req IdentityProofRequest,
+	publicKey, encryptionPublicKey []byte,
+) []byte {
+	h := sha256.New()
+
+	for _, field := range [][]byte{
+		[]byte(identityDomain),
+		[]byte(Protocol),
+		[]byte(req.Route),
+		req.Challenge,
+		req.HostPublicKey,
+		encryptionPublicKey,
+		publicKey,
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+
+	return h.Sum(nil)
 }
 
 // InventoryBinding is the digest the identity key signs for an inventory. It

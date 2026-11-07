@@ -566,9 +566,28 @@ exported or backed up, so a lost or broken device would lose the pool for
 good. A cold key is always created off the device, kept in a backup, and
 imported, so the pool can move to a replacement device.
 
-The device zeroes the request buffer and the decoded key once the request is
-done. Copies held by the host and the transport, and by the host tool that
-sent it, are outside that.
+Before `armory-pool` reads a cold or owner signing key from standard input, it
+requires `-identity`, obtains a one-time challenge, and sends its ephemeral
+X25519 public key to `/v1/identity`. The device signs the route, challenge, both
+ephemeral encryption keys, and its public identity under the pinned identity
+key. The tool verifies that proof before reading the request, then encrypts the
+complete request to the authenticated device key. A forwarding or substituted
+HTTP endpoint sees only ciphertext. This holds only when the pinned identity
+came from a trusted source: `armory/e2e/sim-signer-opcert.sh` pins the identity
+it read over the same link, which protects against a later substitution but
+not against an endpoint present from the start.
+
+The identity proof rate limit is device-wide, so a peer on the USB link can
+exhaust it and keep the operator from provisioning until the window passes.
+
+The device zeroes its decrypted request buffer and decoded key after the
+request. `armory-pool` clears the explicit plaintext request buffer after
+encryption; host JSON processing and transport layers can retain copies outside
+the device's zeroization boundary.
+
+The provisioning firmware accepts private keys only through the encrypted
+`/provision/cold` and `/provision/profile` requests. It does not serve the
+legacy plaintext `/provision` import.
 
 ### Provisioning and wipe authentication
 
@@ -589,8 +608,8 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
-  unsigned. The firmware's unsigned `POST /provision` cold key import is
-  refused too; use a signed `/provision/cold`.
+  unsigned. Private-key requests also use the identity-authenticated encrypted
+  channel described above.
 - The signature is an Ed25519 signature over `AdminBinding`: the domain
   `bursa-armory-admin/1`, the route, the request as the device's Go types
   encode it with the three fields empty and each private key (`signing_key`
@@ -600,7 +619,8 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   exact key while the key never passes through the JSON encoder used for the
   binding. The challenge is one-time.
 - The device's last host key cannot be revoked: an empty list is the
-  bootstrap state, which accepts unsigned provisioning and key enrollment.
+  bootstrap state, which accepts provisioning without a host signature and
+  permits the first host-key enrollment.
   Add the replacement key first, then revoke the old one; only a device wipe
   returns to the bootstrap state.
 - A host key list the device cannot read refuses every authenticated route,
@@ -685,8 +705,8 @@ are unchanged. `TESTNET=1` is refused with it.
 - Not changed: `/wipe/device`, which stays confirmed by the identity public
   key alone as the recovery path when every host key is lost, and
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
-  The unsigned firmware `/provision` cold key import is closed in a multi
-  image: import cold keys with a signed `/provision/cold`.
+- Encrypted private keys. Cold and owner private keys use the same encrypted
+  provisioning routes in single-scope and multi images.
 - No downgrade. An image older than this one does not know the second cold
   key block (`0x20e50600`-`0x20e5060f`) or the ownership record: its
   `/wipe/device` leaves them on the chip, and it imports into an object
@@ -717,8 +737,8 @@ request for its public key:
 ```sh
 armory-pool host-key -out host.skey > host-key.pub
 armory-pool -host-key host.skey provision host-key < host-key.pub
-armory-pool -host-key host.skey provision cold < cold-request.json
-armory-pool -host-key host.skey provision profile < profile-request.json
+armory-pool -identity "$IDENTITY" -host-key host.skey provision cold < cold-request.json
+armory-pool -identity "$IDENTITY" -host-key host.skey provision profile < profile-request.json
 armory-pool -host-key host.skey wipe signlog < wipe-request.json
 armory-pool wipe device < wipe-request.json
 ```
@@ -742,7 +762,9 @@ chain: a log with entries of several scopes verifies as one chain.
 `host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile`,
 `cold` or `signlog`. Without `-host-key` a request is sent unsigned, which the device
 accepts only in the bootstrap state, and always for `wipe device` and `wipe
-objects`. Register the first host key before the other provisioning steps.
+objects`. `provision cold` and `provision profile` require the pinned
+`-identity`. Register the first host key and provision the identity before
+importing private keys.
 
 ### Signing log
 

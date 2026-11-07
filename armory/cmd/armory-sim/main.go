@@ -170,6 +170,7 @@ func build(o options, logf func(string, ...any)) (http.Handler, error) {
 	case "provision":
 		mux.Handle("/provision/", svc.ProvisioningHandler())
 		mux.Handle("/v1/challenge", svc.ProvisioningHandler())
+		mux.Handle(device.RouteIdentityProof, svc.ProvisioningHandler())
 	case "wipe":
 		mux.Handle("/wipe/", svc.WipeHandler())
 		mux.Handle("/v1/challenge", svc.WipeHandler())

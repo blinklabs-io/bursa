@@ -177,21 +177,24 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, req any) error {
 
 	body := buf[:n]
 
-	if err = json.Unmarshal(body, req); err == nil {
+	return decodeSecretRequest(body, req)
+}
+
+func decodeSecretRequest(body []byte, req any) error {
+	err := json.Unmarshal(body, req)
+	if err == nil {
 		err = refuseUnknownFields(body, req)
 	}
-
-	if err != nil {
-		clearSecrets(req)
-
-		if errors.Is(err, errMalformedKey) {
-			return errMalformedKey
-		}
-
-		return errMalformedRequest
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	clearSecrets(req)
+	if errors.Is(err, errMalformedKey) {
+		return errMalformedKey
+	}
+
+	return errMalformedRequest
 }
 
 // refuseUnknownFields fails when the JSON object body names a field req has

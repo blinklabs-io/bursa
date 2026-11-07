@@ -88,7 +88,9 @@ var (
 	errHostAuthMissing = errors.New("signing requires host authentication")
 	// errLastHostKey refuses a revoke that would empty the key list: an
 	// empty list is the bootstrap state, which accepts unsigned requests
-	errLastHostKey = errors.New("the last host key may not be revoked; wipe the device to return to the bootstrap state")
+	errLastHostKey = errors.New(
+		"the last host key may not be revoked; wipe the device to return to the bootstrap state",
+	)
 )
 
 // RequireHostAuth refuses every signing request that is not authenticated
@@ -279,11 +281,9 @@ func (s *Service) challenge(struct{}) (ChallengeResponse, error) {
 	return ChallengeResponse{Version: Protocol, Challenge: c}, nil
 }
 
-// takeChallenge burns challenge ch: it must carry this boot's MAC, be younger
-// than challengeTTL and not issued in the future, and not be used already.
-// The used set grows only through calls made after a host signature verified,
-// and drops entries once they would be refused as expired anyway.
-func (s *Service) takeChallenge(ch []byte) error {
+// validateChallenge checks that challenge ch carries this boot's MAC, is
+// younger than challengeTTL, was not issued in the future, and is unused.
+func (s *Service) validateChallenge(ch []byte) error {
 	errBad := errors.New("unknown or used challenge")
 
 	if len(ch) != challengeSize || len(s.challengeKey) == 0 ||
@@ -312,6 +312,23 @@ func (s *Service) takeChallenge(ch []byte) error {
 	if _, used := s.usedChallenges[key]; used {
 		return errBad
 	}
+
+	return nil
+}
+
+// takeChallenge validates and burns challenge ch. The used set drops entries
+// once they expire. Encrypted provisioning burns a challenge after the AEAD
+// opens but before the request is authorized, so a peer on the link can grow
+// the set; each such request needs a proof from identityProof, whose rate
+// limit bounds the growth.
+func (s *Service) takeChallenge(ch []byte) error {
+	if err := s.validateChallenge(ch); err != nil {
+		return err
+	}
+
+	now := s.clock()
+	var key [challengeSize]byte
+	copy(key[:], ch)
 
 	if s.usedChallenges == nil {
 		s.usedChallenges = map[[challengeSize]byte]struct{}{}

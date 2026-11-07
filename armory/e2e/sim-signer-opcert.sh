@@ -89,10 +89,13 @@ cold_request() {
 	rm -f "$W/cold.key"
 }
 
-if cold_request |
-	armory-pool -signer "http://$SIM_ADDR" -source 127.0.0.1 provision cold > /dev/null 2>&1; then
-	fail "an unsigned cold import was accepted after a host key was registered"
-fi
+UNSIGNED_STATUS=$(cold_request |
+	curl -sS -o "$W/unsigned-cold.out" -w '%{http_code}' \
+		-H 'Content-Type: application/json' --data-binary @- \
+		"http://$SIM_ADDR/provision/cold") || fail "unsigned cold import request failed"
+[ "$UNSIGNED_STATUS" = 400 ] || fail "unsigned cold import returned HTTP $UNSIGNED_STATUS"
+grep -q 'private-key provisioning request must be encrypted' "$W/unsigned-cold.out" ||
+	fail "unsigned cold import failed for an unexpected reason"
 pass "unsigned request refused once a host key exists"
 
 echo '{}' | pool -host-key "$W/host.skey" provision identity > "$W/identity.json"
@@ -101,7 +104,7 @@ IDENTITY=$(jq -r .public_key "$W/identity.json" | base64 -d | od -An -tx1 -v | t
 pass "identity key $IDENTITY"
 
 cold_request |
-	pool -host-key "$W/host.skey" provision cold > "$W/cold.json"
+	pool -identity "$IDENTITY" -host-key "$W/host.skey" provision cold > "$W/cold.json"
 POOL=$(jq -r .pool_id "$W/cold.json")
 COLD_VKEY=$(jq -r .public_key "$W/cold.json")
 [ ${#POOL} -eq 56 ] || fail "cold import returned no pool id"
@@ -109,7 +112,7 @@ pass "cold key imported, pool $POOL"
 
 jq -n --arg name "$PROFILE" --arg reward "e0$(printf 'ee%.0s' $(seq 28))" --argjson chain "$CHAIN" \
 	'{name: $name, network_id: 0, slot: 0, cold_key_id: 551878672, chain_counter: $chain, reward_account: $reward}' |
-	pool -host-key "$W/host.skey" provision profile > "$W/profile.json"
+	pool -identity "$IDENTITY" -host-key "$W/host.skey" provision profile > "$W/profile.json"
 jq -e '.owner_key_hash | length == 56' "$W/profile.json" > /dev/null || fail "profile not provisioned"
 pass "profile $PROFILE provisioned with floor $CHAIN"
 stop_sim

@@ -16,10 +16,10 @@ package device
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -65,8 +65,101 @@ func postAs(
 	if body, err = SignAdminRequest(path, body, key, ch.Challenge); err != nil {
 		t.Fatal(err)
 	}
+	if AdminRouteContainsSecrets(path) &&
+		testRequestContainsSecrets(path, body) {
+		body = encryptAdminHandlerRequest(t, h, path, body, key)
+	}
 
 	return rawPost(h, path, body)
+}
+
+func encryptAdminHandlerRequest(
+	t *testing.T,
+	h http.Handler,
+	route string,
+	body []byte,
+	key ed25519.PrivateKey,
+) []byte {
+	t.Helper()
+
+	code, challengeBody := rawPost(h, "/v1/challenge", []byte("{}"))
+	if code != http.StatusOK {
+		t.Fatalf("admin channel challenge: %d %s", code, challengeBody)
+	}
+	var challenge ChallengeResponse
+	if err := json.Unmarshal(challengeBody, &challenge); err != nil {
+		t.Fatal(err)
+	}
+	hostPrivate, err := ecdh.X25519().NewPrivateKey(
+		bytes.Repeat([]byte{0x73}, x25519KeySize),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proofRequest := IdentityProofRequest{
+		Version:       Protocol,
+		Route:         route,
+		Challenge:     challenge.Challenge,
+		HostPublicKey: hostPrivate.PublicKey().Bytes(),
+	}
+	code, proofBody := rawPost(h, RouteIdentityProof, jsonOf(t, proofRequest))
+	if code != http.StatusOK &&
+		bytes.Contains(proofBody, []byte(errIdentityNotProvisioned.Error())) {
+		identityCode, identityBody := postAs(
+			t,
+			h,
+			RouteProvisionIdentity,
+			IdentityRequest{},
+			key,
+		)
+		if identityCode != http.StatusOK && bytes.Contains(
+			identityBody,
+			[]byte("needs a host key of a mainnet scope"),
+		) {
+			identityCode, identityBody = postAs(
+				t,
+				h,
+				RouteProvisionIdentity,
+				IdentityRequest{},
+				multiKeyCardano,
+			)
+		}
+		if identityCode != http.StatusOK {
+			t.Fatalf(
+				"provision identity: %d %s",
+				identityCode,
+				identityBody,
+			)
+		}
+		code, proofBody = rawPost(
+			h,
+			RouteIdentityProof,
+			jsonOf(t, proofRequest),
+		)
+	}
+	if code != http.StatusOK {
+		t.Fatalf("admin channel identity proof: %d %s", code, proofBody)
+	}
+	var proof IdentityProofResponse
+	if err = json.Unmarshal(proofBody, &proof); err != nil {
+		t.Fatal(err)
+	}
+	channel, err := NewAdminChannel(
+		route,
+		proof.PublicKey,
+		proofRequest,
+		proof,
+		hostPrivate,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := channel.Seal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return jsonOf(t, encrypted)
 }
 
 func jsonOf(t *testing.T, v any) []byte {
@@ -196,9 +289,19 @@ func TestAdminRoutesRefuseUnsignedWithHostKey(t *testing.T) {
 
 			s, chip := newHostAuthService(t)
 			req := requestFor(t, s, route)
+			requestBody := jsonOf(t, req)
+			if AdminRouteContainsSecrets(route) &&
+				testRequestContainsSecrets(route, requestBody) {
+				requestBody = encryptAdminTestRequest(
+					t,
+					s,
+					route,
+					requestBody,
+				)
+			}
 			before := chipState(chip)
 
-			code, body := rawPost(handlerFor(s, route), route, jsonOf(t, req))
+			code, body := rawPost(handlerFor(s, route), route, requestBody)
 			if code == http.StatusOK {
 				t.Fatalf("unsigned request accepted: %s", body)
 			}
@@ -569,48 +672,6 @@ func TestAdminRefusesUnreadableHostKeys(t *testing.T) {
 	}
 }
 
-// The unsigned cold key import the firmware serves is open only while the
-// device is in the bootstrap state, and the refusal names the state.
-func TestUnsignedProvisioningLocked(t *testing.T) {
-	t.Parallel()
-
-	open := func(s *Service) error {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		return s.UnsignedProvisioningLocked()
-	}
-
-	if err := open(New(&sync.Mutex{}, t.Logf)); !errors.Is(err, errNoChip) {
-		t.Fatalf("no chip: %v", err)
-	}
-
-	s, chip := newTestService(t)
-	if err := open(s); err != nil {
-		t.Fatalf("closed with no host key: %v", err)
-	}
-
-	registerHostKey(t, s, hostPub(testHostKey))
-
-	if err := open(s); !errors.Is(err, errProvisioningClosed) {
-		t.Fatalf("with a host key registered: %v", err)
-	}
-
-	// a key of another scope closes it too
-	if err := open(imageOn(t, chip, 1, "")); !errors.Is(
-		err,
-		errProvisioningClosed,
-	) {
-		t.Fatalf("beside a key of another scope: %v", err)
-	}
-
-	chip.bins[hostKeysID] = []byte("torn")
-
-	if err := open(imageOn(t, chip, 0, "")); !errors.Is(err, errHostKeysBad) {
-		t.Fatalf("over an unreadable host key list: %v", err)
-	}
-}
-
 // The binding a host key signs is fixed across releases: armory-pool and the
 // device image ship separately, so the canonical request JSON and the digest
 // over it must not change shape.
@@ -650,6 +711,89 @@ func TestAdminBindingVector(t *testing.T) {
 	)
 	if got != adminBindingVector {
 		t.Fatalf("AdminBinding = %s", got)
+	}
+}
+
+func TestAdminRouteContainsSecrets(t *testing.T) {
+	t.Parallel()
+
+	for route := range adminRequests {
+		want := route == RouteProvisionCold || route == RouteProvisionProfile
+		if got := AdminRouteContainsSecrets(route); got != want {
+			t.Errorf(
+				"AdminRouteContainsSecrets(%q) = %t, want %t",
+				route,
+				got,
+				want,
+			)
+		}
+	}
+
+	if AdminRouteContainsSecrets("/provision/not-a-route") {
+		t.Fatal("unknown route reported as secret-bearing")
+	}
+}
+
+func TestPrivateKeyProvisioningRequiresAuthenticatedEncryption(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	plain := jsonOf(t, map[string]any{
+		"cold_key_id": freeColdID,
+		"signing_key": coldKeyHex(coldSeed),
+	})
+	code, body := rawPost(s.Handler(), RouteProvisionCold, plain)
+	if code != http.StatusBadRequest || !bytes.Contains(
+		body,
+		[]byte("private-key provisioning request must be encrypted"),
+	) {
+		t.Fatalf("plaintext private key: %d %s", code, body)
+	}
+
+	encrypted := encryptAdminTestRequest(
+		t,
+		s,
+		RouteProvisionCold,
+		plain,
+	)
+	var request EncryptedAdminRequest
+	if err := json.Unmarshal(encrypted, &request); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body = rawPost(s.Handler(), RouteProvisionProfile, encrypted)
+	if code != http.StatusBadRequest || !bytes.Contains(
+		body,
+		[]byte("invalid encrypted admin request"),
+	) {
+		t.Fatalf("route-swapped ciphertext: %d %s", code, body)
+	}
+
+	tampered := request
+	tampered.Ciphertext = bytes.Clone(request.Ciphertext)
+	tampered.Ciphertext[len(tampered.Ciphertext)-1] ^= 1
+	code, body = rawPost(
+		s.Handler(),
+		RouteProvisionCold,
+		jsonOf(t, tampered),
+	)
+	if code != http.StatusBadRequest || !bytes.Contains(
+		body,
+		[]byte("invalid encrypted admin request"),
+	) {
+		t.Fatalf("tampered ciphertext: %d %s", code, body)
+	}
+
+	code, body = rawPost(s.Handler(), RouteProvisionCold, encrypted)
+	if code != http.StatusOK {
+		t.Fatalf("valid ciphertext after failed tampering: %d %s", code, body)
+	}
+	code, body = rawPost(s.Handler(), RouteProvisionCold, encrypted)
+	if code != http.StatusBadRequest || !bytes.Contains(
+		body,
+		[]byte("unknown or used challenge"),
+	) {
+		t.Fatalf("replayed ciphertext: %d %s", code, body)
 	}
 }
 

@@ -23,7 +23,7 @@
 //	armory-pool -identity HEX -profile NAME witness -role pool|stake -tx-file F -out W
 //	armory-pool -identity HEX -profile NAME opcert -kes-vkey F -kes-period N -chain-counter N|none -out F
 //	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
-//	armory-pool [-host-key F] provision profile|floor|reward|pins|cold|identity|host-key|host-key/revoke < request.json
+//	armory-pool [-identity HEX] [-host-key F] provision profile|floor|reward|pins|cold|identity|host-key|host-key/revoke < request.json
 //	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
 //	armory-pool reward-hex stake_test1...
 //	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] [-unpinned-relays] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
@@ -634,6 +634,26 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 
 		route := "/" + sub + "/" + sf.Arg(0)
+		c := newClient(*base, *source)
+
+		var channel *device.AdminChannel
+		var err error
+		if device.AdminRouteContainsSecrets(route) {
+			identity, decodeErr := hex.DecodeString(*identityHex)
+			if decodeErr != nil || len(identity) != ed25519.PublicKeySize {
+				return errors.New(
+					"-identity must be the 32-byte identity public key in hex for private-key provisioning",
+				)
+			}
+			channel, err = authenticateDevice(
+				c,
+				ed25519.PublicKey(identity),
+				route,
+			)
+			if err != nil {
+				return err
+			}
+		}
 
 		file, in, err := adminKeyFile(
 			route,
@@ -646,7 +666,14 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 			return err
 		}
 
-		return adminRequest(newClient(*base, *source), route, file, in, stdout)
+		return adminRequest(
+			c,
+			route,
+			file,
+			channel,
+			in,
+			stdout,
+		)
 	case "reward-hex":
 		if len(rest) != 1 {
 			return errors.New("usage: reward-hex <stake_test1...>")
