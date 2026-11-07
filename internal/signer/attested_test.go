@@ -22,6 +22,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -47,6 +48,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/gouroboros/ledger"
+	"github.com/fxamacker/cbor/v2"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/blake2b"
@@ -689,16 +691,21 @@ func writeHostKeyFile(
 	return path
 }
 
-// TestBuildBackendsArmoryHostKey: with host_key_file set, every signing
-// request carries a challenge from the device and a host signature over it.
-func TestBuildBackendsArmoryHostKey(t *testing.T) {
-	t.Parallel()
-	identity, identityPriv, _ := ed25519.GenerateKey(nil)
-	pool, poolPriv, _ := ed25519.GenerateKey(nil)
-	host, hostPriv, _ := ed25519.GenerateKey(nil)
+// hostKeyDevice serves a device that issues one-time challenges and signs only
+// requests carrying a signature by host over the latest challenge. attest
+// produces the inventory attestation evidence. challenges reports how many
+// challenges it has issued.
+func hostKeyDevice(
+	t *testing.T,
+	pool ed25519.PublicKey,
+	poolPriv ed25519.PrivateKey,
+	host ed25519.PublicKey,
+	attest func(nonce []byte, keys []backend.AttestedKeyInfo) []byte,
+) (srv *httptest.Server, challenges func() int) {
+	t.Helper()
 	var mu sync.Mutex
-	var challenges [][]byte
-	device := httptest.NewServer(
+	var issued [][]byte
+	srv = httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -712,15 +719,11 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 				keys := []backend.AttestedKeyInfo{
 					{Role: backend.KeyTypePool, PublicKey: pool},
 				}
-				att := ed25519.Sign(
-					identityPriv,
-					backend.InventoryBinding(in.Nonce, keys),
-				)
 				_ = json.NewEncoder(w).
-					Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
+					Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: attest(in.Nonce, keys)})
 			case "/v1/challenge":
-				c := bytes.Repeat([]byte{byte(len(challenges) + 1)}, 32)
-				challenges = append(challenges, c)
+				c := bytes.Repeat([]byte{byte(len(issued) + 1)}, 32)
+				issued = append(issued, c)
 				_ = json.NewEncoder(w).
 					Encode(map[string]any{"version": backend.AttestedProtocol, "challenge": c})
 			case "/v1/sign":
@@ -730,10 +733,10 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 					Version: backend.AttestedProtocol,
 					Nonce:   req.Nonce,
 				}
-				if !bytes.Equal(req.HostKey, host) || len(challenges) == 0 ||
+				if !bytes.Equal(req.HostKey, host) || len(issued) == 0 ||
 					!bytes.Equal(
 						req.Challenge,
-						challenges[len(challenges)-1],
+						issued[len(issued)-1],
 					) ||
 					!ed25519.Verify(
 						host,
@@ -750,7 +753,27 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 			}
 		}),
 	)
-	t.Cleanup(device.Close)
+	t.Cleanup(srv.Close)
+	return srv, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(issued)
+	}
+}
+
+// TestBuildBackendsArmoryHostKey: with host_key_file set, every signing
+// request carries a challenge from the device and a host signature over it.
+func TestBuildBackendsArmoryHostKey(t *testing.T) {
+	t.Parallel()
+	identity, identityPriv, _ := ed25519.GenerateKey(nil)
+	pool, poolPriv, _ := ed25519.GenerateKey(nil)
+	host, hostPriv, _ := ed25519.GenerateKey(nil)
+	device, challenges := hostKeyDevice(
+		t, pool, poolPriv, host,
+		func(nonce []byte, keys []backend.AttestedKeyInfo) []byte {
+			return ed25519.Sign(identityPriv, backend.InventoryBinding(nonce, keys))
+		},
+	)
 
 	cfg := config.SignerBackendConfig{
 		Name: "armory", Type: "armory", Address: device.URL, Profile: "pool@preview",
@@ -774,8 +797,8 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 	if _, _, err := backend.SignTxFor(t.Context(), ref, body, 6, nil); err != nil {
 		t.Fatalf("authenticated sign: %v", err)
 	}
-	if len(challenges) != 1 {
-		t.Fatalf("challenges = %d, want 1", len(challenges))
+	if n := challenges(); n != 1 {
+		t.Fatalf("challenges = %d, want 1", n)
 	}
 
 	seed := hex.EncodeToString(hostPriv.Seed())
@@ -791,6 +814,127 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 			!strings.Contains(err.Error(), "host_key_file") {
 			t.Errorf("%s: got %v, want a host_key_file error", name, err)
 		}
+	}
+}
+
+// nitroAttester returns the root PEM of a miniature Nitro PKI and a function
+// building a COSE_Sign1 attestation document, signed by an enclave leaf
+// certificate, whose user_data is the binding.
+func nitroAttester(
+	t *testing.T,
+	pcr0 []byte,
+) (rootPEM []byte, document func(binding []byte) []byte) {
+	t.Helper()
+	now := time.Now()
+	rootKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-nitro-root"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTmpl, rootTmpl, &rootKey.PublicKey, rootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "test-enclave"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, root, &leafKey.PublicKey, rootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER}),
+		func(binding []byte) []byte {
+			payload, err := cbor.Marshal(map[string]any{
+				"module_id": "i-test", "digest": "SHA384",
+				"timestamp":   uint64(now.UnixMilli()),
+				"pcrs":        map[uint][]byte{0: pcr0},
+				"certificate": leafDER, "cabundle": [][]byte{rootDER},
+				"user_data": binding,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			protected, err := cbor.Marshal(map[int]int{1: -35})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tbs, err := cbor.Marshal([]any{"Signature1", protected, []byte{}, payload})
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha512.Sum384(tbs)
+			r, sv, err := ecdsa.Sign(rand.Reader, leafKey, digest[:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			sig := make([]byte, 96)
+			r.FillBytes(sig[:48])
+			sv.FillBytes(sig[48:])
+			doc, err := cbor.Marshal([]any{protected, map[any]any{}, payload, sig})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return doc
+		}
+}
+
+// TestBuildBackendsNitroHostKey: a nitro backend authenticates every signing
+// request with the host key, fetching a challenge from the device first.
+func TestBuildBackendsNitroHostKey(t *testing.T) {
+	t.Parallel()
+	pool, poolPriv, _ := ed25519.GenerateKey(nil)
+	host, hostPriv, _ := ed25519.GenerateKey(nil)
+	pcr0 := bytes.Repeat([]byte{0xab}, 48)
+	rootPEM, document := nitroAttester(t, pcr0)
+	rootFile := filepath.Join(t.TempDir(), "root.pem")
+	if err := os.WriteFile(rootFile, rootPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	device, challenges := hostKeyDevice(
+		t, pool, poolPriv, host,
+		func(nonce []byte, keys []backend.AttestedKeyInfo) []byte {
+			return document(backend.InventoryBinding(nonce, keys))
+		},
+	)
+
+	cfg := config.SignerBackendConfig{
+		Name: "nitro", Type: "nitro", Address: device.URL, Profile: "pool@preview",
+		RootCAFile: rootFile,
+		PCRs:       map[uint]string{0: hex.EncodeToString(pcr0)},
+		HostKeyFile: writeHostKeyFile(
+			t,
+			"ArmoryHostSigningKey_ed25519",
+			"5820"+hex.EncodeToString(hostPriv.Seed()),
+			0o600,
+		),
+	}
+	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
+	if err != nil {
+		t.Fatalf("BuildBackends: %v", err)
+	}
+	ref, err := bs[0].GetKey(t.Context(), backend.HashPublicKey(pool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := backend.SignTxFor(t.Context(), ref, []byte{0xa0}, 6, nil); err != nil {
+		t.Fatalf("authenticated sign: %v", err)
+	}
+	if n := challenges(); n != 1 {
+		t.Fatalf("challenges = %d, want 1", n)
 	}
 }
 
@@ -843,6 +987,7 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		{"nitro non-hex PCR", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: "zz"}}, "pcrs[0]"},
 		{"nitro zero PCR0", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: strings.Repeat("00", 48)}}, "all zeros"},
 		{"nitro without address", config.SignerBackendConfig{Type: "nitro", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "address"},
+		{"nitro without host key", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "host_key_file"},
 		{"confidential-space without audience", config.SignerBackendConfig{Type: "confidential-space", Address: "http://127.0.0.1:1", ImageDigest: "sha256:aa"}, "audience"},
 		{"confidential-space cleartext jwks", config.SignerBackendConfig{
 			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://example.com/jwks",

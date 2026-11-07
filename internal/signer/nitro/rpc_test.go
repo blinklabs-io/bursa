@@ -39,13 +39,15 @@ func TestRPCProvisionReloadAndSign(t *testing.T) {
 	require.Equal(t, provisioned.Envelope.PublicKey, loaded.PublicKey)
 	payload := make([]byte, 48)
 	payload[39] = 1
-	response, err := client.Sign(context.Background(), backend.AttestedRequest{
+	request := backend.AttestedRequest{
 		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
 		KeyHash: backend.HashPublicKey(loaded.PublicKey).
 			String(),
 		Role:  backend.KeyTypePool,
 		Nonce: bytes.Repeat([]byte{1}, 32), Payload: payload,
-	})
+	}
+	authorizeRPCRequest(t, client, &request)
+	response, err := client.Sign(context.Background(), request)
 	require.NoError(t, err)
 	require.True(
 		t,
@@ -84,6 +86,15 @@ type badSignatureEnclave struct {
 	key ed25519.PrivateKey
 }
 
+func (e *badSignatureEnclave) Challenge(
+	context.Context,
+) (ChallengeResponse, error) {
+	return ChallengeResponse{
+		Version:   backend.AttestedProtocol,
+		Challenge: bytes.Repeat([]byte{1}, requestNonceSize),
+	}, nil
+}
+
 func (e *badSignatureEnclave) Inventory(
 	context.Context,
 	[]byte,
@@ -106,6 +117,22 @@ func (e *badSignatureEnclave) Sign(
 		Nonce:     request.Nonce,
 		Signature: ed25519.Sign(e.key, request.Payload),
 	}, nil
+}
+
+func authorizeRPCRequest(
+	t *testing.T,
+	client *rpcClient,
+	request *backend.AttestedRequest,
+) {
+	t.Helper()
+	challenge, err := client.Challenge(context.Background())
+	require.NoError(t, err)
+	request.Challenge = challenge.Challenge
+	request.HostKey = testSignerAuthority.Public().(ed25519.PublicKey)
+	request.HostSignature = ed25519.Sign(
+		testSignerAuthority,
+		backend.AttestedRequestBinding(*request),
+	)
 }
 
 func TestProxySignatureMismatchFailsAtKeyRef(t *testing.T) {

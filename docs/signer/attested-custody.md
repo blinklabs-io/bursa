@@ -19,7 +19,7 @@ Three verifiers ship in the signer:
 |-----------|-------------|-----------------|
 | Enclave workload (measured image) | holding keys, enforcing its own signing policy | nothing beyond its measurement |
 | Cloud attestation service / KMS | issuing evidence; releasing wrapped key material only to the measured workload | - |
-| Host OS and Nitro proxy client identity | restricting enclave RPC access to the dedicated proxy process | confidentiality of custody keys, availability |
+| Host OS and Nitro proxy client identity | restricting enclave lifecycle, inventory and challenge RPC access to the dedicated proxy process | confidentiality of custody keys, availability |
 | Host proxy (vsock or socket forwarder) | presenting the authorized RPC client identity | custody-key confidentiality; it can drop, delay, replay, or rewrite messages |
 | Signer process | caller authentication, per-key policy, Cardano operation validation, watermarks, signature verification | key custody |
 
@@ -43,10 +43,12 @@ on four checks the signer performs itself:
 
 The Nitro host/enclave gRPC channel requires mutual TLS. The enclave trusts only
 client certificates issued by its dedicated proxy CA, and the proxy client key
-must be owner-only. This makes the host kernel, filesystem isolation, and proxy
-client identity part of the request-authorization boundary. A root compromise
-or disclosure of that client key permits enclave RPC calls; enclave/KMS custody
-still prevents extraction of the private cold key.
+must be owner-only. A signing RPC also needs a fresh one-time enclave challenge and a request
+signed by the separate signer authority key. The signer process holds that private key; the
+proxy can only forward signed requests. A root compromise can reach both
+identities, while disclosure of the proxy client key alone cannot request a
+cold-key signature. Enclave/KMS custody still prevents extraction of the private
+cold key.
 
 The enclave also enforces, inside the measured image:
 
@@ -168,7 +170,7 @@ backends:
   - name: "nitro"
     type: "nitro"
     address: "unix:///run/bursa/enclave.sock"   # host proxy to the enclave vsock
-    profile: "pool@mainnet"                     # optional; unset for `bursa nitro enclave`
+    host_key_file: "/etc/bursa/signer/nitro-host.skey"
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 hex: image measurement from the built EIF>"

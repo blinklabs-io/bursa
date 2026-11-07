@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -26,40 +27,60 @@ import (
 const (
 	requestNonceSize = 32
 	maxSeenNonces    = 65536
+	// challengeTTL bounds how long an unused challenge occupies the cache.
+	// Challenge is reachable without signer authorization, so a host that
+	// requests challenges and never signs must not exhaust capacity forever.
+	challengeTTL = time.Minute
 )
 
 // Service owns the active plaintext key and performs every cryptographic
 // operation. It is intended to run only in the measured enclave image.
 type Service struct {
-	initMu             sync.Mutex
-	mu                 sync.Mutex
-	recipient          Recipient
-	kms                KMSFactory
-	provisionAuthority ed25519.PublicKey
-	key                ed25519.PrivateKey
-	pub                ed25519.PublicKey
-	seen               map[[requestNonceSize]byte]struct{}
-	counter            uint64
-	hasCounter         bool
+	initMu              sync.Mutex
+	mu                  sync.Mutex
+	recipient           Recipient
+	kms                 KMSFactory
+	provisionAuthority  ed25519.PublicKey
+	signerAuthority     ed25519.PublicKey
+	key                 ed25519.PrivateKey
+	pub                 ed25519.PublicKey
+	envelope            Envelope
+	challenges          map[[requestNonceSize]byte]time.Time
+	challengeNextExpiry time.Time
+	now                 func() time.Time
+	seen                map[[requestNonceSize]byte]struct{}
+	counter             uint64
+	hasCounter          bool
 }
 
 // NewService constructs an enclave service from the NSM recipient, an
-// enclave-side KMS client factory, and a measured provisioning authority.
+// enclave-side KMS client factory, and measured provisioning and signer
+// authorities.
 func NewService(
 	recipient Recipient,
 	kms KMSFactory,
-	provisionAuthority ed25519.PublicKey,
+	provisionAuthority, signerAuthority ed25519.PublicKey,
 ) (*Service, error) {
 	if recipient == nil || kms == nil ||
 		len(provisionAuthority) != ed25519.PublicKeySize ||
-		bytes.Equal(provisionAuthority, make([]byte, ed25519.PublicKeySize)) {
+		bytes.Equal(provisionAuthority, make([]byte, ed25519.PublicKeySize)) ||
+		len(signerAuthority) != ed25519.PublicKeySize ||
+		bytes.Equal(signerAuthority, make([]byte, ed25519.PublicKeySize)) {
 		return nil, errors.New(
-			"nitro recipient, KMS factory, and provisioning authority are required",
+			"nitro recipient, KMS factory, provisioning authority, and signer authority are required",
+		)
+	}
+	if bytes.Equal(provisionAuthority, signerAuthority) {
+		return nil, errors.New(
+			"provisioning and signer authorities must differ",
 		)
 	}
 	return &Service{
 		recipient: recipient, kms: kms,
 		provisionAuthority: bytes.Clone(provisionAuthority),
+		signerAuthority:    bytes.Clone(signerAuthority),
+		challenges:         make(map[[requestNonceSize]byte]time.Time),
+		now:                time.Now,
 		seen:               make(map[[requestNonceSize]byte]struct{}),
 	}, nil
 }
@@ -123,6 +144,20 @@ func (s *Service) Provision(
 			ErrProtocol,
 		)
 	}
+	s.mu.Lock()
+	if len(s.key) != 0 || len(s.pub) != 0 {
+		env := cloneEnvelope(s.envelope)
+		matches := env.KMSKeyID == req.KMSKeyID && env.Role == req.Role
+		s.mu.Unlock()
+		if !matches {
+			return nil, fmt.Errorf(
+				"%w: pool cold key is already loaded",
+				ErrProtocol,
+			)
+		}
+		return &ProvisionResponse{Version: Protocol, Envelope: env}, nil
+	}
+	s.mu.Unlock()
 	kms, err := s.kms(req.Region, req.Credentials)
 	if err != nil {
 		return nil, fmt.Errorf("create KMS client: %w", err)
@@ -166,14 +201,14 @@ func (s *Service) Provision(
 		clear(key)
 		return nil, fmt.Errorf("wrap pool cold key: %w", err)
 	}
-	s.install(key, pub)
+	s.install(key, pub, env)
 	clear(key)
 	return &ProvisionResponse{Version: Protocol, Envelope: env}, nil
 }
 
-// Reload recovers a wrapped key through recipient-attested KMS and atomically
-// replaces the active key. Failed reloads preserve the active key and its
-// replay and counter state.
+// Reload recovers a wrapped key through recipient-attested KMS. An already
+// loaded service accepts only the same public key, preserving its replay and
+// counter state.
 func (s *Service) Reload(
 	ctx context.Context,
 	req *ReloadRequest,
@@ -185,6 +220,16 @@ func (s *Service) Reload(
 	}
 	if err := validateEnvelope(req.Envelope); err != nil {
 		return nil, err
+	}
+	s.mu.Lock()
+	activePublicKey := bytes.Clone(s.pub)
+	s.mu.Unlock()
+	if len(activePublicKey) != 0 &&
+		!bytes.Equal(activePublicKey, req.Envelope.PublicKey) {
+		return nil, fmt.Errorf(
+			"%w: a different pool cold key is already loaded",
+			ErrProtocol,
+		)
 	}
 	if err := validateKMSRequest(req.Region, req.Envelope.KMSKeyID, req.Credentials); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrProtocol, err)
@@ -228,7 +273,7 @@ func (s *Service) Reload(
 			ErrEnvelope,
 		)
 	}
-	s.install(key, pub)
+	s.install(key, pub, req.Envelope)
 	clear(key)
 	return &ReloadResponse{Version: Protocol, PublicKey: bytes.Clone(pub)}, nil
 }
@@ -266,6 +311,43 @@ func (s *Service) Inventory(
 	}, nil
 }
 
+// Challenge returns a one-time value that binds the next signing request to
+// the separately authorized signer process rather than the untrusted proxy.
+func (s *Service) Challenge(
+	_ context.Context,
+	req *ChallengeRequest,
+) (*ChallengeResponse, error) {
+	if req == nil || req.Version != Protocol {
+		return nil, fmt.Errorf("%w: invalid challenge request", ErrProtocol)
+	}
+	var challenge [requestNonceSize]byte
+	if _, err := rand.Read(challenge[:]); err != nil {
+		return nil, fmt.Errorf("generate signer challenge: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	if len(s.challenges) >= maxSeenNonces {
+		if s.challengeNextExpiry.IsZero() ||
+			!now.Before(s.challengeNextExpiry) {
+			s.purgeExpiredChallenges(now)
+		}
+	}
+	if len(s.challenges) >= maxSeenNonces {
+		return nil, fmt.Errorf("%w: challenge cache is full", ErrProtocol)
+	}
+	expires := now.Add(challengeTTL)
+	s.challenges[challenge] = expires
+	if s.challengeNextExpiry.IsZero() ||
+		expires.Before(s.challengeNextExpiry) {
+		s.challengeNextExpiry = expires
+	}
+	return &ChallengeResponse{
+		Version:   backend.AttestedProtocol,
+		Challenge: bytes.Clone(challenge[:]),
+	}, nil
+}
+
 // Sign accepts only canonical pool-cold operational-certificate signables with
 // an explicit issue counter. It refuses opcert-next, which would let the host
 // re-issue an existing number for a new KES key, and profiled requests, whose
@@ -276,7 +358,7 @@ func (s *Service) Sign(
 ) (*backend.AttestedResponse, error) {
 	if req == nil || req.Version != backend.AttestedProtocol ||
 		req.Purpose != backend.PurposeOpCert ||
-		req.Profile != "" ||
+		req.Profile != "" || req.Era != nil ||
 		req.Role != backend.KeyTypePool ||
 		len(req.Payload) != 48 ||
 		len(req.Nonce) != requestNonceSize {
@@ -294,6 +376,28 @@ func (s *Service) Sign(
 	if req.KeyHash != backend.HashPublicKey(s.pub).String() {
 		return nil, fmt.Errorf("%w: key hash mismatch", ErrProtocol)
 	}
+	var challenge [requestNonceSize]byte
+	if len(req.Challenge) != requestNonceSize {
+		return nil, fmt.Errorf("%w: signer challenge is required", ErrProtocol)
+	}
+	copy(challenge[:], req.Challenge)
+	expires, exists := s.challenges[challenge]
+	if !exists {
+		return nil, fmt.Errorf(
+			"%w: signer challenge is unknown or used",
+			ErrProtocol,
+		)
+	}
+	if !s.now().Before(expires) {
+		s.deleteChallenge(challenge, expires)
+		return nil, fmt.Errorf("%w: signer challenge expired", ErrProtocol)
+	}
+	if !bytes.Equal(req.HostKey, s.signerAuthority) ||
+		len(req.HostSignature) != ed25519.SignatureSize ||
+		!ed25519.Verify(s.signerAuthority, backend.AttestedRequestBinding(*req), req.HostSignature) {
+		return nil, fmt.Errorf("%w: signer authorization invalid", ErrProtocol)
+	}
+	s.deleteChallenge(challenge, expires)
 	if _, exists := s.seen[nonce]; exists {
 		return nil, fmt.Errorf("%w: request nonce replay", ErrProtocol)
 	}
@@ -317,16 +421,57 @@ func (s *Service) Sign(
 	}, nil
 }
 
-func (s *Service) install(key ed25519.PrivateKey, pub ed25519.PublicKey) {
+func (s *Service) install(
+	key ed25519.PrivateKey,
+	pub ed25519.PublicKey,
+	env Envelope,
+) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sameKey := bytes.Equal(s.pub, pub)
 	clear(s.key)
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
+	s.envelope = cloneEnvelope(env)
 	if !sameKey {
+		s.challenges = make(map[[requestNonceSize]byte]time.Time)
+		s.challengeNextExpiry = time.Time{}
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0
 		s.hasCounter = false
 	}
+}
+
+func (s *Service) deleteChallenge(
+	challenge [requestNonceSize]byte,
+	expires time.Time,
+) {
+	delete(s.challenges, challenge)
+	if expires.Equal(s.challengeNextExpiry) {
+		s.recalculateChallengeNextExpiry()
+	}
+}
+
+func (s *Service) recalculateChallengeNextExpiry() {
+	nextExpiry := time.Time{}
+	for _, expires := range s.challenges {
+		if nextExpiry.IsZero() || expires.Before(nextExpiry) {
+			nextExpiry = expires
+		}
+	}
+	s.challengeNextExpiry = nextExpiry
+}
+
+func (s *Service) purgeExpiredChallenges(now time.Time) {
+	nextExpiry := time.Time{}
+	for challenge, expires := range s.challenges {
+		if !now.Before(expires) {
+			delete(s.challenges, challenge)
+			continue
+		}
+		if nextExpiry.IsZero() || expires.Before(nextExpiry) {
+			nextExpiry = expires
+		}
+	}
+	s.challengeNextExpiry = nextExpiry
 }

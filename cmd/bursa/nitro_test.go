@@ -15,7 +15,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,5 +46,24 @@ func TestReadFixedHexFile(t *testing.T) {
 	}
 	if _, err := readFixedHexFile(path, "authorization", len(want)); err == nil {
 		t.Fatal("accepted malformed authorization")
+	}
+}
+
+func TestNitroEnclaveRejectsSharedAuthority(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "authority.hex")
+	key := bytes.Repeat([]byte{7}, 32)
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := nitroEnclaveCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{
+		"--provision-authority-file", path,
+		"--signer-authority-file", path,
+	})
+	err := command.Execute()
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("must differ")) {
+		t.Fatalf("Execute() = %v, want shared authority rejection", err)
 	}
 }

@@ -14,9 +14,9 @@ operation remain in the enclave.
 
 | Component | Responsibilities | Secret material available |
 |-----------|------------------|---------------------------|
-| `bursa signer` | caller authentication, policy, opcert counter watermark, response signature verification | none |
+| `bursa signer` | caller authentication, policy, opcert counter watermark, response signature verification, signing each enclave request with the signer authority key | signer authority private key (`host_key_file`) |
 | `bursa nitro proxy` on the parent instance | authenticate to enclave gRPC with a dedicated client certificate, read/write one existing Secrets Manager secret, fetch temporary role credentials, relay an offline provisioning authorization, bridge the signer socket to enclave gRPC, forward opaque KMS TLS bytes to the configured regional endpoint | proxy client key, temporary AWS credentials, provisioning signature and wrapped envelope |
-| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, verify provisioning against the measured image's authority key, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, provisioning authority public key, data key and cold key in enclave memory |
+| `bursa nitro enclave` in the EIF | require a client certificate from the proxy CA, verify provisioning against the measured image's authority key, verify the signer authority's signature and a one-time challenge on each signing request, create recipient attestation, call KMS, unwrap the data key, decrypt the cold-key seed, attest inventory, validate and sign opcert requests | RPC server key, provisioning and signer authority public keys, data key and cold key in enclave memory |
 
 The host proxy has no operation that returns a plaintext key. The envelope in
 Secrets Manager contains the pool role, public key, KMS key ARN, KMS
@@ -24,14 +24,18 @@ Secrets Manager contains the pool role, public key, KMS key ARN, KMS
 is authenticated as AES-GCM additional data. A reload derives the public key
 from the recovered seed and refuses a mismatch.
 
-The host proxy listens on an owner-only Unix socket. Configure the signer's
-`nitro` backend with that socket:
+The host proxy socket defaults to owner-only mode. When the proxy and signer
+run as separate users, put only those users in a dedicated socket group, run
+the proxy with that effective group, and set `--socket-mode 0660`. Keep the
+signer's `host_key_file` owner-only so the proxy cannot read it. Configure the
+signer's `nitro` backend with that socket:
 
 ```yaml
 backends:
   - name: "nitro-pool-cold"
     type: "nitro"
     address: "unix:///run/bursa/nitro.sock"
+    host_key_file: "/etc/bursa/signer/nitro-host.skey"
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 lowercase hex characters from the production EIF>"
@@ -39,11 +43,17 @@ backends:
 
 Create a dedicated CA for the proxy identity. Create an offline Ed25519
 provisioning authority and put only its 32-byte lowercase-hex public key in the
-EIF. The authority private key must remain outside both the EIF and parent
-instance. Put the CA certificate and the enclave server certificate and
-owner-only key in the EIF. Install the proxy client certificate, its owner-only
-key, and the enclave server CA on the parent for the dedicated proxy service
-user.
+EIF. Create a separate signer host key and put its 32-byte lowercase-hex public
+key in the EIF; its private key is the signer's `host_key_file` and must not be
+readable by the proxy service user. The provisioning authority private key must
+remain outside both the EIF and parent instance. Put the CA certificate and the
+enclave server certificate and owner-only key in the EIF. Install the proxy
+client certificate, its owner-only key, and the enclave server CA on the parent
+for the dedicated proxy service user.
+
+`host_key_file` uses the owner-only `ArmoryHostSigningKey_ed25519` text envelope
+accepted by the attested signer backends. `signer-authority-file` is the
+lowercase-hex public key corresponding to that private key.
 
 Run `bursa nitro enclave` as the EIF entry point:
 
@@ -52,7 +62,8 @@ bursa nitro enclave \
   --server-cert-file /etc/bursa/nitro/server.pem \
   --server-key-file /etc/bursa/nitro/server-key.pem \
   --client-ca-file /etc/bursa/nitro/proxy-ca.pem \
-  --provision-authority-file /etc/bursa/nitro/provision-authority.hex
+  --provision-authority-file /etc/bursa/nitro/provision-authority.hex \
+  --signer-authority-file /etc/bursa/nitro/signer-authority.hex
 ```
 
 On the parent instance run:
@@ -60,6 +71,7 @@ On the parent instance run:
 ```text
 bursa nitro proxy --enclave-cid <cid> --region <region> \
   --secret-id <existing-secret-id> --socket /run/bursa/nitro.sock \
+  --socket-mode 0660 \
   --enclave-ca-file /etc/bursa/nitro/enclave-ca.pem \
   --enclave-server-name nitro-enclave.internal \
   --client-cert-file /etc/bursa/nitro/proxy.pem \
@@ -100,6 +112,9 @@ Ed25519 signature before creating a KMS client, so changing the key, account,
 region, role, or protocol fails before any KMS operation. A deployment can use
 the same measured authority public key for multiple explicitly signed KMS keys
 without making the host or its AWS credentials an authorization source.
+The enclave returns the original envelope when an accepted provisioning request
+is repeated, and refuses to reload a different key while one is active. A
+replayed authorization therefore cannot replace the active pool key.
 
 ## KMS recipient policy
 
@@ -146,13 +161,14 @@ trailing values. The signer-facing protocol remains
 `bursa-attested-signer/1`, so the existing `KeyRef` path retains caller ACL,
 policy, watermark, attestation, and returned-signature checks.
 
-The host OS and proxy client key are the RPC access boundary. A process without
-that key cannot invoke provisioning, reload, inventory, or signing. Provisioning
-also requires a signature from the authority whose public key is part of the
-measured EIF. Host root, proxy-key, or AWS credential compromise therefore
-cannot authorize a different KMS key. The enclave independently restricts
-signing to canonical pool-cold operational-certificate payloads and maintains
-its nonce and issue counter guards while the key remains loaded.
+The proxy client key authorizes lifecycle, inventory, and challenge RPCs.
+Signing additionally requires a fresh enclave challenge and a request signature
+from the signer authority whose public key is part of the measured EIF. The
+proxy can forward that authorization but cannot create another signing request.
+Provisioning also requires a signature from the separate provisioning authority.
+The enclave independently restricts signing to canonical pool-cold
+operational-certificate payloads and maintains its nonce and issue counter
+guards while the key remains loaded.
 
 The enclave accepts only the `pool` role and `opcert` purpose, without a
 workload profile. It signs the canonical 48-byte `OCertSignable` value:
@@ -162,9 +178,10 @@ KES verification key (32 bytes) || issue counter (uint64 big endian) ||
 KES period (uint64 big endian)
 ```
 
-Requests require a fresh 32-byte nonce. The enclave rejects nonce replay,
-non-increasing counters, a wrong key hash or role, malformed payloads, and
-unsupported protocol versions. The signer verifies the returned Ed25519
+Requests require a fresh 32-byte nonce and one-time signer challenge. The
+enclave rejects an absent or invalid signer authorization, challenge or nonce
+replay, non-increasing counters, a wrong key hash or role, malformed payloads,
+and unsupported protocol versions. The signer verifies the returned Ed25519
 signature before constructing the operational certificate.
 
 The signer's durable watermark enforces the operational-certificate issue

@@ -370,6 +370,7 @@ func TestRPCRejectsUnauthorizedCallsBeforeStateMutation(t *testing.T) {
 	require.NoError(t, err, "unauthorized reload changed loaded state")
 
 	request := testSignRequest(provisioned.Envelope.PublicKey)
+	authorizeRPCRequest(t, authorized, &request)
 	_, err = unauthorized.Sign(ctx, request)
 	requireRPCDenied(t, "sign", err)
 	signed, err := authorized.Sign(ctx, request)
@@ -409,6 +410,25 @@ func TestRPCAuthorizedProxyRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusOK, inventoryResponse.Code)
 
 	signRequest := testSignRequest(provisioned.Envelope.PublicKey)
+	challengeRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/challenge",
+		bytes.NewReader([]byte(`{}`)),
+	)
+	challengeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(challengeResponse, challengeRequest)
+	require.Equal(t, http.StatusOK, challengeResponse.Code)
+	var challenge ChallengeResponse
+	require.NoError(
+		t,
+		json.Unmarshal(challengeResponse.Body.Bytes(), &challenge),
+	)
+	signRequest.Challenge = challenge.Challenge
+	signRequest.HostKey = testSignerAuthority.Public().(ed25519.PublicKey)
+	signRequest.HostSignature = ed25519.Sign(
+		testSignerAuthority,
+		backend.AttestedRequestBinding(signRequest),
+	)
 	signBody, err := json.Marshal(signRequest)
 	require.NoError(t, err)
 	request := httptest.NewRequest(
