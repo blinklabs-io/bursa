@@ -491,7 +491,13 @@ X25519 public key to `/v1/identity`. The device signs the route, challenge, both
 ephemeral encryption keys, and its public identity under the pinned identity
 key. The tool verifies that proof before reading the request, then encrypts the
 complete request to the authenticated device key. A forwarding or substituted
-HTTP endpoint sees only ciphertext.
+HTTP endpoint sees only ciphertext. This holds only when the pinned identity
+came from a trusted source: `armory/e2e/sim-signer-opcert.sh` pins the identity
+it read over the same link, which protects against a later substitution but
+not against an endpoint present from the start.
+
+The identity proof rate limit is device-wide, so a peer on the USB link can
+exhaust it and keep the operator from provisioning until the window passes.
 
 The device zeroes its decrypted request buffer and decoded key after the
 request. `armory-pool` clears the explicit plaintext request buffer after
@@ -618,8 +624,8 @@ are unchanged. `TESTNET=1` is refused with it.
 - Not changed: `/wipe/device`, which stays confirmed by the identity public
   key alone as the recovery path when every host key is lost, and
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
-  Cold and owner private keys use the same encrypted provisioning routes in
-  single-scope and multi images.
+- Encrypted private keys. Cold and owner private keys use the same encrypted
+  provisioning routes in single-scope and multi images.
 - No downgrade. An image older than this one does not know the second cold
   key block (`0x20e50600`-`0x20e5060f`) or the ownership record: its
   `/wipe/device` leaves them on the chip, and it imports into an object

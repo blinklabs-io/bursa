@@ -165,9 +165,14 @@ func TestPrivateKeyProvisioningAuthenticatesDeviceBeforeReading(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, route, body string
+		// claimPinned makes the endpoint present the pinned public key but
+		// sign the binding with its own key.
+		claimPinned bool
 	}{
-		{"cold", "cold", `{"cold_key_id":551878672,"signing_key":"5820` + strings.Repeat("53", ed25519.SeedSize) + `"}`},
-		{"profile owner", "profile", `{"name":"pool@preview","network_id":0,"slot":0,"cold_key_id":551878672,"owner_signing_key":"5820` + strings.Repeat("54", ed25519.SeedSize) + `"}`},
+		{"cold", "cold", `{"cold_key_id":551878672,"signing_key":"5820` + strings.Repeat("53", ed25519.SeedSize) + `"}`, false},
+		{"profile owner", "profile", `{"name":"pool@preview","network_id":0,"slot":0,"cold_key_id":551878672,"owner_signing_key":"5820` + strings.Repeat("54", ed25519.SeedSize) + `"}`, false},
+		{"cold with pinned key claimed", "cold", `{"cold_key_id":551878672,"signing_key":"5820` + strings.Repeat("53", ed25519.SeedSize) + `"}`, true},
+		{"profile owner with pinned key claimed", "profile", `{"name":"pool@preview","network_id":0,"slot":0,"cold_key_id":551878672,"owner_signing_key":"5820` + strings.Repeat("54", ed25519.SeedSize) + `"}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -190,6 +195,9 @@ func TestPrivateKeyProvisioningAuthenticatesDeviceBeforeReading(t *testing.T) {
 						}
 
 						pub := attacker.Public().(ed25519.PublicKey)
+						if tc.claimPinned {
+							pub = pinned.Public().(ed25519.PublicKey)
+						}
 						_ = json.NewEncoder(w).
 							Encode(device.IdentityProofResponse{
 								Version:   device.Protocol,

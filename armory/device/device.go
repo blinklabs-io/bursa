@@ -62,6 +62,8 @@ var (
 )
 
 const (
+	// The identity proof limit is device-wide: an unauthenticated peer on the
+	// link can exhaust it and delay provisioning until the window passes.
 	identityProofBurst  = 64
 	identityProofWindow = 10 * time.Second
 )

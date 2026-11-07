@@ -316,8 +316,11 @@ func (s *Service) validateChallenge(ch []byte) error {
 	return nil
 }
 
-// takeChallenge validates and burns challenge ch. The used set grows only
-// through authenticated operations and drops entries once they expire.
+// takeChallenge validates and burns challenge ch. The used set drops entries
+// once they expire. Encrypted provisioning burns a challenge after the AEAD
+// opens but before the request is authorized, so a peer on the link can grow
+// the set; each such request needs a proof from identityProof, whose rate
+// limit bounds the growth.
 func (s *Service) takeChallenge(ch []byte) error {
 	if err := s.validateChallenge(ch); err != nil {
 		return err

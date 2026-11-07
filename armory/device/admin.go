@@ -273,7 +273,7 @@ func handleEncryptedAdmin[Req any, P interface {
 		}
 		defer clear(wire)
 
-		var fields map[string]json.RawMessage
+		var fields map[string]ignored
 		if err = json.Unmarshal(wire, &fields); err != nil {
 			http.Error(w, errMalformedRequest.Error(), http.StatusBadRequest)
 			return

@@ -16,7 +16,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -141,6 +143,59 @@ func devicePost(
 	}
 }
 
+// devicePostSecret provisions a private key over the encrypted channel the
+// device requires, pinning the identity the device reported.
+func devicePostSecret(
+	t *testing.T,
+	srv *httptest.Server,
+	path string,
+	identity ed25519.PublicKey,
+	req, resp any,
+) {
+	t.Helper()
+
+	var challenge device.ChallengeResponse
+
+	devicePost(t, srv, "/v1/challenge", struct{}{}, &challenge)
+
+	hostPrivate, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proofReq := device.IdentityProofRequest{
+		Version:       device.Protocol,
+		Route:         path,
+		Challenge:     challenge.Challenge,
+		HostPublicKey: hostPrivate.PublicKey().Bytes(),
+	}
+
+	var proof device.IdentityProofResponse
+
+	devicePost(t, srv, device.RouteIdentityProof, proofReq, &proof)
+
+	channel, err := device.NewAdminChannel(
+		path, identity, proofReq, proof, hostPrivate,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer clear(body)
+
+	sealed, err := channel.Seal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	devicePost(t, srv, path, sealed, resp)
+}
+
 // rig is a provisioned device with a pool cold key whose chain counter is 3,
 // and the public inputs opcert-check takes for the certificate issue 4.
 type rig struct {
@@ -208,7 +263,7 @@ func newRig(t *testing.T, registered ed25519.PrivateKey) *rig {
 
 	var cold device.ColdResponse
 
-	devicePost(t, srv, "/provision/cold", device.ColdRequest{
+	devicePostSecret(t, srv, "/provision/cold", id.PublicKey, device.ColdRequest{
 		ColdKeyID: coldID, SigningKey: append([]byte{0x58, 0x20}, coldSeed...),
 	}, &cold)
 
