@@ -339,7 +339,7 @@ func (e enclaveFromWorkload) Inventory(
 	ctx context.Context,
 	nonce []byte,
 ) (backend.AttestedInventory, error) {
-	return e.w.Inventory(ctx, nonce)
+	return e.w.Inventory(ctx, nonce, "")
 }
 
 func (e enclaveFromWorkload) Sign(

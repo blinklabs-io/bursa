@@ -211,7 +211,7 @@ backends:
   - name: "gcp-cs"
     type: "confidential-space"
     address: "https://workload.example.internal:8443"
-    profile: "pool@mainnet"                     # optional; unset for `bursa confidential-space-workload`
+    profile: "pool@mainnet"                     # optional; must match a `--profile` of `bursa confidential-space-workload`, unset without any
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
     tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
@@ -279,11 +279,46 @@ nothing. Both request forms write the new fields, and an earlier workload
 release cannot read an object that has them; roll the workload forward, not
 back, once this release has signed a certificate.
 
-One signer feature is still refused:
+#### Profiles
 
-- A backend `profile`. The workload signs no profile binding, so leave
-  `profile` unset on its `confidential-space` backend; with it set, the
-  inventory request is refused and the backend does not load.
+Without `--profile` the workload serves unprofiled requests only, and refuses
+any request or inventory that names a profile. With `--profile NAME`
+(repeatable) it holds the same cold key under each named profile, so one
+workload can serve a pool on several networks to signer backends that each set
+`profile`:
+
+- Requests and inventories must name a configured profile; an unprofiled
+  request or an unknown profile is refused, and the refusal consumes no nonce
+  and no counter. A profile name is 1 to 32 characters from letters, digits
+  and `._@-`, as on the armory device.
+- Each profile has its own counter object,
+  `<counter-object>/profiles/<profile>`, for both `opcert` and `opcert-next`,
+  so profiles never share an issue counter, chain-counter floor or KES-period
+  record. The object records its `profile`, and the workload refuses an object
+  that names another profile or none. The unprofiled object at
+  `--counter-object` is neither read nor written, and is unchanged; a profile
+  does not adopt it, so a profile's counter starts empty. Use `opcert-next`,
+  which takes the on-chain counter, to continue a pool whose certificates were
+  issued earlier.
+- Every profiled response carries `binding_signature`, the pool key's
+  signature over `AttestedResponseBinding` (the request including its profile,
+  and the Cardano signature). The signer rejects a response whose binding does
+  not match the profile it asked for, so an untrusted proxy cannot move a
+  request to another profile.
+- The attestation token is bound to the nonce and key list, not the profile,
+  and the key is the same under every profile; profiles are separated by the
+  signing request binding and the counters.
+- First boot, and a restart that finishes a pending bootstrap, create every
+  profile's counter object, as they create the unprofiled one. With an active
+  envelope a missing profile counter stops startup, so a deleted object is not
+  silently reset. To add a profile, grant its object (see the permissions
+  below) and start the workload once with `--create-profile-counter NAME`
+  (repeatable) naming only the profiles being added, then remove the flag.
+  The flag creates the missing counter of the named profiles only; a missing
+  counter of any other profile still stops startup, and a named profile's
+  object deleted while the flag is set would be recreated empty. A counter
+  object that carries a `profile` cannot be read by an earlier workload
+  release.
 
 The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
 key inside the workload. Cloud KMS wraps the data-encryption key. The workload
@@ -292,12 +327,15 @@ public metadata in the file named by `--wrapped-key-file`. It first publishes a
 `counter-pending` envelope with mode `0600`, creates the matching counter
 object, and atomically replaces the envelope with an authenticated `active`
 form before serving. A restart can finish an interrupted pending bootstrap with
-the same pool identity. An active envelope never recreates a missing counter.
+the same pool identity. An active envelope never recreates a missing
+unprofiled counter, and creates a missing profile counter only under
+`--create-profile-counter` naming that profile.
 Cloud KMS must unwrap the same data-encryption key before the public key is
 served. A denial, corrupt envelope, mismatched KMS resource, or changed public
 metadata stops startup.
 
-The command requires:
+The command requires the following; the `--profile` lines are optional (see
+Profiles above):
 
 ```text
 bursa confidential-space-workload \
@@ -307,6 +345,7 @@ bursa confidential-space-workload \
   --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
   --counter-bucket POOL_COUNTER_BUCKET \
   --counter-object pool-cold/counter.json \
+  --profile pool@mainnet --profile pool@preview \
   --wif-credentials /etc/bursa/confidential-space-wif.json \
   --tls-cert-file /etc/bursa/confidential-space-server.pem \
   --tls-key-file /etc/bursa/confidential-space-server-key.pem \
@@ -340,9 +379,13 @@ counter consistent across restarts and concurrent workload replicas without
 allowing one request to exhaust the counter range. Give the workload
 identity only `storage.objects.get`,
 `storage.objects.create`, and `storage.objects.delete` on the configured object
-name. Cloud Storage requires delete permission when a new generation replaces
-an existing object. Enable Object Versioning for recovery evidence, and do not
-expose the workload's attestation credential outside the measured image.
+name. With `--profile`, grant them instead on each profile's object name,
+`<counter-object>/profiles/<profile>`, and not on `--counter-object`, which is
+then neither read nor written; grant a new profile's object before the start
+that adds it. Cloud Storage requires delete permission when a new generation
+replaces an existing object. Enable Object Versioning for recovery evidence,
+and do not expose the workload's attestation credential outside the measured
+image.
 Counter objects written with `bursa-confidential-space-counter/1` migrate once
 with a generation precondition: `next_issue_number` becomes the stored
 `issue_number` plus one. A legacy maximum value, malformed state, or a key-hash
@@ -353,19 +396,21 @@ and require
 `CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
 and the production support attribute. Grant encrypt and decrypt on only the
 wrapping key, and the three object permissions above on only the counter
-object, to that digest-bound federated principal. The same condition makes
-Cloud KMS and Cloud Storage refuse an unapproved digest, a debug image, an
-expired default token, or a request without attestation. The signer
+object or profile counter objects, to that digest-bound federated principal.
+The same condition makes Cloud KMS and Cloud Storage refuse an unapproved
+digest, a debug image, an expired default token, or a request without
+attestation. The signer
 independently verifies those properties on the custom inventory token before
 it accepts the public key.
 
-Persist the wrapped-key file and counter object across workload restarts.
+Persist the wrapped-key file and counter object, or each profile's counter
+object, across workload restarts.
 Losing the wrapped-key file creates a new pool identity on the next boot;
 copying or rolling it back restores the same pool identity because the private
 key never leaves its envelope. Back up the wrapped file together with the Cloud
 KMS key's retention policy. The counter object is created with a new wrapped
 identity; startup fails if that identity later has no matching counter object.
-Never restore or remove the counter object for an existing pool key.
+Never restore or remove a counter object for an existing pool key.
 
 ## USB armory
 

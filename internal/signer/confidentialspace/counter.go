@@ -65,6 +65,9 @@ type counterState struct {
 	LastIssued uint64 `json:"last_issued,omitempty"`
 	// LastIssuedPeriod is the KES period of that certificate, 0 if unknown.
 	LastIssuedPeriod uint64 `json:"last_issued_period,omitempty"`
+	// Profile names the profile the state belongs to. It is omitted for the
+	// unprofiled state, so that object is unchanged.
+	Profile string `json:"profile,omitempty"`
 }
 
 type counterStateWire struct {
@@ -75,6 +78,7 @@ type counterStateWire struct {
 	OpCertFloor      uint64  `json:"opcert_floor,omitempty"`
 	LastIssued       uint64  `json:"last_issued,omitempty"`
 	LastIssuedPeriod uint64  `json:"last_issued_period,omitempty"`
+	Profile          string  `json:"profile,omitempty"`
 }
 
 type counterObject interface {
@@ -92,6 +96,15 @@ type cloudCounterObject struct {
 type CloudCounterStore struct {
 	object counterObject
 	client *storage.Client
+	// profile is the profile whose state the object holds, "" for the
+	// unprofiled state.
+	profile string
+}
+
+// counterProfile is the profile whose state the store holds, "" for the
+// unprofiled state.
+func (s *CloudCounterStore) counterProfile() string {
+	return s.profile
 }
 
 // Prepare binds the counter object to key. A missing object is created only
@@ -116,6 +129,7 @@ func (s *CloudCounterStore) Prepare(
 		initial := counterState{
 			Version: counterStateVersion,
 			KeyHash: keyHash,
+			Profile: s.profile,
 		}
 		if err := s.store(ctx, initial, 0, false); err == nil {
 			return nil
@@ -132,8 +146,49 @@ func NewCloudCounterStore(
 	ctx context.Context,
 	bucket, object, credentialFile string,
 ) (*CloudCounterStore, error) {
+	return newCloudCounterStore(ctx, bucket, object, "", credentialFile)
+}
+
+// errCounterLocationRequired refuses a counter store without a bucket or an
+// object name.
+var errCounterLocationRequired = errors.New(
+	"counter bucket and object are required",
+)
+
+// profileCounterObject is the name of the counter object of profile under
+// the base counter object name.
+func profileCounterObject(object, profile string) string {
+	return object + "/profiles/" + profile
+}
+
+// NewProfiledCloudCounterStore is NewCloudCounterStore for the state of one
+// profile, held in the object profileCounterObject(object, profile). The
+// object records the profile, and is refused for any other.
+func NewProfiledCloudCounterStore(
+	ctx context.Context,
+	bucket, object, profile, credentialFile string,
+) (*CloudCounterStore, error) {
+	if err := ValidateProfile(profile); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(object) == "" {
+		return nil, errCounterLocationRequired
+	}
+	return newCloudCounterStore(
+		ctx,
+		bucket,
+		profileCounterObject(object, profile),
+		profile,
+		credentialFile,
+	)
+}
+
+func newCloudCounterStore(
+	ctx context.Context,
+	bucket, object, profile, credentialFile string,
+) (*CloudCounterStore, error) {
 	if strings.TrimSpace(bucket) == "" || strings.TrimSpace(object) == "" {
-		return nil, errors.New("counter bucket and object are required")
+		return nil, errCounterLocationRequired
 	}
 	if err := validateWIFCredentials(credentialFile); err != nil {
 		return nil, err
@@ -150,7 +205,8 @@ func NewCloudCounterStore(
 		object: &cloudCounterObject{
 			object: client.Bucket(bucket).Object(object),
 		},
-		client: client,
+		client:  client,
+		profile: profile,
 	}, nil
 }
 
@@ -271,6 +327,11 @@ func (s *CloudCounterStore) loadCurrent(
 		if err != nil || !exists {
 			return counterState{}, generation, exists, err
 		}
+		if wire.Profile != s.profile {
+			return counterState{}, 0, false, errors.New(
+				"counter state does not match the profile",
+			)
+		}
 		state, migrate, err := normalizeCounterState(wire, keyHash)
 		if err != nil {
 			return counterState{}, 0, false, err
@@ -337,11 +398,12 @@ func normalizeCounterState(
 			OpCertFloor:      wire.OpCertFloor,
 			LastIssued:       wire.LastIssued,
 			LastIssuedPeriod: wire.LastIssuedPeriod,
+			Profile:          wire.Profile,
 		}, false, nil
 	case counterStateVersionV1:
 		if wire.IssueNumber == nil || wire.NextIssueNumber != nil ||
 			wire.OpCertFloor != 0 || wire.LastIssued != 0 ||
-			wire.LastIssuedPeriod != 0 ||
+			wire.LastIssuedPeriod != 0 || wire.Profile != "" ||
 			*wire.IssueNumber == math.MaxUint64 {
 			return counterState{}, false, errors.New(
 				"legacy counter state cannot be migrated",
