@@ -151,7 +151,10 @@ env:
     }
     guard let importedItems = importedItems as? [[String: Any]],
           importedItems.contains(where: {
-              $0[kSecImportItemIdentity as String] is SecIdentity
+              guard let item = $0[kSecImportItemIdentity as String] else {
+                  return false
+              }
+              return CFGetTypeID(item as AnyObject) == SecIdentityGetTypeID()
           }) else {
         fail("PKCS#12 import returned no identities")
     }
