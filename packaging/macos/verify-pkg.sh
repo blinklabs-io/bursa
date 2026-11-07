@@ -57,6 +57,23 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARNING:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# stapler fetches and checks the ticket over the network, and a dropped
+# connection fails it with error 68 even when the ticket is valid. Retry with
+# a growing pause before treating the failure as real.
+stapler_retry() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if xcrun stapler "$@"; then
+            return 0
+        fi
+        if [ "${attempt}" -lt 5 ]; then
+            warn "stapler $1 failed (attempt ${attempt}/5); retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+        fi
+    done
+    return 1
+}
+
 [ -f "${PKG}" ] || die "pkg not found: ${PKG}"
 
 # ---------------------------------------------------------------------------
@@ -88,7 +105,7 @@ printf '%s' "${spctl_out}" | grep -q 'Notarized Developer ID' \
 # stapler validate is the offline check: without a stapled ticket a first
 # launch on a machine with no network is refused.
 log "Validating the stapled notarization ticket"
-xcrun stapler validate "${PKG}" \
+stapler_retry validate "${PKG}" \
     || die "no valid notarization ticket is stapled to ${PKG}"
 
 if [ "${VERIFY_INSTALL}" != "1" ]; then
