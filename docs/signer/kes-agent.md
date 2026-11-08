@@ -104,6 +104,15 @@ The floor is persisted to `guard_file` via an atomic temp-file + rename write.
 In `sign` mode, requests for a period later than the agent's wall-clock current
 period are rejected before key evolution or guard persistence.
 
+In `sign` mode the guard also records the slot and a SHA-256 of the body of the
+last header signed, in the same write as the floor. The agent signs at most one
+header body per slot and never an older slot: the identical body may be signed
+again (a retry), but a different body for a signed slot or a lower slot is
+refused. Several producers can therefore share one agent for a pool, and the
+first header signed for a slot wins. The record survives restarts and key
+installs, since slots are absolute. A guard file from an earlier version loads
+with no slot record.
+
 For restart recovery, preserve the guard on durable storage available only to
 the approved workload measurement, then stage and install a key whose current
 period is at or above that floor. A replacement workload must use that same

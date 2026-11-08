@@ -15,6 +15,8 @@
 package kesagent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +29,20 @@ import (
 // below the highest period already served or signed.
 var ErrPeriodRollback = errors.New(
 	"kesagent: KES period rollback refused (period below monotonic floor)",
+)
+
+// ErrSlotRollback is returned when a header is presented for a slot below the
+// last slot the agent signed a header for. A producer that asks for an older
+// slot is behind the chain the pool already extended.
+var ErrSlotRollback = errors.New(
+	"kesagent: header slot below the last signed slot refused",
+)
+
+// ErrSlotEquivocation is returned when a header body differs from the one the
+// agent already signed for the same slot. Signing it would publish a second
+// block for the pool in that slot.
+var ErrSlotEquivocation = errors.New(
+	"kesagent: a different header was already signed for this slot",
 )
 
 // PeriodGuard enforces a monotonic non-decreasing floor on the KES period the
@@ -54,12 +70,24 @@ type PeriodGuard struct {
 	// equal-period fast path must not skip persisting while it is false.
 	durable bool
 	vkey    string // hex of the active KES vkey at the current floor (informational)
+	// slot and header record the last block header signed for the pool: its
+	// absolute slot and the SHA-256 of its body. They are persisted with the
+	// floor so a restart or a key install cannot sign a second header for a
+	// signed slot.
+	slot    uint64
+	slotSet bool
+	header  string
 }
 
 type guardState struct {
 	Floor uint64 `json:"floor"`
 	Set   bool   `json:"set"`
 	Vkey  string `json:"kes_vkey,omitempty"`
+	// Slot, SlotSet and Header are absent from guard files written before the
+	// slot guard; such a file loads with no signed slot.
+	Slot    uint64 `json:"last_signed_slot,omitempty"`
+	SlotSet bool   `json:"last_signed_slot_set,omitempty"`
+	Header  string `json:"last_signed_header_sha256,omitempty"`
 }
 
 // NewPeriodGuard opens (or creates) a guard backed by the file at path. Direct
@@ -90,6 +118,9 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 	g.floor = st.Floor
 	g.set = st.Set
 	g.vkey = st.Vkey
+	g.slot = st.Slot
+	g.slotSet = st.SlotSet
+	g.header = st.Header
 	return g, nil
 }
 
@@ -160,6 +191,83 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 	return nil
 }
 
+// LastSignedSlot returns the slot of the last header signed and whether one
+// has been signed.
+func (g *PeriodGuard) LastSignedSlot() (uint64, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.slot, g.slotSet
+}
+
+// AuthorizeHeader is Authorize for a block header body at an absolute slot.
+// Besides the period floor it allows one header body per slot and never an
+// older slot: a slot above the last signed one is recorded durably before it
+// returns; the same slot is allowed again only for the identical body, so a
+// producer can retry after a lost reply; a different body for that slot
+// returns ErrSlotEquivocation and a lower slot returns ErrSlotRollback.
+func (g *PeriodGuard) AuthorizeHeader(
+	vkeyHex string,
+	period uint64,
+	slot uint64,
+	headerBody []byte,
+) error {
+	sum := sha256.Sum256(headerBody)
+	header := hex.EncodeToString(sum[:])
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.set && period < g.floor {
+		return fmt.Errorf(
+			"%w: period %d < floor %d",
+			ErrPeriodRollback,
+			period,
+			g.floor,
+		)
+	}
+	if g.slotSet {
+		switch {
+		case slot < g.slot:
+			return fmt.Errorf(
+				"%w: slot %d < last signed slot %d",
+				ErrSlotRollback,
+				slot,
+				g.slot,
+			)
+		case slot == g.slot && header != g.header:
+			return fmt.Errorf("%w: slot %d", ErrSlotEquivocation, slot)
+		case slot == g.slot && g.durable:
+			// The identical header again: already recorded durably.
+			g.vkey = vkeyHex
+			return nil
+		}
+	}
+	// Record the new slot, or retry persisting a slot whose record is not yet
+	// durable. As in Authorize, roll back only when the write did not reach
+	// the guard file.
+	prevFloor, prevSet, prevVkey := g.floor, g.set, g.vkey
+	prevSlot, prevSlotSet, prevHeader := g.slot, g.slotSet, g.header
+	prevDurable := g.durable
+	if !g.set || period > g.floor {
+		g.floor = period
+	}
+	g.set = true
+	g.vkey = vkeyHex
+	g.slot = slot
+	g.slotSet = true
+	g.header = header
+	g.durable = false
+	committed, err := g.persistLocked()
+	if err != nil {
+		if !committed {
+			g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+			g.slot, g.slotSet, g.header = prevSlot, prevSlotSet, prevHeader
+			g.durable = prevDurable
+		}
+		return err
+	}
+	g.durable = true
+	return nil
+}
+
 // persistLocked writes the guard state durably. It reports whether the new
 // state reached the guard file: once the rename commits, the on-disk floor has
 // advanced even if a later step (the parent-directory sync) fails, and the
@@ -168,7 +276,14 @@ func (g *PeriodGuard) persistLocked() (committed bool, err error) {
 	if g.path == "" {
 		return true, nil
 	}
-	st := guardState{Floor: g.floor, Set: g.set, Vkey: g.vkey}
+	st := guardState{
+		Floor:   g.floor,
+		Set:     g.set,
+		Vkey:    g.vkey,
+		Slot:    g.slot,
+		SlotSet: g.slotSet,
+		Header:  g.header,
+	}
 	data, err := json.Marshal(st)
 	if err != nil {
 		return false, fmt.Errorf("kesagent: marshal guard state: %w", err)

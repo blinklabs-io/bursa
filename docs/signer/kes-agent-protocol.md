@@ -103,9 +103,18 @@ the guard and key untouched, unless:
   installed issue counter, the installed certificate start period, and the
   installed cold-key signature.
 
+The agent then checks the header's slot against the last header it signed,
+which it keeps in `guard_file`. A slot above it is recorded durably before the
+signature is returned. The same slot is signed again only for the identical
+header body, so a producer can retry after a lost reply. A different body for
+that slot (`a different header was already signed for this slot`) or a lower
+slot (`header slot below the last signed slot refused`) is refused. Producers
+that share an agent therefore cannot publish two blocks for the pool in one
+slot: the first header the agent signs for a slot wins.
+
 `error` is non-empty (and `signature` absent) when signing is refused, e.g. a
-message that is not a matching header body, a period rollback, or an exhausted
-key. Header bodies of the pre-Babbage (TPraos) eras are refused.
+message that is not a matching header body, a second header for a signed slot,
+an older slot, a period rollback, or an exhausted key. Header bodies of the pre-Babbage (TPraos) eras are refused.
 
 The `type` field is mandatory and must equal `sign_request`. A frame with a
 different or missing type is refused even when its other fields form a valid

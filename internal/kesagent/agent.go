@@ -418,8 +418,10 @@ func (a *Agent) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		a.metrics.incSign("error")
 		return nil, ErrNoActiveKey
 	}
+	var slot uint64
 	if typed {
-		if err := a.checkHeaderLocked(period, msg); err != nil {
+		var err error
+		if slot, err = a.checkHeaderLocked(period, msg); err != nil {
 			a.metrics.incSign("error")
 			return nil, err
 		}
@@ -448,9 +450,19 @@ func (a *Agent) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		return nil, fmt.Errorf("%w: cannot reach period %d (key ends at %d)",
 			ErrExhausted, period, a.active.endPeriod())
 	}
-	if err := a.guard.Authorize(hex.EncodeToString(a.active.vkey), period); err != nil {
+	vkeyHex := hex.EncodeToString(a.active.vkey)
+	var guardErr error
+	if typed {
+		// One header body per slot, never an older slot: the record is durable
+		// before the signature leaves the agent, so producers sharing this
+		// agent cannot publish two blocks for the pool in one slot.
+		guardErr = a.guard.AuthorizeHeader(vkeyHex, period, slot, msg)
+	} else {
+		guardErr = a.guard.Authorize(vkeyHex, period)
+	}
+	if guardErr != nil {
 		a.metrics.incSign("error")
-		return nil, err
+		return nil, guardErr
 	}
 	sk := &kes.SecretKey{
 		Depth:  a.active.depth,
