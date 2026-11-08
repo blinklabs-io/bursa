@@ -210,7 +210,9 @@ func sqliteTarget(dsn string) (string, bool, string, error) {
 			// SQLite URI authorities other than localhost are not local paths.
 			return "", false, mode, nil
 		}
-		uri = parsed.Path
+		// parsed.Path is already percent-decoded. Keep the escaped form here so
+		// the PathUnescape below performs the same single decoding pass as SQLite.
+		uri = parsed.EscapedPath()
 	}
 	path, err := url.PathUnescape(uri)
 	if err != nil {

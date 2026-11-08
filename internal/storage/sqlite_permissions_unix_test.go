@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -67,6 +68,40 @@ func TestSQLiteStoreUsesOwnerOnlyFilePermissions(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	_, err = store.GetWallet(context.Background(), "persisted")
 	require.NoError(t, err)
+}
+
+func TestSQLiteStoreSecuresEncodedHierarchicalURITarget(t *testing.T) {
+	tempDir := t.TempDir()
+	actualPath := filepath.Join(tempDir, "wallet%2Edb")
+	decoyPath := filepath.Join(tempDir, "wallet.db")
+	dsn := "file://" + filepath.ToSlash(
+		filepath.Join(tempDir, "wallet%252Edb"),
+	)
+
+	previousUmask := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(previousUmask) })
+
+	store, err := NewSQLiteStore(dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	wallet, err := store.CreateWallet("encoded")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_, err := os.Stat(actualPath + suffix)
+		require.NoError(t, err, suffix)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		info, err := os.Stat(actualPath + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err, suffix)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), suffix)
+		_, err = os.Stat(decoyPath + suffix)
+		require.ErrorIs(t, err, os.ErrNotExist, suffix)
+	}
 }
 
 // The pool opens a new connection after discarding one, and that connection

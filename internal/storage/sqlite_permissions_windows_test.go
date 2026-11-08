@@ -21,6 +21,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,6 +107,39 @@ func TestSQLiteStoreRestrictsFilesToOwnerUnderPermissiveDirectory(
 		}
 		require.NoError(t, err, suffix)
 		requireOwnerOnly(t, dbPath+suffix)
+	}
+}
+
+func TestSQLiteStoreSecuresEncodedHierarchicalURITarget(t *testing.T) {
+	t.Parallel()
+	tempDir := permissiveDir(t)
+	actualPath := filepath.Join(tempDir, "wallet%2Edb")
+	decoyPath := filepath.Join(tempDir, "wallet.db")
+	dsn := (&url.URL{
+		Scheme: "file",
+		Path:   "/" + filepath.ToSlash(actualPath),
+	}).String()
+
+	store, err := NewSQLiteStore(dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	wallet, err := store.CreateWallet("encoded")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_, err := os.Stat(actualPath + suffix)
+		require.NoError(t, err, suffix)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		_, err := os.Stat(actualPath + suffix)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err, suffix)
+		requireOwnerOnly(t, actualPath+suffix)
+		_, err = os.Stat(decoyPath + suffix)
+		require.ErrorIs(t, err, os.ErrNotExist, suffix)
 	}
 }
 
