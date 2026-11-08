@@ -37,11 +37,12 @@ type Decision struct {
 }
 
 type waiter struct {
-	req       Request
-	done      chan queueResult
-	authority *pairingAuthority
-	ready     bool
-	decided   bool
+	req         Request
+	done        chan queueResult
+	authority   *pairingAuthority
+	terminalErr error
+	ready       bool
+	decided     bool
 }
 
 type queueResult struct {
@@ -146,8 +147,14 @@ func (q *Queue) publish(id string, effects *spend.TxSummary) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	w, ok := q.waiters[id]
-	if !ok || w.decided || w.ready {
+	if !ok || w.ready {
 		return nil, ErrUnknownRequest
+	}
+	if w.decided {
+		if w.terminalErr != nil {
+			return nil, w.terminalErr
+		}
+		return nil, ErrAlreadyDecided
 	}
 	w.req.Effects = effects
 	w.ready = true
@@ -239,6 +246,7 @@ func (q *Queue) cancelAuthority(authority pairingAuthority) {
 			continue
 		}
 		w.decided = true
+		w.terminalErr = ErrRefused
 		w.done <- queueResult{err: ErrRefused}
 		cancelled = true
 	}

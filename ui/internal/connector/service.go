@@ -921,6 +921,9 @@ func (s *Service) promptAndAwait(
 		return nil, err
 	}
 	if authority, ok := pairingAuthorityFromContext(ctx); ok {
+		// Keep the read lock through execution so token revocation cannot return
+		// while work admitted under that token is still running. Releasing it after
+		// Verify would reopen the authorization check/use race.
 		s.pairingMu.RLock()
 		defer s.pairingMu.RUnlock()
 		if !s.tokens.Verify(authority.token, authority.extensionID) {

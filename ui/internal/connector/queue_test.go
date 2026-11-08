@@ -69,6 +69,10 @@ func TestDrainQueueResult(t *testing.T) {
 	if !d.Approved || d.Password != "pw" {
 		t.Fatalf("buffered decision: got %+v", d)
 	}
+	done <- queueResult{err: ErrRefused}
+	if _, err := drainQueueResult(done); !errors.Is(err, ErrRefused) {
+		t.Fatalf("buffered error = %v, want ErrRefused", err)
+	}
 }
 
 func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
@@ -123,6 +127,15 @@ func TestQueueCancelsOnlyMatchingPairingAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit remote: %v", err)
 	}
+	other, err := q.submitAuthorized(
+		"https://other.example",
+		"enable",
+		nil,
+		pairingAuthority{extensionID: "other", token: "other-token"},
+	)
+	if err != nil {
+		t.Fatalf("submit other authority: %v", err)
+	}
 
 	q.cancelAuthority(authority)
 	if _, err := q.Await(context.Background(), revoked.ID); !errors.Is(
@@ -132,8 +145,15 @@ func TestQueueCancelsOnlyMatchingPairingAuthority(t *testing.T) {
 		t.Fatalf("revoked request error = %v, want ErrRefused", err)
 	}
 	pending := q.Pending()
-	if len(pending) != 1 || pending[0].ID != remote.ID {
-		t.Fatalf("pending after cancellation = %v, want only remote", pending)
+	pendingIDs := make(map[string]bool, len(pending))
+	for _, req := range pending {
+		pendingIDs[req.ID] = true
+	}
+	if len(pending) != 2 || !pendingIDs[remote.ID] || !pendingIDs[other.ID] {
+		t.Fatalf(
+			"pending after cancellation = %v, want remote and other authority",
+			pending,
+		)
 	}
 	if err := q.Decide(remote.ID, Decision{Approved: true}); err != nil {
 		t.Fatalf("decide remote: %v", err)
@@ -141,6 +161,13 @@ func TestQueueCancelsOnlyMatchingPairingAuthority(t *testing.T) {
 	decision, err := q.Await(context.Background(), remote.ID)
 	if err != nil || !decision.Approved {
 		t.Fatalf("remote result = %+v, %v", decision, err)
+	}
+	if err := q.Decide(other.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide other authority: %v", err)
+	}
+	decision, err = q.Await(context.Background(), other.ID)
+	if err != nil || !decision.Approved {
+		t.Fatalf("other authority result = %+v, %v", decision, err)
 	}
 }
 

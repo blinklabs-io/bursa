@@ -416,6 +416,55 @@ func TestServiceSignTxInspectionFailureDoesNotPromptOrSign(t *testing.T) {
 	}
 }
 
+func TestServiceUnpairDuringInspectionReturnsRefused(t *testing.T) {
+	origin := "https://inspection.example"
+	release := make(chan struct{})
+	be := &blockingInspectBackend{
+		fakeBackend: &fakeBackend{
+			inspectSummary: spend.TxSummary{Fee: "170000"},
+		},
+		started: make(chan string, 1),
+		release: release,
+	}
+	s := NewService(t.TempDir(), be, nil)
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"ext",
+			token,
+			origin,
+			"signTx",
+			json.RawMessage(`{"tx":"cafebabe","partialSign":false}`),
+		)
+		result <- err
+	}()
+	select {
+	case <-be.started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach inspection")
+	}
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, ErrRefused) {
+		t.Fatalf("signTx error = %v, want ErrRefused", err)
+	}
+	if be.signTxCalled {
+		t.Fatal("revoked request reached SignTx")
+	}
+}
+
 func TestServiceSignTxInspectionUsesQueueAdmission(t *testing.T) {
 	origin := "https://bounded.example"
 	release := make(chan struct{})
