@@ -628,12 +628,13 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   Add the replacement key first, then revoke the old one; only a device wipe
   returns to the bootstrap state.
 - The canonical host key list is SE050 object `0x20e50021`. Replacements are
-  first written and verified in transient object `0x20e50024`; while that
-  object exists, it is authoritative. The canonical copy is then replaced and
-  verified before the transient copy is deleted. An interruption therefore
-  leaves at least one valid list instead of returning a provisioned device to
-  the unsigned bootstrap state. A malformed transient list is refused rather
-  than ignored in favor of the older canonical copy.
+  first written and verified in persistent staging object `0x20e50024`; while
+  it contains a valid list, it is authoritative. The canonical copy is then
+  replaced and verified before the staging copy is deleted. After staging
+  verifies, an interruption leaves at least one valid list. A malformed stage
+  is refused rather than ignored in favor of the older canonical copy, so an
+  interrupted write fails closed instead of returning a provisioned device to
+  the unsigned bootstrap state.
 - A host key list the device cannot read refuses every authenticated route,
   because no key is left to check a signature against.
 - `POST /wipe/device` stays confirmed by the identity public key alone and
@@ -718,8 +719,9 @@ are unchanged. `TESTNET=1` is refused with it.
   `/wipe/objects`, which only lists object IDs and needs no confirmation.
 - Encrypted private keys. Cold and owner private keys use the same encrypted
   provisioning routes in single-scope and multi images.
-- No downgrade. An image older than this one does not know the transient host
-  key list, the second cold key block (`0x20e50600`-`0x20e5060f`) or the
+- No downgrade. An image older than this one does not know the persistent
+  host-key staging object, the second cold key block
+  (`0x20e50600`-`0x20e5060f`) or the
   ownership record: its
   `/wipe/device` leaves them on the chip, and it imports into an object
   another scope owns. Wipe with this version's wipe image before flashing an

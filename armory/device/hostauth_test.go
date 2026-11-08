@@ -327,6 +327,53 @@ func TestHostKeyResizeInterruptionKeepsAuthentication(t *testing.T) {
 	}
 }
 
+func TestHostKeyStageDeleteFailureRecovers(t *testing.T) {
+	s, chip := newHostAuthService(t)
+	chip.failDelete = true
+
+	if _, err := s.addHostKey(HostKeyRequest{PublicKey: hostPub(testHostKey2)}); err == nil {
+		t.Fatal("failed staging cleanup reported success")
+	}
+
+	chip.failDelete = false
+	s = New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]ed25519.PrivateKey{
+		"original": testHostKey,
+		"staged":   testHostKey2,
+	} {
+		if err := authAs(t, s, key); err != nil {
+			t.Errorf("%s host key after restart: %v", name, err)
+		}
+	}
+
+	third := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x4a}, 32))
+	if _, err := s.addHostKey(HostKeyRequest{PublicKey: hostPub(third)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := chip.bins[hostKeysStageID]; ok {
+		t.Fatal("successful update left its staging object")
+	}
+
+	s = New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]ed25519.PrivateKey{
+		"original": testHostKey,
+		"staged":   testHostKey2,
+		"later":    third,
+	} {
+		if err := authAs(t, s, key); err != nil {
+			t.Errorf("%s host key after completed update: %v", name, err)
+		}
+	}
+}
+
 func TestStagedHostKeysAreAuthoritative(t *testing.T) {
 	chip := newFakeChip()
 	canonical := make([]byte, hostKeysLen)
