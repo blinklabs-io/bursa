@@ -190,32 +190,38 @@ func (s *Service) grantedIdentity(origin string) (accountIdentity, bool) {
 }
 
 func (s *Service) withCurrentGrant(
+	ctx context.Context,
 	origin string,
 	fn func() (json.RawMessage, error),
 ) (json.RawMessage, error) {
-	s.bindingMu.RLock()
-	defer s.bindingMu.RUnlock()
-	if !s.identity.valid() || !s.grants.IsGranted(origin, s.identity) {
-		return nil, ErrNotGranted
-	}
-	return fn()
+	return s.withPairingAuthority(ctx, func() (json.RawMessage, error) {
+		s.bindingMu.RLock()
+		defer s.bindingMu.RUnlock()
+		if !s.identity.valid() || !s.grants.IsGranted(origin, s.identity) {
+			return nil, ErrNotGranted
+		}
+		return fn()
+	})
 }
 
 func (s *Service) withExpectedIdentity(
+	ctx context.Context,
 	expected accountIdentity,
 	origin string,
 	requireGrant bool,
 	fn func() (json.RawMessage, error),
 ) (json.RawMessage, error) {
-	s.bindingMu.RLock()
-	defer s.bindingMu.RUnlock()
-	if !expected.valid() || s.identity != expected {
-		return nil, ErrNotGranted
-	}
-	if requireGrant && !s.grants.IsGranted(origin, expected) {
-		return nil, ErrNotGranted
-	}
-	return fn()
+	return s.withPairingAuthority(ctx, func() (json.RawMessage, error) {
+		s.bindingMu.RLock()
+		defer s.bindingMu.RUnlock()
+		if !expected.valid() || s.identity != expected {
+			return nil, ErrNotGranted
+		}
+		if requireGrant && !s.grants.IsGranted(origin, expected) {
+			return nil, ErrNotGranted
+		}
+		return fn()
+	})
 }
 
 // BeginPair generates a numeric pairing code for the given extensionID and
@@ -398,10 +404,12 @@ func (s *Service) Handle(
 	switch method {
 	// isEnabled is a special case: returns a bool without requiring a grant.
 	case "isEnabled":
-		if _, ok := s.grantedIdentity(origin); ok {
-			return json.RawMessage(`true`), nil
-		}
-		return json.RawMessage(`false`), nil
+		return s.withPairingAuthority(ctx, func() (json.RawMessage, error) {
+			if _, ok := s.grantedIdentity(origin); ok {
+				return json.RawMessage(`true`), nil
+			}
+			return json.RawMessage(`false`), nil
+		})
 
 	// enable: capture the identity being presented for consent, enqueue, then
 	// grant only if that exact identity remains active after approval.
@@ -420,6 +428,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					false,
@@ -435,12 +444,12 @@ func (s *Service) Handle(
 
 	// Read methods: require grant, call Backend immediately.
 	case "getNetworkId":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			return json.Marshal(s.be.NetworkID())
 		})
 
 	case "getBalance":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.Balance(ctx)
 			if err != nil {
 				return nil, err
@@ -461,6 +470,7 @@ func (s *Service) Handle(
 			return nil, err
 		}
 		return s.withExpectedIdentity(
+			ctx,
 			identity,
 			origin,
 			true,
@@ -485,6 +495,7 @@ func (s *Service) Handle(
 			return nil, err
 		}
 		return s.withExpectedIdentity(
+			ctx,
 			identity,
 			origin,
 			true,
@@ -509,6 +520,7 @@ func (s *Service) Handle(
 			return nil, err
 		}
 		return s.withExpectedIdentity(
+			ctx,
 			identity,
 			origin,
 			true,
@@ -522,7 +534,7 @@ func (s *Service) Handle(
 		)
 
 	case "getUnusedAddresses":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.UnusedAddresses(ctx)
 			if err != nil {
 				return nil, err
@@ -531,7 +543,7 @@ func (s *Service) Handle(
 		})
 
 	case "getChangeAddress":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.ChangeAddress(ctx)
 			if err != nil {
 				return nil, err
@@ -540,7 +552,7 @@ func (s *Service) Handle(
 		})
 
 	case "getRewardAddresses":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.RewardAddresses(ctx)
 			if err != nil {
 				return nil, err
@@ -567,6 +579,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					true,
@@ -596,6 +609,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					true,
@@ -625,6 +639,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					true,
@@ -666,6 +681,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					true,
@@ -716,6 +732,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					true,
@@ -760,6 +777,7 @@ func (s *Service) Handle(
 					return nil, ErrUserDeclined
 				}
 				return s.withExpectedIdentity(
+					ctx,
 					identity,
 					origin,
 					true,
@@ -828,6 +846,24 @@ func pairingAuthorityFromContext(
 ) (pairingAuthority, bool) {
 	authority, ok := ctx.Value(pairingAuthorityContextKey{}).(pairingAuthority)
 	return authority, ok
+}
+
+func (s *Service) withPairingAuthority(
+	ctx context.Context,
+	fn func() (json.RawMessage, error),
+) (json.RawMessage, error) {
+	authority, ok := pairingAuthorityFromContext(ctx)
+	if !ok {
+		return fn()
+	}
+	// Keep the read lock through the protected operation so token revocation
+	// cannot return while work admitted under that token is still running.
+	s.pairingMu.RLock()
+	defer s.pairingMu.RUnlock()
+	if !s.tokens.Verify(authority.token, authority.extensionID) {
+		return nil, ErrRefused
+	}
+	return fn()
 }
 
 func (s *Service) submit(
@@ -919,16 +955,6 @@ func (s *Service) promptAndAwait(
 	d, err := s.queue.Await(ctx, req.ID)
 	if err != nil {
 		return nil, err
-	}
-	if authority, ok := pairingAuthorityFromContext(ctx); ok {
-		// Keep the read lock through execution so token revocation cannot return
-		// while work admitted under that token is still running. Releasing it after
-		// Verify would reopen the authorization check/use race.
-		s.pairingMu.RLock()
-		defer s.pairingMu.RUnlock()
-		if !s.tokens.Verify(authority.token, authority.extensionID) {
-			return nil, ErrRefused
-		}
 	}
 	return fn(d)
 }
