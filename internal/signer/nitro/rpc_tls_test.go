@@ -393,7 +393,7 @@ func TestRPCAuthorizedProxyRoundTrip(t *testing.T) {
 		testProvisionRequest(),
 	)
 	require.NoError(t, err)
-	handler, err := NewProxyHandler(client)
+	handler, err := NewProxyHandler(client, discardSaver{})
 	require.NoError(t, err)
 
 	inventoryBody, err := json.Marshal(

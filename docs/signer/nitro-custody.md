@@ -78,9 +78,10 @@ bursa nitro proxy --enclave-cid <cid> --region <region> \
   --client-key-file /etc/bursa/nitro/proxy-key.pem
 ```
 
-The proxy reads the wrapped envelope and calls `Reload`. It fails before
-opening the signer socket if Secrets Manager, KMS recipient decryption,
-envelope authentication, the expected public key, or enclave initialization
+The proxy reads the wrapped envelope and the sealed counter state stored
+beside it, and calls `Reload`. It fails before opening the signer socket if
+Secrets Manager, KMS recipient decryption, envelope authentication, counter
+state authentication, the expected public key, or enclave initialization
 fails. The proxy reloads only at startup, so restart it after every enclave
 restart; a restarted enclave holds no key, and the proxy returns errors until
 its own restart repeats that recovery path.
@@ -145,11 +146,12 @@ measurement. The enclave additionally refuses absent PCR0 and the all-zero PCR0
 AWS emits for debug mode. The signer independently verifies the inventory's
 NSM document, certificate chain, PCRs, nonce binding, and non-debug state.
 
-The parent role needs `secretsmanager:GetSecretValue` and
-`secretsmanager:DescribeSecret`; the latter distinguishes an existing secret
-with no value from a missing secret. Grant
-`secretsmanager:PutSecretValue` only during explicit provisioning. It does not
-need permission to decrypt a data key without recipient attestation.
+The parent role needs `secretsmanager:GetSecretValue`,
+`secretsmanager:DescribeSecret`, and `secretsmanager:PutSecretValue`.
+`DescribeSecret` distinguishes an existing secret with no value from a missing
+secret. `PutSecretValue` writes the envelope during provisioning and the sealed
+counter state with every signature, so the proxy needs it while it serves. It
+does not need permission to decrypt a data key without recipient attestation.
 
 ## Protocol and signing rules
 
@@ -168,7 +170,8 @@ proxy can forward that authorization but cannot create another signing request.
 Provisioning also requires a signature from the separate provisioning authority.
 The enclave independently restricts signing to canonical pool-cold
 operational-certificate payloads and maintains its nonce and issue counter
-guards while the key remains loaded.
+guards while the key remains loaded, and seals the counter state (see
+below).
 
 The enclave accepts only the `pool` role and `opcert` purpose, without a
 workload profile. It signs the canonical 48-byte `OCertSignable` value:
@@ -184,14 +187,52 @@ replay, non-increasing counters, a wrong key hash or role, malformed payloads,
 and unsupported protocol versions. The signer verifies the returned Ed25519
 signature before constructing the operational certificate.
 
-The signer's durable watermark enforces the operational-certificate issue
-counter. `bursa signer` refuses to start with a `nitro` backend unless
+The enclave seals the highest issued counter with every signature it
+returns. The sealing key is derived with HKDF from the KMS data key under its
+own label, so only the enclave can seal or open the state, and the
+authenticated data binds the pool public key, the KMS key ID, and a state
+version. The proxy writes the sealed state to the same Secrets Manager secret
+as the envelope before it releases the signature, admitting one request at a
+time across the enclave call and the write. A sign request that does not
+finish within 20 seconds, including any wait behind another request, fails
+and releases nothing. On start the proxy passes the stored state to
+`Reload`. A tampered state, or one sealed for another key or KMS key, refuses
+the reload; a secret with no state is a legacy start with no known counter. A
+reload on a loaded enclave never lowers its counter. Secrets written before
+this change hold the envelope only and still load.
+
+If the write fails or times out, the request fails, no signature is released,
+and the proxy logs the cause and refuses every later sign until it restarts,
+since the failed write can still land after a newer one. The running enclave
+has still counted that issue number and refuses it until the enclave and the
+proxy are restarted. A write
+reported as failed can still have been stored, and a stored write's response
+can fail to reach the signer; then the reloaded state already holds the number
+and the restart does not clear it. Restoring the previous secret version makes
+the number signable again. That is the same rollback a host can perform, so do
+it only when the signer's watermark has no record of the issue number and the
+host is trusted not to have kept the withheld signature.
+
+Each signature writes a new secret version. Secrets Manager keeps every
+version created in the last 24 hours, so more than about 100 signatures in a
+day reach its version quota, and a write refused there fails like any other.
+The enclave signs only operational certificates.
+
+The proxy and the enclave image move together: their gRPC messages reject
+unknown fields, so a proxy and an enclave from releases on either side of
+this change refuse each other. Earlier releases also refuse a secret that
+holds counter state. To downgrade, write the envelope-only value back to the
+secret; the signer's watermark continues to enforce the issue counter.
+
+The sealed state narrows the restart gap and is not the counter authority. The
+host holds it and can restore an older secret version. Two proxies pointed at
+one secret overwrite each other's state (last writer wins, no compare and
+swap). The signer's durable watermark therefore remains the authority for the
+operational-certificate issue counter, including across replicas.
+`bursa signer` refuses to start with a `nitro` backend unless
 `signer.watermark.mode` is `enforce` (the default) and `signer.watermark.type`
 is `file` or `postgres`. A `file` path must open a file-backed SQLite
-database; an in-memory one such as `:memory:` is refused. The enclave's own counter lives in memory and resets
-on restart, so it is defence in depth only. The host can roll back the wrapped
-envelope in Secrets Manager, so persisting enclave state there would not stop
-a rollback either.
+database; an in-memory one such as `:memory:` is refused.
 
 Two signer features are refused by design:
 

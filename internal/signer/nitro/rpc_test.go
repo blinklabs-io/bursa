@@ -119,6 +119,26 @@ func (e *badSignatureEnclave) Sign(
 	}, nil
 }
 
+// proxyTestEnclave adapts badSignatureEnclave, which serves as a
+// backend.Enclave elsewhere, to the proxy's enclave API.
+type proxyTestEnclave struct{ *badSignatureEnclave }
+
+func (e proxyTestEnclave) Sign(
+	ctx context.Context,
+	request backend.AttestedRequest,
+) (SignResponse, error) {
+	response, err := e.badSignatureEnclave.Sign(ctx, request)
+	return SignResponse{
+		AttestedResponse: response,
+		SealedState:      []byte("state"),
+	}, err
+}
+
+// discardSaver accepts every sealed state.
+type discardSaver struct{}
+
+func (discardSaver) SaveSealedState(context.Context, []byte) error { return nil }
+
 func authorizeRPCRequest(
 	t *testing.T,
 	client *rpcClient,
@@ -165,7 +185,8 @@ func TestProxyRejectsMalformedRequests(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	handler, err := NewProxyHandler(
-		&badSignatureEnclave{pub: publicKey, key: privateKey},
+		proxyTestEnclave{&badSignatureEnclave{pub: publicKey, key: privateKey}},
+		discardSaver{},
 	)
 	require.NoError(t, err)
 	for name, body := range map[string]string{

@@ -477,8 +477,9 @@ func watermarkPostgresDSN(c config.SignerWatermarkConfig) (string, error) {
 }
 
 // CheckBackendWatermark refuses a nitro backend unless the watermark enforces
-// on durable storage. The enclave's own issue counter is in memory and resets
-// on restart, so the signer's watermark is what stops a reused issue counter.
+// on durable storage. The enclave seals its issue counter into host storage,
+// but the host can roll that state back and replicas can share one secret, so
+// the signer's watermark is what stops a reused issue counter.
 func CheckBackendWatermark(
 	backends []config.SignerBackendConfig,
 	c config.SignerWatermarkConfig,
@@ -493,7 +494,7 @@ func CheckBackendWatermark(
 		durable := c.Type == "file" || c.Type == "postgres"
 		if !enforcing || !durable {
 			return fmt.Errorf(
-				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store (type \"file\" or \"postgres\"): the enclave's issue counter does not survive a restart",
+				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store (type \"file\" or \"postgres\"): the host holds the enclave's sealed counter state and it can be rolled back",
 				b.Name,
 			)
 		}

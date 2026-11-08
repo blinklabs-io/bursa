@@ -51,6 +51,10 @@ type Service struct {
 	seen                map[[requestNonceSize]byte]struct{}
 	counter             uint64
 	hasCounter          bool
+	// sealKey seals the counter state. It is derived from the KMS data key,
+	// which never leaves Provision and Reload, and it is cleared when the
+	// loaded key changes.
+	sealKey []byte
 }
 
 // NewService constructs an enclave service from the NSM recipient, an
@@ -182,6 +186,11 @@ func (s *Service) Provision(
 		return nil, err
 	}
 	defer clear(dataKey)
+	sealKey, err := deriveSealKey(dataKey)
+	if err != nil {
+		return nil, fmt.Errorf("derive counter sealing key: %w", err)
+	}
+	defer clear(sealKey)
 	seed := make([]byte, ed25519.SeedSize)
 	if _, err := rand.Read(seed); err != nil {
 		return nil, fmt.Errorf("generate pool cold key: %w", err)
@@ -201,14 +210,18 @@ func (s *Service) Provision(
 		clear(key)
 		return nil, fmt.Errorf("wrap pool cold key: %w", err)
 	}
-	s.install(key, pub, env)
+	s.install(key, pub, env, sealKey, nil)
 	clear(key)
 	return &ProvisionResponse{Version: Protocol, Envelope: env}, nil
 }
 
-// Reload recovers a wrapped key through recipient-attested KMS. An already
-// loaded service accepts only the same public key, preserving its replay and
-// counter state.
+// Reload recovers a wrapped key through recipient-attested KMS and restores
+// the highest issued counter from the sealed state the host stored with the
+// last released signature. A tampered state, or one sealed for another pool
+// key or KMS key, refuses the reload. An absent state starts with no known
+// counter, which is no weaker than the host restoring an older secret
+// version. An already loaded service accepts only the same public key,
+// preserving its replay state, and never lowers its counter to a stored one.
 func (s *Service) Reload(
 	ctx context.Context,
 	req *ReloadRequest,
@@ -220,6 +233,13 @@ func (s *Service) Reload(
 	}
 	if err := validateEnvelope(req.Envelope); err != nil {
 		return nil, err
+	}
+	if len(req.SealedState) > maxSealedStateSize {
+		return nil, fmt.Errorf(
+			"%w: state exceeds %d bytes",
+			ErrCounterState,
+			maxSealedStateSize,
+		)
 	}
 	s.mu.Lock()
 	activePublicKey := bytes.Clone(s.pub)
@@ -273,7 +293,29 @@ func (s *Service) Reload(
 			ErrEnvelope,
 		)
 	}
-	s.install(key, pub, req.Envelope)
+	sealKey, err := deriveSealKey(dataKey)
+	if err != nil {
+		clear(key)
+		return nil, fmt.Errorf("derive counter sealing key: %w", err)
+	}
+	defer clear(sealKey)
+	// Authenticate the state before installing anything, so a refused reload
+	// leaves a loaded service untouched. No state is a legacy start.
+	var restored *uint64
+	if len(req.SealedState) != 0 {
+		issued, err := openCounterState(
+			sealKey,
+			pub,
+			req.Envelope.KMSKeyID,
+			req.SealedState,
+		)
+		if err != nil {
+			clear(key)
+			return nil, err
+		}
+		restored = &issued
+	}
+	s.install(key, pub, req.Envelope, sealKey, restored)
 	clear(key)
 	return &ReloadResponse{Version: Protocol, PublicKey: bytes.Clone(pub)}, nil
 }
@@ -355,7 +397,7 @@ func (s *Service) Challenge(
 func (s *Service) Sign(
 	_ context.Context,
 	req *backend.AttestedRequest,
-) (*backend.AttestedResponse, error) {
+) (*SignResponse, error) {
 	if req == nil || req.Version != backend.AttestedProtocol ||
 		req.Purpose != backend.PurposeOpCert ||
 		req.Profile != "" || req.Era != nil ||
@@ -410,26 +452,41 @@ func (s *Service) Sign(
 			ErrProtocol,
 		)
 	}
+	// Seal before consuming the nonce or advancing the counter, so a sealing
+	// failure releases nothing and changes nothing.
+	sealed, err := sealCounterState(
+		s.sealKey,
+		s.pub,
+		s.envelope.KMSKeyID,
+		issueCounter,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("seal counter state: %w", err)
+	}
 	s.seen[nonce] = struct{}{}
 	s.counter = issueCounter
 	s.hasCounter = true
 	sig := ed25519.Sign(s.key, req.Payload)
-	return &backend.AttestedResponse{
+	return &SignResponse{AttestedResponse: backend.AttestedResponse{
 		Version:   backend.AttestedProtocol,
 		Nonce:     bytes.Clone(req.Nonce),
 		Signature: sig,
-	}, nil
+	}, SealedState: sealed}, nil
 }
 
 func (s *Service) install(
 	key ed25519.PrivateKey,
 	pub ed25519.PublicKey,
 	env Envelope,
+	sealKey []byte,
+	restored *uint64,
 ) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sameKey := bytes.Equal(s.pub, pub)
 	clear(s.key)
+	clear(s.sealKey)
+	s.sealKey = bytes.Clone(sealKey)
 	s.key = bytes.Clone(key)
 	s.pub = bytes.Clone(pub)
 	s.envelope = cloneEnvelope(env)
@@ -439,6 +496,12 @@ func (s *Service) install(
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0
 		s.hasCounter = false
+	}
+	// Restore under the same lock as the install, so no Sign can run between
+	// them. The counter only ever rises.
+	if restored != nil && (!s.hasCounter || *restored > s.counter) {
+		s.counter = *restored
+		s.hasCounter = true
 	}
 }
 

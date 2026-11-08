@@ -276,12 +276,13 @@ func nitroProxyCommand() *cobra.Command {
 					return err
 				}
 			} else {
-				envelope, err := store.Load(ctx)
+				envelope, sealedState, err := store.LoadSealed(ctx)
 				if err != nil {
 					return err
 				}
 				response, err := client.Reload(ctx, nitro.ReloadRequest{
 					Version: nitro.Protocol, Region: region, Credentials: credentials, Envelope: envelope,
+					SealedState: sealedState,
 				})
 				if err != nil {
 					return fmt.Errorf("reload enclave key: %w", err)
@@ -291,7 +292,7 @@ func nitroProxyCommand() *cobra.Command {
 				}
 			}
 
-			handler, err := nitro.NewProxyHandler(client)
+			handler, err := nitro.NewProxyHandler(client, store)
 			if err != nil {
 				return err
 			}

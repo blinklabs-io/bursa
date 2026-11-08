@@ -131,3 +131,80 @@ func TestSecretStoreLoadDistinguishesVersionlessSecret(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretStoreLoadSealedReadsLegacyEnvelopeOnlySecret(t *testing.T) {
+	t.Parallel()
+	legacy, err := json.Marshal(validTestEnvelope())
+	require.NoError(t, err)
+	client := &fakeSecrets{value: legacy}
+	store, err := NewSecretStore(client, "pool-cold")
+	require.NoError(t, err)
+
+	env, err := store.Load(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, validTestEnvelope(), env)
+	env, state, err := store.LoadSealed(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, validTestEnvelope(), env)
+	require.Empty(t, state)
+}
+
+func TestSecretStoreSealedStateRoundTrip(t *testing.T) {
+	t.Parallel()
+	client := &fakeSecrets{}
+	store, err := NewSecretStore(client, "pool-cold")
+	require.NoError(t, err)
+	require.NoError(t, store.Save(context.Background(), validTestEnvelope()))
+	require.NoError(
+		t,
+		store.SaveSealedState(context.Background(), []byte("sealed-1")),
+	)
+
+	// a fresh store reads both from the one secret
+	reread, err := NewSecretStore(client, "pool-cold")
+	require.NoError(t, err)
+	env, state, err := reread.LoadSealed(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, validTestEnvelope(), env)
+	require.Equal(t, []byte("sealed-1"), state)
+	// the state-bearing secret still loads as an envelope
+	env, err = reread.Load(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, validTestEnvelope(), env)
+
+	// a later state replaces the earlier one and keeps the envelope
+	require.NoError(
+		t,
+		reread.SaveSealedState(context.Background(), []byte("sealed-2")),
+	)
+	_, state, err = store.LoadSealed(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []byte("sealed-2"), state)
+}
+
+func TestSecretStoreSaveSealedStateNeedsEnvelopeAndBound(t *testing.T) {
+	t.Parallel()
+	client := &fakeSecrets{}
+	store, err := NewSecretStore(client, "pool-cold")
+	require.NoError(t, err)
+	require.Error(
+		t,
+		store.SaveSealedState(context.Background(), []byte("x")),
+		"state saved before any envelope was loaded or saved",
+	)
+	require.Empty(t, client.value)
+	require.NoError(t, store.Save(context.Background(), validTestEnvelope()))
+	require.ErrorIs(
+		t,
+		store.SaveSealedState(
+			context.Background(),
+			make([]byte, maxSealedStateSize+1),
+		),
+		ErrCounterState,
+	)
+	require.ErrorIs(
+		t,
+		store.SaveSealedState(context.Background(), nil),
+		ErrCounterState,
+	)
+}
