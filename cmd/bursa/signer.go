@@ -347,10 +347,14 @@ key.`,
 
 			// Readiness probe: verify the process's runtime dependencies are
 			// usable. Backends were validated at boot (the process exits above
-			// if none are configured); the durable watermark store is the
-			// dependency that can become unreachable at runtime, so ping it
-			// when it has a remote/file backend.
+			// if none are configured), but an attested enclave can stop
+			// signing afterwards, so backends that report health are probed.
+			// The durable watermark store can also become unreachable, so
+			// ping it when it has a remote/file backend.
 			readyCheck := func(rctx context.Context) error {
+				if err := backendsHealthy(rctx, backends); err != nil {
+					return err
+				}
 				if p, ok := wm.(watermark.Pinger); ok {
 					return p.Ping(rctx)
 				}
@@ -469,4 +473,20 @@ key.`,
 	)
 	cmd.AddCommand(signerCounterResetCommand())
 	return cmd
+}
+
+// backendsHealthy probes every backend that can report its own health and
+// joins the failures, each named by backend.
+func backendsHealthy(ctx context.Context, backends []backend.Backend) error {
+	var errs []error
+	for _, b := range backends {
+		hc, ok := b.(backend.HealthChecker)
+		if !ok {
+			continue
+		}
+		if err := hc.Health(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("backend %q: %w", b.Name(), err))
+		}
+	}
+	return errors.Join(errs...)
 }

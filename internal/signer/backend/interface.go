@@ -51,6 +51,14 @@ type Backend interface {
 	GetKey(ctx context.Context, hash KeyHash) (KeyRef, error)
 }
 
+// HealthChecker is an optional interface a Backend implements when it can
+// become unavailable after it loaded, such as an enclave that stopped
+// signing. The signer's readiness probe calls it.
+type HealthChecker interface {
+	// Health returns nil when the backend can serve signing requests.
+	Health(ctx context.Context) error
+}
+
 // KeyRef is a resolved, signable key handle.
 type KeyRef interface {
 	Hash() KeyHash

@@ -63,6 +63,9 @@ key or enclave restart resets them, so the signer's durable watermark remains
 required. The Nitro backend additionally seals its counter into host storage
 and restores it on reload (see [Nitro custody](nitro-custody.md)); the
 watermark remains required there too, since the host can roll that state back.
+The Nitro enclave signs an identical payload again at the stored counter, so a
+retry after a lost response succeeds; a different payload at that counter is
+refused.
 
 The Confidential Space workload also requires TLS 1.3 mutual authentication
 for both protocol endpoints. This prevents network clients without the

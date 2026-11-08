@@ -696,3 +696,33 @@ func (k *plainKey) Sign(_ context.Context, payload []byte) ([]byte, error) {
 	k.payload = append(k.payload[:0], payload...)
 	return []byte("sig"), nil
 }
+
+func TestAttestedBackendHealth(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newFakeEnclave(t, KeyTypePool)
+	b := loadAttested(t, e)
+	if err := b.Health(ctx); err != nil {
+		t.Fatalf("healthy enclave: %v", err)
+	}
+
+	// An unavailable enclave is reported, and the loaded keys stay served:
+	// a health probe never changes what the backend serves.
+	unavailable := errors.New("enclave stopped signing")
+	e.inventoryFn = func(context.Context, []byte) (AttestedInventory, error) {
+		return AttestedInventory{}, unavailable
+	}
+	if err := b.Health(ctx); !errors.Is(err, unavailable) {
+		t.Fatalf("stopped enclave: got %v, want %v", err, unavailable)
+	}
+	if _, err := b.GetKey(ctx, e.hashOf(0)); err != nil {
+		t.Fatalf("health probe dropped the served key: %v", err)
+	}
+
+	// Evidence that does not verify is unhealthy too.
+	e.inventoryFn = nil
+	e.tamperInv = func(_ []byte, inv *AttestedInventory) { inv.Attestation = []byte("forged") }
+	if err := b.Health(ctx); !errors.Is(err, ErrAttestation) {
+		t.Fatalf("forged evidence: got %v, want ErrAttestation", err)
+	}
+}

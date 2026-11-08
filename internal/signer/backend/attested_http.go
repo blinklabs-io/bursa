@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
@@ -196,6 +197,20 @@ func newHTTPEnclave(
 	}
 }
 
+// errorDetail renders a short, quoted excerpt of an error response body, so a
+// proxy's stated reason (for example a stopped signer) reaches the operator.
+func errorDetail(body []byte) string {
+	const limit = 200
+	text := bytes.TrimSpace(body)
+	if len(text) == 0 {
+		return ""
+	}
+	if len(text) > limit {
+		text = text[:limit]
+	}
+	return ": " + strconv.Quote(string(text))
+}
+
 func (e *HTTPEnclave) post(
 	ctx context.Context,
 	path string,
@@ -232,7 +247,11 @@ func (e *HTTPEnclave) post(
 		)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("enclave returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf(
+			"enclave returned HTTP %d%s",
+			resp.StatusCode,
+			errorDetail(data),
+		)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

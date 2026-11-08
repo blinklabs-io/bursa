@@ -393,10 +393,19 @@ func TestReloadAndCanonicalOpCertSigning(t *testing.T) {
 	authorizeTestRequest(t, restarted, request)
 	_, err = restarted.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "nonce replay")
+	// the same payload at the equal counter signs again, identically; a
+	// different payload at that counter does not
 	request.Nonce = bytes.Repeat([]byte{8}, requestNonceSize)
 	authorizeTestRequest(t, restarted, request)
+	resigned, err := restarted.Sign(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, signed.Signature, resigned.Signature)
+	request.Nonce = bytes.Repeat([]byte{10}, requestNonceSize)
+	request.Payload = bytes.Clone(payload)
+	request.Payload[47] ^= 1
+	authorizeTestRequest(t, restarted, request)
 	_, err = restarted.Sign(context.Background(), request)
-	require.ErrorContains(t, err, "issue counter is not increasing")
+	require.ErrorContains(t, err, "different payload")
 
 	inv, err := restarted.Inventory(
 		context.Background(),
@@ -451,7 +460,7 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	request.Nonce = bytes.Repeat([]byte{2}, requestNonceSize)
 	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
-	require.ErrorContains(t, err, "issue counter is not increasing")
+	require.NoError(t, err, "an identical payload at the equal counter signs again")
 
 	env.Ciphertext[0] ^= 0xff
 	_, err = service.Reload(context.Background(), &ReloadRequest{
@@ -465,7 +474,7 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	request.Nonce = bytes.Repeat([]byte{3}, requestNonceSize)
 	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
-	require.ErrorContains(t, err, "issue counter is not increasing")
+	require.NoError(t, err, "an identical payload at the equal counter signs again")
 }
 
 func TestSameKeyReloadPreservesAuthorizedChallenge(t *testing.T) {

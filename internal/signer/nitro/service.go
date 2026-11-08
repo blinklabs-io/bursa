@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -51,6 +52,10 @@ type Service struct {
 	seen                map[[requestNonceSize]byte]struct{}
 	counter             uint64
 	hasCounter          bool
+	// payloadHash is the SHA-256 of the payload signed at counter. It is nil
+	// when the counter came from a state that holds none, which allows no
+	// re-sign at that counter.
+	payloadHash []byte
 	// sealKey seals the counter state. It is derived from the KMS data key,
 	// which never leaves Provision and Reload, and it is cleared when the
 	// loaded key changes.
@@ -221,7 +226,8 @@ func (s *Service) Provision(
 // key or KMS key, refuses the reload. An absent state starts with no known
 // counter, which is no weaker than the host restoring an older secret
 // version. An already loaded service accepts only the same public key,
-// preserving its replay state, and never lowers its counter to a stored one.
+// preserving its replay state, and never lowers its counter to a stored one;
+// the payload hash of the winning counter is kept with it.
 func (s *Service) Reload(
 	ctx context.Context,
 	req *ReloadRequest,
@@ -301,9 +307,9 @@ func (s *Service) Reload(
 	defer clear(sealKey)
 	// Authenticate the state before installing anything, so a refused reload
 	// leaves a loaded service untouched. No state is a legacy start.
-	var restored *uint64
+	var restored *counterRecord
 	if len(req.SealedState) != 0 {
-		issued, err := openCounterState(
+		record, err := openCounterState(
 			sealKey,
 			pub,
 			req.Envelope.KMSKeyID,
@@ -313,7 +319,7 @@ func (s *Service) Reload(
 			clear(key)
 			return nil, err
 		}
-		restored = &issued
+		restored = &record
 	}
 	s.install(key, pub, req.Envelope, sealKey, restored)
 	clear(key)
@@ -391,7 +397,8 @@ func (s *Service) Challenge(
 }
 
 // Sign accepts only canonical pool-cold operational-certificate signables with
-// an explicit issue counter. It refuses opcert-next, which would let the host
+// an explicit issue counter. The counter must rise, except that a payload
+// identical to the one last signed at the stored counter is signed again. It refuses opcert-next, which would let the host
 // re-issue an existing number for a new KES key, and profiled requests, whose
 // binding signature this enclave does not produce.
 func (s *Service) Sign(
@@ -446,11 +453,24 @@ func (s *Service) Sign(
 	if len(s.seen) >= maxSeenNonces {
 		return nil, fmt.Errorf("%w: replay cache is full", ErrProtocol)
 	}
+	payloadHash := hashPayload(req.Payload)
 	if s.hasCounter && issueCounter <= s.counter {
-		return nil, fmt.Errorf(
-			"%w: opcert issue counter is not increasing",
-			ErrProtocol,
-		)
+		// A request whose payload is identical to the one signed at the
+		// stored counter is signed again. Ed25519 is deterministic, so the
+		// signature is the one already issued and nothing new exists. It
+		// recovers a response that was lost after the state was saved.
+		if issueCounter < s.counter || s.payloadHash == nil {
+			return nil, fmt.Errorf(
+				"%w: opcert issue counter is not increasing",
+				ErrProtocol,
+			)
+		}
+		if subtle.ConstantTimeCompare(s.payloadHash, payloadHash) != 1 {
+			return nil, fmt.Errorf(
+				"%w: opcert issue counter already signed for a different payload",
+				ErrProtocol,
+			)
+		}
 	}
 	// Seal before consuming the nonce or advancing the counter, so a sealing
 	// failure releases nothing and changes nothing.
@@ -459,6 +479,7 @@ func (s *Service) Sign(
 		s.pub,
 		s.envelope.KMSKeyID,
 		issueCounter,
+		payloadHash,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("seal counter state: %w", err)
@@ -466,6 +487,7 @@ func (s *Service) Sign(
 	s.seen[nonce] = struct{}{}
 	s.counter = issueCounter
 	s.hasCounter = true
+	s.payloadHash = payloadHash
 	sig := ed25519.Sign(s.key, req.Payload)
 	return &SignResponse{AttestedResponse: backend.AttestedResponse{
 		Version:   backend.AttestedProtocol,
@@ -479,7 +501,7 @@ func (s *Service) install(
 	pub ed25519.PublicKey,
 	env Envelope,
 	sealKey []byte,
-	restored *uint64,
+	restored *counterRecord,
 ) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -496,12 +518,21 @@ func (s *Service) install(
 		s.seen = make(map[[requestNonceSize]byte]struct{})
 		s.counter = 0
 		s.hasCounter = false
+		s.payloadHash = nil
 	}
 	// Restore under the same lock as the install, so no Sign can run between
-	// them. The counter only ever rises.
-	if restored != nil && (!s.hasCounter || *restored > s.counter) {
-		s.counter = *restored
-		s.hasCounter = true
+	// them. The counter only ever rises, and its payload hash travels with
+	// it: when the stored counter wins, so does its hash. At an equal
+	// counter the hash already held stays, and a stored one fills a gap.
+	if restored != nil {
+		switch {
+		case !s.hasCounter || restored.LastIssued > s.counter:
+			s.counter = restored.LastIssued
+			s.hasCounter = true
+			s.payloadHash = bytes.Clone(restored.PayloadHash)
+		case restored.LastIssued == s.counter && s.payloadHash == nil:
+			s.payloadHash = bytes.Clone(restored.PayloadHash)
+		}
 	}
 }
 

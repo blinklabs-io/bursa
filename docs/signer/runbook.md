@@ -447,6 +447,9 @@ Unauthenticated endpoints on the signer's listener:
   with a three-second timeout. It returns 503 while that dependency is
   unreachable and 200 for a healthy store. The in-memory store has no external
   dependency and is always ready after startup.
+  It also probes each attested backend (`nitro`, `confidential-space`) with a
+  fresh inventory request and returns 503 when one is unavailable, for example
+  a Nitro proxy that stopped signing after a failed state save.
 
 Prometheus exposition is available at `/metrics` on the dedicated metrics
 listener. The listener accepts only a loopback host, with the port set by
@@ -456,8 +459,9 @@ can scrape the endpoint without exposing signer activity on the service
 listener.
 
 Use `/readyz` as the HA load-balancer readiness gate so a replica whose shared
-watermark store is unavailable is removed from rotation. Custody backends are
-validated at startup but are not rechecked by `/readyz`.
+watermark store or attested backend is unavailable is removed from rotation.
+Other custody backends are validated at startup but are not rechecked by
+`/readyz`.
 
 Metrics exported:
 
