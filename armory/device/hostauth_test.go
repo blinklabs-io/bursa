@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,6 +30,22 @@ import (
 var testHostKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x48}, 32))
 
 var testHostKey2 = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x49}, 32))
+
+// interruptedResizeChip models the SE050 losing power after deleting a binary
+// object whose fixed size must change, before it creates the replacement.
+type interruptedResizeChip struct {
+	*fakeChip
+}
+
+func (c *interruptedResizeChip) WriteBinary(id uint32, data []byte) error {
+	if old, ok := c.bins[id]; id == hostKeysID && ok && len(old) != len(data) {
+		delete(c.bins, id)
+
+		return errors.New("power lost after delete")
+	}
+
+	return c.fakeChip.WriteBinary(id, data)
+}
 
 func hostPub(
 	k ed25519.PrivateKey,
@@ -257,6 +274,133 @@ func TestHostAuthNoKeyRegistered(t *testing.T) {
 	}
 }
 
+// An interrupted migration from the legacy host key list must not make a
+// provisioned device look fresh and accept another first key unsigned.
+func TestHostKeyResizeInterruptionKeepsAuthentication(t *testing.T) {
+	base := newFakeChip()
+	legacy := make([]byte, hostKeysLen)
+	copy(legacy, hostPub(testHostKey))
+	base.bins[hostKeysID] = legacy
+	chip := &interruptedResizeChip{fakeChip: base}
+
+	s := New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.addHostKey(HostKeyRequest{PublicKey: hostPub(testHostKey2)}); err == nil {
+		t.Fatal("interrupted resize reported success")
+	}
+
+	// A reboot after the canonical object was deleted must recover the staged
+	// list, including the update whose durable staging write completed.
+	s = New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, key := range map[string]ed25519.PrivateKey{
+		"legacy": testHostKey,
+		"added":  testHostKey2,
+	} {
+		if err := authAs(t, s, key); err != nil {
+			t.Errorf("%s host key after restart: %v", name, err)
+		}
+	}
+
+	third := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x4a}, 32))
+	code, body := rawPost(
+		s.ProvisioningHandler(),
+		RouteProvisionHostKey,
+		jsonOf(t, HostKeyRequest{PublicKey: hostPub(third)}),
+	)
+	if code == http.StatusOK {
+		t.Fatalf("unsigned host-key enrollment accepted after interrupted migration: %s", body)
+	}
+
+	if !strings.Contains(string(body), errHostKeyUnknown.Error()) {
+		t.Fatalf("unsigned enrollment refused for another reason: %s", body)
+	}
+}
+
+func TestHostKeyStageDeleteFailureRecovers(t *testing.T) {
+	s, chip := newHostAuthService(t)
+	chip.failDelete = true
+
+	if _, err := s.addHostKey(HostKeyRequest{PublicKey: hostPub(testHostKey2)}); err == nil {
+		t.Fatal("failed staging cleanup reported success")
+	}
+
+	chip.failDelete = false
+	s = New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]ed25519.PrivateKey{
+		"original": testHostKey,
+		"staged":   testHostKey2,
+	} {
+		if err := authAs(t, s, key); err != nil {
+			t.Errorf("%s host key after restart: %v", name, err)
+		}
+	}
+
+	third := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x4a}, 32))
+	if _, err := s.addHostKey(HostKeyRequest{PublicKey: hostPub(third)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := chip.bins[hostKeysStageID]; ok {
+		t.Fatal("successful update left its staging object")
+	}
+
+	s = New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+	for name, key := range map[string]ed25519.PrivateKey{
+		"original": testHostKey,
+		"staged":   testHostKey2,
+		"later":    third,
+	} {
+		if err := authAs(t, s, key); err != nil {
+			t.Errorf("%s host key after completed update: %v", name, err)
+		}
+	}
+}
+
+func TestStagedHostKeysAreAuthoritative(t *testing.T) {
+	chip := newFakeChip()
+	canonical := make([]byte, hostKeysLen)
+	copy(canonical, hostPub(testHostKey))
+	chip.bins[hostKeysID] = canonical
+
+	staged := make([]byte, hostListSize)
+	copy(staged, hostPub(testHostKey2))
+	staged[ed25519.PublicKeySize] = scopeImage
+	chip.bins[hostKeysStageID] = staged
+
+	s := New(&sync.Mutex{}, t.Logf)
+	s.SetNetwork(0, "")
+
+	if err := s.SetChip(chip); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := authAs(t, s, testHostKey2); err != nil {
+		t.Fatalf("staged host key: %v", err)
+	}
+
+	if err := authAs(t, s, testHostKey); !errors.Is(err, errHostKeyUnknown) {
+		t.Fatalf("superseded canonical host key: %v", err)
+	}
+}
+
 func TestHostKeyProvisioning(t *testing.T) {
 	s, chip := newTestService(t)
 	keys := make([][]byte, maxHostKeys+1)
@@ -317,6 +461,10 @@ func TestHostKeyProvisioning(t *testing.T) {
 		t.Fatalf("reloaded %d host keys, want %d", got, want)
 	}
 
+	if _, ok := chip.bins[hostKeysStageID]; ok {
+		t.Fatal("successful host key write left its stage")
+	}
+
 	for _, k := range s2.hostKeys {
 		if bytes.Equal(k, keys[1]) {
 			t.Fatal("revoked key reloaded")
@@ -325,20 +473,30 @@ func TestHostKeyProvisioning(t *testing.T) {
 }
 
 func TestHostKeysUnreadableRefusesSigning(t *testing.T) {
-	s, chip := newTestService(t)
-	provisionTestProfile(t, s)
+	for name, corrupt := range map[string]func(*testing.T, *Service, *fakeChip){
+		"canonical": func(_ *testing.T, _ *Service, chip *fakeChip) {
+			chip.bins[hostKeysID] = []byte("torn")
+		},
+		"staged over valid canonical": func(t *testing.T, s *Service, chip *fakeChip) {
+			registerHostKey(t, s, hostPub(testHostKey))
+			chip.bins[hostKeysStageID] = []byte("torn")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, chip := newTestService(t)
+			provisionTestProfile(t, s)
+			corrupt(t, s, chip)
 
-	// the profile is provisioned first: provisioning is refused over an
-	// unreadable list
-	chip.bins[hostKeysID] = []byte("torn")
+			s = New(&sync.Mutex{}, t.Logf)
+			if err := s.SetChip(chip); err != nil {
+				t.Fatal(err)
+			}
 
-	s = New(&sync.Mutex{}, t.Logf)
-	if err := s.SetChip(chip); err != nil {
-		t.Fatal(err)
-	}
-
-	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
-		t.Fatal("signed while the host key list is unreadable")
+			r := postSign(t, s, opcertRequest(t, s, chip, 1))
+			if !strings.Contains(r.Error, errHostKeysBad.Error()) {
+				t.Fatalf("unreadable host key list did not fail closed: %+v", r)
+			}
+		})
 	}
 }
 
@@ -538,6 +696,21 @@ func TestWriteHostKeysEmptyDeleteFailureRefusesSigning(t *testing.T) {
 
 	if r := postSign(t, s, opcertRequest(t, s, chip, 1)); r.Error == "" {
 		t.Fatal("signed unauthenticated after a failed delete")
+	}
+}
+
+func TestWriteHostKeysEmptyDeletesBothCopies(t *testing.T) {
+	s, chip := newHostAuthService(t)
+	chip.bins[hostKeysStageID] = bytes.Clone(chip.bins[hostKeysID])
+
+	if _, err := s.writeHostKeys(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []uint32{hostKeysID, hostKeysStageID} {
+		if _, ok := chip.bins[id]; ok {
+			t.Errorf("host key object %#08x remains after empty cleanup", id)
+		}
 	}
 }
 

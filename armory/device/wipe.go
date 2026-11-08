@@ -111,7 +111,7 @@ func armoryIDs() []uint32 {
 
 	add(bringupFirst, bringupLast)
 	ids = append(ids, coldKeyIDs()...)
-	ids = append(ids, hostKeysID)
+	ids = append(ids, hostKeysID, hostKeysStageID)
 
 	for slot := uint8(0); slot <= profile.MaxSlot; slot++ {
 		ids = append(ids, profile.Profile{Slot: slot}.OwnerKeyID())

@@ -62,9 +62,10 @@ no unfiltered `/sign`. The single-scope images build as before.
   one with no owner, never the other mainnet scope's. A mainnet key also
   removes a testnet profile with `/wipe/profile`.
 - Do not flash an image older than this one over a device it has used. An
-  older image does not know the second cold key block or the ownership
-  record: its `/wipe/device` leaves them on the chip, and it imports into an
-  object another scope owns. Wipe with this image's wipe image first.
+  older image does not know the persistent host-key staging object, the second
+  cold key block or the ownership record: its `/wipe/device` leaves them on the
+  chip, and it imports into an object another scope owns. Wipe with this image's
+  wipe image first.
 - A device that ran a testnet image keeps its profiles and host key. A
   testnet key does not act device-wide on the multi image and the device's
   last key cannot be revoked, so adding mainnet scopes takes a device wipe.

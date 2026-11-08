@@ -27,10 +27,15 @@ import (
 	"time"
 )
 
-// hostKeysID holds the registered host public keys: maxHostKeys slots, an
-// all-zero key marking one unused. The fixed size means a rewrite never
-// deletes and recreates the object.
-const hostKeysID uint32 = 0x20e50021
+const (
+	// hostKeysID holds the registered host public keys: maxHostKeys slots, an
+	// all-zero key marking one unused.
+	hostKeysID uint32 = 0x20e50021
+	// hostKeysStageID makes replacing hostKeysID recoverable across power loss.
+	// A valid staged list is authoritative until the canonical copy is written
+	// and the stage is deleted.
+	hostKeysStageID uint32 = 0x20e50024
+)
 
 const (
 	maxHostKeys = 4
@@ -158,21 +163,33 @@ func (s *Service) setHostEntries(entries []hostEntry) {
 	}
 }
 
-// loadHostKeys reads the host key list from chip. A missing object means no
-// host key is registered; an unreadable one refuses signing and every
-// authenticated provisioning and wipe request until a restart reads a valid
-// list or a device wipe resets it.
+// loadHostKeys reads the host key list from chip. A valid staged replacement is
+// authoritative. A missing canonical and stage means no host key is registered;
+// an unreadable object refuses signing and every authenticated provisioning and
+// wipe request until a restart reads a valid list or a device wipe resets it.
 func (s *Service) loadHostKeys(chip Chip) error {
 	s.setHostEntries(nil)
 	s.hostKeysBad = false
 
-	ok, err := chip.Exists(hostKeysID)
-	if err != nil || !ok {
+	staged, err := chip.Exists(hostKeysStageID)
+	if err != nil {
 		return err
 	}
 
-	b, err := chip.ReadBinary(hostKeysID)
-	if err != nil || (len(b) != hostKeysLen && len(b) != hostListSize) {
+	id := hostKeysID
+	if staged {
+		id = hostKeysStageID
+	} else {
+		ok, err := chip.Exists(hostKeysID)
+		if err != nil || !ok {
+			return err
+		}
+	}
+
+	b, err := chip.ReadBinary(id)
+	validSize := len(b) == hostListSize ||
+		(id == hostKeysID && len(b) == hostKeysLen)
+	if err != nil || !validSize {
 		s.logf("host key list: unreadable (%d bytes, %v)", len(b), err)
 		s.hostKeysBad = true
 
@@ -577,7 +594,7 @@ func (s *Service) revokeHostKey(req HostKeyRequest) (HostKeyResponse, error) {
 }
 
 // writeHostKeys writes entries and serves them once the write reads back; an
-// empty list deletes the object. A failed write leaves the stored list
+// empty list deletes both copies. A failed write leaves the stored list
 // unknown, so signing and every authenticated provisioning and wipe request
 // are refused until a restart reads a valid list or a device wipe resets it.
 // The list is always written in the scoped format, with legacy entries kept
@@ -597,11 +614,9 @@ func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 			copy(slot[ed25519.PublicKeySize+2:], e.chain[:])
 		}
 
-		if err = s.chip.WriteBinary(hostKeysID, b); err == nil {
-			var got []byte
-
-			if got, err = s.chip.ReadBinary(hostKeysID); err == nil && !bytes.Equal(got, b) {
-				err = errors.New("read back differs")
+		if err = s.writeHostKeyObject(hostKeysStageID, b); err == nil {
+			if err = s.writeHostKeyObject(hostKeysID, b); err == nil {
+				err = s.deleteHostKeyObject(hostKeysStageID)
 			}
 		}
 	}
@@ -631,12 +646,37 @@ func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 	return HostKeyResponse{HostKeys: s.listedKeys()}, nil
 }
 
-// deleteHostKeys removes the key list object and checks it is gone, so a
-// delete whose reply was lost still counts.
-func (s *Service) deleteHostKeys() error {
-	delErr := s.chip.Delete(hostKeysID)
+// writeHostKeyObject writes and verifies one copy of the host key list.
+func (s *Service) writeHostKeyObject(id uint32, b []byte) error {
+	if err := s.chip.WriteBinary(id, b); err != nil {
+		return err
+	}
 
-	ok, err := s.chip.Exists(hostKeysID)
+	got, err := s.chip.ReadBinary(id)
+	if err == nil && !bytes.Equal(got, b) {
+		err = errors.New("read back differs")
+	}
+
+	return err
+}
+
+// deleteHostKeys removes the key list object and checks it is gone, so a
+// delete whose reply was lost still counts. Both copies must be gone before
+// the device returns to the bootstrap state.
+func (s *Service) deleteHostKeys() error {
+	for _, id := range []uint32{hostKeysID, hostKeysStageID} {
+		if err := s.deleteHostKeyObject(id); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) deleteHostKeyObject(id uint32) error {
+	delErr := s.chip.Delete(id)
+
+	ok, err := s.chip.Exists(id)
 	if err != nil {
 		return err
 	}

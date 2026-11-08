@@ -41,7 +41,8 @@ const RecordSize = 0xe0
 const IdentityKeyID uint32 = 0x20e50020
 
 // SignLogHeadID holds the number and hash of the latest signing log entry:
-// 0x20e50020 is the identity key, 0x20e50021 the host key list.
+// 0x20e50020 is the identity key, 0x20e50021 the host key list, 0x20e50023 the
+// cold key ownership record and 0x20e50024 the persistent host-key stage.
 const SignLogHeadID uint32 = 0x20e50022
 
 // Object ID bases, offset by profile slot. Cold keys live at
