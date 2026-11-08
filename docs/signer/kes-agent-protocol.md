@@ -30,7 +30,9 @@ neither control commands nor serve-key mode.
 - `[]byte` fields are base64-encoded (standard `encoding/json` behavior).
 - Sign and control clients must deliver each complete inbound frame within 10
   seconds after the server starts waiting for it. The server closes idle or
-  stalled connections; clients must reconnect after such a close.
+  stalled connections; clients must reconnect after such a close. The one
+  exception is an admitted attested sign session (below), which may stay idle
+  for up to 5 minutes between requests.
 - Clients must drain each outbound frame within 10 seconds so a blocked writer
   cannot retain a connection slot indefinitely.
 - Serve-key clients send no inbound frames, so their long-lived subscriptions
@@ -150,7 +152,20 @@ omits evidence, and is followed by connection close. Successful attestation is
 valid only for that TLS connection.
 
 After admission, the connection accepts the ordinary typed `sign_request`
-frames above. KES private state, evolution, period authorization, operational
+frames above. A producer keeps one session open between leader slots: the
+server waits up to 5 minutes for the next request's length header, and the
+10-second bound applies only to the frame body once the header has arrived.
+To keep the session alive and detect a dead agent early, the client sends a
+keep-alive well inside that bound:
+
+```json
+-> { "type": "ping" }
+<- { "type": "pong" }
+```
+
+A ping does no key access or signing and changes neither the period floor nor
+any signing state; the agent counts it in `bursa_kesagent_ping_total`. The
+local service socket answers ping too, but keeps the 10-second idle bound. KES private state, evolution, period authorization, operational
 certificate validation, and header signing stay inside the workload.
 
 The workload-local provider adapter accepts:

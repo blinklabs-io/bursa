@@ -111,6 +111,12 @@ const (
 	// timing includes idle time before the length header; outbound timing starts
 	// immediately before the header write.
 	frameIOTimeout = 10 * time.Second
+
+	// attestedSignIdleTimeout bounds the wait for the next request header on
+	// an attested sign session. A remote producer keeps one authenticated
+	// session open between leader slots, which are minutes apart, and pings
+	// well inside this bound; frameIOTimeout still bounds each frame body.
+	attestedSignIdleTimeout = 5 * time.Minute
 )
 
 // Socket modes for the service socket.
@@ -217,6 +223,16 @@ type SignRequest struct {
 	Message []byte `json:"message"`
 }
 
+// SignRequestTypePing is the SignRequest type of a keep-alive. The agent
+// answers it with a Pong and does nothing else: no key access, no signing,
+// and no change to the period floor or the signed-slot record.
+const SignRequestTypePing = "ping"
+
+// Pong is the server's reply to a ping SignRequest.
+type Pong struct {
+	Type string `json:"type"` // "pong"
+}
+
 // SignResponse is the server's reply to a SignRequest.
 type SignResponse struct {
 	Type      string `json:"type"` // "sign_response"
@@ -320,9 +336,22 @@ type deadlineReader interface {
 	SetReadDeadline(time.Time) error
 }
 
-// readFrame reads a single length-prefixed JSON frame into v.
-func readFrame(r deadlineReader, v any) (retErr error) {
-	if err := r.SetReadDeadline(time.Now().Add(frameIOTimeout)); err != nil {
+// readFrame reads a single length-prefixed JSON frame into v. One
+// frameIOTimeout covers the idle wait for the header and the whole frame.
+func readFrame(r deadlineReader, v any) error {
+	return readFrameIdle(r, v, 0)
+}
+
+// readFrameIdle is readFrame with a separate bound on the wait for the length
+// header. With idle > 0 the header may take up to idle to arrive, and the
+// frame body then has frameIOTimeout from the header's arrival. With idle <= 0
+// it behaves exactly like readFrame.
+func readFrameIdle(r deadlineReader, v any, idle time.Duration) (retErr error) {
+	headerTimeout := frameIOTimeout
+	if idle > 0 {
+		headerTimeout = idle
+	}
+	if err := r.SetReadDeadline(time.Now().Add(headerTimeout)); err != nil {
 		return fmt.Errorf("kesagent: set frame read deadline: %w", err)
 	}
 	defer func() {
@@ -333,6 +362,11 @@ func readFrame(r deadlineReader, v any) (retErr error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return err // may be io.EOF; callers distinguish
+	}
+	if idle > 0 {
+		if err := r.SetReadDeadline(time.Now().Add(frameIOTimeout)); err != nil {
+			return fmt.Errorf("kesagent: set frame body deadline: %w", err)
+		}
 	}
 	n := binary.BigEndian.Uint32(hdr[:])
 	if n == 0 {

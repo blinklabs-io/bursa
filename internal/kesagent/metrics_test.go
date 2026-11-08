@@ -36,6 +36,7 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 	m.setCurrentPeriod(42)
 	m.setExhausted(true)
 	m.addConns(1)
+	m.incPing()
 
 	mfs, err := reg.Gather()
 	if err != nil {
@@ -53,6 +54,7 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 		"bursa_kesagent_current_period":      "Current absolute KES period of the active key.",
 		"bursa_kesagent_exhausted":           "1 when the active KES key has exhausted its evolutions, else 0.",
 		"bursa_kesagent_service_connections": "Currently connected service-socket clients.",
+		"bursa_kesagent_ping_total":          "Keep-alive pings answered on sign sessions.",
 	}
 	for name, help := range want {
 		gotHelp, ok := got[name]

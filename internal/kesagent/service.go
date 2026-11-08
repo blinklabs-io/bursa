@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 )
@@ -194,7 +195,7 @@ func (a *Agent) handleServiceConn(ctx context.Context, conn net.Conn) {
 	case ModeServeKey:
 		a.handleServeKey(ctx, conn)
 	case ModeSign:
-		a.handleSign(ctx, conn)
+		a.handleSign(ctx, conn, 0)
 	}
 }
 
@@ -241,17 +242,33 @@ func (a *Agent) handleServeKey(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func (a *Agent) handleSign(ctx context.Context, conn net.Conn) {
+// handleSign serves sign requests on conn until it fails or closes. idle
+// bounds the wait for each next request header (see readFrameIdle); 0 keeps
+// the single frameIOTimeout of the local service socket. A ping is answered
+// with a Pong and touches nothing else.
+func (a *Agent) handleSign(
+	ctx context.Context,
+	conn net.Conn,
+	idle time.Duration,
+) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		var req SignRequest
-		if err := readFrame(conn, &req); err != nil {
+		if err := readFrameIdle(conn, &req, idle); err != nil {
 			if !errors.Is(err, io.EOF) {
 				a.logger.Debug("service sign read failed", "error", err)
 			}
 			return
+		}
+		if req.Type == SignRequestTypePing {
+			a.metrics.incPing()
+			if err := writeFrame(conn, Pong{Type: "pong"}); err != nil {
+				a.logger.Debug("service ping response write failed", "error", err)
+				return
+			}
+			continue
 		}
 		resp := SignResponse{Type: "sign_response", Period: req.Period}
 		var sig []byte

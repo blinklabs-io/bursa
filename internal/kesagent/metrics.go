@@ -25,6 +25,7 @@ type Metrics struct {
 	currentPer  prometheus.Gauge
 	exhausted   prometheus.Gauge
 	activeConns prometheus.Gauge
+	pings       prometheus.Counter
 }
 
 // NewMetrics builds the KES agent metric set.
@@ -54,6 +55,10 @@ func NewMetrics() *Metrics {
 			Name: "bursa_kesagent_service_connections",
 			Help: "Currently connected service-socket clients.",
 		}),
+		pings: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "bursa_kesagent_ping_total",
+			Help: "Keep-alive pings answered on sign sessions.",
+		}),
 	}
 }
 
@@ -66,6 +71,7 @@ func (m *Metrics) Register(r prometheus.Registerer) {
 		m.currentPer,
 		m.exhausted,
 		m.activeConns,
+		m.pings,
 	)
 }
 
@@ -78,6 +84,12 @@ func (m *Metrics) incServedKeys() {
 func (m *Metrics) incSign(result string) {
 	if m != nil {
 		m.signs.WithLabelValues(result).Inc()
+	}
+}
+
+func (m *Metrics) incPing() {
+	if m != nil {
+		m.pings.Inc()
 	}
 }
 

@@ -137,6 +137,7 @@ exposing KES activity on a network interface.
 |--------|---------|
 | `bursa_kesagent_served_keys_total` | Keys pushed to producers |
 | `bursa_kesagent_sign_total` | Sign operations (sign mode) |
+| `bursa_kesagent_ping_total` | Keep-alive pings answered on sign sessions |
 | `bursa_kesagent_evolutions_total` | KES evolutions performed |
 | `bursa_kesagent_current_period` | Current absolute KES period |
 | `bursa_kesagent_exhausted` | Active key exhausted (1/0) |

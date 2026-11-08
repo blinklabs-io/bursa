@@ -343,7 +343,7 @@ func (a *Agent) serveAttestedConn(
 	if err := writeFrame(conn, resp); err != nil {
 		return
 	}
-	a.handleSign(ctx, conn)
+	a.handleSign(ctx, conn, attestedSignIdleTimeout)
 }
 
 // HTTPAttester calls a workload-local provider adapter. The adapter receives
