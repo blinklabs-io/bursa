@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -83,12 +84,24 @@ func TestSQLiteStoreSecuresEncodedHierarchicalURITarget(t *testing.T) {
 	store, err := NewSQLiteStore(dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-
-	info, err := os.Stat(actualPath)
+	wallet, err := store.CreateWallet("encoded")
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-	_, err = os.Stat(decoyPath)
-	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, wallet.Save(context.Background()))
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_, err := os.Stat(actualPath + suffix)
+		require.NoError(t, err, suffix)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		info, err := os.Stat(actualPath + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err, suffix)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), suffix)
+		_, err = os.Stat(decoyPath + suffix)
+		require.ErrorIs(t, err, os.ErrNotExist, suffix)
+	}
 }
 
 // The pool opens a new connection after discarding one, and that connection

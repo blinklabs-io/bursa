@@ -123,10 +123,24 @@ func TestSQLiteStoreSecuresEncodedHierarchicalURITarget(t *testing.T) {
 	store, err := NewSQLiteStore(dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
+	wallet, err := store.CreateWallet("encoded")
+	require.NoError(t, err)
+	require.NoError(t, wallet.Save(context.Background()))
 
-	requireOwnerOnly(t, actualPath)
-	_, err = os.Stat(decoyPath)
-	require.ErrorIs(t, err, os.ErrNotExist)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_, err := os.Stat(actualPath + suffix)
+		require.NoError(t, err, suffix)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+		_, err := os.Stat(actualPath + suffix)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err, suffix)
+		requireOwnerOnly(t, actualPath+suffix)
+		_, err = os.Stat(decoyPath + suffix)
+		require.ErrorIs(t, err, os.ErrNotExist, suffix)
+	}
 }
 
 // grantEveryone replaces path's DACL with an unprotected one granting Everyone
