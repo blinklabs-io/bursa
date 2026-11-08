@@ -190,18 +190,6 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
-		// The attested protocol has no way yet for a remote producer to say
-		// which profile it is admitted for.
-		if len(profiles) != 1 {
-			logger.Error(
-				"kes_agent.attested_listen_address supports one profile",
-				"profiles",
-				len(profiles),
-			)
-			_ = serviceLn.Close()
-			_ = controlLn.Close()
-			return 1
-		}
 		attestedLn, err = listenAttestedKES(
 			kc.AttestedListenAddress,
 			kc.AttestedTLSCertFile,
