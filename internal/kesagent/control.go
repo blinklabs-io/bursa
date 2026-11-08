@@ -106,32 +106,44 @@ func (a *Agent) handleControlConn(conn net.Conn) {
 	}
 }
 
-// dispatch executes a single control command and returns its reply.
+// dispatch executes a single control command and returns its reply. Key
+// commands act on cmd.Profile, which may be omitted when the agent has one
+// profile.
 func (a *Agent) dispatch(cmd Command) Reply {
 	switch cmd.Command {
-	case CmdGenStagedKey:
-		vkey, err := a.GenStagedKey()
-		if err != nil {
-			return Reply{Ok: false, Error: err.Error()}
-		}
-		return Reply{Ok: true, KESVKey: vkey, Info: a.Info()}
-	case CmdInstallKey:
-		info, err := a.InstallKey(cmd.OpCert)
-		if err != nil {
-			return Reply{Ok: false, Error: err.Error()}
-		}
-		return Reply{Ok: true, Info: info}
-	case CmdDropKey:
-		if err := a.DropKey(cmd.Target); err != nil {
-			return Reply{Ok: false, Error: err.Error()}
-		}
-		return Reply{Ok: true, Info: a.Info()}
 	case CmdInfo:
-		return Reply{Ok: true, Info: a.Info()}
+		if cmd.Profile == "" && len(a.profiles) > 1 {
+			return Reply{Ok: true, Profiles: a.ProfilesInfo()}
+		}
+	case CmdGenStagedKey, CmdInstallKey, CmdDropKey:
 	default:
 		return Reply{
 			Ok:    false,
 			Error: fmt.Sprintf("unknown command %q", cmd.Command),
 		}
+	}
+	p, err := a.profileByName(cmd.Profile)
+	if err != nil {
+		return Reply{Ok: false, Error: err.Error()}
+	}
+	switch cmd.Command {
+	case CmdGenStagedKey:
+		vkey, err := p.GenStagedKey()
+		if err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{Ok: true, KESVKey: vkey, Info: a.profileInfo(p)}
+	case CmdInstallKey:
+		if _, err := p.InstallKey(cmd.OpCert); err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{Ok: true, Info: a.profileInfo(p)}
+	case CmdDropKey:
+		if err := p.DropKey(cmd.Target); err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{Ok: true, Info: a.profileInfo(p)}
+	default: // CmdInfo
+		return Reply{Ok: true, Info: a.profileInfo(p)}
 	}
 }

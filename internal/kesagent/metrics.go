@@ -17,39 +17,42 @@ package kesagent
 import "github.com/prometheus/client_golang/prometheus"
 
 // Metrics holds Prometheus collectors for the KES agent. Construct one per
-// process and call Register to publish it.
+// process and call Register to publish it. Every series about a key carries a
+// profile label; a profile works through the view forProfile returns.
 type Metrics struct {
-	servedKeys  prometheus.Counter
+	servedKeys  *prometheus.CounterVec
 	signs       *prometheus.CounterVec
-	evolutions  prometheus.Counter
-	currentPer  prometheus.Gauge
-	exhausted   prometheus.Gauge
+	evolutions  *prometheus.CounterVec
+	currentPer  *prometheus.GaugeVec
+	exhausted   *prometheus.GaugeVec
 	activeConns prometheus.Gauge
+
+	profile string
 }
 
 // NewMetrics builds the KES agent metric set.
 func NewMetrics() *Metrics {
 	return &Metrics{
-		servedKeys: prometheus.NewCounter(prometheus.CounterOpts{
+		servedKeys: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bursa_kesagent_served_keys_total",
 			Help: "KES key pushes delivered to producers (serve-key mode).",
-		}),
+		}, []string{"profile"}),
 		signs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bursa_kesagent_sign_total",
 			Help: "KES signing operations by result (ok|error).",
-		}, []string{"result"}),
-		evolutions: prometheus.NewCounter(prometheus.CounterOpts{
+		}, []string{"profile", "result"}),
+		evolutions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bursa_kesagent_evolutions_total",
 			Help: "KES key forward-evolutions performed.",
-		}),
-		currentPer: prometheus.NewGauge(prometheus.GaugeOpts{
+		}, []string{"profile"}),
+		currentPer: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "bursa_kesagent_current_period",
 			Help: "Current absolute KES period of the active key.",
-		}),
-		exhausted: prometheus.NewGauge(prometheus.GaugeOpts{
+		}, []string{"profile"}),
+		exhausted: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "bursa_kesagent_exhausted",
 			Help: "1 when the active KES key has exhausted its evolutions, else 0.",
-		}),
+		}, []string{"profile"}),
 		activeConns: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "bursa_kesagent_service_connections",
 			Help: "Currently connected service-socket clients.",
@@ -69,27 +72,38 @@ func (m *Metrics) Register(r prometheus.Registerer) {
 	)
 }
 
+// forProfile returns a view of m whose per-key series are labelled with the
+// profile name. It shares m's collectors.
+func (m *Metrics) forProfile(name string) *Metrics {
+	if m == nil {
+		return nil
+	}
+	v := *m
+	v.profile = name
+	return &v
+}
+
 func (m *Metrics) incServedKeys() {
 	if m != nil {
-		m.servedKeys.Inc()
+		m.servedKeys.WithLabelValues(m.profile).Inc()
 	}
 }
 
 func (m *Metrics) incSign(result string) {
 	if m != nil {
-		m.signs.WithLabelValues(result).Inc()
+		m.signs.WithLabelValues(m.profile, result).Inc()
 	}
 }
 
 func (m *Metrics) incEvolutions() {
 	if m != nil {
-		m.evolutions.Inc()
+		m.evolutions.WithLabelValues(m.profile).Inc()
 	}
 }
 
 func (m *Metrics) setCurrentPeriod(p uint64) {
 	if m != nil {
-		m.currentPer.Set(float64(p))
+		m.currentPer.WithLabelValues(m.profile).Set(float64(p))
 	}
 }
 
@@ -98,9 +112,9 @@ func (m *Metrics) setExhausted(v bool) {
 		return
 	}
 	if v {
-		m.exhausted.Set(1)
+		m.exhausted.WithLabelValues(m.profile).Set(1)
 	} else {
-		m.exhausted.Set(0)
+		m.exhausted.WithLabelValues(m.profile).Set(0)
 	}
 }
 

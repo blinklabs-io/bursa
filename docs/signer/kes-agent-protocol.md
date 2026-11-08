@@ -83,8 +83,15 @@ one `SignResponse` per request. The KES key never leaves the agent.
 Client -> server:
 
 ```json
-{ "type": "sign_request", "period": 512, "message": "<b64>" }
+{ "type": "sign_request", "period": 512, "message": "<b64>", "profile": "pool-a" }
 ```
+
+`profile` is optional. The agent routes a header to the profile whose cold
+verification key is the header's issuer key and whose active KES vkey is the
+one its operational certificate names. When `profile` is present, that must be
+the profile the header routes to; otherwise the request is refused with `header
+belongs to a different profile`. A header that matches no profile is refused
+with `no such profile`.
 
 Server -> client:
 
@@ -98,7 +105,7 @@ the guard and key untouched, unless:
 
 - the message decodes as a header body with no trailing bytes;
 - the header's slot divided by `slots_per_kes_period` equals `period`;
-- the issuer verification key equals the configured cold verification key;
+- the issuer verification key equals the profile's cold verification key;
 - the header's operational certificate carries the active KES vkey, the
   installed issue counter, the installed certificate start period, and the
   installed cold-key signature.
@@ -177,6 +184,11 @@ evidence fails because each Dingo connection supplies a fresh nonce.
 Request/response. The client sends a `Command` frame; the server replies with a
 `Reply` frame.
 
+Every command takes an optional `profile` field naming the profile it acts on.
+It may be omitted when the agent has one profile. With several, a key command
+without it is refused with `request does not select exactly one profile`, and
+`info` without it returns every profile in `profiles`.
+
 ### Commands
 
 **gen-staged-key** - generate a fresh staged KES key pair, returning its vkey so
@@ -208,8 +220,10 @@ opcert.
 **info** - status snapshot.
 
 ```json
--> { "command": "info" }
+-> { "command": "info", "profile": "pool-a" }
 <- { "ok": true, "info": { ... } }
+-> { "command": "info" }                       // agent with several profiles
+<- { "ok": true, "profiles": [ { ... }, { ... } ] }
 ```
 
 Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
@@ -221,7 +235,8 @@ Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
   "ok": true,
   "error": "",
   "kes_vkey": "<b64, gen-staged-key only>",
-  "info": { ... }
+  "info": { ... },
+  "profiles": [ { ... } ]
 }
 ```
 
@@ -231,6 +246,7 @@ Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
 |-----------------------|---------------------------------------------------------------|
 | `version`             | Agent version string.                                         |
 | `mode`                | `serve-key` or `sign`.                                        |
+| `profile`             | Profile name (`default` for a single-pool configuration).     |
 | `has_active_key`      | Whether an active key is installed.                           |
 | `active_period`       | Current absolute KES period of the active key.                |
 | `active_start`        | Absolute KES period the opcert was issued for.                |

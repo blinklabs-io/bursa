@@ -84,6 +84,24 @@ type KESAgentConfig struct {
 	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
 	// inside the protected workload that produces nonce-bound evidence.
 	AttesterAddress string `yaml:"attester_address"        envconfig:"KESAGENT_ATTESTER_ADDRESS"`
+	// Profiles lets one agent serve several pools, on one network or many.
+	// When it is set, the single-pool fields above (cold_vkey_file,
+	// cold_vkey_hex, system_start, slots_per_kes_period, guard_file) must
+	// be left unset. Profiles are configured in YAML only.
+	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`
+}
+
+// KESAgentProfileConfig is one pool on one network served by the KES agent.
+// slot_length and max_kes_evolutions default to 1 and 62.
+type KESAgentProfileConfig struct {
+	Name              string  `yaml:"name"`
+	ColdVKeyFile      string  `yaml:"cold_vkey_file"`
+	ColdVKeyHex       string  `yaml:"cold_vkey_hex"`
+	SystemStart       string  `yaml:"system_start"`
+	SlotLength        float64 `yaml:"slot_length"`
+	SlotsPerKESPeriod uint64  `yaml:"slots_per_kes_period"`
+	MaxKESEvolutions  uint64  `yaml:"max_kes_evolutions"`
+	GuardFile         string  `yaml:"guard_file"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.

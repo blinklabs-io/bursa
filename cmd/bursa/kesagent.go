@@ -120,26 +120,9 @@ func runKesAgent(configFile string) int {
 		)
 		return 1
 	}
-	if kc.SlotsPerKESPeriod == 0 {
-		logger.Error("kes_agent.slots_per_kes_period must be set")
-		return 1
-	}
-	if kc.SlotLength <= 0 {
-		logger.Error(
-			"kes_agent.slot_length must be positive",
-			"slot_length",
-			kc.SlotLength,
-		)
-		return 1
-	}
-	systemStart, err := time.Parse(time.RFC3339, kc.SystemStart)
+	profiles, err := kesAgentProfiles(kc)
 	if err != nil {
-		logger.Error("kes_agent.system_start must be RFC3339", "error", err)
-		return 1
-	}
-	coldVKey, err := loadColdVKey(kc.ColdVKeyHex, kc.ColdVKeyFile)
-	if err != nil {
-		logger.Error("failed to load cold verification key", "error", err)
+		logger.Error("invalid kes_agent profile configuration", "error", err)
 		return 1
 	}
 	serviceSocketMode, err := parseSocketMode(kc.ServiceSocketMode)
@@ -173,15 +156,10 @@ func runKesAgent(configFile string) int {
 	metrics.Register(prometheus.DefaultRegisterer)
 
 	agent, err := kesagent.New(kesagent.Config{
-		Mode:              kc.Mode,
-		SystemStart:       systemStart,
-		SlotLength:        time.Duration(kc.SlotLength * float64(time.Second)),
-		SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
-		MaxKESEvolutions:  kc.MaxKESEvolutions,
-		ColdVKey:          coldVKey,
-		EvolveInterval:    evolveInterval,
-		GuardPath:         kc.GuardFile,
-		Version:           version.GetVersionString(),
+		Mode:           kc.Mode,
+		EvolveInterval: evolveInterval,
+		Version:        version.GetVersionString(),
+		Profiles:       profiles,
 	}, logger, metrics)
 	if err != nil {
 		logger.Error("failed to create KES agent", "error", err)
@@ -208,6 +186,18 @@ func runKesAgent(configFile string) int {
 	if kc.AttestedListenAddress != "" {
 		if kc.Mode != kesagent.ModeSign {
 			logger.Error("kes_agent.attested_listen_address requires sign mode")
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
+		// The attested protocol has no way yet for a remote producer to say
+		// which profile it is admitted for.
+		if len(profiles) != 1 {
+			logger.Error(
+				"kes_agent.attested_listen_address supports one profile",
+				"profiles",
+				len(profiles),
+			)
 			_ = serviceLn.Close()
 			_ = controlLn.Close()
 			return 1
@@ -269,8 +259,14 @@ func runKesAgent(configFile string) int {
 		"mode", kc.Mode,
 		"service_socket", kc.ServiceSocket,
 		"control_socket", kc.ControlSocket,
-		"cold_vkey", hex.EncodeToString(coldVKey),
 	)
+	for _, p := range profiles {
+		logger.Info("serving KES agent profile",
+			"profile", p.Name,
+			"cold_vkey", hex.EncodeToString(p.ColdVKey),
+			"guard_file", p.GuardPath,
+		)
+	}
 
 	exitCode := 0
 	select {
@@ -337,6 +333,97 @@ func listenAttestedKES(
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		MinVersion:   tls.VersionTLS13,
 	}), nil
+}
+
+// kesAgentProfiles builds the agent's profiles from kc: the profiles list, or
+// one profile named kesagent.DefaultProfileName from the single-pool fields.
+func kesAgentProfiles(
+	kc config.KESAgentConfig,
+) ([]kesagent.ProfileConfig, error) {
+	if len(kc.Profiles) == 0 {
+		p, err := kesAgentProfile(config.KESAgentProfileConfig{
+			Name:              kesagent.DefaultProfileName,
+			ColdVKeyFile:      kc.ColdVKeyFile,
+			ColdVKeyHex:       kc.ColdVKeyHex,
+			SystemStart:       kc.SystemStart,
+			SlotLength:        kc.SlotLength,
+			SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
+			MaxKESEvolutions:  kc.MaxKESEvolutions,
+			GuardFile:         kc.GuardFile,
+		}, "kes_agent")
+		if err != nil {
+			return nil, err
+		}
+		return []kesagent.ProfileConfig{p}, nil
+	}
+	if kc.ColdVKeyFile != "" || kc.ColdVKeyHex != "" ||
+		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
+		kc.GuardFile != "" {
+		return nil, errors.New(
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, slots_per_kes_period and guard_file; set them in each profile",
+		)
+	}
+	out := make([]kesagent.ProfileConfig, 0, len(kc.Profiles))
+	for i, pc := range kc.Profiles {
+		if pc.SlotLength == 0 {
+			pc.SlotLength = 1
+		}
+		p, err := kesAgentProfile(
+			pc,
+			fmt.Sprintf("kes_agent.profiles[%d]", i),
+		)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// kesAgentProfile validates one profile's settings; field names errors with
+// the config path the setting came from.
+func kesAgentProfile(
+	pc config.KESAgentProfileConfig,
+	field string,
+) (kesagent.ProfileConfig, error) {
+	if pc.SlotsPerKESPeriod == 0 {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s.slots_per_kes_period must be set",
+			field,
+		)
+	}
+	if pc.SlotLength <= 0 {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s.slot_length must be positive, got %v",
+			field,
+			pc.SlotLength,
+		)
+	}
+	systemStart, err := time.Parse(time.RFC3339, pc.SystemStart)
+	if err != nil {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s.system_start must be RFC3339: %w",
+			field,
+			err,
+		)
+	}
+	coldVKey, err := loadColdVKey(pc.ColdVKeyHex, pc.ColdVKeyFile)
+	if err != nil {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s: load cold verification key: %w",
+			field,
+			err,
+		)
+	}
+	return kesagent.ProfileConfig{
+		Name:              pc.Name,
+		SystemStart:       systemStart,
+		SlotLength:        time.Duration(pc.SlotLength * float64(time.Second)),
+		SlotsPerKESPeriod: pc.SlotsPerKESPeriod,
+		MaxKESEvolutions:  pc.MaxKESEvolutions,
+		ColdVKey:          coldVKey,
+		GuardPath:         pc.GuardFile,
+	}, nil
 }
 
 // loadColdVKey resolves the pool cold verification key from an inline hex value

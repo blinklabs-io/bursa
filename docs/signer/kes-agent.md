@@ -30,6 +30,37 @@ For the socket wire format, see
   (see the protocol document). To run the agent inside an attested workload,
   see [`attested-custody.md`](attested-custody.md).
 
+## Profiles
+
+One agent can serve several pools, on one network or several. Each pool is a
+profile in `kes_agent.profiles` with:
+
+- `name`: 1-64 letters, digits, `.`, `_` or `-`, unique in the agent;
+- its own `cold_vkey_file` or `cold_vkey_hex`;
+- its network's `system_start`, `slot_length` (default 1),
+  `slots_per_kes_period` and `max_kes_evolutions` (default 62);
+- its own `guard_file`. Two profiles may not share a guard file.
+
+Each profile has its own staged and active KES key, operational certificate,
+evolution schedule, period floor and last signed slot, and its own lock. A
+refusal in one profile, such as a second header for a signed slot, does not
+affect another.
+
+The `sign` service routes each header to a profile by its issuer key (the
+pool's cold key) and the KES key named by its operational certificate. One
+cold key may be used on several networks; the KES key tells those profiles
+apart. A header that matches no profile is refused. `serve-key` mode takes
+exactly one profile, since a producer subscribes to one key. The attested
+listener supports one profile for now.
+
+Control commands take the profile name. With one profile it may be omitted,
+and `info` without a name lists every profile.
+
+A configuration without `profiles` serves one profile named `default` from the
+single-pool settings (`cold_vkey_file`, `system_start`, `guard_file` and so
+on), and its existing guard file is that profile's state. Setting `profiles`
+together with those single-pool settings is refused at startup.
+
 ## Sockets
 
 Two Unix-domain sockets, each with its own independent mode (default `0600`,
@@ -100,6 +131,7 @@ clock jump, restart, or stale key re-install - a belt-and-suspenders complement
 to KES forward security. A period strictly below the floor is refused; a period
 equal to the floor is allowed (a producer signs many headers within one period).
 The floor is persisted to `guard_file` via an atomic temp-file + rename write.
+Each profile has its own guard file and floor.
 `guard_file` is required; the daemon refuses to start without a durable path.
 In `sign` mode, requests for a period later than the agent's wall-clock current
 period are rejected before key evolution or guard persistence.
@@ -136,6 +168,9 @@ The scheduler ticks every `evolve_interval` (default `1m`) to evolve the key as
 periods advance.
 
 ## Metrics
+
+Every metric except `bursa_kesagent_service_connections` carries a `profile`
+label, which is `default` for a single-pool configuration.
 
 When `metrics.port` is non-zero the agent serves Prometheus metrics at
 `/metrics` on the dedicated metrics listener. The configured address must be

@@ -53,6 +53,25 @@ kes_agent:
   # KES period below the highest already served, across restarts/clock jumps.
   guard_file: "/var/lib/bursa/kes-agent/guard.json"  # env: KESAGENT_GUARD_FILE
 
+  # Several pools, on one network or several, can be served by one agent in
+  # sign mode. profiles replaces the single-pool settings above
+  # (cold_vkey_file/cold_vkey_hex, system_start, slots_per_kes_period,
+  # guard_file); each profile has its own keys, schedule and guard file.
+  # Control commands then take the profile name. YAML only.
+  # profiles:
+  #   - name: "mainnet-pool"
+  #     cold_vkey_file: "/etc/bursa/kes-agent/mainnet-cold.vkey"
+  #     system_start: "2017-09-23T21:44:51Z"
+  #     slots_per_kes_period: 129600
+  #     guard_file: "/var/lib/bursa/kes-agent/mainnet-pool.json"
+  #   - name: "preprod-pool"
+  #     cold_vkey_file: "/etc/bursa/kes-agent/preprod-cold.vkey"
+  #     system_start: "2022-06-01T00:00:00Z"
+  #     slot_length: 1               # default 1
+  #     slots_per_kes_period: 129600
+  #     max_kes_evolutions: 62       # default 62
+  #     guard_file: "/var/lib/bursa/kes-agent/preprod-pool.json"
+
   # Optional remote sign service for Dingo. This is available only in sign
   # mode and always requires a client certificate issued by the configured CA.
   # attested_listen_address: ":9443"

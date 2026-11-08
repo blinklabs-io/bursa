@@ -230,7 +230,7 @@ func TestSignHeaderOneHeaderPerSlot(t *testing.T) {
 	if _, err := a.SignHeader(5, later.encode(t)); err != nil {
 		t.Fatalf("slot 53: %v", err)
 	}
-	if slot, ok := a.guard.LastSignedSlot(); !ok || slot != 53 {
+	if slot, ok := sole(t, a).guard.LastSignedSlot(); !ok || slot != 53 {
 		t.Fatalf("last signed slot = %d %v, want 53 true", slot, ok)
 	}
 }
