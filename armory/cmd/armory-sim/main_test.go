@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"io"
 	"math"
 	"net/http"
@@ -471,4 +472,174 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	c.reads++
 
 	return c.r.Read(p)
+}
+
+// simPost sends body to path on h, as a host client on loopback does.
+func simPost(h http.Handler, path string, body []byte) (int, string) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1:18080"+path,
+		bytes.NewReader(body),
+	)
+	r.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(w, r)
+
+	return w.Code, w.Body.String()
+}
+
+func simJSON(t *testing.T, v any) []byte {
+	t.Helper()
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return b
+}
+
+// simSigned returns req signed for route by key over a fresh challenge.
+func simSigned(
+	t *testing.T,
+	h http.Handler,
+	route string,
+	req any,
+	key ed25519.PrivateKey,
+) []byte {
+	t.Helper()
+
+	code, body := simPost(h, "/v1/challenge", []byte("{}"))
+	if code != http.StatusOK {
+		t.Fatalf("challenge: %d %s", code, body)
+	}
+
+	var ch device.ChallengeResponse
+	if err := json.Unmarshal([]byte(body), &ch); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := device.SignAdminRequest(route, simJSON(t, req), key, ch.Challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return b
+}
+
+func simKey(b byte) ed25519.PrivateKey {
+	return ed25519.NewKeyFromSeed(bytes.Repeat([]byte{b}, ed25519.SeedSize))
+}
+
+// wantRefused fails unless the response is a refusal carrying want, so a
+// refusal for another reason does not pass.
+func wantRefused(t *testing.T, what string, code int, body, want string) {
+	t.Helper()
+
+	if code == http.StatusOK || !strings.Contains(body, want) {
+		t.Fatalf("%s: %d %q, want a refusal %q", what, code, body, want)
+	}
+}
+
+// TestMultiBootstrap drives the first-key bootstrap of a multi provisioning
+// image: the device's first host key is taken unsigned, every later key is
+// added signed, and a key acts only for its own scope.
+func TestMultiBootstrap(t *testing.T) {
+	h, err := build(options{
+		listen: "127.0.0.1:0", state: t.TempDir(), image: "provision",
+		network: "multi", cardBlocks: 1 << 10,
+	}, t.Logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cardano, testnet, prime := simKey(0xc1), simKey(0xc2), simKey(0xc3)
+	pub := func(k ed25519.PrivateKey) []byte {
+		return k.Public().(ed25519.PublicKey)
+	}
+
+	// the device's first host key, unsigned
+	code, body := simPost(h, device.RouteProvisionHostKey, simJSON(t, device.HostKeyRequest{
+		PublicKey: pub(cardano), Scope: "cardano-mainnet",
+	}))
+	if code != http.StatusOK {
+		t.Fatalf("unsigned first host key: %d %s", code, body)
+	}
+
+	// only one key is taken unsigned
+	code, body = simPost(h, device.RouteProvisionHostKey, simJSON(t, device.HostKeyRequest{
+		PublicKey: pub(testnet), Scope: "testnet",
+	}))
+	wantRefused(t, "second unsigned host key", code, body, "only while the device holds no host key")
+
+	// the mainnet key adds the first key of another scope, signed
+	code, body = simPost(h, device.RouteProvisionHostKey, simSigned(t, h, device.RouteProvisionHostKey, device.HostKeyRequest{
+		PublicKey: pub(testnet), Scope: "testnet",
+	}, cardano))
+	if code != http.StatusOK {
+		t.Fatalf("signed testnet host key add: %d %s", code, body)
+	}
+
+	// a testnet key does not add a mainnet scope's first key
+	code, body = simPost(h, device.RouteProvisionHostKey, simSigned(t, h, device.RouteProvisionHostKey, device.HostKeyRequest{
+		PublicKey: pub(prime), Scope: "prime-mainnet",
+	}, testnet))
+	wantRefused(t, "testnet key adding a prime-mainnet key", code, body, "not of the scope it adds a key for")
+
+	// a testnet key is refused on a mainnet profile
+	profile := device.ProvisionRequest{
+		Name: "pool@cardano-mainnet", NetworkID: 1, Slot: 0, ColdKeyID: 0x20e50010,
+	}
+	code, body = simPost(h, device.RouteProvisionProfile, simSigned(t, h, device.RouteProvisionProfile, profile, testnet))
+	wantRefused(t, "testnet key on a mainnet profile", code, body, "not of the scope of this profile")
+
+	// the same request signed by the cardano key passes host authentication,
+	// whatever the profile request itself then meets
+	code, body = simPost(h, device.RouteProvisionProfile, simSigned(t, h, device.RouteProvisionProfile, profile, cardano))
+	for _, refusal := range []string{
+		"not of the scope of this profile",
+		"host key not registered",
+		"host signature does not verify",
+		"requires host authentication",
+	} {
+		if strings.Contains(body, refusal) {
+			t.Fatalf("cardano key on a cardano-mainnet profile: %d %s", code, body)
+		}
+	}
+
+	// device-wide requests need a key of a mainnet scope
+	code, body = simPost(h, device.RouteProvisionIdentity, simSigned(t, h, device.RouteProvisionIdentity, device.IdentityRequest{}, testnet))
+	wantRefused(t, "testnet key provisioning the identity", code, body, "device-wide")
+}
+
+// TestMultiImages checks the multi signing and wipe images take no unsigned
+// host key and authenticate inventory, and that -chain is refused.
+func TestMultiImages(t *testing.T) {
+	for _, image := range []string{"sign", "wipe"} {
+		h, err := build(options{
+			listen: "127.0.0.1:0", state: t.TempDir(), image: image,
+			network: "multi", cardBlocks: 1 << 10,
+		}, t.Logf)
+		if err != nil {
+			t.Fatalf("%s: %v", image, err)
+		}
+
+		if code, body := simPost(h, device.RouteProvisionHostKey, simJSON(t, device.HostKeyRequest{
+			PublicKey: simKey(0xc4).Public().(ed25519.PublicKey), Scope: "cardano-mainnet",
+		})); code != http.StatusNotFound {
+			t.Fatalf("%s image served the host key route: %d %s", image, code, body)
+		}
+
+		if image == "sign" {
+			code, body := simPost(h, "/v1/inventory", []byte(`{"nonce":"AQ==","profile":"pool@cardano-mainnet"}`))
+			wantRefused(t, "unsigned multi inventory", code, body, "host authentication")
+		}
+	}
+
+	if _, err := build(options{
+		listen: "127.0.0.1:0", state: t.TempDir(), image: "provision",
+		network: "multi", chain: "cardano",
+	}, t.Logf); err == nil {
+		t.Fatal("-chain accepted with -network multi")
+	}
 }
