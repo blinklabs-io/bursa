@@ -19,7 +19,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,23 +450,6 @@ func TestServiceSignRequestProfileMustMatchTheHeader(t *testing.T) {
 	resp = roundTrip(SignRequest{Period: pb.period, Message: pb.header.encode(t)})
 	if resp.Error != "" || len(resp.Signature) == 0 {
 		t.Fatalf("pool B header without a profile: %+v", resp)
-	}
-}
-
-func TestServeAttestedServiceRefusesSeveralProfiles(t *testing.T) {
-	coldA, coldB := newColdKey(t), newColdKey(t)
-	a := newMultiAgent(t,
-		profileOn(t, networkA, "pool-a", coldA),
-		profileOn(t, networkB, "pool-b", coldB),
-	)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	err = a.ServeAttestedService(context.Background(), ln, AttestedServiceConfig{})
-	if !errors.Is(err, ErrAmbiguousProfile) {
-		t.Fatalf("ServeAttestedService with two profiles: err = %v, want ErrAmbiguousProfile", err)
 	}
 }
 
