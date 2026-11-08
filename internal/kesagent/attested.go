@@ -101,6 +101,14 @@ type AttestationVerifier interface {
 type AttestedServiceConfig struct {
 	Provider string
 	Attester Attester
+	// Plaintext serves the protocol on plain TCP connections. The listener is
+	// then not expected to be TLS, and no remote-peer authentication is done by
+	// the agent.
+	Plaintext bool
+	// ClientCertOptional accepts a TLS connection without a client
+	// certificate. It is for a listener configured without a client CA; the
+	// default requires a verified client certificate.
+	ClientCertOptional bool
 }
 
 type attestedKeyState struct {
@@ -236,9 +244,11 @@ func NewAttestationRequest() (AttestationRequest, error) {
 	return req, nil
 }
 
-// ServeAttestedService serves sign mode over mutually authenticated TLS. The
-// listener may be TCP or another stream transport, but every accepted
-// connection must be a TLS connection with a verified client certificate.
+// ServeAttestedService serves sign mode. The listener may be TCP or another
+// stream transport. By default every accepted connection must be a TLS
+// connection with a verified client certificate; cfg.ClientCertOptional
+// relaxes the certificate requirement and cfg.Plaintext serves plain
+// connections.
 func (a *Agent) ServeAttestedService(
 	ctx context.Context,
 	ln net.Listener,
@@ -284,7 +294,7 @@ func (a *Agent) ServeAttestedService(
 			defer wg.Done()
 			defer conns.remove(conn)
 			defer conn.Close()
-			if err := authenticateRemotePeer(ctx, conn); err != nil {
+			if err := authenticateRemotePeer(ctx, conn, cfg); err != nil {
 				a.logger.Warn("refusing unauthenticated KES peer", "error", err)
 				return
 			}
@@ -293,7 +303,19 @@ func (a *Agent) ServeAttestedService(
 	}
 }
 
-func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
+// authenticateRemotePeer completes the TLS handshake and checks the client
+// certificate the listener's TLS configuration verified. A plaintext service
+// does no peer authentication. A TLS service requires a verified client
+// certificate unless cfg.ClientCertOptional is set, which is for a listener
+// that requests none.
+func authenticateRemotePeer(
+	ctx context.Context,
+	conn net.Conn,
+	cfg AttestedServiceConfig,
+) error {
+	if cfg.Plaintext {
+		return nil
+	}
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return ErrUnauthenticatedPeer
@@ -306,6 +328,9 @@ func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
 	}
 	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("%w: %w", ErrUnauthenticatedPeer, err)
+	}
+	if cfg.ClientCertOptional {
+		return nil
 	}
 	state := tlsConn.ConnectionState()
 	if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {

@@ -213,12 +213,7 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
-		attestedLn, err = listenAttestedKES(
-			kc.AttestedListenAddress,
-			kc.AttestedTLSCertFile,
-			kc.AttestedTLSKeyFile,
-			kc.AttestedClientCAFile,
-		)
+		attestedLn, err = attestedListener(kc)
 		if err != nil {
 			logger.Error("failed to open attested KES listener", "error", err)
 			_ = serviceLn.Close()
@@ -233,18 +228,31 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
-		fingerprint, err := serverCertFingerprint(kc.AttestedTLSCertFile)
-		if err != nil {
-			logger.Error("invalid attested KES certificate", "error", err)
-			_ = attestedLn.Close()
-			_ = serviceLn.Close()
-			_ = controlLn.Close()
-			return 1
+		if kc.AttestedPlaintext {
+			logger.Info(
+				"attested listener serving plain TCP",
+				"address", kc.AttestedListenAddress,
+			)
+		} else {
+			fingerprint, err := serverCertFingerprint(kc.AttestedTLSCertFile)
+			if err != nil {
+				logger.Error("invalid attested KES certificate", "error", err)
+				_ = attestedLn.Close()
+				_ = serviceLn.Close()
+				_ = controlLn.Close()
+				return 1
+			}
+			logger.Info(
+				"attested KES server certificate public key",
+				"server_spki_sha256", fingerprint,
+			)
+			if kc.AttestedClientCAFile == "" {
+				logger.Info(
+					"attested listener serving TLS without client certificates",
+					"address", kc.AttestedListenAddress,
+				)
+			}
 		}
-		logger.Info(
-			"attested KES server certificate public key",
-			"server_spki_sha256", fingerprint,
-		)
 	}
 
 	ctx, stop := signal.NotifyContext(
@@ -313,24 +321,30 @@ func attestedServiceConfig(
 			"kes_agent.attestation_provider is required",
 		)
 	}
+	transport := func(cfg kesagent.AttestedServiceConfig) kesagent.AttestedServiceConfig {
+		cfg.Plaintext = kc.AttestedPlaintext
+		cfg.ClientCertOptional = !kc.AttestedPlaintext &&
+			kc.AttestedClientCAFile == ""
+		return cfg
+	}
 	if kc.AttestationProvider == kesagent.NoEvidenceProvider {
 		if kc.AttesterAddress != "" {
 			return kesagent.AttestedServiceConfig{}, errors.New(
 				"kes_agent.attester_address is not used with the none provider",
 			)
 		}
-		return kesagent.AttestedServiceConfig{
+		return transport(kesagent.AttestedServiceConfig{
 			Provider: kc.AttestationProvider,
-		}, nil
+		}), nil
 	}
 	attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
 	if err != nil {
 		return kesagent.AttestedServiceConfig{}, err
 	}
-	return kesagent.AttestedServiceConfig{
+	return transport(kesagent.AttestedServiceConfig{
 		Provider: kc.AttestationProvider,
 		Attester: attester,
-	}, nil
+	}), nil
 }
 
 // serverCertFingerprint returns the SHA-256 SPKI fingerprint of the first
@@ -357,19 +371,31 @@ func serverCertFingerprint(certFile string) (string, error) {
 	}
 }
 
-func listenAttestedKES(
-	address, certFile, keyFile, clientCAFile string,
-) (net.Listener, error) {
-	if certFile == "" || keyFile == "" || clientCAFile == "" {
+// attestedListener opens the attested KES listener. With attested_plaintext it
+// serves plain TCP and the TLS files must be unset. Otherwise it requires TLS
+// 1.3 with a certificate and key, and requests a client certificate only when
+// a client CA is configured.
+func attestedListener(kc config.KESAgentConfig) (net.Listener, error) {
+	if kc.AttestedPlaintext {
+		if kc.AttestedTLSCertFile != "" || kc.AttestedTLSKeyFile != "" ||
+			kc.AttestedClientCAFile != "" {
+			return nil, errors.New(
+				"kes_agent.attested_plaintext cannot be combined with " +
+					"attested_tls_cert_file, attested_tls_key_file or attested_client_ca_file",
+			)
+		}
+		return net.Listen("tcp", kc.AttestedListenAddress)
+	}
+	if kc.AttestedTLSCertFile == "" || kc.AttestedTLSKeyFile == "" {
 		return nil, errors.New(
-			"attested KES listener requires TLS certificate, key, and client CA files",
+			"attested KES listener requires a TLS certificate and key, or attested_plaintext",
 		)
 	}
-	certPEM, err := os.ReadFile(certFile)
+	certPEM, err := os.ReadFile(kc.AttestedTLSCertFile)
 	if err != nil {
 		return nil, fmt.Errorf("read attested KES certificate: %w", err)
 	}
-	keyPEM, err := bursa.ReadSecretKeyFile(keyFile)
+	keyPEM, err := bursa.ReadSecretKeyFile(kc.AttestedTLSKeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("read attested KES private key: %w", err)
 	}
@@ -378,26 +404,29 @@ func listenAttestedKES(
 	if err != nil {
 		return nil, fmt.Errorf("load attested KES certificate: %w", err)
 	}
-	caPEM, err := os.ReadFile(clientCAFile)
-	if err != nil {
-		return nil, fmt.Errorf("read attested KES client CA: %w", err)
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
 	}
-	clientCAs := x509.NewCertPool()
-	if !clientCAs.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New(
-			"attested KES client CA contains no certificates",
-		)
+	if kc.AttestedClientCAFile != "" {
+		caPEM, err := os.ReadFile(kc.AttestedClientCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read attested KES client CA: %w", err)
+		}
+		clientCAs := x509.NewCertPool()
+		if !clientCAs.AppendCertsFromPEM(caPEM) {
+			return nil, errors.New(
+				"attested KES client CA contains no certificates",
+			)
+		}
+		tlsCfg.ClientCAs = clientCAs
+		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
-	ln, err := net.Listen("tcp", address)
+	ln, err := net.Listen("tcp", kc.AttestedListenAddress)
 	if err != nil {
 		return nil, err
 	}
-	return tls.NewListener(ln, &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    clientCAs,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS13,
-	}), nil
+	return tls.NewListener(ln, tlsCfg), nil
 }
 
 // loadColdVKey resolves the pool cold verification key from an inline hex value

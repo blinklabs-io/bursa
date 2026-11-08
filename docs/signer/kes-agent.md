@@ -57,8 +57,7 @@ default `0600` regardless of how `service_socket_mode` is configured.
 ## Attested remote signing
 
 Sign mode can additionally listen on `attested_listen_address` for a remote
-Dingo producer. This listener speaks `bursa-attested-kes/1` and requires TLS
-1.3 with a client certificate issued by `attested_client_ca_file`. It never
+Dingo producer. This listener speaks `bursa-attested-kes/1`. It never
 offers serve-key mode or control commands. The local control socket remains the
 only route for staging, installing, or dropping keys.
 
@@ -68,13 +67,30 @@ challenge, pool cold verification key, active KES verification key, installed
 operational certificate, and active period. Dingo verifies that evidence with
 the pinned Nitro PCR policy or Confidential Space image policy described in
 [`attested-custody.md`](attested-custody.md). Provider failure, a wrong nonce or
-provider, a failed measurement, or a failed client certificate closes the
+provider, a failed measurement, or a failed client certificate (where the agent requires one) closes the
 connection before signing is available.
 
 The provider adapter is configured by `attester_address`. It accepts the
 protocol binding at `POST /v1/attest` over HTTPS, loopback HTTP, or a Unix
 socket. Static evidence is insufficient because every connection has a fresh
 challenge.
+
+### Listener transport modes
+
+The agent supports three modes. Each authenticates a different thing at the
+agent itself; transport security can also be provided outside the agent, for
+example by a sidecar or the network.
+
+| Mode | Configuration | Authenticated at the agent |
+| --- | --- | --- |
+| TLS 1.3 with client certificates | `attested_tls_cert_file`, `attested_tls_key_file`, `attested_client_ca_file` | The agent to the client by its server certificate; the client to the agent by a certificate issued by the CA. |
+| TLS 1.3, server authentication only | `attested_tls_cert_file`, `attested_tls_key_file` | The agent to the client. No client certificate is requested. |
+| Plain TCP | `attested_plaintext: true` | Nothing at the transport. |
+
+`attested_plaintext` cannot be combined with the TLS certificate, key or client
+CA files; the agent refuses to start. All modes speak the same protocol: hello,
+the attestation exchange, then sign frames. The agent logs which mode it is
+serving at startup.
 
 ### none provider
 
