@@ -398,9 +398,10 @@ func (s *Service) Challenge(
 
 // Sign accepts only canonical pool-cold operational-certificate signables with
 // an explicit issue counter. The counter must rise, except that a payload
-// identical to the one last signed at the stored counter is signed again. It refuses opcert-next, which would let the host
-// re-issue an existing number for a new KES key, and profiled requests, whose
-// binding signature this enclave does not produce.
+// identical to the one last signed at the stored counter is signed again. It
+// refuses opcert-next, which would let the host re-issue an existing number
+// for a new KES key, and profiled requests, whose binding signature this
+// enclave does not produce.
 func (s *Service) Sign(
 	_ context.Context,
 	req *backend.AttestedRequest,

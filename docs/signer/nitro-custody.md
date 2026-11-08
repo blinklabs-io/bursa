@@ -195,7 +195,8 @@ Ed25519 is deterministic, so the signature is the one already issued and
 nothing new exists. Any other payload at that counter (a different KES key or
 period) is refused, as is a lower counter. SHA-256 is already the enclave's
 hash for the sealing key and authenticated data; the digest sits inside the
-sealed record, where the host cannot read or forge it. The sealing key is derived with HKDF from the KMS data key under its
+sealed record, where the host cannot read or forge it. The sealing key is
+derived with HKDF from the KMS data key under its
 own label, so only the enclave can seal or open the state, and the
 authenticated data binds the pool public key, the KMS key ID, and a state
 version. The proxy writes the sealed state to the same Secrets Manager secret
@@ -211,16 +212,20 @@ this change hold the envelope only and still load.
 If the write fails or times out, the request fails, no signature is released,
 and the proxy logs the cause and refuses every later sign until it restarts,
 since the failed write can still land after a newer one. While stopped, the
-proxy answers inventory with HTTP 503 and the reason, so the signer's
-`/readyz` reports the backend unavailable instead of looking healthy while
-signs return 502; a restart clears it. The running enclave has still counted
+proxy also answers inventory with HTTP 503, so a signer started against it
+fails closed; a proxy restart clears it. The running enclave has still counted
 the issue number. After the restart reloads the stored state, a retry of the
 same request (same payload, fresh nonce and challenge) is signed again and its
-state saved, whether or not the failed write landed. This recovers a response
-lost after the state was saved. The retry is subject to the signer's own
-checks, and the signer records an issue counter only once it has the
-signature. If the failed write did not land, the restart reloads an older
-state and the retry signs as a new counter.
+state saved, whether or not the failed write landed. If the failed write did
+not land, the restart reloads an older state and the retry signs as a new
+counter.
+
+The same re-sign recovers a response lost between the enclave and the signer,
+and a signer whose watermark commit failed: the signer commits an issue
+counter only after it holds a verified signature, so it has no record of the
+number and passes the retry to the enclave. Once the signer has committed the
+number, its watermark refuses a retry of it, even when the signer's own
+response to its caller was lost.
 
 The sealed state is versioned. A state of the previous version holds no
 payload hash; it still loads and allows no re-sign at its counter, so an equal

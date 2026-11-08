@@ -128,7 +128,8 @@ func sealCounterState(
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("generate counter nonce: %w", err)
 	}
-	return gcm.Seal(nonce, nonce, plain, counterAAD(counterStateVersion, pub, kmsKeyID)), nil
+	aad := counterAAD(counterStateVersion, pub, kmsKeyID)
+	return gcm.Seal(nonce, nonce, plain, aad), nil
 }
 
 // openCounterState authenticates sealed and returns the record. The version

@@ -893,62 +893,38 @@ func (b *AttestedBackend) Load(ctx context.Context) error {
 	b.version1 = false
 	b.mu.Unlock()
 
-	keys, err := b.attest(ctx)
-	if err != nil {
-		return err
-	}
-	b.mu.Lock()
-	b.keys = keys
-	b.mu.Unlock()
-	return nil
-}
-
-// Health attests the enclave afresh and reports whether it answers with
-// verified evidence. It changes nothing the backend serves, so a probe can
-// run while signing continues, and an enclave that stopped signing but still
-// answers is reported by the enclave failing the inventory request.
-func (b *AttestedBackend) Health(ctx context.Context) error {
-	_, err := b.attest(ctx)
-	return err
-}
-
-// attest fetches and verifies the enclave inventory and returns the key
-// handles it describes, without installing them.
-func (b *AttestedBackend) attest(
-	ctx context.Context,
-) (map[KeyHash]*attestedKey, error) {
 	nonce := make([]byte, attestedNonceSize)
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("attested nonce: %w", err)
+		return fmt.Errorf("attested nonce: %w", err)
 	}
 	inv, err := b.enclave.Inventory(ctx, nonce)
 	if err != nil {
-		return nil, fmt.Errorf("attested inventory: %w", err)
+		return fmt.Errorf("attested inventory: %w", err)
 	}
 	if inv.Version != AttestedProtocol {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"%w: inventory version %q",
 			ErrAttestedProtocol,
 			inv.Version,
 		)
 	}
 	if len(inv.Attestation) == 0 {
-		return nil, fmt.Errorf("%w: missing attestation evidence", ErrAttestation)
+		return fmt.Errorf("%w: missing attestation evidence", ErrAttestation)
 	}
 	if err := b.verifier.Verify(ctx, inv.Attestation, InventoryBinding(nonce, inv.Keys)); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrAttestation, err)
+		return fmt.Errorf("%w: %w", ErrAttestation, err)
 	}
 	keys := make(map[KeyHash]*attestedKey, len(inv.Keys))
 	for _, ki := range inv.Keys {
 		if !ki.Role.Valid() {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"%w: invalid key role %q",
 				ErrAttestedProtocol,
 				ki.Role,
 			)
 		}
 		if len(ki.PublicKey) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"%w: public key must be %d bytes, got %d",
 				ErrAttestedProtocol,
 				ed25519.PublicKeySize,
@@ -957,7 +933,7 @@ func (b *AttestedBackend) attest(
 		}
 		hash := HashPublicKey(ki.PublicKey)
 		if _, dup := keys[hash]; dup {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"%w: duplicate key %s in inventory",
 				ErrAttestedProtocol,
 				hash,
@@ -975,7 +951,10 @@ func (b *AttestedBackend) attest(
 			profile:     b.profile,
 		}
 	}
-	return keys, nil
+	b.mu.Lock()
+	b.keys = keys
+	b.mu.Unlock()
+	return nil
 }
 
 // serves reports whether k is the handle the current attested load issued.

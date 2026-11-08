@@ -172,8 +172,8 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// A stopped proxy still reaches a healthy enclave, so inventory would
-		// succeed while every sign fails. The signer treats an unavailable
-		// inventory as an unavailable backend, which makes the stop visible.
+		// succeed while every sign fails. Refusing it makes a signer that
+		// loads this backend while the proxy is stopped fail closed.
 		if p.saveFailed.Load() {
 			http.Error(
 				w,

@@ -457,6 +457,7 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "nonce replay")
+	requireOtherPayloadRefused(t, service, request, 4)
 	request.Nonce = bytes.Repeat([]byte{2}, requestNonceSize)
 	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
@@ -471,10 +472,29 @@ func TestMalformedLifecycleRequestsPreserveLoadedState(t *testing.T) {
 	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.ErrorContains(t, err, "nonce replay")
+	requireOtherPayloadRefused(t, service, request, 5)
 	request.Nonce = bytes.Repeat([]byte{3}, requestNonceSize)
 	authorizeTestRequest(t, service, request)
 	_, err = service.Sign(context.Background(), request)
 	require.NoError(t, err, "an identical payload at the equal counter signs again")
+}
+
+// requireOtherPayloadRefused signs a different payload at request's counter
+// and requires the refusal only a kept counter and payload hash produce.
+func requireOtherPayloadRefused(
+	t *testing.T,
+	service *Service,
+	request *backend.AttestedRequest,
+	nonce byte,
+) {
+	t.Helper()
+	other := *request
+	other.Payload = bytes.Clone(request.Payload)
+	other.Payload[47] ^= 1
+	other.Nonce = bytes.Repeat([]byte{nonce}, requestNonceSize)
+	authorizeTestRequest(t, service, &other)
+	_, err := service.Sign(context.Background(), &other)
+	require.ErrorContains(t, err, "different payload")
 }
 
 func TestSameKeyReloadPreservesAuthorizedChallenge(t *testing.T) {
