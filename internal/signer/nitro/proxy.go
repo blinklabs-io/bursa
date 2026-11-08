@@ -56,6 +56,10 @@ type ProxyHandler struct {
 	// signTimeout bounds each sign request, so a stalled enclave call or save
 	// cannot hold the slot indefinitely.
 	signTimeout time.Duration
+	// saveFailed is set, under the slot, once a save fails. A failed write
+	// can still land after a later one and roll the stored state back, so
+	// the proxy signs nothing more until it restarts and reloads.
+	saveFailed bool
 }
 
 // NewProxyHandler constructs the host-side signer proxy.
@@ -103,7 +107,8 @@ func writeJSON(w http.ResponseWriter, value any) {
 // releasing the signature. A failed save, or a response without state, fails
 // the request and releases nothing. The running enclave has still counted
 // the issue number and refuses it until a restart reloads the stored state,
-// which predates this request.
+// which predates this request. After a failed save the proxy refuses every
+// later sign, so a write that still lands cannot overtake a newer one.
 //
 // The sealed state lives in one secret. Replicas pointed at the same secret
 // would overwrite each other's state (last writer wins, no compare-and-swap),
@@ -122,6 +127,11 @@ func (p *ProxyHandler) signAndPersist(
 		return backend.AttestedResponse{}, ctx.Err()
 	}
 	defer func() { <-p.signSlot }()
+	if p.saveFailed {
+		return backend.AttestedResponse{}, errors.New(
+			"an earlier sealed counter state save failed; restart the proxy",
+		)
+	}
 	response, err := p.enclave.Sign(ctx, request)
 	if err != nil {
 		return backend.AttestedResponse{}, err
@@ -132,10 +142,11 @@ func (p *ProxyHandler) signAndPersist(
 		)
 	}
 	if err := p.saver.SaveSealedState(ctx, response.SealedState); err != nil {
+		p.saveFailed = true
 		// the enclave has counted this issue number; the operator needs the
 		// cause to choose a recovery
 		slog.Error(
-			"sealed counter state not saved; signature withheld",
+			"sealed counter state not saved; signature withheld and signing stopped until restart",
 			"error", err,
 		)
 		return backend.AttestedResponse{}, err

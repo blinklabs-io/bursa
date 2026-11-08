@@ -271,8 +271,9 @@ func TestProxyBoundsStalledSave(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a stalled save held the sign request without a bound")
 	}
-	// the stalled request gave up its slot
-	require.Equal(t, http.StatusOK, postSign(handler, 6).Code)
+	// the stalled write may still land, so the proxy signs nothing more
+	require.Equal(t, http.StatusBadGateway, postSign(handler, 6).Code)
+	require.Equal(t, 1, enclave.signCalls())
 }
 
 func TestProxyQueuedSignHonorsDeadline(t *testing.T) {
@@ -314,4 +315,31 @@ func TestProxyQueuedSignHonorsDeadline(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first sign request never completed")
 	}
+}
+
+// failOnceSaver fails its first save and accepts every later one.
+type failOnceSaver struct{ calls atomic.Int32 }
+
+func (s *failOnceSaver) SaveSealedState(context.Context, []byte) error {
+	if s.calls.Add(1) == 1 {
+		return errors.New("secrets manager unavailable")
+	}
+	return nil
+}
+
+func TestProxyRefusesSignAfterFailedSave(t *testing.T) {
+	t.Parallel()
+	_, key, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	enclave, saver := &stateEnclave{key: key}, &failOnceSaver{}
+	handler, err := NewProxyHandler(enclave, saver)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusBadGateway, postSign(handler, 5).Code)
+	// the failed write may still land, so no later write may overtake it
+	response := postSign(handler, 6)
+	require.Equal(t, http.StatusBadGateway, response.Code)
+	require.NotContains(t, response.Body.String(), "signature")
+	require.Equal(t, 1, enclave.signCalls())
+	require.Equal(t, int32(1), saver.calls.Load())
 }

@@ -202,8 +202,10 @@ reload on a loaded enclave never lowers its counter. Secrets written before
 this change hold the envelope only and still load.
 
 If the write fails or times out, the request fails, no signature is released,
-and the proxy logs the cause. The running enclave has still counted that issue
-number and refuses it until the enclave and the proxy are restarted. A write
+and the proxy logs the cause and refuses every later sign until it restarts,
+since the failed write can still land after a newer one. The running enclave
+has still counted that issue number and refuses it until the enclave and the
+proxy are restarted. A write
 reported as failed can still have been stored, and a stored write's response
 can fail to reach the signer; then the reloaded state already holds the number
 and the restart does not clear it. Restoring the previous secret version makes
