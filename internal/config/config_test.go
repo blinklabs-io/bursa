@@ -426,6 +426,12 @@ func TestDefaultDebugListenAddressIsLoopback(t *testing.T) {
 }
 
 func TestKESAgentConfig_ClientAllowlist(t *testing.T) {
+	// The file cases must not see an allowlist from the environment;
+	// t.Setenv restores the original value when the test ends.
+	t.Setenv("KESAGENT_ATTESTED_CLIENT_SPKI_SHA256", "")
+	if err := os.Unsetenv("KESAGENT_ATTESTED_CLIENT_SPKI_SHA256"); err != nil {
+		t.Fatalf("unset allowlist variable: %v", err)
+	}
 	fp := strings.Repeat("ab", 32)
 	upper := strings.ToUpper(fp)
 	load := func(t *testing.T, yaml string) (*Config, error) {

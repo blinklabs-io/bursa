@@ -67,7 +67,7 @@ accepted. To revoke or limit individual clients, set
 `attested_client_spki_sha256` to a list of SHA-256 fingerprints (64 hex
 characters each) of the permitted client certificates' SubjectPublicKeyInfo,
 for example from
-`openssl x509 -in client.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256`.
+`openssl x509 -in client.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -r | cut -d' ' -f1`.
 When the list is set, a client whose verified certificate is not listed is
 disconnected before the hello. Malformed entries fail at config load. The
 environment variable `KESAGENT_ATTESTED_CLIENT_SPKI_SHA256` takes a
