@@ -631,10 +631,12 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
   first written and verified in persistent staging object `0x20e50024`; while
   it contains a valid list, it is authoritative. The canonical copy is then
   replaced and verified before the staging copy is deleted. After staging
-  verifies, an interruption leaves at least one valid list. A malformed stage
-  is refused rather than ignored in favor of the older canonical copy, so an
-  interrupted write fails closed instead of returning a provisioned device to
-  the unsigned bootstrap state.
+  verifies, an interruption leaves at least one valid list, and recovery uses
+  the valid stage or the canonical copy. A stage that is present but
+  unreadable or malformed is not replaced by the older canonical copy: the
+  device refuses every authenticated route until a restart reads a valid list
+  or a device wipe resets it. An interrupted write therefore fails closed
+  instead of returning a provisioned device to the unsigned bootstrap state.
 - A host key list the device cannot read refuses every authenticated route,
   because no key is left to check a signature against.
 - `POST /wipe/device` stays confirmed by the identity public key alone and
