@@ -16,15 +16,11 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -71,93 +67,7 @@ drop-key, info.`,
 	}
 	cmd.Flags().
 		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
-	cmd.AddCommand(kesAgentGenIdentityKeyCommand())
 	return cmd
-}
-
-func kesAgentGenIdentityKeyCommand() *cobra.Command {
-	var skeyFile, vkeyFile string
-	cmd := &cobra.Command{
-		Use:   "gen-identity-key",
-		Short: "Generate the Ed25519 identity key for the identity-key attestation provider",
-		Long: `Generate an Ed25519 identity key for the identity-key attestation provider.
-
-Writes the signing key envelope (mode 0600) and the matching verification key
-envelope, and prints the public key as hex on stdout. Pin that hex in the
-client that verifies attestation. Existing files are never overwritten.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return genIdentityKey(skeyFile, vkeyFile, cmd.OutOrStdout())
-		},
-	}
-	cmd.Flags().StringVar(&skeyFile, "signing-key-file", "", "Path to write the identity signing key")
-	cmd.Flags().StringVar(&vkeyFile, "verification-key-file", "", "Path to write the identity verification key")
-	_ = cmd.MarkFlagRequired("signing-key-file")
-	_ = cmd.MarkFlagRequired("verification-key-file")
-	return cmd
-}
-
-// genIdentityKey creates the identity signing and verification key files
-// without overwriting either, and prints the public key as hex to out.
-func genIdentityKey(skeyFile, vkeyFile string, out io.Writer) error {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return fmt.Errorf("generate identity key: %w", err)
-	}
-	defer clear(priv)
-	skeyEnv, err := identityKeyEnvelope(
-		kesagent.IdentityKeyFileType,
-		"KES agent identity signing key",
-		priv.Seed(),
-	)
-	if err != nil {
-		return err
-	}
-	defer clear(skeyEnv)
-	vkeyEnv, err := identityKeyEnvelope(
-		kesagent.IdentityVKeyFileType,
-		"KES agent identity verification key",
-		pub,
-	)
-	if err != nil {
-		return err
-	}
-	if err := writeNewFile(skeyFile, skeyEnv, 0o600); err != nil {
-		return err
-	}
-	if err := writeNewFile(vkeyFile, vkeyEnv, 0o644); err != nil {
-		_ = os.Remove(skeyFile)
-		return err
-	}
-	_, err = fmt.Fprintln(out, hex.EncodeToString(pub))
-	return err
-}
-
-func identityKeyEnvelope(typ, desc string, key []byte) ([]byte, error) {
-	return json.MarshalIndent(map[string]string{
-		"type":        typ,
-		"description": desc,
-		"cborHex":     "5820" + hex.EncodeToString(key),
-	}, "", "  ")
-}
-
-// writeNewFile creates path exclusively, so an existing file is never
-// overwritten.
-func writeNewFile(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }
 
 // runKesAgent runs the KES agent daemon to completion and returns the process
@@ -314,19 +224,20 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
-		attestedCfg, err = attestedServiceConfig(kc)
-		if err != nil {
+		attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
+		if err != nil || kc.AttestationProvider == "" {
+			if err == nil {
+				err = errors.New("kes_agent.attestation_provider is required")
+			}
 			logger.Error("invalid attested KES configuration", "error", err)
 			_ = attestedLn.Close()
 			_ = serviceLn.Close()
 			_ = controlLn.Close()
 			return 1
 		}
-		if ia, ok := attestedCfg.Attester.(*kesagent.IdentityKeyAttester); ok {
-			logger.Info(
-				"attestation identity public key",
-				"identity_public_key", hex.EncodeToString(ia.Public()),
-			)
+		attestedCfg = kesagent.AttestedServiceConfig{
+			Provider: kc.AttestationProvider,
+			Attester: attester,
 		}
 	}
 
@@ -383,50 +294,6 @@ func runKesAgent(configFile string) int {
 	_ = os.Remove(kc.ControlSocket)
 	logger.Info("kes-agent shutdown complete")
 	return exitCode
-}
-
-// attestedServiceConfig builds the attested service provider and attester.
-// The identity-key provider signs with a local key; every other provider
-// needs a workload-local adapter at attester_address.
-func attestedServiceConfig(
-	kc config.KESAgentConfig,
-) (kesagent.AttestedServiceConfig, error) {
-	if kc.AttestationProvider == "" {
-		return kesagent.AttestedServiceConfig{}, errors.New(
-			"kes_agent.attestation_provider is required",
-		)
-	}
-	if kc.AttestationProvider == kesagent.IdentityKeyProvider {
-		if kc.AttestationIdentityKeyFile == "" {
-			return kesagent.AttestedServiceConfig{}, errors.New(
-				"kes_agent.attestation_identity_key_file is required for the identity-key provider",
-			)
-		}
-		key, err := kesagent.LoadIdentityKey(kc.AttestationIdentityKeyFile)
-		if err != nil {
-			return kesagent.AttestedServiceConfig{}, fmt.Errorf(
-				"read attestation identity key: %w",
-				err,
-			)
-		}
-		defer clear(key)
-		attester, err := kesagent.NewIdentityKeyAttester(key)
-		if err != nil {
-			return kesagent.AttestedServiceConfig{}, err
-		}
-		return kesagent.AttestedServiceConfig{
-			Provider: kc.AttestationProvider,
-			Attester: attester,
-		}, nil
-	}
-	attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
-	if err != nil {
-		return kesagent.AttestedServiceConfig{}, err
-	}
-	return kesagent.AttestedServiceConfig{
-		Provider: kc.AttestationProvider,
-		Attester: attester,
-	}, nil
 }
 
 func listenAttestedKES(

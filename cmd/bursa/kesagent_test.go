@@ -15,18 +15,9 @@
 package main
 
 import (
-	"bytes"
-	"crypto/ed25519"
-	"encoding/hex"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"testing"
-
-	"github.com/blinklabs-io/bursa/internal/config"
-	"github.com/blinklabs-io/bursa/internal/kesagent"
 )
 
 func TestParseSocketMode(t *testing.T) {
@@ -230,140 +221,5 @@ func TestLoadColdVKeyMalformedTextFileOfLength32(t *testing.T) {
 		t.Fatal(
 			"expected loadColdVKey to reject malformed text-shaped 32-byte input",
 		)
-	}
-}
-
-func TestAttestedServiceConfigIdentityKey(t *testing.T) {
-	t.Parallel()
-	seed := make([]byte, ed25519.SeedSize)
-	seed[0] = 7
-	keyFile := filepath.Join(t.TempDir(), "identity.skey")
-	envelope := `{"type":"` + kesagent.IdentityKeyFileType +
-		`","cborHex":"5820` + hex.EncodeToString(seed) + `"}`
-	if err := os.WriteFile(keyFile, []byte(envelope), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := attestedServiceConfig(config.KESAgentConfig{
-		AttestationProvider:        kesagent.IdentityKeyProvider,
-		AttestationIdentityKeyFile: keyFile,
-	})
-	if err != nil {
-		t.Fatalf("identity-key without attester_address refused: %v", err)
-	}
-	if cfg.Provider != kesagent.IdentityKeyProvider || cfg.Attester == nil {
-		t.Fatalf("config = %+v", cfg)
-	}
-	binding := kesagent.AttestationBinding(
-		[]byte("n"), []byte("c"), []byte("k"), []byte("o"), 1,
-	)
-	ev, err := cfg.Attester.Evidence(t.Context(), binding)
-	if err != nil {
-		t.Fatalf("Evidence: %v", err)
-	}
-	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
-	if !ed25519.Verify(pub, binding, ev) {
-		t.Fatal("evidence is not the identity key's signature over the binding")
-	}
-
-	if _, err := attestedServiceConfig(config.KESAgentConfig{
-		AttestationProvider: kesagent.IdentityKeyProvider,
-	}); err == nil {
-		t.Fatal("identity-key without a key file accepted")
-	}
-	if _, err := attestedServiceConfig(config.KESAgentConfig{
-		AttestationProvider:        kesagent.IdentityKeyProvider,
-		AttestationIdentityKeyFile: filepath.Join(t.TempDir(), "missing"),
-	}); err == nil {
-		t.Fatal("identity-key with a missing key file accepted")
-	}
-}
-
-func TestAttestedServiceConfigPlatformProvidersUnchanged(t *testing.T) {
-	t.Parallel()
-	if _, err := attestedServiceConfig(config.KESAgentConfig{}); err == nil {
-		t.Fatal("no provider and no attester accepted")
-	}
-	if _, err := attestedServiceConfig(config.KESAgentConfig{
-		AttesterAddress: "unix:///run/bursa/attester.sock",
-	}); err == nil {
-		t.Fatal("attester without a provider accepted")
-	}
-	for _, provider := range []string{"nitro", "confidential-space"} {
-		if _, err := attestedServiceConfig(config.KESAgentConfig{
-			AttestationProvider: provider,
-		}); err == nil {
-			t.Fatalf("%s without attester_address accepted", provider)
-		}
-		cfg, err := attestedServiceConfig(config.KESAgentConfig{
-			AttestationProvider: provider,
-			AttesterAddress:     "unix:///run/bursa/attester.sock",
-		})
-		if err != nil || cfg.Provider != provider {
-			t.Fatalf("%s with attester refused: %v", provider, err)
-		}
-	}
-}
-
-func TestGenIdentityKey(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	skey := filepath.Join(dir, "identity.skey")
-	vkey := filepath.Join(dir, "identity.vkey")
-	var out bytes.Buffer
-	if err := genIdentityKey(skey, vkey, &out); err != nil {
-		t.Fatalf("genIdentityKey: %v", err)
-	}
-
-	key, err := kesagent.LoadIdentityKey(skey)
-	if err != nil {
-		t.Fatalf("generated key does not load: %v", err)
-	}
-	pub := key.Public().(ed25519.PublicKey)
-	if got := strings.TrimSpace(out.String()); got != hex.EncodeToString(pub) {
-		t.Fatalf("printed public key %q does not match the signing key", got)
-	}
-	if strings.Contains(out.String(), hex.EncodeToString(key.Seed())) {
-		t.Fatal("stdout contains the private seed")
-	}
-
-	vdata, err := os.ReadFile(vkey)
-	if err != nil {
-		t.Fatalf("read vkey: %v", err)
-	}
-	var env struct {
-		Type    string `json:"type"`
-		CborHex string `json:"cborHex"`
-	}
-	if err := json.Unmarshal(vdata, &env); err != nil {
-		t.Fatalf("vkey is not JSON: %v", err)
-	}
-	if env.Type != kesagent.IdentityVKeyFileType ||
-		env.CborHex != "5820"+hex.EncodeToString(pub) {
-		t.Fatalf("vkey envelope = %+v", env)
-	}
-
-	if runtime.GOOS != "windows" {
-		fi, err := os.Stat(skey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fi.Mode().Perm() != 0o600 {
-			t.Fatalf("signing key mode = %o, want 600", fi.Mode().Perm())
-		}
-	}
-
-	before, _ := os.ReadFile(skey)
-	if err := genIdentityKey(skey, filepath.Join(dir, "other.vkey"), &out); err == nil {
-		t.Fatal("existing signing key file was overwritten")
-	}
-	if after, _ := os.ReadFile(skey); !bytes.Equal(before, after) {
-		t.Fatal("existing signing key file content changed")
-	}
-	if err := genIdentityKey(filepath.Join(dir, "other.skey"), vkey, &out); err == nil {
-		t.Fatal("existing verification key file was overwritten")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "other.skey")); err == nil {
-		t.Fatal("signing key left behind after the verification key was refused")
 	}
 }
