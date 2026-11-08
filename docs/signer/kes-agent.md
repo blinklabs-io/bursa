@@ -134,7 +134,8 @@ to KES forward security. A period strictly below the floor is refused; a period
 equal to the floor is allowed (a producer signs many headers within one period).
 The floor is persisted to `guard_file` via an atomic temp-file + rename write.
 Each profile has its own guard file and floor.
-`guard_file` is required; the daemon refuses to start without a durable path.
+`guard_file` is required unless a shared guard store is configured (below);
+the daemon refuses to start without a durable path.
 In `sign` mode, requests for a period later than the agent's wall-clock current
 period are rejected before key evolution or guard persistence.
 
@@ -169,6 +170,42 @@ the approved workload measurement, then stage and install a key whose current
 period is at or above that floor. A replacement workload must use that same
 floor or a newly certified KES key. Do not run active and standby agents from
 independent guard copies.
+
+### Shared guard store (PostgreSQL)
+
+Several agent replicas can share one guard through PostgreSQL instead of guard
+files. Without `store` the agent uses guard files exactly as described above.
+
+```yaml
+kes_agent:
+  store:
+    type: "postgres"          # default "file": each profile's guard_file
+    dsn_env: "KESAGENT_PG_DSN" # environment variable holding the DSN
+```
+
+With `type: postgres`, leave `guard_file` unset (the agent refuses both). The
+DSN is read only from the variable `dsn_env` names. A non-loopback host
+requires `sslmode=verify-full`; a Unix socket or loopback host does not. The
+agent uses the signer's watermark tables (`signer_watermark` and
+`signer_counter_watermark`) and creates them if they do not exist. Its records
+are keyed by the hash of the pool cold verification key and scoped by the
+profile's network (`system_start`), so one cold key on several networks keeps
+separate records.
+
+- The KES period floor is one shared non-decreasing record: a period below it
+  is refused on every replica.
+- Each signed slot is one shared record of its header body. The first body
+  recorded for a slot wins on every replica; the identical body may be signed
+  again (a retry); a different body is refused as an equivocation. Two
+  replicas can never both sign different headers for one slot.
+- Refusing a slot older than the last one signed is per replica, from the
+  replica's own memory, and starts empty on each start.
+
+The first start against an empty store has no floor, so the agent logs a
+warning and sets `bursa_kesagent_guard_fresh` to 1, as for a missing guard
+file. Moving from guard files to the store does not copy the file's floor.
+A database error refuses the signature; it is not counted as a slot-guard
+refusal.
 
 ## Locked memory
 

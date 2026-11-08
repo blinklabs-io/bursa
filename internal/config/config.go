@@ -96,6 +96,21 @@ type KESAgentConfig struct {
 	// cold_vkey_hex, system_start, slots_per_kes_period, guard_file) must
 	// be left unset. Profiles are configured in YAML only.
 	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`
+	// Store optionally moves every profile's period floor and signed slot
+	// records from guard files into a database that several agent replicas
+	// share. Without it the agent uses guard files. YAML only.
+	Store KESAgentStoreConfig `yaml:"store"                   ignored:"true"`
+}
+
+// KESAgentStoreConfig selects where the KES agent keeps its slot guard.
+type KESAgentStoreConfig struct {
+	// Type is "file" (the default when empty: each profile's guard_file) or
+	// "postgres" (a shared PostgreSQL database; guard_file must be unset).
+	Type string `yaml:"type"`
+	// DSNEnv names an environment variable holding the PostgreSQL connection
+	// string, so credentials stay out of the config file. A non-loopback
+	// host requires sslmode=verify-full.
+	DSNEnv string `yaml:"dsn_env"`
 }
 
 // KESAgentProfileConfig is one pool on one network served by the KES agent.

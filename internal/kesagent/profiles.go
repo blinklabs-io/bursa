@@ -188,7 +188,14 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			)
 		}
 		pools[poolKey] = pc.Name
-		p, err := newProfile(pc, cfg.Mode, logger, metrics, &a.now)
+		p, err := newProfile(
+			pc,
+			cfg.Mode,
+			logger,
+			metrics,
+			&a.now,
+			cfg.SharedGuard,
+		)
 		if err != nil {
 			a.Close()
 			return nil, fmt.Errorf("profile %q: %w", pc.Name, err)

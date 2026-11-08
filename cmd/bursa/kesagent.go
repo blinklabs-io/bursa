@@ -34,6 +34,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/kesagent"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/bursa/internal/version"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/prometheus/client_golang/prometheus"
@@ -152,6 +153,18 @@ func runKesAgent(configFile string) int {
 		}
 	}
 
+	var sharedGuard kesagent.SharedGuardStore
+	store, err := openKesAgentStore(kc.Store)
+	if err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
+	if store != nil {
+		// Deferred before agent.Close, so it runs after it.
+		defer store.Close()
+		sharedGuard = store
+	}
+
 	metrics := kesagent.NewMetrics()
 	metrics.Register(prometheus.DefaultRegisterer)
 
@@ -160,6 +173,7 @@ func runKesAgent(configFile string) int {
 		EvolveInterval: evolveInterval,
 		Version:        version.GetVersionString(),
 		Profiles:       profiles,
+		SharedGuard:    sharedGuard,
 	}, logger, metrics)
 	if err != nil {
 		logger.Error("failed to create KES agent", "error", err)
@@ -321,6 +335,62 @@ func listenAttestedKES(
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		MinVersion:   tls.VersionTLS13,
 	}), nil
+}
+
+// kesAgentStoreOpenTimeout bounds connecting to the shared guard store and
+// creating its tables at startup.
+const kesAgentStoreOpenTimeout = 30 * time.Second
+
+// openKesAgentStore opens the shared guard store sc selects. It returns nil
+// for the file store, the default, where each profile keeps a guard file.
+func openKesAgentStore(
+	sc config.KESAgentStoreConfig,
+) (*watermark.PostgresWatermark, error) {
+	dsn, err := kesAgentStoreDSN(sc)
+	if err != nil || dsn == "" {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		kesAgentStoreOpenTimeout,
+	)
+	defer cancel()
+	// NewPostgresWatermark refuses a non-loopback host without
+	// hostname-verified TLS (sslmode=verify-full).
+	return watermark.NewPostgresWatermark(ctx, dsn)
+}
+
+// kesAgentStoreDSN validates sc and returns the PostgreSQL connection string
+// it names, or "" for the file store.
+func kesAgentStoreDSN(sc config.KESAgentStoreConfig) (string, error) {
+	switch sc.Type {
+	case "", "file":
+		if sc.DSNEnv != "" {
+			return "", errors.New(
+				"kes_agent.store.dsn_env is set but kes_agent.store.type is not \"postgres\"",
+			)
+		}
+		return "", nil
+	case "postgres":
+		if sc.DSNEnv == "" {
+			return "", errors.New(
+				"kes_agent.store.type \"postgres\" requires kes_agent.store.dsn_env",
+			)
+		}
+		dsn := os.Getenv(sc.DSNEnv)
+		if dsn == "" {
+			return "", fmt.Errorf(
+				"kes_agent.store.dsn_env %q is set but the environment variable is empty",
+				sc.DSNEnv,
+			)
+		}
+		return dsn, nil
+	default:
+		return "", fmt.Errorf(
+			"kes_agent.store.type must be \"file\" or \"postgres\", got %q",
+			sc.Type,
+		)
+	}
 }
 
 // kesAgentProfiles builds the agent's profiles from kc: the profiles list, or

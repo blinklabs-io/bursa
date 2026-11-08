@@ -80,6 +80,12 @@ type Config struct {
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	GuardPath         string        // durable monotonic period store path
+
+	// SharedGuard, when set, holds every profile's period floor and signed
+	// slot records in place of guard files, so several agent replicas can
+	// share them. The caller owns it and closes it after Agent.Close. Profiles
+	// must then leave GuardPath unset.
+	SharedGuard SharedGuardStore
 }
 
 // ProfileConfig configures one profile: a pool's cold verification key, the
@@ -139,7 +145,7 @@ type profile struct {
 	mode    string
 	logger  *slog.Logger
 	metrics *Metrics
-	guard   *PeriodGuard
+	guard   slotGuard
 	nowFn   *func() time.Time // the agent's clock
 
 	mu      sync.Mutex
@@ -170,13 +176,15 @@ func (p *profile) maxEvolutions() uint64 {
 	return m
 }
 
-// newProfile validates cfg and opens the profile's durable period guard.
+// newProfile validates cfg and opens the profile's durable period guard: its
+// guard file, or its records in shared when shared is set.
 func newProfile(
 	cfg ProfileConfig,
 	mode string,
 	logger *slog.Logger,
 	metrics *Metrics,
 	nowFn *func() time.Time,
+	shared SharedGuardStore,
 ) (*profile, error) {
 	if cfg.Depth == 0 {
 		cfg.Depth = kes.CardanoKesDepth
@@ -218,12 +226,28 @@ func newProfile(
 	if len(cfg.ColdVKey) != ed25519.PublicKeySize {
 		return nil, ErrColdVKey
 	}
-	if cfg.GuardPath == "" {
+	var guard slotGuard
+	switch {
+	case shared != nil && cfg.GuardPath != "":
+		// Refused rather than ignored, so no one believes the file still
+		// guards the profile.
+		return nil, errors.New(
+			"kesagent: guard_path must be unset when a shared guard store is configured",
+		)
+	case shared != nil:
+		g, err := newSharedGuard(shared, cfg.ColdVKey, cfg.SystemStart)
+		if err != nil {
+			return nil, err
+		}
+		guard = g
+	case cfg.GuardPath == "":
 		return nil, errors.New("kesagent: guard_path is required")
-	}
-	guard, err := NewPeriodGuard(cfg.GuardPath)
-	if err != nil {
-		return nil, err
+	default:
+		g, err := NewPeriodGuard(cfg.GuardPath)
+		if err != nil {
+			return nil, err
+		}
+		guard = g
 	}
 	p := &profile{
 		cfg:     cfg,
@@ -238,7 +262,12 @@ func newProfile(
 	// means the last signed slot was lost, so the slot guard cannot refuse a
 	// second header for it. Starting is still allowed; operators are told.
 	fresh := guard.Fresh()
-	if fresh {
+	if fresh && shared != nil {
+		p.logger.Warn(
+			"shared guard store has no period floor for this profile: " +
+				"expected only on its first start against the store",
+		)
+	} else if fresh {
 		p.logger.Warn(
 			"guard file missing or empty: starting with no record of "+
 				"signed slots; expected only on a first start",

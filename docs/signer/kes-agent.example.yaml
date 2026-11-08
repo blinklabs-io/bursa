@@ -62,6 +62,15 @@ kes_agent:
   # KES period below the highest already served, across restarts/clock jumps.
   guard_file: "/var/lib/bursa/kes-agent/guard.json"  # env: KESAGENT_GUARD_FILE
 
+  # Optional shared guard store, so several agent replicas share each
+  # profile's period floor and signed slot records. Default "file" uses
+  # guard_file above. With "postgres", leave guard_file unset; the DSN is read
+  # from the variable dsn_env names, and a non-loopback host requires
+  # sslmode=verify-full. YAML only.
+  # store:
+  #   type: "postgres"
+  #   dsn_env: "KESAGENT_PG_DSN"
+
   # Several pools, on one network or several, can be served by one agent in
   # sign mode. profiles replaces the single-pool settings above
   # (cold_vkey_file/cold_vkey_hex, system_start, slots_per_kes_period,
