@@ -234,7 +234,11 @@ func TestAttestedRestartCannotInstallBelowDurableFloor(t *testing.T) {
 	) {
 		t.Fatalf("restart install error = %v, want ErrPeriodRollback", err)
 	}
-	if _, err := restarted.attestedKeyState(); !errors.Is(err, ErrNoActiveKey) {
+	sole, err := restarted.selectProfile("", nil)
+	if err != nil {
+		t.Fatalf("selectProfile: %v", err)
+	}
+	if _, err := sole.attestedKeyState(); !errors.Is(err, ErrNoActiveKey) {
 		t.Fatalf("restarted agent exposed state after rollback: %v", err)
 	}
 }

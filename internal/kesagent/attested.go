@@ -93,14 +93,6 @@ type attestedKeyState struct {
 	period   uint64
 }
 
-func (a *Agent) attestedKeyState() (attestedKeyState, error) {
-	p, err := a.selectProfile("", nil)
-	if err != nil {
-		return attestedKeyState{}, err
-	}
-	return p.attestedKeyState()
-}
-
 // VerifyAttestation validates a response before a client admits the workload.
 func VerifyAttestation(
 	ctx context.Context,
@@ -311,7 +303,15 @@ func (a *Agent) serveAttestedConn(
 		_ = writeFrame(conn, resp)
 		return
 	}
-	state, err := a.attestedKeyState()
+	// The selector picks which profile's key state is attested. It does not
+	// bind the session: sign requests still route by header.
+	selected, err := a.selectProfile(req.Profile, req.KESVKey)
+	if err != nil {
+		resp.Error = err.Error()
+		_ = writeFrame(conn, resp)
+		return
+	}
+	state, err := selected.attestedKeyState()
 	if err != nil {
 		resp.Error = err.Error()
 		_ = writeFrame(conn, resp)
