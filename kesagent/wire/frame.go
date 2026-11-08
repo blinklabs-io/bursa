@@ -15,7 +15,6 @@
 package wire
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -34,6 +33,17 @@ const (
 	// timing includes idle time before the length header; outbound timing starts
 	// immediately before the header write.
 	FrameIOTimeout = 10 * time.Second
+
+	// Suggested per-message caps for callers of ReadFrameLimit and
+	// WriteFrameLimit. They are advisory: the Limit functions enforce only the
+	// max they are given, and the agent keeps MaxFrameLen.
+
+	// MaxHelloFrameLen bounds the initial handshake frame.
+	MaxHelloFrameLen = 4 << 10
+	// MaxKeyPushFrameLen bounds a serve-key push.
+	MaxKeyPushFrameLen = 8 << 10
+	// MaxSignFrameLen bounds a sign-mode request or response.
+	MaxSignFrameLen = 64 << 10
 )
 
 // DeadlineWriter is a writer with a write deadline, such as a net.Conn.
@@ -42,8 +52,27 @@ type DeadlineWriter interface {
 	SetWriteDeadline(time.Time) error
 }
 
-// WriteFrame writes a single length-prefixed JSON frame.
+// WriteFrame writes a single length-prefixed JSON frame, bounding the write
+// with FrameIOTimeout.
 func WriteFrame(w DeadlineWriter, v any) (retErr error) {
+	if err := w.SetWriteDeadline(time.Now().Add(FrameIOTimeout)); err != nil {
+		return fmt.Errorf("kesagent: set frame write deadline: %w", err)
+	}
+	defer func() {
+		if err := w.SetWriteDeadline(time.Time{}); retErr == nil && err != nil {
+			retErr = fmt.Errorf("kesagent: clear frame write deadline: %w", err)
+		}
+	}()
+	return WriteFrameLimit(w, MaxFrameLen, v)
+}
+
+// WriteFrameLimit writes a single length-prefixed JSON frame of at most max
+// payload bytes (and never more than MaxFrameLen). It sets no deadline; the
+// caller owns them. A short write is an error.
+func WriteFrameLimit(w io.Writer, max int, v any) error {
+	if max > MaxFrameLen {
+		max = MaxFrameLen
+	}
 	var payload []byte
 	var err error
 	if m, ok := v.(FrameMarshaler); ok {
@@ -55,17 +84,9 @@ func WriteFrame(w DeadlineWriter, v any) (retErr error) {
 		return fmt.Errorf("kesagent: marshal frame: %w", err)
 	}
 	defer securemem.Wipe(payload)
-	if len(payload) > MaxFrameLen {
+	if len(payload) > max {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", len(payload))
 	}
-	if err := w.SetWriteDeadline(time.Now().Add(FrameIOTimeout)); err != nil {
-		return fmt.Errorf("kesagent: set frame write deadline: %w", err)
-	}
-	defer func() {
-		if err := w.SetWriteDeadline(time.Time{}); retErr == nil && err != nil {
-			retErr = fmt.Errorf("kesagent: clear frame write deadline: %w", err)
-		}
-	}()
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(
 		hdr[:],
@@ -94,7 +115,8 @@ type DeadlineReader interface {
 	SetReadDeadline(time.Time) error
 }
 
-// ReadFrame reads a single length-prefixed JSON frame into v.
+// ReadFrame reads a single length-prefixed JSON frame into v, bounding the
+// whole read with FrameIOTimeout.
 func ReadFrame(r DeadlineReader, v any) (retErr error) {
 	if err := r.SetReadDeadline(time.Now().Add(FrameIOTimeout)); err != nil {
 		return fmt.Errorf("kesagent: set frame read deadline: %w", err)
@@ -104,6 +126,25 @@ func ReadFrame(r DeadlineReader, v any) (retErr error) {
 			retErr = fmt.Errorf("kesagent: clear frame read deadline: %w", err)
 		}
 	}()
+	return ReadFrameLimit(r, MaxFrameLen, nil, v)
+}
+
+// ReadFrameLimit reads a single length-prefixed JSON frame of at most max
+// payload bytes (and never more than MaxFrameLen) into v. It sets no
+// deadline; the caller owns them. bodyGuard, if non-nil, runs after the
+// 4-byte header is read and before the body is read, so a caller can set a
+// body deadline there; an error from it aborts the read. The body is read
+// into one buffer of the exact advertised size, which is wiped before the
+// function returns, so an inbound KeyPush leaves no key bytes behind.
+func ReadFrameLimit(
+	r io.Reader,
+	max int,
+	bodyGuard func() error,
+	v any,
+) error {
+	if max > MaxFrameLen {
+		max = MaxFrameLen
+	}
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return err // may be io.EOF; callers distinguish
@@ -112,18 +153,19 @@ func ReadFrame(r DeadlineReader, v any) (retErr error) {
 	if n == 0 {
 		return errors.New("kesagent: zero-length frame")
 	}
-	if n > MaxFrameLen {
+	if uint64(n) > uint64(max) {
 		return fmt.Errorf("kesagent: frame too large (%d bytes)", n)
 	}
-	// Grow the payload buffer as bytes actually arrive rather than
-	// pre-allocating the full advertised length: a client that announces a
-	// large frame (up to MaxFrameLen) but never sends the body then ties up
-	// only what it actually delivered, not the whole advertised buffer.
-	var buf bytes.Buffer
-	if _, err := io.CopyN(&buf, r, int64(n)); err != nil {
+	if bodyGuard != nil {
+		if err := bodyGuard(); err != nil {
+			return err
+		}
+	}
+	payload := make([]byte, n)
+	defer securemem.Wipe(payload)
+	if _, err := io.ReadFull(r, payload); err != nil {
 		return fmt.Errorf("kesagent: read frame payload: %w", err)
 	}
-	payload := buf.Bytes()
 	if err := json.Unmarshal(payload, v); err != nil {
 		return fmt.Errorf("kesagent: unmarshal frame: %w", err)
 	}

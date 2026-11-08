@@ -30,7 +30,9 @@
 //
 // The maximum payload length is MaxFrameLen (1 MiB). []byte fields are
 // base64-encoded by encoding/json. WriteFrame and ReadFrame apply
-// FrameIOTimeout to each frame.
+// FrameIOTimeout to each frame. ReadFrameLimit and WriteFrameLimit set no
+// deadlines and take a caller-chosen size cap; MaxHelloFrameLen,
+// MaxKeyPushFrameLen and MaxSignFrameLen are suggested caps.
 //
 // # Handshake
 //
