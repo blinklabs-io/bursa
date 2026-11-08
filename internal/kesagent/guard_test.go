@@ -16,6 +16,7 @@ package kesagent
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -66,5 +67,96 @@ func TestPeriodGuardDurable(t *testing.T) {
 	}
 	if err := g2.Authorize("vk", 41); !errors.Is(err, ErrPeriodRollback) {
 		t.Fatalf("rollback after reload: want ErrPeriodRollback, got %v", err)
+	}
+}
+
+func TestPeriodGuardHeaderSlot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "guard.json")
+	g, err := NewPeriodGuard(path)
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	a, b := []byte("header a"), []byte("header b")
+	if err := g.AuthorizeHeader("vk", 5, 100, a); err != nil {
+		t.Fatalf("slot 100: %v", err)
+	}
+	if err := g.AuthorizeHeader("vk", 5, 100, a); err != nil {
+		t.Fatalf("slot 100, same body: %v", err)
+	}
+	if err := g.AuthorizeHeader("vk", 5, 100, b); !errors.Is(
+		err,
+		ErrSlotEquivocation,
+	) {
+		t.Fatalf("slot 100, other body: want ErrSlotEquivocation, got %v", err)
+	}
+	if err := g.AuthorizeHeader("vk", 5, 99, b); !errors.Is(
+		err,
+		ErrSlotRollback,
+	) {
+		t.Fatalf("slot 99: want ErrSlotRollback, got %v", err)
+	}
+	// The period floor still applies to headers.
+	if err := g.AuthorizeHeader("vk", 4, 101, b); !errors.Is(
+		err,
+		ErrPeriodRollback,
+	) {
+		t.Fatalf("period 4: want ErrPeriodRollback, got %v", err)
+	}
+	if err := g.AuthorizeHeader("vk2", 6, 130, b); err != nil {
+		t.Fatalf("slot 130, period 6: %v", err)
+	}
+	if floor, set := g.Floor(); !set || floor != 6 {
+		t.Fatalf("floor = %d %v, want 6 true", floor, set)
+	}
+
+	// The record survives a restart, and a new key changes nothing.
+	g2, err := NewPeriodGuard(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if slot, ok := g2.LastSignedSlot(); !ok || slot != 130 {
+		t.Fatalf("reloaded slot = %d %v, want 130 true", slot, ok)
+	}
+	if err := g2.AuthorizeHeader("vk3", 6, 130, a); !errors.Is(
+		err,
+		ErrSlotEquivocation,
+	) {
+		t.Fatalf("after reload, other body: want ErrSlotEquivocation, got %v", err)
+	}
+	if err := g2.AuthorizeHeader("vk3", 6, 130, b); err != nil {
+		t.Fatalf("after reload, same body: %v", err)
+	}
+	if err := g2.AuthorizeHeader("vk3", 6, 129, b); !errors.Is(
+		err,
+		ErrSlotRollback,
+	) {
+		t.Fatalf("after reload, slot 129: want ErrSlotRollback, got %v", err)
+	}
+}
+
+func TestPeriodGuardLoadsFileWithoutSlot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "guard.json")
+	if err := os.WriteFile(
+		path,
+		[]byte(`{"floor":7,"set":true,"kes_vkey":"aa"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write old guard file: %v", err)
+	}
+	g, err := NewPeriodGuard(path)
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	if _, ok := g.LastSignedSlot(); ok {
+		t.Fatal("old guard file loaded a signed slot")
+	}
+	if err := g.AuthorizeHeader("vk", 7, 1, []byte("h")); err != nil {
+		t.Fatalf("first header after upgrade: %v", err)
+	}
+	if err := g.AuthorizeHeader("vk", 6, 2, []byte("h2")); !errors.Is(
+		err,
+		ErrPeriodRollback,
+	) {
+		t.Fatalf("floor kept across upgrade: want ErrPeriodRollback, got %v", err)
 	}
 }

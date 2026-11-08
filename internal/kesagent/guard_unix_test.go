@@ -200,3 +200,69 @@ func TestPeriodGuardRetriesPersistAfterUnsyncedCommit(t *testing.T) {
 		)
 	}
 }
+
+// TestPeriodGuardHeaderSlotPersistFailures covers the slot record on both
+// sides of the rename. A record that reached the guard file stays, so another
+// body for that slot is refused and the same body retries the write; a record
+// that never reached it is rolled back, so nothing was promised for the slot.
+func TestPeriodGuardHeaderSlotPersistFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permissions")
+	}
+	for _, tc := range []struct {
+		name      string
+		dirMode   os.FileMode
+		committed bool
+	}{
+		{name: "after commit", dirMode: 0o300, committed: true},
+		{name: "before commit", dirMode: 0o500, committed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "guard.json")
+			g, err := NewPeriodGuard(path)
+			if err != nil {
+				t.Fatalf("NewPeriodGuard: %v", err)
+			}
+			if err := g.AuthorizeHeader("vk", 5, 100, []byte("a")); err != nil {
+				t.Fatalf("seed slot 100: %v", err)
+			}
+			if err := os.Chmod(dir, tc.dirMode); err != nil {
+				t.Fatalf("chmod dir: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+			if err := g.AuthorizeHeader("vk", 5, 101, []byte("b")); err == nil {
+				t.Fatal("slot 101: want a persist failure, got nil")
+			}
+			slot, _ := g.LastSignedSlot()
+			other := g.AuthorizeHeader("vk", 5, 101, []byte("c"))
+			if tc.committed {
+				if slot != 101 {
+					t.Fatalf("slot = %d, want 101 kept after commit", slot)
+				}
+				if !errors.Is(other, ErrSlotEquivocation) {
+					t.Fatalf("other body: want ErrSlotEquivocation, got %v", other)
+				}
+			} else if slot != 100 {
+				t.Fatalf("slot = %d, want 100 after an uncommitted write", slot)
+			}
+
+			if err := os.Chmod(dir, 0o700); err != nil {
+				t.Fatalf("restore dir mode: %v", err)
+			}
+			if tc.committed {
+				// The same body retries the write and now succeeds.
+				if err := g.AuthorizeHeader(
+					"vk", 5, 101, []byte("b"),
+				); err != nil {
+					t.Fatalf("retry of the same body: %v", err)
+				}
+			} else if err := g.AuthorizeHeader(
+				"vk", 5, 101, []byte("c"),
+			); err != nil {
+				t.Fatalf("slot 101 after an uncommitted write: %v", err)
+			}
+		})
+	}
+}
