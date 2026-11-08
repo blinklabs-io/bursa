@@ -203,6 +203,9 @@ func VerifyAttestation(
 		// No evidence: the pinned TLS server key is the authentication.
 		return nil
 	}
+	if verifier == nil {
+		return ErrAttestation
+	}
 	binding := AttestationBinding(
 		req.Nonce,
 		coldVKey,
