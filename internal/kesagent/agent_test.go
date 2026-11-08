@@ -376,6 +376,9 @@ func TestEvolveToLockedDiscardsKeyWhenStoreFails(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
 	metrics := NewMetrics().forProfile(DefaultProfileName)
+	if metrics == nil {
+		t.Fatal("forProfile returned nil")
+	}
 	sole(t, a).metrics = metrics
 	vkey, _ := a.GenStagedKey()
 	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
