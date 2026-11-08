@@ -235,16 +235,16 @@ func TestAttestedServiceConfigProviders(t *testing.T) {
 	t.Parallel()
 	const addr = "unix:///run/bursa/attester.sock"
 	cfg, err := attestedServiceConfig(config.KESAgentConfig{
-		AttestationProvider: kesagent.MTLSProvider,
+		AttestationProvider: kesagent.NoEvidenceProvider,
 	})
-	if err != nil || cfg.Provider != kesagent.MTLSProvider || cfg.Attester != nil {
-		t.Fatalf("mtls config = %+v, %v", cfg, err)
+	if err != nil || cfg.Provider != kesagent.NoEvidenceProvider || cfg.Attester != nil {
+		t.Fatalf("none config = %+v, %v", cfg, err)
 	}
 	if _, err := attestedServiceConfig(config.KESAgentConfig{
-		AttestationProvider: kesagent.MTLSProvider,
+		AttestationProvider: kesagent.NoEvidenceProvider,
 		AttesterAddress:     addr,
 	}); err == nil {
-		t.Fatal("mtls with attester_address accepted")
+		t.Fatal("none with attester_address accepted")
 	}
 	if _, err := attestedServiceConfig(config.KESAgentConfig{}); err == nil {
 		t.Fatal("no provider accepted")

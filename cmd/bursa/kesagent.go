@@ -303,7 +303,7 @@ func runKesAgent(configFile string) int {
 }
 
 // attestedServiceConfig builds the attested service provider and attester.
-// The mtls provider has no attester and rejects attester_address; every other
+// The none provider has no attester and rejects attester_address; every other
 // provider needs the workload-local adapter at attester_address.
 func attestedServiceConfig(
 	kc config.KESAgentConfig,
@@ -313,10 +313,10 @@ func attestedServiceConfig(
 			"kes_agent.attestation_provider is required",
 		)
 	}
-	if kc.AttestationProvider == kesagent.MTLSProvider {
+	if kc.AttestationProvider == kesagent.NoEvidenceProvider {
 		if kc.AttesterAddress != "" {
 			return kesagent.AttestedServiceConfig{}, errors.New(
-				"kes_agent.attester_address is not used with the mtls provider",
+				"kes_agent.attester_address is not used with the none provider",
 			)
 		}
 		return kesagent.AttestedServiceConfig{
@@ -334,7 +334,7 @@ func attestedServiceConfig(
 }
 
 // serverCertFingerprint returns the SHA-256 SPKI fingerprint of the first
-// certificate in certFile, which clients pin for the mtls provider.
+// certificate in certFile, which a client may pin.
 func serverCertFingerprint(certFile string) (string, error) {
 	pemData, err := os.ReadFile(certFile)
 	if err != nil {

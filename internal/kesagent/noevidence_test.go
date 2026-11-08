@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-func mtlsTestCert(
+func tlsTestCert(
 	t *testing.T,
 	parent *x509.Certificate,
 	parentKey *ecdsa.PrivateKey,
@@ -59,22 +59,22 @@ func mtlsTestCert(
 	return cert, key, tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-func TestMTLSAttestationRoundTrip(t *testing.T) {
+func TestNoEvidenceAttestationRoundTrip(t *testing.T) {
 	t.Parallel()
 	a, cold, spec := newHeaderAgent(t)
-	ca, caKey, _ := mtlsTestCert(t, nil, nil, &x509.Certificate{
+	ca, caKey, _ := tlsTestCert(t, nil, nil, &x509.Certificate{
 		Subject:               pkix.Name{CommonName: "test ca"},
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,
 	})
-	serverLeaf, _, serverCert := mtlsTestCert(t, ca, caKey, &x509.Certificate{
+	serverLeaf, _, serverCert := tlsTestCert(t, ca, caKey, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "server"},
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
-	_, _, clientCert := mtlsTestCert(t, ca, caKey, &x509.Certificate{
+	_, _, clientCert := tlsTestCert(t, ca, caKey, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "client"},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -94,7 +94,7 @@ func TestMTLSAttestationRoundTrip(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- a.ServeAttestedService(ctx, ln, AttestedServiceConfig{Provider: MTLSProvider})
+		done <- a.ServeAttestedService(ctx, ln, AttestedServiceConfig{Provider: NoEvidenceProvider})
 	}()
 
 	// The client pins the server certificate public key, not the CA.
@@ -132,13 +132,13 @@ func TestMTLSAttestationRoundTrip(t *testing.T) {
 	if err := readFrame(conn, &resp); err != nil {
 		t.Fatalf("read attestation: %v", err)
 	}
-	if resp.Error != "" || resp.Provider != MTLSProvider {
+	if resp.Error != "" || resp.Provider != NoEvidenceProvider {
 		t.Fatalf("response = error %q provider %q", resp.Error, resp.Provider)
 	}
 	if len(resp.Attestation) != 0 {
-		t.Fatalf("mtls response carries %d bytes of evidence", len(resp.Attestation))
+		t.Fatalf("none response carries %d bytes of evidence", len(resp.Attestation))
 	}
-	if err := VerifyAttestation(t.Context(), req, resp, MTLSProvider, cold.pub, resp.OpCert, nil); err != nil {
+	if err := VerifyAttestation(t.Context(), req, resp, NoEvidenceProvider, cold.pub, resp.OpCert, nil); err != nil {
 		t.Fatalf("VerifyAttestation: %v", err)
 	}
 
@@ -161,7 +161,7 @@ func TestMTLSAttestationRoundTrip(t *testing.T) {
 	}
 }
 
-func TestServeAttestedServiceNilAttesterOnlyForMTLS(t *testing.T) {
+func TestServeAttestedServiceNilAttesterOnlyForNone(t *testing.T) {
 	t.Parallel()
 	a, _, _ := newHeaderAgent(t)
 	for _, provider := range []string{"nitro", "confidential-space", "other", ""} {
@@ -187,14 +187,14 @@ func TestServeAttestedServiceNilAttesterOnlyForMTLS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
 	if err := a.ServeAttestedService(ctx, ln, AttestedServiceConfig{
-		Provider: MTLSProvider,
+		Provider: NoEvidenceProvider,
 		Attester: bindingAttester{},
 	}); err == nil {
-		t.Fatal("mtls with an attester was served")
+		t.Fatal("none with an attester was served")
 	}
 }
 
-func TestVerifyAttestationEmptyEvidenceOnlyForMTLS(t *testing.T) {
+func TestVerifyAttestationEmptyEvidenceOnlyForNone(t *testing.T) {
 	t.Parallel()
 	a, cold, _ := newHeaderAgent(t)
 	respFor := func(provider string, att Attester) (AttestationRequest, AttestationResponse) {
@@ -218,14 +218,14 @@ func TestVerifyAttestationEmptyEvidenceOnlyForMTLS(t *testing.T) {
 		return req, resp
 	}
 
-	req, resp := respFor(MTLSProvider, nil)
-	if err := VerifyAttestation(t.Context(), req, resp, MTLSProvider, cold.pub, resp.OpCert, nil); err != nil {
-		t.Fatalf("mtls with empty evidence refused: %v", err)
+	req, resp := respFor(NoEvidenceProvider, nil)
+	if err := VerifyAttestation(t.Context(), req, resp, NoEvidenceProvider, cold.pub, resp.OpCert, nil); err != nil {
+		t.Fatalf("none with empty evidence refused: %v", err)
 	}
 	withEvidence := resp
 	withEvidence.Attestation = []byte("x")
-	if err := VerifyAttestation(t.Context(), req, withEvidence, MTLSProvider, cold.pub, resp.OpCert, nil); err == nil {
-		t.Fatal("mtls with non-empty evidence accepted")
+	if err := VerifyAttestation(t.Context(), req, withEvidence, NoEvidenceProvider, cold.pub, resp.OpCert, nil); err == nil {
+		t.Fatal("none with non-empty evidence accepted")
 	}
 	downgraded := resp
 	downgraded.Provider = "nitro"
@@ -233,7 +233,7 @@ func TestVerifyAttestationEmptyEvidenceOnlyForMTLS(t *testing.T) {
 		t.Fatal("nitro with empty evidence accepted")
 	}
 	if err := VerifyAttestation(t.Context(), req, resp, "nitro", cold.pub, resp.OpCert, bindingVerifier{}); err == nil {
-		t.Fatal("mtls response accepted for an expected nitro provider")
+		t.Fatal("none response accepted for an expected nitro provider")
 	}
 	if err := VerifyAttestation(t.Context(), req, resp, "nitro", cold.pub, resp.OpCert, nil); err == nil {
 		t.Fatal("nil verifier accepted for nitro")
@@ -242,7 +242,7 @@ func TestVerifyAttestationEmptyEvidenceOnlyForMTLS(t *testing.T) {
 
 func TestSPKIFingerprintMatchesOpenSSLComputation(t *testing.T) {
 	t.Parallel()
-	cert, key, _ := mtlsTestCert(t, nil, nil, &x509.Certificate{Subject: pkix.Name{CommonName: "fp"}})
+	cert, key, _ := tlsTestCert(t, nil, nil, &x509.Certificate{Subject: pkix.Name{CommonName: "fp"}})
 	// openssl x509 -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256
 	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
