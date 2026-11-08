@@ -83,10 +83,13 @@ record the resulting submodule pointer when explicitly requested.
 - Preserve restrictive secret-key file permissions on Unix and Windows. Any
   change to key-file creation, replacement, or encryption must retain the
   permission checks and update the platform-specific tests.
-- Do not weaken signer authentication, TLS/loopback restrictions, caller
-  authorization, key policy checks, transaction/CIP-8 watermarks, or replay
-  protection. A new signer operation needs positive and negative tests for
-  caller, key, policy, and watermark behavior.
+- Do not weaken the defaults for signer authentication, TLS/loopback,
+  caller authorization, key policy checks, transaction/CIP-8 watermarks, or
+  replay protection. Transport and authentication checks are secure defaults,
+  not hard requirements: a deployment may relax one only through an explicit,
+  documented option, and the mode in use is logged at INFO in neutral terms.
+  Refuse only combinations that cannot work. A new signer operation needs
+  positive and negative tests for caller, key, policy, and watermark behavior.
 - Keep cryptographic and wire-format changes tied to the relevant CIP and
   cardano-cli compatibility tests. Do not change CBOR, bech32 prefixes,
   derivation paths, network tags, key envelope types, or transaction witness
