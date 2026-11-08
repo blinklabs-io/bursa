@@ -21,14 +21,16 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 )
 
 // Control command names.
 const (
-	CmdGenStagedKey = "gen-staged-key"
-	CmdInstallKey   = "install-key"
-	CmdDropKey      = "drop-key"
-	CmdInfo         = "info"
+	CmdGenStagedKey = wire.CmdGenStagedKey
+	CmdInstallKey   = wire.CmdInstallKey
+	CmdDropKey      = wire.CmdDropKey
+	CmdInfo         = wire.CmdInfo
 )
 
 // ServeControl accepts connections on ln and processes control commands until

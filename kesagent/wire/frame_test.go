@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kesagent
+package wire
 
 import (
 	"bytes"
@@ -82,10 +82,10 @@ func TestWriteFrameWipesKeyPushPayload(t *testing.T) {
 				OpCert:     []byte{0x81, 0x01},
 			}
 
-			err := writeFrame(writer, push)
+			err := WriteFrameLimit(writer, MaxFrameLen, push)
 			if !errors.Is(err, test.payloadErr) {
 				t.Fatalf(
-					"writeFrame() error = %v, want %v",
+					"WriteFrameLimit() error = %v, want %v",
 					err,
 					test.payloadErr,
 				)
@@ -138,30 +138,34 @@ func TestKeyPushMarshalFrameMatchesJSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := push.marshalFrame()
+		got, err := push.MarshalFrame(MaxFrameLen)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(got, want) {
-			t.Fatalf("marshalFrame() = %s, want %s", got, want)
+			t.Fatalf("MarshalFrame() = %s, want %s", got, want)
 		}
 	}
 }
 
 func TestKeyPushMarshalFrameRejectsOversizedPush(t *testing.T) {
 	t.Parallel()
-	big := make([]byte, maxFrameLen)
+	big := make([]byte, MaxFrameLen)
 	for _, push := range []KeyPush{
-		{Type: strings.Repeat("t", maxFrameLen+1)},
+		{Type: strings.Repeat("t", MaxFrameLen+1)},
 		{Type: "key_push", KESSignKey: big},
 		{Type: "key_push", KESVKey: big},
 		{Type: "key_push", OpCert: big},
 	} {
-		if got, err := push.marshalFrame(); err == nil {
+		got, err := push.MarshalFrame(MaxFrameLen)
+		if err == nil {
 			t.Fatalf(
-				"marshalFrame() returned %d bytes, want frame-size error",
+				"MarshalFrame() returned %d bytes, want frame-size error",
 				len(got),
 			)
+		}
+		if !errors.Is(err, ErrFrameTooLarge) {
+			t.Fatalf("MarshalFrame() error = %v, want ErrFrameTooLarge", err)
 		}
 	}
 }
@@ -196,7 +200,7 @@ func TestWriteFrameLeavesNoSigningKeyInHeap(t *testing.T) {
 	defer clear(push.KESSignKey)
 
 	writer := &discardFrameWriter{}
-	if err := writeFrame(writer, push); err != nil {
+	if err := WriteFrameLimit(writer, MaxFrameLen, push); err != nil {
 		t.Fatal(err)
 	}
 	if writer.bytes == 0 {
@@ -204,7 +208,7 @@ func TestWriteFrameLeavesNoSigningKeyInHeap(t *testing.T) {
 	}
 	if n := countInHeap(t, needle, &needle[0]); n != 0 {
 		t.Fatalf(
-			"base64 signing key found %d time(s) in process memory after writeFrame",
+			"base64 signing key found %d time(s) in process memory after WriteFrameLimit",
 			n,
 		)
 	}
@@ -290,12 +294,12 @@ func TestWriteFrameLeavesNoSigningKeyInHeapWithFullSizeFields(t *testing.T) {
 	defer clear(needle)
 
 	writer := &discardFrameWriter{}
-	if err := writeFrame(writer, push); err != nil {
+	if err := WriteFrameLimit(writer, MaxFrameLen, push); err != nil {
 		t.Fatal(err)
 	}
 	if n := countInHeap(t, needle, &needle[0]); n != 0 {
 		t.Fatalf(
-			"base64 signing key found %d time(s) in process memory after writeFrame",
+			"base64 signing key found %d time(s) in process memory after WriteFrameLimit",
 			n,
 		)
 	}
