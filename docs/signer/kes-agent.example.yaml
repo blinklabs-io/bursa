@@ -82,6 +82,11 @@ kes_agent:
   # Alternatively serve plain TCP (transport security provided elsewhere); the
   # TLS files above must then be unset.
   # attested_plaintext: false
+  # Optional: only these client public keys (SHA-256 of the certificate's
+  # SubjectPublicKeyInfo, 64 hex chars) are served. Unset accepts any client
+  # certificate issued by the CA.
+  # attested_client_spki_sha256:
+  #   - "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
   # The provider adapter runs inside the measured workload and produces fresh,
   # binding-specific evidence over a local Unix socket.

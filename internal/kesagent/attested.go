@@ -109,6 +109,10 @@ type AttestedServiceConfig struct {
 	// certificate. It is for a listener configured without a client CA; the
 	// default requires a verified client certificate.
 	ClientCertOptional bool
+	// AllowedClientSPKI, when non-empty, restricts clients to those whose
+	// verified leaf certificate has a SHA-256 SubjectPublicKeyInfo digest in
+	// the list. Empty accepts any client the TLS configuration verifies.
+	AllowedClientSPKI [][sha256.Size]byte
 }
 
 type attestedKeyState struct {
@@ -322,7 +326,20 @@ func authenticateRemotePeer(
 	if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
 		return ErrUnauthenticatedPeer
 	}
-	return nil
+	allowed := cfg.AllowedClientSPKI
+	if len(allowed) == 0 {
+		return nil
+	}
+	fingerprint := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
+	for _, entry := range allowed {
+		if subtle.ConstantTimeCompare(fingerprint[:], entry[:]) == 1 {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"%w: client public key is not in the allowlist",
+		ErrUnauthenticatedPeer,
+	)
 }
 
 func (a *Agent) serveAttestedConn(
@@ -368,7 +385,7 @@ func (a *Agent) serveAttestedConn(
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
-		a.handleSign(ctx, conn)
+		a.handleSign(ctx, conn, nil)
 		return
 	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)

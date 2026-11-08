@@ -16,7 +16,9 @@ Both sockets speak the same framing and handshake.
 
 An optional remote sign listener uses the same framing over mutually
 authenticated TLS 1.3. It speaks the attested extension below and exposes
-neither control commands nor serve-key mode.
+neither control commands nor serve-key mode. When a client public-key
+allowlist is configured, a verified client outside it is closed before the
+server hello.
 
 ## Framing
 

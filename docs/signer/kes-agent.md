@@ -94,6 +94,17 @@ Dingo producer. This listener speaks `bursa-attested-kes/1`. It never
 offers serve-key mode or control commands. The local control socket remains the
 only route for staging, installing, or dropping keys.
 
+By default any client certificate that chains to `attested_client_ca_file` is
+accepted. To revoke or limit individual clients, set
+`attested_client_spki_sha256` to a list of SHA-256 fingerprints (64 hex
+characters each) of the permitted client certificates' SubjectPublicKeyInfo,
+for example from
+`openssl x509 -in client.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -r | cut -d' ' -f1`.
+When the list is set, a client whose verified certificate is not listed is
+disconnected before the hello. Malformed entries fail at config load. The
+environment variable `KESAGENT_ATTESTED_CLIENT_SPKI_SHA256` takes a
+comma-separated list.
+
 Before accepting a header request, Dingo sends a fresh 32-byte challenge. The
 agent asks its workload-local provider adapter for evidence that commits to the
 challenge, pool cold verification key, active KES verification key, installed

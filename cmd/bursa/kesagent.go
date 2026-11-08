@@ -206,6 +206,17 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
+		allowedClients, err := config.ParseSPKIFingerprints(
+			kc.AttestedClientSPKISHA256,
+		)
+		if err != nil {
+			logger.Error("invalid attested KES configuration", "error", err)
+			_ = attestedLn.Close()
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
+		attestedCfg.AllowedClientSPKI = allowedClients
 		if kc.AttestedPlaintext {
 			logger.Info(
 				"attested listener serving plain TCP",
