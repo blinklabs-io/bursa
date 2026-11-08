@@ -64,6 +64,18 @@ func TestSQLiteDatabasePath(t *testing.T) {
 			wantFile: true,
 		},
 		{
+			name:     "hierarchical URI decodes once",
+			dsn:      "file:///tmp/wallet%252Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet%2Dstore.db",
+			wantFile: true,
+		},
+		{
+			name:     "localhost URI decodes once",
+			dsn:      "file://localhost/tmp/wallet%252Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet%2Dstore.db",
+			wantFile: true,
+		},
+		{
 			name:     "remote URI authority",
 			dsn:      "file://other-host/tmp/wallets.db",
 			wantFile: false,

@@ -69,6 +69,28 @@ func TestSQLiteStoreUsesOwnerOnlyFilePermissions(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSQLiteStoreSecuresEncodedHierarchicalURITarget(t *testing.T) {
+	tempDir := t.TempDir()
+	actualPath := filepath.Join(tempDir, "wallet%2Edb")
+	decoyPath := filepath.Join(tempDir, "wallet.db")
+	dsn := "file://" + filepath.ToSlash(
+		filepath.Join(tempDir, "wallet%252Edb"),
+	)
+
+	previousUmask := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(previousUmask) })
+
+	store, err := NewSQLiteStore(dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	info, err := os.Stat(actualPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	_, err = os.Stat(decoyPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 // The pool opens a new connection after discarding one, and that connection
 // must be secured like the first.
 func TestSQLiteStoreSecuresTheDatabaseForANewConnection(t *testing.T) {

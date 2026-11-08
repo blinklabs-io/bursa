@@ -30,7 +30,7 @@ jobs:
           go-version: ${{ matrix.go-version }}
           check-latest: true
       - name: go test (SQLite permissions)
-        run: go test -v -count=1 -run "^TestSQLite(Store(RestrictsFilesToOwnerUnderPermissiveDirectory|TightensExistingPermissiveDatabase|RejectsFilesOwnedByAnotherIdentity|ReadOnlyDSNSecuresDatabaseAndSidecars|SecuresSidecarsRecreatedForANewConnection|OpensExistingWALDatabaseWhereCreationIsDenied|RejectsDirectoryLettingOthersReplaceEntries|RejectsAncestorLettingOthersReplaceEntries|RejectsDirectoryOwnedByAnotherIdentity|RejectsReparsePointOthersCanRetarget|OpensThroughJunctionOthersCannotRetarget|RejectsDirectoryRetargetedAfterCheck)|FilesAreOwnerOnlyBeforeSQLiteOpensThem|FilePermissionsAcceptLongPaths)$" ./internal/storage/
+        run: go test -v -count=1 -run "^TestSQLite(Store(RestrictsFilesToOwnerUnderPermissiveDirectory|SecuresEncodedHierarchicalURITarget|TightensExistingPermissiveDatabase|RejectsFilesOwnedByAnotherIdentity|ReadOnlyDSNSecuresDatabaseAndSidecars|SecuresSidecarsRecreatedForANewConnection|OpensExistingWALDatabaseWhereCreationIsDenied|RejectsDirectoryLettingOthersReplaceEntries|RejectsAncestorLettingOthersReplaceEntries|RejectsDirectoryOwnedByAnotherIdentity|RejectsReparsePointOthersCanRetarget|OpensThroughJunctionOthersCannotRetarget|RejectsDirectoryRetargetedAfterCheck)|FilesAreOwnerOnlyBeforeSQLiteOpensThem|FilePermissionsAcceptLongPaths)$" ./internal/storage/
       - name: go test (secret file permissions)
         if: ${{ !cancelled() }}
         run: go test -v -count=1 -run "^(TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile|TestLoadSecretKeyFromFileWindowsAllowsOwner|TestCheckSecurityDescriptorAcceptsTheUserSDDLAlias)$" .

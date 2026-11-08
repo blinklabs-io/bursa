@@ -21,6 +21,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,6 +108,25 @@ func TestSQLiteStoreRestrictsFilesToOwnerUnderPermissiveDirectory(
 		require.NoError(t, err, suffix)
 		requireOwnerOnly(t, dbPath+suffix)
 	}
+}
+
+func TestSQLiteStoreSecuresEncodedHierarchicalURITarget(t *testing.T) {
+	t.Parallel()
+	tempDir := permissiveDir(t)
+	actualPath := filepath.Join(tempDir, "wallet%2Edb")
+	decoyPath := filepath.Join(tempDir, "wallet.db")
+	dsn := (&url.URL{
+		Scheme: "file",
+		Path:   "/" + filepath.ToSlash(actualPath),
+	}).String()
+
+	store, err := NewSQLiteStore(dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	requireOwnerOnly(t, actualPath)
+	_, err = os.Stat(decoyPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 // grantEveryone replaces path's DACL with an unprotected one granting Everyone
