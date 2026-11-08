@@ -29,7 +29,11 @@ const maxSignable = 128
 
 // testnetSign is reported at startup, so the build is never mistaken for a
 // signing image fit for keys that matter.
-const testnetSign = "testnet bring-up build: unauthenticated /sign is served; never use it with keys that matter"
+const testnetSign = "testnet bring-up build: /sign and /pubkey are served without host auth and use the bring-up raw key, not a cold key"
+
+// testnetRoutes are the bring-up routes this build serves without host
+// authentication.
+var testnetRoutes = []string{"/sign", "/pubkey"}
 
 func init() {
 	http.HandleFunc("/sign", (&firmwareSigner).sign)

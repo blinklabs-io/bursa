@@ -25,6 +25,14 @@ import (
 
 const buildMode = "signing build: provisioning endpoints are not served"
 
+// imageOpenRoutes are the routes of this image that never take host
+// authentication.
+var imageOpenRoutes = []string{"/v1/challenge"}
+
+// servesInventory is set: /v1/inventory is served, and only a multi image
+// authenticates it.
+const servesInventory = true
+
 // routes serves inventory and signing only. Provisioning, the opcert floor
 // and reset need the provisioning image, loaded over USB recovery boot.
 func routes(svc *device.Service, _ *signer, _ *sync.Mutex) {

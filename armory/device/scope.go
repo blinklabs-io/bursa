@@ -68,7 +68,7 @@ func (s *Service) SetScopes(scopes []Scope) {
 	s.scopes = append([]Scope(nil), scopes...)
 	s.networkFixed, s.requireHostAuth = true, true
 	s.logf(
-		"multi image: signing and every request require a host key of the scope acted on",
+		"multi image: signing, inventory, provisioning and profile wipes take a host key of the scope acted on",
 	)
 }
 
@@ -79,6 +79,11 @@ func (s *Service) AllowFirstHostKey() {
 	defer s.mu.Unlock()
 
 	s.firstHostKeyOpen = true
+
+	// the mode was reported when the chip was set, before this call
+	if s.chip != nil {
+		s.logf("%s", s.hostAuthMode())
+	}
 }
 
 func (s *Service) multi() bool { return len(s.scopes) > 0 }
