@@ -231,6 +231,9 @@ The sealed state is versioned. A state of the previous version holds no
 payload hash; it still loads and allows no re-sign at its counter, so an equal
 counter is refused until a higher one is signed. A tampered or malformed
 state, a hash of the wrong length, or an unknown version refuses the reload.
+An enclave image that predates the current version refuses a current state,
+so returning to it after a signature needs the secret version written before
+the upgrade.
 
 Each signature writes a new secret version. Secrets Manager keeps every
 version created in the last 24 hours, so more than about 100 signatures in a
