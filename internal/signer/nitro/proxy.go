@@ -127,7 +127,16 @@ func (p *ProxyHandler) signAndPersist(
 	ctx context.Context,
 	request backend.AttestedRequest,
 ) (backend.AttestedResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.signTimeout)
+	deadline := time.Now().Add(p.signTimeout)
+	// The save runs to the same deadline but ignores the client's
+	// cancellation: a client that goes away after the enclave counted the
+	// issue number must not abort the save and stop the proxy.
+	saveCtx, cancelSave := context.WithDeadline(
+		context.WithoutCancel(ctx),
+		deadline,
+	)
+	defer cancelSave()
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	select {
 	case p.signSlot <- struct{}{}:
@@ -147,7 +156,7 @@ func (p *ProxyHandler) signAndPersist(
 			"enclave returned no sealed counter state",
 		)
 	}
-	if err := p.saver.SaveSealedState(ctx, response.SealedState); err != nil {
+	if err := p.saver.SaveSealedState(saveCtx, response.SealedState); err != nil {
 		p.saveFailed.Store(true)
 		// the enclave has counted this issue number; the operator needs the
 		// cause to choose a recovery
