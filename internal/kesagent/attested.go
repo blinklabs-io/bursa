@@ -22,7 +22,6 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -35,17 +34,11 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
 
 const (
-	// AttestedProtocolID is the protocol spoken by an attested KES workload.
-	AttestedProtocolID = "bursa-attested-kes/1"
-	// NoEvidenceProvider is the attestation provider for a workload that
-	// supplies no platform evidence. The attestation field is empty and the
-	// protocol measures nothing; any transport authentication is configured
-	// separately on the client and the agent.
-	NoEvidenceProvider   = "none"
 	attestationNonceSize = 32
 	attesterMaxResponse  = 1 << 20
 )
@@ -60,28 +53,6 @@ var (
 		"kesagent: remote peer is not authenticated",
 	)
 )
-
-// AttestationRequest is the first client message after the attested protocol
-// hello. Nonce must be fresh and exactly 32 bytes.
-type AttestationRequest struct {
-	Type     string `json:"type"`
-	Protocol string `json:"protocol"`
-	Nonce    []byte `json:"nonce"`
-}
-
-// AttestationResponse binds the active KES state to measured-workload
-// evidence. The KES signing key is deliberately absent.
-type AttestationResponse struct {
-	Type        string `json:"type"`
-	Protocol    string `json:"protocol"`
-	Nonce       []byte `json:"nonce"`
-	Provider    string `json:"provider"`
-	KESVKey     []byte `json:"kes_vkey,omitempty"`
-	OpCert      []byte `json:"opcert,omitempty"`
-	Period      uint64 `json:"period,omitempty"`
-	Attestation []byte `json:"attestation,omitempty"`
-	Error       string `json:"error,omitempty"`
-}
 
 // Attester produces platform evidence that commits to binding. Implementations
 // live inside the protected workload and call the platform attestation API.
@@ -128,33 +99,6 @@ func (a *Agent) attestedKeyState() (attestedKeyState, error) {
 		return attestedKeyState{}, err
 	}
 	return p.attestedKeyState()
-}
-
-// AttestationBinding is the digest provider evidence must commit to. It binds
-// a caller nonce to the active public KES state and the pool identity.
-func AttestationBinding(
-	nonce, coldVKey, kesVKey, opcert []byte,
-	period uint64,
-) []byte {
-	h := sha256.New()
-	h.Write([]byte(AttestedProtocolID))
-	writeBindingField(h, nonce)
-	writeBindingField(h, coldVKey)
-	writeBindingField(h, kesVKey)
-	writeBindingField(h, opcert)
-	var p [8]byte
-	binary.BigEndian.PutUint64(p[:], period)
-	h.Write(p[:])
-	return h.Sum(nil)
-}
-
-type bindingWriter interface{ Write([]byte) (int, error) }
-
-func writeBindingField(w bindingWriter, value []byte) {
-	var size [8]byte
-	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
-	_, _ = w.Write(size[:])
-	_, _ = w.Write(value)
 }
 
 // VerifyAttestation validates a response before a client admits the workload.
@@ -205,7 +149,7 @@ func VerifyAttestation(
 	if verifier == nil {
 		return ErrAttestation
 	}
-	binding := AttestationBinding(
+	binding := wire.AttestationBinding(
 		req.Nonce,
 		coldVKey,
 		resp.KESVKey,
@@ -374,7 +318,7 @@ func (a *Agent) serveAttestedConn(
 		return
 	}
 	resp.KESVKey, resp.OpCert, resp.Period = state.kesVKey, state.opcert, state.period
-	binding := AttestationBinding(
+	binding := wire.AttestationBinding(
 		req.Nonce,
 		state.coldVKey,
 		state.kesVKey,

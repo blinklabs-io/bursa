@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/gouroboros/kes"
+
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 )
 
 type bindingAttester struct {
@@ -249,7 +251,7 @@ func TestVerifyAttestationRejectsReplayAndProviderMismatch(t *testing.T) {
 		Nonce: append([]byte(nil), req.Nonce...), Provider: "nitro",
 		KESVKey: kesVKey, OpCert: opcert, Period: 7,
 	}
-	resp.Attestation = AttestationBinding(
+	resp.Attestation = wire.AttestationBinding(
 		req.Nonce,
 		cold,
 		resp.KESVKey,

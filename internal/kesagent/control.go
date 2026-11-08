@@ -23,14 +23,6 @@ import (
 	"sync"
 )
 
-// Control command names.
-const (
-	CmdGenStagedKey = "gen-staged-key"
-	CmdInstallKey   = "install-key"
-	CmdDropKey      = "drop-key"
-	CmdInfo         = "info"
-)
-
 // ServeControl accepts connections on ln and processes control commands until
 // ctx is cancelled or ln is closed.
 func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
