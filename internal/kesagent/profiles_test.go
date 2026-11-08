@@ -177,8 +177,8 @@ func TestAgentTellsOneColdKeyOnTwoNetworksApartByKESKey(t *testing.T) {
 	// header routes to the other profile, whose slot record is its own.
 	mustSign(t, a, pa, pa.header.encode(t))
 	mustSign(t, a, pb, pb.header.encode(t))
-	slotA, _ := a.byName["mainnet-pool"].guard.LastSignedSlot()
-	slotB, _ := a.byName["testnet-pool"].guard.LastSignedSlot()
+	slotA, _ := named(t, a, "mainnet-pool").guard.LastSignedSlot()
+	slotB, _ := named(t, a, "testnet-pool").guard.LastSignedSlot()
 	if slotA != 52 || slotB != 25 {
 		t.Fatalf("last signed slots = %d, %d; want 52, 25", slotA, slotB)
 	}
@@ -219,14 +219,14 @@ func TestSignHeaderForRefusesAHeaderOfAnotherProfile(t *testing.T) {
 	pa := install(t, a, "pool-a", coldA, 3, 52, 5)
 	pb := install(t, a, "pool-b", coldB, 0, 25, 1)
 
-	_, err := a.signHeaderFor(a.byName["pool-a"], pb.period, pb.header.encode(t))
+	_, err := a.signHeaderFor(named(t, a, "pool-a"), pb.period, pb.header.encode(t))
 	if !errors.Is(err, ErrProfileMismatch) {
 		t.Fatalf("pool B header on a pool A session: err = %v, want ErrProfileMismatch", err)
 	}
-	if _, set := a.byName["pool-b"].guard.LastSignedSlot(); set {
+	if _, set := named(t, a, "pool-b").guard.LastSignedSlot(); set {
 		t.Fatal("a refused header reached pool B's slot record")
 	}
-	if _, err := a.signHeaderFor(a.byName["pool-a"], pa.period, pa.header.encode(t)); err != nil {
+	if _, err := a.signHeaderFor(named(t, a, "pool-a"), pa.period, pa.header.encode(t)); err != nil {
 		t.Fatalf("pool A header on a pool A session: %v", err)
 	}
 }

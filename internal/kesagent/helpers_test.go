@@ -136,3 +136,14 @@ func sole(t *testing.T, a *Agent) *profile {
 	}
 	return p
 }
+
+// named returns the agent's profile called name, failing the test if there is
+// none.
+func named(t *testing.T, a *Agent, name string) *profile {
+	t.Helper()
+	p := a.byName[name]
+	if p == nil {
+		t.Fatalf("no profile %q", name)
+	}
+	return p
+}
