@@ -207,6 +207,53 @@ file. Moving from guard files to the store does not copy the file's floor.
 A database error refuses the signature; it is not counted as a slot-guard
 refusal.
 
+### Shared KES key (sealed with age)
+
+With the PostgreSQL store, the replicas can also share each profile's KES key,
+so any replica can sign for any profile. Without these settings each replica
+keeps its own key in memory only, as before.
+
+```yaml
+kes_agent:
+  store:
+    type: "postgres"
+    dsn_env: "KESAGENT_PG_DSN"
+    age_recipients: ["age1..."]             # seal staged keys to these
+    age_identity_file: "/etc/bursa/age.txt" # unseal installed keys with these
+    key_poll_interval: "10s"                # optional, default 10s
+```
+
+`age_recipients` and `age_identity_file` are set together and only with
+`type: postgres`. The keys live in the `kes_agent_key` table, created on first
+use, with at most one staged and one installed key per pool cold key and
+network (the same identity the guard records use).
+
+- `gen-staged-key` on any replica generates the key, seals it with age to
+  `age_recipients` and stores it as the staged key, replacing any staged
+  before. It refuses a key that this replica's own identity cannot open.
+- `install-key` on any replica checks the opcert against the stored staged key
+  and the cold key as before, unseals the key, and marks it installed in one
+  transaction. If two replicas install at once, one install wins; the other
+  gets an error unless it installed the very same opcert.
+- Every replica loads the installed key at startup, before its sockets open,
+  and checks for a newly installed one every `key_poll_interval`. It re-checks
+  the opcert against the cold key, unseals the key, evolves it to the current
+  KES period and signs with it. Until a replica has loaded the key it refuses
+  signs for that profile, and the error names why (for example, an identity
+  the key was not sealed to). A replica that misses an install keeps signing
+  with its previous key until its next poll.
+- `drop-key` stays local: it wipes this replica's copy and leaves the stored
+  records alone. The replica does not reload the dropped key until a new key
+  is installed or it restarts.
+
+The stored key is sealed at the period it was generated at and is not
+re-sealed as it evolves. It is at rest in the database and in every backup of
+it, and anything holding the age identity can read it. The stored copy can
+sign for every period the key covers, including periods the replicas have
+already evolved past, so it has no KES forward security. Unsealing goes through age's own buffers, which
+the agent cannot wipe; the agent wipes its own copies and keeps the key in
+locked memory as before.
+
 ## Locked memory
 
 The agent attempts to lock the KES signing key buffer with `mlock` so that

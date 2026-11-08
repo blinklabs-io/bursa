@@ -111,6 +111,18 @@ type KESAgentStoreConfig struct {
 	// string, so credentials stay out of the config file. A non-loopback
 	// host requires sslmode=verify-full.
 	DSNEnv string `yaml:"dsn_env"`
+	// AgeRecipients and AgeIdentityFile, set together and only with type
+	// "postgres", make the replicas share each profile's KES key: a staged
+	// key is sealed with age to AgeRecipients and kept in the database, and
+	// every replica unseals the installed key with the identities in
+	// AgeIdentityFile. Without them each replica keeps its own key in
+	// memory only.
+	AgeRecipients   []string `yaml:"age_recipients"`
+	AgeIdentityFile string   `yaml:"age_identity_file"`
+	// KeyPollInterval is how often each replica checks the database for a
+	// newly installed key (a Go duration; default 10s). It needs the age
+	// settings.
+	KeyPollInterval string `yaml:"key_poll_interval"`
 }
 
 // KESAgentProfileConfig is one pool on one network served by the KES agent.

@@ -70,6 +70,13 @@ kes_agent:
   # store:
   #   type: "postgres"
   #   dsn_env: "KESAGENT_PG_DSN"
+  #   # Optional: share each profile's KES key between the replicas. A staged
+  #   # key is sealed with age to age_recipients and kept in the database;
+  #   # every replica unseals the installed key with age_identity_file. Set
+  #   # both or neither. Anything holding the identity can read the stored key.
+  #   age_recipients: ["age1..."]
+  #   age_identity_file: "/etc/bursa/kes-agent-age.txt"
+  #   key_poll_interval: "10s"  # how often to look for a newly installed key
 
   # Several pools, on one network or several, can be served by one agent in
   # sign mode. profiles replaces the single-pool settings above

@@ -153,33 +153,60 @@ func runKesAgent(configFile string) int {
 		}
 	}
 
+	sealer, keyPollInterval, err := kesAgentKeySealer(kc.Store)
+	if err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
 	var sharedGuard kesagent.SharedGuardStore
 	store, err := openKesAgentStore(kc.Store)
 	if err != nil {
 		logger.Error("invalid kes_agent.store", "error", err)
 		return 1
 	}
+	var keyStore kesagent.KeyStore
 	if store != nil {
 		// Deferred before agent.Close, so it runs after it.
 		defer store.Close()
 		sharedGuard = store
+		if sealer != nil {
+			ks, err := openKesAgentKeyStore(store)
+			if err != nil {
+				logger.Error("failed to open the shared KES key store", "error", err)
+				return 1
+			}
+			keyStore = ks
+		}
 	}
 
 	metrics := kesagent.NewMetrics()
 	metrics.Register(prometheus.DefaultRegisterer)
 
 	agent, err := kesagent.New(kesagent.Config{
-		Mode:           kc.Mode,
-		EvolveInterval: evolveInterval,
-		Version:        version.GetVersionString(),
-		Profiles:       profiles,
-		SharedGuard:    sharedGuard,
+		Mode:            kc.Mode,
+		EvolveInterval:  evolveInterval,
+		Version:         version.GetVersionString(),
+		Profiles:        profiles,
+		SharedGuard:     sharedGuard,
+		KeyStore:        keyStore,
+		KeySealer:       sealer,
+		KeyPollInterval: keyPollInterval,
 	}, logger, metrics)
 	if err != nil {
 		logger.Error("failed to create KES agent", "error", err)
 		return 1
 	}
 	defer agent.Close()
+	if keyStore != nil {
+		// Load the installed keys before the sockets open. A profile that
+		// fails is logged, refuses signs, and is retried on every poll.
+		syncCtx, cancel := context.WithTimeout(
+			context.Background(),
+			kesAgentStoreOpenTimeout,
+		)
+		_ = agent.SyncKeys(syncCtx)
+		cancel()
+	}
 
 	serviceLn, err := kesagent.ListenUnix(kc.ServiceSocket, serviceSocketMode)
 	if err != nil {
@@ -358,6 +385,66 @@ func openKesAgentStore(
 	// NewPostgresWatermark refuses a non-loopback host without
 	// hostname-verified TLS (sslmode=verify-full).
 	return watermark.NewPostgresWatermark(ctx, dsn)
+}
+
+// defaultKesAgentKeyPollInterval is kes_agent.store.key_poll_interval when
+// unset.
+const defaultKesAgentKeyPollInterval = 10 * time.Second
+
+// kesAgentKeySealer validates the shared key settings in sc and returns the
+// age sealer and poll interval, or a nil sealer when the key is not shared.
+func kesAgentKeySealer(
+	sc config.KESAgentStoreConfig,
+) (*kesagent.KeySealer, time.Duration, error) {
+	if len(sc.AgeRecipients) == 0 && sc.AgeIdentityFile == "" {
+		if sc.KeyPollInterval != "" {
+			return nil, 0, errors.New(
+				"kes_agent.store.key_poll_interval needs age_recipients and age_identity_file",
+			)
+		}
+		return nil, 0, nil
+	}
+	if sc.Type != "postgres" {
+		return nil, 0, errors.New(
+			"kes_agent.store.age_recipients and age_identity_file need kes_agent.store.type \"postgres\"",
+		)
+	}
+	if len(sc.AgeRecipients) == 0 || sc.AgeIdentityFile == "" {
+		return nil, 0, errors.New(
+			"kes_agent.store.age_recipients and age_identity_file must be set together",
+		)
+	}
+	poll := defaultKesAgentKeyPollInterval
+	if sc.KeyPollInterval != "" {
+		d, err := time.ParseDuration(sc.KeyPollInterval)
+		if err != nil {
+			return nil, 0, fmt.Errorf("kes_agent.store.key_poll_interval: %w", err)
+		}
+		if d <= 0 {
+			return nil, 0, errors.New(
+				"kes_agent.store.key_poll_interval must be positive",
+			)
+		}
+		poll = d
+	}
+	sealer, err := kesagent.NewKeySealer(sc.AgeRecipients, sc.AgeIdentityFile)
+	if err != nil {
+		return nil, 0, err
+	}
+	return sealer, poll, nil
+}
+
+// openKesAgentKeyStore creates the sealed key table in the shared guard
+// store's database and returns the key store over the same connection pool.
+func openKesAgentKeyStore(
+	store *watermark.PostgresWatermark,
+) (*kesagent.PostgresKeyStore, error) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		kesAgentStoreOpenTimeout,
+	)
+	defer cancel()
+	return kesagent.NewPostgresKeyStore(ctx, store.Pool())
 }
 
 // kesAgentStoreDSN validates sc and returns the PostgreSQL connection string
