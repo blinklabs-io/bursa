@@ -85,6 +85,8 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			Name:              DefaultProfileName,
 			Depth:             cfg.Depth,
 			SystemStart:       cfg.SystemStart,
+			ShelleyStartSlot:  cfg.ShelleyStartSlot,
+			ShelleyStartTime:  cfg.ShelleyStartTime,
 			SlotLength:        cfg.SlotLength,
 			SlotsPerKESPeriod: cfg.SlotsPerKESPeriod,
 			MaxKESEvolutions:  cfg.MaxKESEvolutions,

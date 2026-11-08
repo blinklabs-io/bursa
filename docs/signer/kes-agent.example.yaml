@@ -38,6 +38,15 @@ kes_agent:
   # values).
   system_start: "2017-09-23T21:44:51Z"   # env: KESAGENT_SYSTEM_START
 
+  # First Shelley slot and its time. Required on networks whose Byron era
+  # used 20-second slots (mainnet, preprod): without them slots are counted
+  # from system_start at slot_length, which runs ahead of the chain there and
+  # makes the agent refuse every header. Not needed on preview.
+  #   mainnet: 4492800 at 2020-07-29T21:44:51Z
+  #   preprod: 86400 at 2022-06-21T00:00:00Z
+  shelley_start_slot: 4492800                # env: KESAGENT_SHELLEY_START_SLOT
+  shelley_start_time: "2020-07-29T21:44:51Z" # env: KESAGENT_SHELLEY_START_TIME
+
   # Slot schedule. slot_length is wall-clock seconds per slot (default 1);
   # slots_per_kes_period is protocol-defined (129600 on mainnet and Preprod).
   slot_length: 1                   # env: KESAGENT_SLOT_LENGTH
@@ -62,11 +71,15 @@ kes_agent:
   #   - name: "mainnet-pool"
   #     cold_vkey_file: "/etc/bursa/kes-agent/mainnet-cold.vkey"
   #     system_start: "2017-09-23T21:44:51Z"
+  #     shelley_start_slot: 4492800
+  #     shelley_start_time: "2020-07-29T21:44:51Z"
   #     slots_per_kes_period: 129600
   #     guard_file: "/var/lib/bursa/kes-agent/mainnet-pool.json"
   #   - name: "preprod-pool"
   #     cold_vkey_file: "/etc/bursa/kes-agent/preprod-cold.vkey"
   #     system_start: "2022-06-01T00:00:00Z"
+  #     shelley_start_slot: 86400
+  #     shelley_start_time: "2022-06-21T00:00:00Z"
   #     slot_length: 1               # default 1
   #     slots_per_kes_period: 129600
   #     max_kes_evolutions: 62       # default 62

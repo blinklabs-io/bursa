@@ -115,3 +115,32 @@ func TestKESAgentProfilesRefusesMixedOrIncompleteConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestKESAgentProfilesParsesTheShelleyAnchor(t *testing.T) {
+	got, err := kesAgentProfiles(config.KESAgentConfig{
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-06-01T00:00:00Z",
+		ShelleyStartSlot:  86400,
+		ShelleyStartTime:  "2022-06-21T00:00:00Z",
+		SlotLength:        1,
+		SlotsPerKESPeriod: 129600,
+		GuardFile:         "/var/lib/bursa/guard.json",
+	})
+	if err != nil {
+		t.Fatalf("kesAgentProfiles: %v", err)
+	}
+	if got[0].ShelleyStartSlot != 86400 ||
+		!got[0].ShelleyStartTime.Equal(time.Date(2022, 6, 21, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("anchor = %d %v", got[0].ShelleyStartSlot, got[0].ShelleyStartTime)
+	}
+	_, err = kesAgentProfiles(config.KESAgentConfig{
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-06-01T00:00:00Z",
+		ShelleyStartTime:  "June 21",
+		SlotLength:        1,
+		SlotsPerKESPeriod: 129600,
+	})
+	if err == nil || !strings.Contains(err.Error(), "shelley_start_time must be RFC3339") {
+		t.Fatalf("bad shelley_start_time: err = %v", err)
+	}
+}

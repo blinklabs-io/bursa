@@ -67,8 +67,14 @@ type Config struct {
 	Profiles       []ProfileConfig
 
 	// Single-pool fields, used only when Profiles is empty.
-	Depth             uint64        // KES tree depth (default kes.CardanoKesDepth)
-	SystemStart       time.Time     // Shelley genesis system start
+	Depth       uint64    // KES tree depth (default kes.CardanoKesDepth)
+	SystemStart time.Time // Shelley genesis system start
+	// ShelleyStartSlot and ShelleyStartTime anchor the slot clock at the
+	// first Shelley slot, for networks whose Byron era ran with longer slots
+	// (mainnet, preprod). Without them the anchor is slot 0 at SystemStart,
+	// which is right only where every slot has had SlotLength since genesis.
+	ShelleyStartSlot  uint64
+	ShelleyStartTime  time.Time
 	SlotLength        time.Duration // wall-clock duration of one slot
 	SlotsPerKESPeriod uint64        // slots per KES period
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
@@ -80,9 +86,15 @@ type Config struct {
 // genesis parameters of the network it forges on, and the durable guard file
 // that holds its period floor and last signed slot.
 type ProfileConfig struct {
-	Name              string
-	Depth             uint64        // KES tree depth (default kes.CardanoKesDepth)
-	SystemStart       time.Time     // Shelley genesis system start
+	Name        string
+	Depth       uint64    // KES tree depth (default kes.CardanoKesDepth)
+	SystemStart time.Time // Shelley genesis system start
+	// ShelleyStartSlot and ShelleyStartTime anchor the slot clock at the
+	// first Shelley slot, for networks whose Byron era ran with longer slots
+	// (mainnet, preprod). Without them the anchor is slot 0 at SystemStart,
+	// which is right only where every slot has had SlotLength since genesis.
+	ShelleyStartSlot  uint64
+	ShelleyStartTime  time.Time
 	SlotLength        time.Duration // wall-clock duration of one slot
 	SlotsPerKESPeriod uint64        // slots per KES period
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
@@ -172,6 +184,17 @@ func newProfile(
 	if cfg.SystemStart.IsZero() {
 		return nil, errors.New("kesagent: system_start is required")
 	}
+	if cfg.ShelleyStartTime.IsZero() && cfg.ShelleyStartSlot != 0 {
+		return nil, errors.New(
+			"kesagent: shelley_start_slot requires shelley_start_time",
+		)
+	}
+	if !cfg.ShelleyStartTime.IsZero() &&
+		cfg.ShelleyStartTime.Before(cfg.SystemStart) {
+		return nil, errors.New(
+			"kesagent: shelley_start_time is before system_start",
+		)
+	}
 	if cfg.SlotLength <= 0 {
 		return nil, errors.New("kesagent: slot_length must be positive")
 	}
@@ -180,10 +203,8 @@ func newProfile(
 			"kesagent: slots_per_kes_period must be positive",
 		)
 	}
-	// SlotLength > 0 is guaranteed above, so guard the KES-period-duration
-	// multiplication (SlotLength * SlotsPerKESPeriod) against int64 overflow.
-	// An oversized slots_per_kes_period would otherwise wrap to a non-positive
-	// duration and silently freeze currentKESPeriod at 0, stalling evolution.
+	// A KES period longer than a time.Duration can hold is no real network's
+	// and means a misconfigured slot_length or slots_per_kes_period.
 	if cfg.SlotsPerKESPeriod > uint64(math.MaxInt64)/uint64(cfg.SlotLength) {
 		return nil, fmt.Errorf(
 			"kesagent: slot_length (%s) * slots_per_kes_period (%d) overflows the KES period duration",
@@ -215,25 +236,24 @@ func newProfile(
 	}, nil
 }
 
-// kesPeriodDuration is the wall-clock length of one KES period.
-func (p *profile) kesPeriodDuration() time.Duration {
-	return p.cfg.SlotLength * time.Duration(
-		p.cfg.SlotsPerKESPeriod,
-	) // #nosec G115
+// currentSlot computes the current absolute slot from the profile's slot
+// clock anchor: the first Shelley slot and its time when configured,
+// otherwise slot 0 at SystemStart. Before the anchor it is the anchor slot.
+func (p *profile) currentSlot() uint64 {
+	anchorSlot, anchorTime := uint64(0), p.cfg.SystemStart
+	if !p.cfg.ShelleyStartTime.IsZero() {
+		anchorSlot, anchorTime = p.cfg.ShelleyStartSlot, p.cfg.ShelleyStartTime
+	}
+	elapsed := p.now().Sub(anchorTime)
+	if elapsed <= 0 {
+		return anchorSlot
+	}
+	return anchorSlot + uint64(elapsed/p.cfg.SlotLength) // #nosec G115 -- elapsed and SlotLength are positive
 }
 
-// currentKESPeriod computes the current absolute KES period from genesis
-// parameters and the agent clock.
+// currentKESPeriod is the absolute KES period of the current slot.
 func (p *profile) currentKESPeriod() uint64 {
-	elapsed := p.now().Sub(p.cfg.SystemStart)
-	if elapsed <= 0 {
-		return 0
-	}
-	per := p.kesPeriodDuration()
-	if per <= 0 {
-		return 0
-	}
-	return uint64(elapsed / per) // #nosec G115
+	return p.currentSlot() / p.cfg.SlotsPerKESPeriod
 }
 
 // GenStagedKey generates a fresh KES key into the staging slot and returns its

@@ -346,6 +346,8 @@ func kesAgentProfiles(
 			ColdVKeyFile:      kc.ColdVKeyFile,
 			ColdVKeyHex:       kc.ColdVKeyHex,
 			SystemStart:       kc.SystemStart,
+			ShelleyStartSlot:  kc.ShelleyStartSlot,
+			ShelleyStartTime:  kc.ShelleyStartTime,
 			SlotLength:        kc.SlotLength,
 			SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
 			MaxKESEvolutions:  kc.MaxKESEvolutions,
@@ -358,9 +360,10 @@ func kesAgentProfiles(
 	}
 	if kc.ColdVKeyFile != "" || kc.ColdVKeyHex != "" ||
 		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
-		kc.GuardFile != "" {
+		kc.GuardFile != "" || kc.ShelleyStartTime != "" ||
+		kc.ShelleyStartSlot != 0 {
 		return nil, errors.New(
-			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, slots_per_kes_period and guard_file; set them in each profile",
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period and guard_file; set them in each profile",
 		)
 	}
 	out := make([]kesagent.ProfileConfig, 0, len(kc.Profiles))
@@ -407,6 +410,17 @@ func kesAgentProfile(
 			err,
 		)
 	}
+	var shelleyStart time.Time
+	if pc.ShelleyStartTime != "" {
+		shelleyStart, err = time.Parse(time.RFC3339, pc.ShelleyStartTime)
+		if err != nil {
+			return kesagent.ProfileConfig{}, fmt.Errorf(
+				"%s.shelley_start_time must be RFC3339: %w",
+				field,
+				err,
+			)
+		}
+	}
 	coldVKey, err := loadColdVKey(pc.ColdVKeyHex, pc.ColdVKeyFile)
 	if err != nil {
 		return kesagent.ProfileConfig{}, fmt.Errorf(
@@ -418,6 +432,8 @@ func kesAgentProfile(
 	return kesagent.ProfileConfig{
 		Name:              pc.Name,
 		SystemStart:       systemStart,
+		ShelleyStartSlot:  pc.ShelleyStartSlot,
+		ShelleyStartTime:  shelleyStart,
 		SlotLength:        time.Duration(pc.SlotLength * float64(time.Second)),
 		SlotsPerKESPeriod: pc.SlotsPerKESPeriod,
 		MaxKESEvolutions:  pc.MaxKESEvolutions,

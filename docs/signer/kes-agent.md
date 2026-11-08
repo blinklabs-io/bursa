@@ -161,8 +161,13 @@ with unlocked memory, which may be swapped to disk.
 
 ## Slot / period configuration
 
-Absolute KES periods are derived from the Shelley genesis `system_start`,
-`slot_length`, and `slots_per_kes_period`. Set these to match the target
+Absolute KES periods are derived from the current slot and
+`slots_per_kes_period`. The current slot is counted at `slot_length` from an
+anchor: `shelley_start_slot` at `shelley_start_time` when set, otherwise slot 0
+at `system_start`. Networks whose Byron era used 20-second slots need the
+Shelley anchor, or the agent runs ahead of the chain and refuses every header:
+mainnet is slot 4492800 at `2020-07-29T21:44:51Z`, preprod is slot 86400 at
+`2022-06-21T00:00:00Z`. Preview has no Byron era and needs none. Set these to match the target
 network (e.g. mainnet `slots_per_kes_period: 129600`, `max_kes_evolutions: 62`).
 The scheduler ticks every `evolve_interval` (default `1m`) to evolve the key as
 periods advance.
