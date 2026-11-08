@@ -102,6 +102,7 @@ const (
 	// Socket modes for the service socket.
 	ModeServeKey = wire.ModeServeKey
 	ModeSign     = wire.ModeSign
+	ModeControl  = wire.ModeControl
 
 	// Control command names.
 	CmdGenStagedKey = wire.CmdGenStagedKey

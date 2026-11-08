@@ -439,6 +439,9 @@ func kesAgentProfiles(
 			SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
 			MaxKESEvolutions:  kc.MaxKESEvolutions,
 			GuardFile:         kc.GuardFile,
+
+			ControlClientSPKISHA256: kc.ControlClientSPKISHA256,
+			ControlAnyClient:        kc.ControlAnyClient,
 		}, "kes_agent")
 		if err != nil {
 			return nil, err
@@ -504,8 +507,17 @@ func kesAgentProfile(
 			err,
 		)
 	}
+	control, err := config.ParseSPKIList(
+		field+".control_client_spki_sha256",
+		pc.ControlClientSPKISHA256,
+	)
+	if err != nil {
+		return kesagent.ProfileConfig{}, err
+	}
 	return kesagent.ProfileConfig{
 		Name:              pc.Name,
+		ControlClientSPKI: control,
+		ControlAnyClient:  pc.ControlAnyClient,
 		SystemStart:       systemStart,
 		SlotLength:        time.Duration(pc.SlotLength * float64(time.Second)),
 		SlotsPerKESPeriod: pc.SlotsPerKESPeriod,

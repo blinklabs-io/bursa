@@ -72,6 +72,12 @@ func goldenCases() []goldenCase {
 			Type: "attestation_request", Protocol: AttestedProtocolID, Nonce: nonce,
 			KESVKey: kesVKey, Profile: "pool-a",
 		}, func() any { return new(AttestationRequest) }},
+		{"attestation_request_control", AttestationRequest{
+			Type: "attestation_request", Protocol: AttestedProtocolID,
+			Nonce: nonce, Role: ModeControl,
+		}, func() any { return new(AttestationRequest) }},
+		{"hello_attested_control", Hello{Protocol: AttestedProtocolID, Mode: ModeControl},
+			func() any { return new(Hello) }},
 		{"attestation_response_none", AttestationResponse{
 			Type: "attestation_response", Protocol: AttestedProtocolID,
 			Nonce: nonce, Provider: NoEvidenceProvider,
@@ -111,6 +117,11 @@ func goldenCases() []goldenCase {
 		{"command_install_key", Command{
 			Command: CmdInstallKey, OpCert: opcert, Profile: "mainnet-pool",
 		}, func() any { return new(Command) }},
+		{"command_gen_staged_key_profile", Command{
+			Command: CmdGenStagedKey, Profile: "mainnet-pool",
+		}, func() any { return new(Command) }},
+		{"command_info_profile", Command{Command: CmdInfo, Profile: "mainnet-pool"},
+			func() any { return new(Command) }},
 		{"command_drop_key", Command{Command: CmdDropKey, Target: "staged"},
 			func() any { return new(Command) }},
 		{"command_info", Command{Command: CmdInfo},

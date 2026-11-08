@@ -92,8 +92,9 @@ default `0600` regardless of how `service_socket_mode` is configured.
 
 Sign mode can additionally listen on `attested_listen_address` for a remote
 Dingo producer. This listener speaks `bursa-attested-kes/1`. It never
-offers serve-key mode or control commands. The local control socket remains the
-only route for staging, installing, or dropping keys.
+offers serve-key mode. By default it serves sign sessions only; a client listed
+in a profile's `control_client_spki_sha256` can also open control sessions (see
+[Remote control role](#remote-control-role)).
 
 By default any client certificate that chains to `attested_client_ca_file` is
 accepted. To revoke or limit individual clients, set
@@ -156,6 +157,64 @@ At startup the agent logs the same value as `server_spki_sha256` when it
 serves TLS (message "attested KES server certificate public key"). `nitro` and
 `confidential-space` are unchanged and still require `attester_address`. With
 no provider configured the agent refuses to start.
+
+## Remote control role
+
+A rotation controller outside the agent's pod can stage a key and install an
+operational certificate over the attested listener. List the controller's
+client certificate in `control_client_spki_sha256` (64 hex characters each,
+fingerprinted as for `attested_client_spki_sha256`) in each profile it may
+control:
+
+```yaml
+kes_agent:
+  attested_client_ca_file: /etc/bursa/client-ca.pem
+  profiles:
+    - name: pool-a
+      # ...
+      control_client_spki_sha256:
+        - "<hex sha256 of the controller certificate SPKI>"
+```
+
+With a single pool, set `control_client_spki_sha256` (or
+`KESAGENT_CONTROL_CLIENT_SPKI_SHA256`, comma-separated) at the `kes_agent`
+level. A control list requires `attested_client_ca_file` and cannot be combined
+with `attested_plaintext`, unless `control_any_client` is set; malformed entries
+fail at config load.
+
+To use the control role without client certificates at the agent, for example
+when mutual TLS is terminated by a sidecar or the listener is plain TCP, set
+`control_any_client: true` on the profile (`KESAGENT_CONTROL_ANY_CLIENT` at the
+`kes_agent` level for a single pool). Any client that declares `role: control`
+may then use the control commands for that profile in every transport mode, and
+no list is needed. The default is off: the control role is available only
+through a list or this option. Setting both is valid; list members and every
+other client are allowed. The option applies per profile.
+
+The client chooses the session with the `role` field of its attestation request:
+`"control"` opens a control session, and `"sign"` or no role opens a sign session
+as before. A control session needs the client's key in the control list of at
+least one profile, or a profile with `control_any_client`; a sign session is governed by `attested_client_spki_sha256`
+as before. One certificate may be in both lists and open either kind of session.
+A client whose key is in neither list is disconnected before the hello when
+`attested_client_spki_sha256` is set and no profile sets `control_any_client`.
+
+A control session receives the hello `{"protocol":"bursa-attested-kes/1",
+"mode":"control"}` when the certificate is in a control list and not in a
+non-empty `attested_client_spki_sha256`; otherwise the hello says `sign`. The
+attestation response carries `role` with the admitted role. The agent then
+answers the same attestation exchange as for sign sessions, so the controller
+verifies the agent the same way. The attested profile is chosen by the
+request's `profile` and `kes_vkey` as for sign sessions, and must be one the
+client may control.
+
+The session then serves the control commands `gen-staged-key`, `install-key`,
+`drop-key` and `info` on the profiles the client may control. Each
+command names its `profile` when the agent has several. A command naming an
+unknown profile, none with several profiles, or a profile the client's key is
+not listed for is refused with an error reply. A control session carries
+control frames only and a sign session carries sign frames only. Control
+sessions use the 10 second frame timeout of the local sockets.
 
 ## Key lifecycle (control socket)
 

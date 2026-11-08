@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -113,5 +114,56 @@ func TestKESAgentProfilesRefusesMixedOrIncompleteConfig(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestKESAgentProfilesCarryControlClients(t *testing.T) {
+	t.Parallel()
+	const fp = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	pool := config.KESAgentProfileConfig{
+		Name:              "pool",
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-10-25T00:00:00Z",
+		SlotsPerKESPeriod: 129600,
+		SlotLength:        1,
+		GuardFile:         "/var/lib/bursa/pool.json",
+	}
+	withControl := pool
+	withControl.ControlClientSPKISHA256 = []string{fp}
+	withControl.ControlAnyClient = true
+	got, err := kesAgentProfiles(config.KESAgentConfig{
+		Profiles: []config.KESAgentProfileConfig{withControl, pool},
+	})
+	if err != nil {
+		t.Fatalf("kesAgentProfiles: %v", err)
+	}
+	if len(got[0].ControlClientSPKI) != 1 ||
+		hex.EncodeToString(got[0].ControlClientSPKI[0][:]) != fp ||
+		len(got[1].ControlClientSPKI) != 0 ||
+		!got[0].ControlAnyClient || got[1].ControlAnyClient {
+		t.Fatalf("control clients = %v, %v", got[0].ControlClientSPKI, got[1].ControlClientSPKI)
+	}
+
+	single, err := kesAgentProfiles(config.KESAgentConfig{
+		ColdVKeyHex:             testColdVKeyHex,
+		SystemStart:             "2022-10-25T00:00:00Z",
+		SlotLength:              1,
+		SlotsPerKESPeriod:       129600,
+		GuardFile:               "/var/lib/bursa/guard.json",
+		ControlClientSPKISHA256: []string{fp},
+	})
+	if err != nil {
+		t.Fatalf("kesAgentProfiles single: %v", err)
+	}
+	if len(single[0].ControlClientSPKI) != 1 {
+		t.Fatalf("single-pool control clients = %v", single[0].ControlClientSPKI)
+	}
+
+	withControl.ControlClientSPKISHA256 = []string{"zz"}
+	_, err = kesAgentProfiles(config.KESAgentConfig{
+		Profiles: []config.KESAgentProfileConfig{withControl},
+	})
+	if err == nil || !strings.Contains(err.Error(), "kes_agent.profiles[0].control_client_spki_sha256") {
+		t.Fatalf("malformed control client: err = %v", err)
 	}
 }

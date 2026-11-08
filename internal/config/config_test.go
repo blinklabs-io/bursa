@@ -522,3 +522,84 @@ func TestKESAgentConfig_ClientAllowlist(t *testing.T) {
 		t.Error("malformed environment entry accepted")
 	}
 }
+
+// Not t.Parallel: LoadConfigFile replaces the package-level globalConfig.
+func TestLoadConfigFile_KESAgentControlClientLists(t *testing.T) {
+	previous := globalConfig
+	t.Cleanup(func() { globalConfig = previous })
+	a := strings.Repeat("aa", 32)
+	b := strings.Repeat("bb", 32)
+	ca := "  attested_client_ca_file: /ca.pem\n"
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "disjoint lists load",
+			yaml: "kes_agent:\n" + ca + "  attested_client_spki_sha256: [" + a + "]\n" +
+				"  profiles:\n    - name: pool\n      control_client_spki_sha256: [" + b + "]\n",
+		},
+		{
+			name: "one key in both lists loads",
+			yaml: "kes_agent:\n" + ca + "  attested_client_spki_sha256: [" + a + "]\n" +
+				"  profiles:\n    - name: pool\n      control_client_spki_sha256: [" + a + "]\n",
+		},
+		{
+			name: "single-pool control list loads",
+			yaml: "kes_agent:\n" + ca + "  control_client_spki_sha256: [" + b + "]\n",
+		},
+		{
+			name: "malformed profile control entry",
+			yaml: "kes_agent:\n" + ca + "  profiles:\n    - name: pool\n" +
+				"      control_client_spki_sha256: [zz]\n",
+			wantErr: "profiles[0].control_client_spki_sha256[0]",
+		},
+		{
+			name:    "malformed single-pool control entry",
+			yaml:    "kes_agent:\n" + ca + "  control_client_spki_sha256: [zz]\n",
+			wantErr: "kes_agent.control_client_spki_sha256[0]",
+		},
+		{
+			name: "control list without a client CA",
+			yaml: "kes_agent:\n  profiles:\n    - name: pool\n" +
+				"      control_client_spki_sha256: [" + a + "]\n",
+			wantErr: "profiles[0].control_client_spki_sha256 requires attested_client_ca_file",
+		},
+		{
+			name: "control list with plaintext and control_any_client",
+			yaml: "kes_agent:\n  attested_plaintext: true\n  control_any_client: true\n  control_client_spki_sha256: [" + a + "]\n",
+		},
+		{
+			name: "profile control_any_client alone in plaintext",
+			yaml: "kes_agent:\n  attested_plaintext: true\n  profiles:\n    - name: pool\n      control_any_client: true\n",
+		},
+		{
+			name:    "profile list with plaintext and the option on another profile",
+			yaml:    "kes_agent:\n  attested_plaintext: true\n  profiles:\n    - name: a\n      control_any_client: true\n    - name: b\n      control_client_spki_sha256: [" + a + "]\n",
+			wantErr: "profiles[1].control_client_spki_sha256 requires attested_client_ca_file",
+		},
+		{
+			name:    "control list with plaintext",
+			yaml:    "kes_agent:\n  attested_plaintext: true\n  control_client_spki_sha256: [" + a + "]\n",
+			wantErr: "control_client_spki_sha256 requires attested_client_ca_file",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "bursa.yml")
+			if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadConfigFile(path)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("LoadConfigFile: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

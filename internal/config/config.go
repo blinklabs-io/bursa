@@ -102,6 +102,11 @@ type KESAgentConfig struct {
 	// cold_vkey_hex, system_start, slots_per_kes_period, guard_file) must
 	// be left unset. Profiles are configured in YAML only.
 	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`
+	// ControlClientSPKISHA256 is control_client_spki_sha256 for the single
+	// profile built from the fields above; with profiles, set it in each.
+	ControlClientSPKISHA256 []string `yaml:"control_client_spki_sha256" envconfig:"KESAGENT_CONTROL_CLIENT_SPKI_SHA256"`
+	// ControlAnyClient is control_any_client for that single profile.
+	ControlAnyClient bool `yaml:"control_any_client"         envconfig:"KESAGENT_CONTROL_ANY_CLIENT"`
 }
 
 // KESAgentProfileConfig is one pool on one network served by the KES agent.
@@ -115,6 +120,17 @@ type KESAgentProfileConfig struct {
 	SlotsPerKESPeriod uint64  `yaml:"slots_per_kes_period"`
 	MaxKESEvolutions  uint64  `yaml:"max_kes_evolutions"`
 	GuardFile         string  `yaml:"guard_file"`
+	// ControlClientSPKISHA256 lists the attested-listener client
+	// certificates (SHA-256 SPKI, 64 hex chars each) that may open a control
+	// session for this profile, to stage and install keys. A certificate may
+	// also be in attested_client_spki_sha256; the client chooses the role.
+	// Requires attested_client_ca_file and is refused with
+	// attested_plaintext unless control_any_client is set.
+	ControlClientSPKISHA256 []string `yaml:"control_client_spki_sha256"`
+	// ControlAnyClient lets any client that declares the control role use
+	// the control commands for this profile, in every transport mode,
+	// including plain TCP. Default false. It may be combined with a list.
+	ControlAnyClient bool `yaml:"control_any_client"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.
@@ -358,12 +374,19 @@ var globalConfig = defaultConfig()
 // ParseSPKIFingerprints decodes SHA-256 SubjectPublicKeyInfo fingerprints,
 // each exactly 32 bytes as hex. Case is ignored.
 func ParseSPKIFingerprints(entries []string) ([][32]byte, error) {
+	return ParseSPKIList("kes_agent.attested_client_spki_sha256", entries)
+}
+
+// ParseSPKIList is ParseSPKIFingerprints for any list; field names errors
+// with the config path the list came from.
+func ParseSPKIList(field string, entries []string) ([][32]byte, error) {
 	out := make([][32]byte, 0, len(entries))
 	for i, entry := range entries {
 		raw, err := hex.DecodeString(strings.TrimSpace(entry))
 		if err != nil || len(raw) != 32 {
 			return nil, fmt.Errorf(
-				"kes_agent.attested_client_spki_sha256[%d] must be 64 hex characters (32 bytes)",
+				"%s[%d] must be 64 hex characters (32 bytes)",
+				field,
 				i,
 			)
 		}
@@ -388,6 +411,34 @@ func validateClientAllowlist(kc KESAgentConfig) error {
 		return errors.New(
 			"kes_agent.attested_client_spki_sha256 requires attested_client_ca_file and cannot be combined with attested_plaintext",
 		)
+	}
+	type controlList struct {
+		list []string
+		any  bool
+	}
+	controlLists := map[string]controlList{
+		"kes_agent.control_client_spki_sha256": {
+			kc.ControlClientSPKISHA256, kc.ControlAnyClient,
+		},
+	}
+	for i, pc := range kc.Profiles {
+		controlLists[fmt.Sprintf(
+			"kes_agent.profiles[%d].control_client_spki_sha256", i,
+		)] = controlList{pc.ControlClientSPKISHA256, pc.ControlAnyClient}
+	}
+	for field, cl := range controlLists {
+		if _, err := ParseSPKIList(field, cl.list); err != nil {
+			return err
+		}
+		// A list cannot be checked without verified client certificates,
+		// unless control_any_client opens the profile to every client.
+		if len(cl.list) > 0 && !cl.any &&
+			(kc.AttestedPlaintext || kc.AttestedClientCAFile == "") {
+			return fmt.Errorf(
+				"%s requires attested_client_ca_file and cannot be combined with attested_plaintext",
+				field,
+			)
+		}
 	}
 	return nil
 }

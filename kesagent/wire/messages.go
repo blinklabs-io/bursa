@@ -20,6 +20,9 @@ const (
 	ModeServeKey = "serve-key"
 	// ModeSign keeps the key in the agent and signs on request.
 	ModeSign = "sign"
+	// ModeControl is the Hello mode of an attested-listener session that
+	// serves control commands instead of sign requests.
+	ModeControl = "control"
 )
 
 const (
@@ -137,18 +140,23 @@ type AttestationRequest struct {
 	Nonce    []byte `json:"nonce"`
 	KESVKey  []byte `json:"kes_vkey,omitempty"`
 	Profile  string `json:"profile,omitempty"`
+	// Role is the session the client wants: "sign" or "control". Absent
+	// means sign.
+	Role string `json:"role,omitempty"`
 }
 
 // AttestationResponse binds the active KES state to measured-workload
 // evidence. The KES signing key is deliberately absent.
 type AttestationResponse struct {
-	Type        string `json:"type"`
-	Protocol    string `json:"protocol"`
-	Nonce       []byte `json:"nonce"`
-	Provider    string `json:"provider"`
-	KESVKey     []byte `json:"kes_vkey,omitempty"`
-	OpCert      []byte `json:"opcert,omitempty"`
-	Period      uint64 `json:"period,omitempty"`
+	Type     string `json:"type"`
+	Protocol string `json:"protocol"`
+	Nonce    []byte `json:"nonce"`
+	Provider string `json:"provider"`
+	KESVKey  []byte `json:"kes_vkey,omitempty"`
+	OpCert   []byte `json:"opcert,omitempty"`
+	Period   uint64 `json:"period,omitempty"`
+	// Role is the session the agent admitted the client for.
+	Role        string `json:"role,omitempty"`
 	Attestation []byte `json:"attestation,omitempty"`
 	Error       string `json:"error,omitempty"`
 }

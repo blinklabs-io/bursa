@@ -30,6 +30,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -47,6 +48,11 @@ var (
 	// ErrAttestation is returned when workload evidence cannot be produced or
 	// verified. The connection is closed without admitting sign requests.
 	ErrAttestation = errors.New("kesagent: attestation failed")
+	// ErrRoleNotPermitted is returned when a client requests a role it may
+	// not open.
+	ErrRoleNotPermitted = errors.New(
+		"kesagent: client is not permitted the requested role",
+	)
 	// ErrUnauthenticatedPeer is returned when the remote service connection is
 	// not protected by mutually authenticated TLS.
 	ErrUnauthenticatedPeer = errors.New(
@@ -84,6 +90,14 @@ type AttestedServiceConfig struct {
 	// verified leaf certificate has a SHA-256 SubjectPublicKeyInfo digest in
 	// the list. Empty accepts any client the TLS configuration verifies.
 	AllowedClientSPKI [][sha256.Size]byte
+
+	// controlClients maps a client public key to the profiles it may open
+	// control sessions for. ServeAttestedService fills it from the profile
+	// configuration.
+	controlClients map[[sha256.Size]byte][]*profile
+	// controlAnyClient is set when some profile accepts control sessions
+	// from any client.
+	controlAnyClient bool
 }
 
 type attestedKeyState struct {
@@ -191,6 +205,8 @@ func (a *Agent) ServeAttestedService(
 			"kesagent: attested service requires an attester, except for the none provider, which takes none",
 		)
 	}
+	cfg.controlClients = a.controlClients()
+	cfg.controlAnyClient = a.controlAnyClient()
 	conns := newConnSet()
 	srvCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -262,15 +278,11 @@ func authenticateRemotePeer(
 	if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
 		return ErrUnauthenticatedPeer
 	}
-	allowed := cfg.AllowedClientSPKI
-	if len(allowed) == 0 {
-		return nil
-	}
 	fingerprint := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
-	for _, entry := range allowed {
-		if subtle.ConstantTimeCompare(fingerprint[:], entry[:]) == 1 {
-			return nil
-		}
+	if signClientAllowed(cfg, &fingerprint) ||
+		len(cfg.listedControlProfiles(&fingerprint)) > 0 ||
+		cfg.controlAnyClient {
+		return nil
 	}
 	return fmt.Errorf(
 		"%w: client public key is not in the allowlist",
@@ -278,12 +290,55 @@ func authenticateRemotePeer(
 	)
 }
 
+// signClientAllowed reports whether the client with the given public key
+// fingerprint may open a sign session. fingerprint is nil when the connection
+// carries no verified client certificate, which the agent does not restrict.
+func signClientAllowed(cfg AttestedServiceConfig, fingerprint *[sha256.Size]byte) bool {
+	if fingerprint == nil || len(cfg.AllowedClientSPKI) == 0 {
+		return true
+	}
+	for _, entry := range cfg.AllowedClientSPKI {
+		if subtle.ConstantTimeCompare(fingerprint[:], entry[:]) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// peerSPKIFingerprint returns the SHA-256 SPKI fingerprint of the verified
+// client certificate on conn, or nil when it has none.
+func peerSPKIFingerprint(conn net.Conn) *[sha256.Size]byte {
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil
+	}
+	state := tlsConn.ConnectionState()
+	if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
+		return nil
+	}
+	sum := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
+	return &sum
+}
+
 func (a *Agent) serveAttestedConn(
 	ctx context.Context,
 	conn net.Conn,
 	cfg AttestedServiceConfig,
 ) {
-	if err := writeFrame(conn, Hello{Protocol: AttestedProtocolID, Mode: ModeSign}); err != nil {
+	fingerprint := peerSPKIFingerprint(conn)
+	listedFor := cfg.listedControlProfiles(fingerprint)
+	controlFor := a.controlProfilesFor(listedFor)
+	signOK := signClientAllowed(cfg, fingerprint)
+	// The Hello precedes the client's role, so it names the role the
+	// client's listing implies: control for a client in a control list and
+	// not in a non-empty sign list, sign otherwise. The response to the
+	// attestation request carries the admitted role.
+	helloMode := ModeSign
+	if len(listedFor) > 0 &&
+		(len(cfg.AllowedClientSPKI) == 0 || !signOK) {
+		helloMode = ModeControl
+	}
+	if err := writeFrame(conn, Hello{Protocol: AttestedProtocolID, Mode: helloMode}); err != nil {
 		return
 	}
 	var req AttestationRequest
@@ -303,11 +358,27 @@ func (a *Agent) serveAttestedConn(
 		_ = writeFrame(conn, resp)
 		return
 	}
+	role := req.Role
+	if role == "" {
+		role = ModeSign
+	}
+	if (role != ModeSign || !signOK) &&
+		(role != ModeControl || len(controlFor) == 0) {
+		resp.Error = ErrRoleNotPermitted.Error()
+		_ = writeFrame(conn, resp)
+		return
+	}
 	// The selector picks which profile's key state is attested. It does not
-	// bind the session: sign requests still route by header.
+	// bind the session: sign requests still route by header. A control
+	// session is attested for a profile it may control.
 	selected, err := a.selectProfile(req.Profile, req.KESVKey)
 	if err != nil {
 		resp.Error = err.Error()
+		_ = writeFrame(conn, resp)
+		return
+	}
+	if role == ModeControl && !slices.Contains(controlFor, selected) {
+		resp.Error = ErrRoleNotPermitted.Error()
 		_ = writeFrame(conn, resp)
 		return
 	}
@@ -316,6 +387,14 @@ func (a *Agent) serveAttestedConn(
 		resp.Error = err.Error()
 		_ = writeFrame(conn, resp)
 		return
+	}
+	resp.Role = role
+	serve := func() {
+		if role == ModeControl {
+			a.handleRemoteControl(ctx, conn, controlFor)
+			return
+		}
+		a.handleSign(ctx, conn, nil)
 	}
 	resp.KESVKey, resp.OpCert, resp.Period = state.kesVKey, state.opcert, state.period
 	binding := wire.AttestationBinding(
@@ -329,7 +408,7 @@ func (a *Agent) serveAttestedConn(
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
-		a.handleSign(ctx, conn, nil)
+		serve()
 		return
 	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)
@@ -342,7 +421,7 @@ func (a *Agent) serveAttestedConn(
 	if err := writeFrame(conn, resp); err != nil {
 		return
 	}
-	a.handleSign(ctx, conn, nil)
+	serve()
 }
 
 // HTTPAttester calls a workload-local provider adapter. The adapter receives

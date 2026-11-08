@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -88,6 +89,13 @@ type ProfileConfig struct {
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	GuardPath         string        // durable monotonic period store path
+	// ControlClientSPKI lists the client certificate public keys (SHA-256 of
+	// the DER SubjectPublicKeyInfo) that may open a control session for this
+	// profile on the attested listener.
+	ControlClientSPKI [][sha256.Size]byte
+	// ControlAnyClient lets any client that declares the control role use
+	// the control commands for this profile, in every transport mode.
+	ControlAnyClient bool
 }
 
 // keyState is the in-memory state of a KES key. The raw secret key bytes live

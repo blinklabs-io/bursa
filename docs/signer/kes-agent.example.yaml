@@ -87,6 +87,13 @@ kes_agent:
   # certificate issued by the CA.
   # attested_client_spki_sha256:
   #   - "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  # Optional: client public keys that may open a control session
+  # (gen-staged-key, install-key, drop-key, info). With several profiles, set
+  # control_client_spki_sha256 in each profile instead. Requires
+  # attested_client_ca_file unless control_any_client is set.
+  # control_any_client: true  # any client declaring role control, any transport
+  # control_client_spki_sha256:
+  #   - "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
   # The provider adapter runs inside the measured workload and produces fresh,
   # binding-specific evidence over a local Unix socket.
