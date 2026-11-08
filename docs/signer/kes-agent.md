@@ -76,6 +76,26 @@ protocol binding at `POST /v1/attest` over HTTPS, loopback HTTP, or a Unix
 socket. Static evidence is insufficient because every connection has a fresh
 challenge.
 
+### Identity-key provider
+
+Without platform evidence, set `attestation_provider: "identity-key"` and
+`attestation_identity_key_file`. `attester_address` is not used. The agent
+signs the binding with an Ed25519 identity key, and Dingo verifies the 64-byte
+signature against the identity public key pinned in its own configuration
+(`kesagent.NewIdentityKeyVerifier` with `kesagent.VerifyAttestation`). This
+proves the response came from a holder of that key; it does not measure the
+workload, so it is no substitute for `nitro` or `confidential-space` where
+those are available.
+
+The key file is a text envelope readable only by its owner:
+
+```json
+{ "type": "KESAgentIdentitySigningKey_ed25519", "cborHex": "5820<64 hex chars: 32-byte seed>" }
+```
+
+`nitro` and `confidential-space` are unchanged and still require
+`attester_address`. With no provider configured the agent refuses to start.
+
 ## Key lifecycle (control socket)
 
 1. **`gen-staged-key`** - the agent generates a fresh staged KES key pair and

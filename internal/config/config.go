@@ -84,6 +84,10 @@ type KESAgentConfig struct {
 	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
 	// inside the protected workload that produces nonce-bound evidence.
 	AttesterAddress string `yaml:"attester_address"        envconfig:"KESAGENT_ATTESTER_ADDRESS"`
+	// AttestationIdentityKeyFile is the Ed25519 identity signing key used by the
+	// "identity-key" attestation provider (a text envelope). The attested
+	// evidence is a signature by this key; no attester_address is needed.
+	AttestationIdentityKeyFile string `yaml:"attestation_identity_key_file" envconfig:"KESAGENT_ATTESTATION_IDENTITY_KEY_FILE"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.

@@ -224,20 +224,13 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
-		attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
-		if err != nil || kc.AttestationProvider == "" {
-			if err == nil {
-				err = errors.New("kes_agent.attestation_provider is required")
-			}
+		attestedCfg, err = attestedServiceConfig(kc)
+		if err != nil {
 			logger.Error("invalid attested KES configuration", "error", err)
 			_ = attestedLn.Close()
 			_ = serviceLn.Close()
 			_ = controlLn.Close()
 			return 1
-		}
-		attestedCfg = kesagent.AttestedServiceConfig{
-			Provider: kc.AttestationProvider,
-			Attester: attester,
 		}
 	}
 
@@ -294,6 +287,50 @@ func runKesAgent(configFile string) int {
 	_ = os.Remove(kc.ControlSocket)
 	logger.Info("kes-agent shutdown complete")
 	return exitCode
+}
+
+// attestedServiceConfig builds the attested service provider and attester.
+// The identity-key provider signs with a local key; every other provider
+// needs a workload-local adapter at attester_address.
+func attestedServiceConfig(
+	kc config.KESAgentConfig,
+) (kesagent.AttestedServiceConfig, error) {
+	if kc.AttestationProvider == "" {
+		return kesagent.AttestedServiceConfig{}, errors.New(
+			"kes_agent.attestation_provider is required",
+		)
+	}
+	if kc.AttestationProvider == kesagent.IdentityKeyProvider {
+		if kc.AttestationIdentityKeyFile == "" {
+			return kesagent.AttestedServiceConfig{}, errors.New(
+				"kes_agent.attestation_identity_key_file is required for the identity-key provider",
+			)
+		}
+		key, err := kesagent.LoadIdentityKey(kc.AttestationIdentityKeyFile)
+		if err != nil {
+			return kesagent.AttestedServiceConfig{}, fmt.Errorf(
+				"read attestation identity key: %w",
+				err,
+			)
+		}
+		defer clear(key)
+		attester, err := kesagent.NewIdentityKeyAttester(key)
+		if err != nil {
+			return kesagent.AttestedServiceConfig{}, err
+		}
+		return kesagent.AttestedServiceConfig{
+			Provider: kc.AttestationProvider,
+			Attester: attester,
+		}, nil
+	}
+	attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
+	if err != nil {
+		return kesagent.AttestedServiceConfig{}, err
+	}
+	return kesagent.AttestedServiceConfig{
+		Provider: kc.AttestationProvider,
+		Attester: attester,
+	}, nil
 }
 
 func listenAttestedKES(

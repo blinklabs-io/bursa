@@ -163,6 +163,10 @@ POST /v1/attest
 It returns the same protocol and binding plus `attestation`. Static or replayed
 evidence fails because each Dingo connection supplies a fresh nonce.
 
+With provider `identity-key` there is no adapter: the agent signs the 32-byte
+binding directly with its Ed25519 identity key, and `attestation` is that
+64-byte signature. The client verifies it against a pinned identity public key.
+
 ## Control socket
 
 Request/response. The client sends a `Command` frame; the server replies with a

@@ -64,6 +64,10 @@ kes_agent:
   # binding-specific evidence over a local Unix socket.
   # attestation_provider: "nitro"  # or "confidential-space"
   # attester_address: "unix:///run/bursa/attester.sock"
+  # Without platform evidence, sign the binding with a pinned identity key
+  # instead (no attester_address). env: KESAGENT_ATTESTATION_IDENTITY_KEY_FILE
+  # attestation_provider: "identity-key"
+  # attestation_identity_key_file: "/run/secrets/kes-agent/identity.skey"
 
 # Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
 # port to 0 to disable it. Non-loopback addresses and addresses that carry a
