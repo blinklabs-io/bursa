@@ -33,6 +33,8 @@ const (
 	IdentityKeyProvider = "identity-key"
 	// IdentityKeyFileType is the text-envelope type of an identity key file.
 	IdentityKeyFileType = "KESAgentIdentitySigningKey_ed25519"
+	// IdentityVKeyFileType is the text-envelope type of the matching public key.
+	IdentityVKeyFileType = "KESAgentIdentityVerificationKey_ed25519"
 )
 
 // IdentityKeyAttester signs the attestation binding with the agent's identity
@@ -54,6 +56,11 @@ func NewIdentityKeyAttester(
 		)
 	}
 	return &IdentityKeyAttester{key: bytes.Clone(key)}, nil
+}
+
+// Public returns the identity public key clients must pin.
+func (a *IdentityKeyAttester) Public() ed25519.PublicKey {
+	return a.key.Public().(ed25519.PublicKey)
 }
 
 // Evidence implements Attester. binding must be an AttestationBinding digest.

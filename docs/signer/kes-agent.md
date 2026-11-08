@@ -87,7 +87,13 @@ proves the response came from a holder of that key; it does not measure the
 workload, so it is no substitute for `nitro` or `confidential-space` where
 those are available.
 
-The key file is a text envelope readable only by its owner:
+Create the key with `bursa kes-agent gen-identity-key --signing-key-file
+identity.skey --verification-key-file identity.vkey`. It writes both
+envelopes (the signing key with mode 0600), refuses to overwrite existing
+files, and prints the public key as hex on stdout: that hex is the key to pin
+in Dingo. The agent also logs it at startup as `identity_public_key`.
+
+The signing key file is a text envelope readable only by its owner:
 
 ```json
 { "type": "KESAgentIdentitySigningKey_ed25519", "cborHex": "5820<64 hex chars: 32-byte seed>" }
