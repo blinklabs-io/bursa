@@ -93,6 +93,10 @@ type AttestationVerifier interface {
 type AttestedServiceConfig struct {
 	Provider string
 	Attester Attester
+	// AllowedClientSPKI, when non-empty, restricts clients to those whose
+	// verified leaf certificate has a SHA-256 SubjectPublicKeyInfo digest in
+	// the list. Empty accepts any client the TLS configuration verifies.
+	AllowedClientSPKI [][sha256.Size]byte
 }
 
 type attestedKeyState struct {
@@ -264,7 +268,7 @@ func (a *Agent) ServeAttestedService(
 			defer wg.Done()
 			defer conns.remove(conn)
 			defer conn.Close()
-			if err := authenticateRemotePeer(ctx, conn); err != nil {
+			if err := authenticateRemotePeer(ctx, conn, cfg.AllowedClientSPKI); err != nil {
 				a.logger.Warn("refusing unauthenticated KES peer", "error", err)
 				return
 			}
@@ -273,7 +277,11 @@ func (a *Agent) ServeAttestedService(
 	}
 }
 
-func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
+func authenticateRemotePeer(
+	ctx context.Context,
+	conn net.Conn,
+	allowed [][sha256.Size]byte,
+) error {
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return ErrUnauthenticatedPeer
@@ -291,7 +299,19 @@ func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
 	if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
 		return ErrUnauthenticatedPeer
 	}
-	return nil
+	if len(allowed) == 0 {
+		return nil
+	}
+	fingerprint := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
+	for _, entry := range allowed {
+		if subtle.ConstantTimeCompare(fingerprint[:], entry[:]) == 1 {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"%w: client public key is not in the allowlist",
+		ErrUnauthenticatedPeer,
+	)
 }
 
 func (a *Agent) serveAttestedConn(

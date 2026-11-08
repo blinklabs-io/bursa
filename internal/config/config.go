@@ -15,8 +15,10 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/kelseyhightower/envconfig"
 	"gopkg.in/yaml.v3"
@@ -84,6 +86,11 @@ type KESAgentConfig struct {
 	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
 	// inside the protected workload that produces nonce-bound evidence.
 	AttesterAddress string `yaml:"attester_address"        envconfig:"KESAGENT_ATTESTER_ADDRESS"`
+	// AttestedClientSPKISHA256 optionally restricts attested clients to those
+	// whose client certificate public key has one of these SHA-256 SPKI
+	// fingerprints (64 hex chars each). Empty accepts any certificate that
+	// chains to attested_client_ca_file.
+	AttestedClientSPKISHA256 []string `yaml:"attested_client_spki_sha256" envconfig:"KESAGENT_ATTESTED_CLIENT_SPKI_SHA256"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.
@@ -324,6 +331,23 @@ func defaultConfig() Config {
 // We use a singleton for the config for convenience
 var globalConfig = defaultConfig()
 
+// ParseSPKIFingerprints decodes SHA-256 SubjectPublicKeyInfo fingerprints,
+// each exactly 32 bytes as hex. Case is ignored.
+func ParseSPKIFingerprints(entries []string) ([][32]byte, error) {
+	out := make([][32]byte, 0, len(entries))
+	for i, entry := range entries {
+		raw, err := hex.DecodeString(strings.TrimSpace(entry))
+		if err != nil || len(raw) != 32 {
+			return nil, fmt.Errorf(
+				"kes_agent.attested_client_spki_sha256[%d] must be 64 hex characters (32 bytes)",
+				i,
+			)
+		}
+		out = append(out, [32]byte(raw))
+	}
+	return out, nil
+}
+
 func GetConfig() *Config {
 	return &globalConfig
 }
@@ -334,6 +358,11 @@ func LoadConfig() (*Config, error) {
 			"failed loading config from environment: %w",
 			err,
 		)
+	}
+	if _, err := ParseSPKIFingerprints(
+		globalConfig.KESAgent.AttestedClientSPKISHA256,
+	); err != nil {
+		return nil, err
 	}
 	return &globalConfig, nil
 }
@@ -365,6 +394,11 @@ func LoadConfigFile(path string) (*Config, error) {
 			"failed loading config from environment: %w",
 			err,
 		)
+	}
+	if _, err := ParseSPKIFingerprints(
+		globalConfig.KESAgent.AttestedClientSPKISHA256,
+	); err != nil {
+		return nil, err
 	}
 	return &globalConfig, nil
 }

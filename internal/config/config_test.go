@@ -17,6 +17,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -421,5 +422,52 @@ func TestDefaultDebugListenAddressIsLoopback(t *testing.T) {
 	t.Parallel()
 	if got := defaultConfig().Debug.ListenAddress; got != "127.0.0.1" {
 		t.Fatalf("default debug listen address = %q, want 127.0.0.1", got)
+	}
+}
+
+func TestKESAgentConfig_ClientAllowlist(t *testing.T) {
+	fp := strings.Repeat("ab", 32)
+	upper := strings.ToUpper(fp)
+	load := func(t *testing.T, yaml string) (*Config, error) {
+		t.Helper()
+		cfgFile := filepath.Join(t.TempDir(), "bursa.yml")
+		if err := os.WriteFile(cfgFile, []byte(yaml), 0o600); err != nil {
+			t.Fatalf("write temp config: %v", err)
+		}
+		return LoadConfigFile(cfgFile)
+	}
+
+	cfg, err := load(t, "kes_agent:\n  attested_client_spki_sha256:\n    - \""+fp+"\"\n    - \""+upper+"\"\n")
+	if err != nil {
+		t.Fatalf("valid allowlist rejected: %v", err)
+	}
+	if got := cfg.KESAgent.AttestedClientSPKISHA256; len(got) != 2 || got[0] != fp {
+		t.Fatalf("allowlist = %v", got)
+	}
+	parsed, err := ParseSPKIFingerprints(cfg.KESAgent.AttestedClientSPKISHA256)
+	if err != nil || len(parsed) != 2 || parsed[0] != parsed[1] || parsed[0][0] != 0xab {
+		t.Fatalf("ParseSPKIFingerprints = %v, %v", parsed, err)
+	}
+
+	if cfg, err = load(t, "kes_agent:\n  mode: sign\n"); err != nil ||
+		len(cfg.KESAgent.AttestedClientSPKISHA256) != 0 {
+		t.Fatalf("unset allowlist: %v, %v", cfg.KESAgent.AttestedClientSPKISHA256, err)
+	}
+
+	for name, entry := range map[string]string{
+		"not hex":   strings.Repeat("zz", 32),
+		"too short": strings.Repeat("ab", 31),
+		"too long":  strings.Repeat("ab", 33),
+		"odd":       fp + "a",
+		"empty":     "",
+	} {
+		if _, err := load(t, "kes_agent:\n  attested_client_spki_sha256:\n    - \""+entry+"\"\n"); err == nil {
+			t.Errorf("%s: malformed entry accepted", name)
+		}
+	}
+
+	t.Setenv("KESAGENT_ATTESTED_CLIENT_SPKI_SHA256", "nothex")
+	if _, err := load(t, ""); err == nil {
+		t.Error("malformed environment entry accepted")
 	}
 }
