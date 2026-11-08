@@ -216,6 +216,14 @@ func (a *Agent) ServeAttestedService(
 	if a.cfg.Mode != ModeSign {
 		return errors.New("kesagent: attested service requires sign mode")
 	}
+	// Sessions are not bound to a profile yet, so with several profiles an
+	// admitted session could sign for all of them.
+	if len(a.profiles) != 1 {
+		return fmt.Errorf(
+			"%w: the attested service supports one profile",
+			ErrAmbiguousProfile,
+		)
+	}
 	if cfg.Provider == "" || cfg.Attester == nil {
 		return errors.New(
 			"kesagent: attested service requires provider and attester",
