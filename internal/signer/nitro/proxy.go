@@ -13,8 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
-	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 )
@@ -30,6 +31,12 @@ type enclaveAPI interface {
 	) (SignResponse, error)
 }
 
+// defaultSignTimeout bounds one sign request from its arrival, including the
+// wait for another sign to finish, to the release of its signature. It stays
+// below the proxy server's 30 second write timeout, so a state saved inside
+// it leaves time to release the signature.
+const defaultSignTimeout = 20 * time.Second
+
 // sealedStateSaver durably persists the sealed counter state.
 type sealedStateSaver interface {
 	SaveSealedState(context.Context, []byte) error
@@ -40,10 +47,15 @@ type sealedStateSaver interface {
 type ProxyHandler struct {
 	enclave enclaveAPI
 	saver   sealedStateSaver
-	// signMu is held across the enclave Sign and the save of its sealed
-	// state. Without it, concurrent requests could store a lower counter's
-	// state after a higher one was already released.
-	signMu sync.Mutex
+	// signSlot admits one request at a time across the enclave Sign and the
+	// save of its sealed state. Without it, concurrent requests could store a
+	// lower counter's state after a higher one was already released. It is a
+	// channel rather than a mutex so a queued request gives up at its
+	// deadline.
+	signSlot chan struct{}
+	// signTimeout bounds each sign request, so a stalled enclave call or save
+	// cannot hold the slot indefinitely.
+	signTimeout time.Duration
 }
 
 // NewProxyHandler constructs the host-side signer proxy.
@@ -56,7 +68,12 @@ func NewProxyHandler(
 			"nitro enclave client and sealed state store are required",
 		)
 	}
-	return &ProxyHandler{enclave: enclave, saver: saver}, nil
+	return &ProxyHandler{
+		enclave:     enclave,
+		saver:       saver,
+		signSlot:    make(chan struct{}, 1),
+		signTimeout: defaultSignTimeout,
+	}, nil
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request, out any) error {
@@ -97,8 +114,14 @@ func (p *ProxyHandler) signAndPersist(
 	ctx context.Context,
 	request backend.AttestedRequest,
 ) (backend.AttestedResponse, error) {
-	p.signMu.Lock()
-	defer p.signMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, p.signTimeout)
+	defer cancel()
+	select {
+	case p.signSlot <- struct{}{}:
+	case <-ctx.Done():
+		return backend.AttestedResponse{}, ctx.Err()
+	}
+	defer func() { <-p.signSlot }()
 	response, err := p.enclave.Sign(ctx, request)
 	if err != nil {
 		return backend.AttestedResponse{}, err
@@ -109,6 +132,12 @@ func (p *ProxyHandler) signAndPersist(
 		)
 	}
 	if err := p.saver.SaveSealedState(ctx, response.SealedState); err != nil {
+		// the enclave has counted this issue number; the operator needs the
+		// cause to choose a recovery
+		slog.Error(
+			"sealed counter state not saved; signature withheld",
+			"error", err,
+		)
 		return backend.AttestedResponse{}, err
 	}
 	return response.AttestedResponse, nil

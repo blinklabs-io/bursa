@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,6 +124,14 @@ func postSign(
 	handler http.Handler,
 	counter uint64,
 ) *httptest.ResponseRecorder {
+	return postSignContext(context.Background(), handler, counter)
+}
+
+func postSignContext(
+	ctx context.Context,
+	handler http.Handler,
+	counter uint64,
+) *httptest.ResponseRecorder {
 	payload := make([]byte, 48)
 	binary.BigEndian.PutUint64(payload[32:40], counter)
 	body, err := json.Marshal(backend.AttestedRequest{
@@ -136,7 +145,12 @@ func postSign(
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(
 		response,
-		httptest.NewRequest(http.MethodPost, "/v1/sign", bytes.NewReader(body)),
+		httptest.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		),
 	)
 	return response
 }
@@ -226,4 +240,78 @@ func TestProxySerializesSignAndSave(t *testing.T) {
 	}
 	require.Equal(t, uint64(6), lastCounter(t, saver))
 	require.Len(t, saver.saved, 2)
+}
+
+// stallingSaver blocks its first save until the request context ends.
+type stallingSaver struct{ calls atomic.Int32 }
+
+func (s *stallingSaver) SaveSealedState(ctx context.Context, _ []byte) error {
+	if s.calls.Add(1) == 1 {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func TestProxyBoundsStalledSave(t *testing.T) {
+	t.Parallel()
+	_, key, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	enclave, saver := &stateEnclave{key: key}, &stallingSaver{}
+	handler, err := NewProxyHandler(enclave, saver)
+	require.NoError(t, err)
+	handler.signTimeout = 50 * time.Millisecond
+
+	// the request carries no deadline of its own
+	codes := make(chan int, 1)
+	go func() { codes <- postSign(handler, 5).Code }()
+	select {
+	case code := <-codes:
+		require.Equal(t, http.StatusBadGateway, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stalled save held the sign request without a bound")
+	}
+	// the stalled request gave up its slot
+	require.Equal(t, http.StatusOK, postSign(handler, 6).Code)
+}
+
+func TestProxyQueuedSignHonorsDeadline(t *testing.T) {
+	t.Parallel()
+	enclave := &stateEnclave{}
+	saver := &recordingSaver{
+		gate:    make(chan struct{}),
+		started: make(chan struct{}),
+	}
+	handler := newStateProxy(t, enclave, saver)
+	var release sync.Once
+	releaseSave := func() { release.Do(func() { close(saver.gate) }) }
+	defer releaseSave()
+
+	first := make(chan int, 1)
+	go func() { first <- postSign(handler, 5).Code }()
+	select {
+	case <-saver.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first save never started")
+	}
+	// a request queued behind the pending save gives up at its deadline
+	// without reaching the enclave
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	second := make(chan int, 1)
+	go func() { second <- postSignContext(ctx, handler, 6).Code }()
+	select {
+	case code := <-second:
+		require.Equal(t, http.StatusBadGateway, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a queued sign request outlived its deadline")
+	}
+	require.Equal(t, 1, enclave.signCalls())
+	releaseSave()
+	select {
+	case code := <-first:
+		require.Equal(t, http.StatusOK, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first sign request never completed")
+	}
 }

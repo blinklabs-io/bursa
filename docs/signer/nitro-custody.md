@@ -192,20 +192,29 @@ returns. The sealing key is derived with HKDF from the KMS data key under its
 own label, so only the enclave can seal or open the state, and the
 authenticated data binds the pool public key, the KMS key ID, and a state
 version. The proxy writes the sealed state to the same Secrets Manager secret
-as the envelope before it releases the signature, holding one lock across the
-enclave call and the write. On start the proxy passes the stored state to
+as the envelope before it releases the signature, admitting one request at a
+time across the enclave call and the write. A sign request that does not
+finish within 20 seconds, including any wait behind another request, fails
+and releases nothing. On start the proxy passes the stored state to
 `Reload`. A tampered state, or one sealed for another key or KMS key, refuses
 the reload; a secret with no state is a legacy start with no known counter. A
 reload on a loaded enclave never lowers its counter. Secrets written before
 this change hold the envelope only and still load.
 
-If the write fails, the request fails and no signature is released. The
-running enclave has still counted that issue number and refuses it until the
-enclave and the proxy are restarted; the reload then restores the stored
-state, which predates the failed request. If the write succeeds but the
-response does not reach the signer, the stored state already holds the number
-and a restart does not clear it. Restore the previous secret version only when
-the signer's watermark has no record of that issue number.
+If the write fails or times out, the request fails, no signature is released,
+and the proxy logs the cause. The running enclave has still counted that issue
+number and refuses it until the enclave and the proxy are restarted. A write
+reported as failed can still have been stored, and a stored write's response
+can fail to reach the signer; then the reloaded state already holds the number
+and the restart does not clear it. Restoring the previous secret version makes
+the number signable again. That is the same rollback a host can perform, so do
+it only when the signer's watermark has no record of the issue number and the
+host is trusted not to have kept the withheld signature.
+
+Each signature writes a new secret version. Secrets Manager keeps every
+version created in the last 24 hours, so more than about 100 signatures in a
+day reach its version quota, and a write refused there fails like any other.
+The enclave signs only operational certificates.
 
 The proxy and the enclave image move together: their gRPC messages reject
 unknown fields, so a proxy and an enclave from releases on either side of
