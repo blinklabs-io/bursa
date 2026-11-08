@@ -37,7 +37,8 @@ device wipe it is in bootstrap again.
 | wipe: `/wipe/profile`, `/wipe/signlog`, `/wipe/cold` | unsigned in bootstrap; then a host key of the image's scope | as testnet | always a host key of the scope acted on |
 
 With a host key of another scope on the device, a single-scope image is not
-in bootstrap and takes no unsigned request on these routes.
+in bootstrap: its signing, provisioning and wipe routes above take no
+unsigned request, and `/v1/inventory` stays unsigned.
 
 Some routes take no host key on any image, by design:
 
