@@ -48,6 +48,9 @@ var (
 	ErrEnvelope = errors.New("invalid wrapped key envelope")
 	// ErrNoEnvelope marks an existing Secrets Manager secret with no value.
 	ErrNoEnvelope = errors.New("wrapped key envelope is absent")
+	// ErrCounterState marks sealed counter state that is malformed, tampered,
+	// or sealed for a different pool key or KMS key.
+	ErrCounterState = errors.New("invalid sealed counter state")
 )
 
 // Credentials are temporary AWS credentials delivered to the enclave for a
@@ -119,6 +122,18 @@ type ReloadRequest struct {
 	Region      string      `json:"region"`
 	Credentials Credentials `json:"credentials"`
 	Envelope    Envelope    `json:"envelope"`
+	// SealedState is the counter state the enclave returned with its last
+	// released signature. Absent for a key that never signed.
+	SealedState []byte `json:"sealed_state,omitempty"`
+}
+
+// SignResponse is the enclave's Sign result. SealedState is the counter state
+// after this signature, sealed so that only the enclave can open it. The host
+// must persist it before releasing Signature, and never forwards it to the
+// signer.
+type SignResponse struct {
+	backend.AttestedResponse
+	SealedState []byte `json:"sealed_state"`
 }
 
 // ReloadResponse confirms which public key was installed.

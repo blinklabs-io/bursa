@@ -234,12 +234,13 @@ func (c *rpcClient) Challenge(ctx context.Context) (ChallengeResponse, error) {
 	return response, err
 }
 
-// Sign implements backend.Enclave over gRPC.
+// Sign asks the enclave to sign and returns the sealed counter state with
+// the signature.
 func (c *rpcClient) Sign(
 	ctx context.Context,
 	req backend.AttestedRequest,
-) (backend.AttestedResponse, error) {
-	var response backend.AttestedResponse
+) (SignResponse, error) {
+	var response SignResponse
 	err := c.conn.Invoke(ctx, "/"+rpcServiceName+"/Sign", &req, &response)
 	return response, err
 }
@@ -270,7 +271,7 @@ type custodyRPC interface {
 	Sign(
 		context.Context,
 		*backend.AttestedRequest,
-	) (*backend.AttestedResponse, error)
+	) (*SignResponse, error)
 }
 
 func invokeRPC(

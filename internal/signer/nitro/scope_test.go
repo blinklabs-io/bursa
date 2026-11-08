@@ -152,7 +152,8 @@ func TestProxyRefusesProfiledInventory(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	handler, err := NewProxyHandler(
-		&badSignatureEnclave{pub: publicKey, key: privateKey},
+		proxyTestEnclave{&badSignatureEnclave{pub: publicKey, key: privateKey}},
+		discardSaver{},
 	)
 	require.NoError(t, err)
 	request := httptest.NewRequest(http.MethodPost, "/v1/inventory",

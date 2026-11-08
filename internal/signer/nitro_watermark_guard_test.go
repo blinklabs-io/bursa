@@ -50,6 +50,13 @@ func TestCheckBackendWatermark_NitroRequiresEnforcingDurable(t *testing.T) {
 			!strings.Contains(err.Error(), "durable") {
 			t.Fatalf("watermark %+v: unhelpful error %v", wm, err)
 		}
+		// the enclave seals its counter, so the error must not claim it is
+		// lost on restart
+		if strings.Contains(err.Error(), "does not survive") ||
+			(strings.Contains(err.Error(), `(type "file"`) &&
+				!strings.Contains(err.Error(), "rolled back")) {
+			t.Fatalf("watermark %+v: stale rationale in error %v", wm, err)
+		}
 	}
 }
 
