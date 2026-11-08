@@ -16,6 +16,7 @@ package signer
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"strings"
@@ -496,7 +497,20 @@ func TestSignOpCert_BackendFailureRecordsNoCounter(t *testing.T) {
 		t.Fatalf("failed sign: want CodeBackend, got (code=%s, err=%v)", code, err)
 	}
 
+	// a signature that fails verification records nothing either
 	k.signErr = nil
+	_, wrong, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := k.priv
+	k.priv = wrong
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeInternal {
+		t.Fatalf("unverified signature: want CodeInternal, got (code=%s, err=%v)", code, err)
+	}
+	k.priv = priv
+
 	res, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String())
 	if err != nil || res == nil {
 		t.Fatalf("retry of counter 3: got (code=%s, err=%v)", code, err)

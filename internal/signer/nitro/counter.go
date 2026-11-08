@@ -25,7 +25,8 @@ import (
 const (
 	// counterStateVersion names the sealed counter record. It is bound into
 	// the AEAD additional data, so a record of another version is refused.
-	// Version 2 adds the hash of the payload last signed at the counter.
+	// Version 2 adds the hash of the payload last signed at the counter;
+	// version 1 records still load through counterStateVersionV1.
 	counterStateVersion = "bursa-nitro-counter/2"
 	// counterStateVersionV1 is the previous record, which holds no payload
 	// hash. It still loads, and allows no re-sign at its counter.

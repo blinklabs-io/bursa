@@ -201,3 +201,42 @@ func TestOpenCounterStateRefusesUnknownVersion(t *testing.T) {
 	restarted, _, _ := newTestService(t, evidence)
 	require.ErrorIs(t, reloadWithState(restarted, env, state), ErrCounterState)
 }
+
+func TestReloadAtEqualCounterMergesPayloadHash(t *testing.T) {
+	t.Parallel()
+	evidence := testEvidence(t, 6)
+	sealKey := testSealKey(t)
+	original := opcertPayload(0x11, 5, 120)
+	other := opcertPayload(0x22, 5, 120)
+
+	// a loaded hash stays when a stored state at the same counter holds
+	// another
+	service, _, _ := newTestService(t, evidence)
+	env := provisionTestKey(t, service)
+	_, err := signPayload(service, env.PublicKey, original, 1)
+	require.NoError(t, err)
+	foreign, err := sealCounterState(
+		sealKey, env.PublicKey, env.KMSKeyID, 5, hashPayload(other),
+	)
+	require.NoError(t, err)
+	require.NoError(t, reloadWithState(service, env, foreign))
+	_, err = signPayload(service, env.PublicKey, other, 2)
+	require.ErrorContains(t, err, "different payload")
+	_, err = signPayload(service, env.PublicKey, original, 3)
+	require.NoError(t, err)
+
+	// a stored hash fills a counter loaded from a version 1 state
+	restarted, _, _ := newTestService(t, evidence)
+	require.NoError(t, reloadWithState(
+		restarted, env, sealV1State(t, sealKey, env.PublicKey, env.KMSKeyID, 5),
+	))
+	stored, err := sealCounterState(
+		sealKey, env.PublicKey, env.KMSKeyID, 5, hashPayload(original),
+	)
+	require.NoError(t, err)
+	require.NoError(t, reloadWithState(restarted, env, stored))
+	_, err = signPayload(restarted, env.PublicKey, other, 4)
+	require.ErrorContains(t, err, "different payload")
+	_, err = signPayload(restarted, env.PublicKey, original, 5)
+	require.NoError(t, err)
+}

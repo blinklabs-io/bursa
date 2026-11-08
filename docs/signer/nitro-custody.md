@@ -216,16 +216,18 @@ proxy also answers inventory with HTTP 503, so a signer started against it
 fails closed; a proxy restart clears it. The running enclave has still counted
 the issue number. After the restart reloads the stored state, a retry of the
 same request (same payload, fresh nonce and challenge) is signed again and its
-state saved, whether or not the failed write landed. If the failed write did
-not land, the restart reloads an older state and the retry signs as a new
-counter.
+state saved, whether or not the failed write landed: a reload never lowers
+the running enclave's counter, which keeps its payload hash. Only an enclave
+that restarted and loaded an older state signs the retry as a new counter.
 
 The same re-sign recovers a response lost between the enclave and the signer,
 and a signer whose watermark commit failed: the signer commits an issue
 counter only after it holds a verified signature, so it has no record of the
 number and passes the retry to the enclave. Once the signer has committed the
 number, its watermark refuses a retry of it, even when the signer's own
-response to its caller was lost.
+response to its caller was lost. A commit error whose outcome is unknown, such
+as a connection lost before the store confirmed, may have recorded the number,
+and the retry is then refused the same way.
 
 The sealed state is versioned. A state of the previous version holds no
 payload hash; it still loads and allows no re-sign at its counter, so an equal
