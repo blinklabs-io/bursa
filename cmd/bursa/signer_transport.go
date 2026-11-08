@@ -103,6 +103,16 @@ func checkSignerListener(cfg config.SignerConfig) (string, error) {
 	return "signer listener: plain TCP", nil
 }
 
+// signerJWKSHint names signer.jwks_plaintext when an http jwks_url was used
+// without it, or returns "".
+func signerJWKSHint(cfg config.SignerConfig) string {
+	u, err := url.Parse(cfg.JWKSURL)
+	if err != nil || u.Scheme != "http" || cfg.JWKSPlaintext {
+		return ""
+	}
+	return "signer.jwks_plaintext: true permits an http signer.jwks_url on any host"
+}
+
 // describeSignerJWKS returns the INFO line naming the JWKS transport, or ""
 // when signer.jwks_url is unset.
 func describeSignerJWKS(cfg config.SignerConfig) string {

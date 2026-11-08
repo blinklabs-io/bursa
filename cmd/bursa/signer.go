@@ -317,6 +317,8 @@ key.`,
 						"failed to initialize JWKS validator",
 						"error",
 						err,
+						"hint",
+						signerJWKSHint(cfg.Signer),
 					)
 					os.Exit(1)
 				}

@@ -252,6 +252,24 @@ func TestCheckSignerListener(t *testing.T) {
 	}
 }
 
+func TestSignerJWKSHint(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		cfg  config.SignerConfig
+		hint bool
+	}{
+		{config.SignerConfig{JWKSURL: "http://idp/jwks"}, true},
+		{config.SignerConfig{JWKSURL: "http://idp/jwks", JWKSPlaintext: true}, false},
+		{config.SignerConfig{JWKSURL: "https://idp/jwks"}, false},
+	} {
+		got := signerJWKSHint(tc.cfg)
+		if (got != "") != tc.hint ||
+			(got != "" && !strings.Contains(got, "signer.jwks_plaintext")) {
+			t.Errorf("%+v: hint = %q", tc.cfg, got)
+		}
+	}
+}
+
 func TestDescribeSignerJWKS(t *testing.T) {
 	t.Parallel()
 	for url, want := range map[string]string{

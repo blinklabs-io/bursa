@@ -46,7 +46,7 @@ func CallerFromContext(ctx context.Context) string {
 type Validator func(token string) (subject string, err error)
 
 var errJWKSURLPolicy = errors.New(
-	"jwks_url must use https, or http on a loopback host; set jwks_plaintext: true for http on other hosts",
+	"jwks_url must use https, or http on a loopback host",
 )
 
 // checkJWKSURL applies the key transport policy to configured locations and
