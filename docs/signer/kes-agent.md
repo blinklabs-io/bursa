@@ -143,7 +143,23 @@ again (a retry), but a different body for a signed slot or a lower slot is
 refused. Several producers can therefore share one agent for a pool, and the
 first header signed for a slot wins. The record survives restarts and key
 installs, since slots are absolute. A guard file from an earlier version loads
-with no slot record.
+with no slot record. Each refusal is counted in
+`bursa_kesagent_slot_guard_refusals_total` with a `reason` of `equivocation`
+(a different body for a signed slot) or `rollback` (a lower slot).
+
+While it runs, the agent holds an exclusive lock on `<guard_file>.lock`, a file
+next to the guard file that it creates if needed and leaves in place on exit.
+A second agent process started on the same guard file fails at startup with a
+"guard file is locked" error. The lock is released when the agent exits. It
+uses `flock` and is not taken on platforms without it (Windows, AIX). The guard
+file's directory must exist at startup.
+
+A missing or empty guard file loads with no floor and no slot record. That is
+expected on a first start, so the agent still starts, but it logs a warning
+naming the file and sets `bursa_kesagent_guard_fresh` to 1 for that profile.
+On any later start it means the record of signed slots was lost (for example a
+wiped volume), and the agent could sign a second header for a slot it already
+signed; alert on this gauge.
 
 For restart recovery, preserve the guard on durable storage available only to
 the approved workload measurement, then stage and install a key whose current
@@ -190,6 +206,8 @@ exposing KES activity on a network interface.
 | `bursa_kesagent_current_period` | Current absolute KES period |
 | `bursa_kesagent_exhausted` | Active key exhausted (1/0) |
 | `bursa_kesagent_service_connections` | Active service-socket connections |
+| `bursa_kesagent_slot_guard_refusals_total` | Headers refused by the slot guard, by `reason` (`equivocation`, `rollback`) |
+| `bursa_kesagent_guard_fresh` | Guard file was missing or empty at startup (1/0) |
 
 ## Shutdown
 

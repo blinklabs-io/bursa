@@ -27,6 +27,9 @@ type Metrics struct {
 	exhausted   *prometheus.GaugeVec
 	activeConns prometheus.Gauge
 
+	slotGuardRefusals *prometheus.CounterVec
+	guardFresh        *prometheus.GaugeVec
+
 	profile string
 }
 
@@ -57,6 +60,16 @@ func NewMetrics() *Metrics {
 			Name: "bursa_kesagent_service_connections",
 			Help: "Currently connected service-socket clients.",
 		}),
+		slotGuardRefusals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "bursa_kesagent_slot_guard_refusals_total",
+			Help: "Block headers the slot guard refused, " +
+				"by reason (equivocation|rollback).",
+		}, []string{"profile", "reason"}),
+		guardFresh: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "bursa_kesagent_guard_fresh",
+			Help: "1 when the profile's guard file was missing or " +
+				"empty at startup, so no signed slot was known, else 0.",
+		}, []string{"profile"}),
 	}
 }
 
@@ -69,6 +82,8 @@ func (m *Metrics) Register(r prometheus.Registerer) {
 		m.currentPer,
 		m.exhausted,
 		m.activeConns,
+		m.slotGuardRefusals,
+		m.guardFresh,
 	)
 }
 
@@ -121,5 +136,26 @@ func (m *Metrics) setExhausted(v bool) {
 func (m *Metrics) addConns(delta float64) {
 	if m != nil {
 		m.activeConns.Add(delta)
+	}
+}
+
+// incSlotGuardRefusal counts a header the slot guard refused; reason is
+// "equivocation" or "rollback".
+func (m *Metrics) incSlotGuardRefusal(reason string) {
+	if m != nil {
+		m.slotGuardRefusals.WithLabelValues(m.profile, reason).Inc()
+	}
+}
+
+// setGuardFresh records whether the profile's guard file had no prior record
+// when the profile opened it.
+func (m *Metrics) setGuardFresh(v bool) {
+	if m == nil {
+		return
+	}
+	if v {
+		m.guardFresh.WithLabelValues(m.profile).Set(1)
+	} else {
+		m.guardFresh.WithLabelValues(m.profile).Set(0)
 	}
 }

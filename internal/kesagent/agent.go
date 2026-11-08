@@ -225,7 +225,7 @@ func newProfile(
 	if err != nil {
 		return nil, err
 	}
-	return &profile{
+	p := &profile{
 		cfg:     cfg,
 		mode:    mode,
 		logger:  logger.With("profile", cfg.Name),
@@ -233,7 +233,19 @@ func newProfile(
 		guard:   guard,
 		nowFn:   nowFn,
 		subs:    make(map[int]chan KeyPush),
-	}, nil
+	}
+	// A first start has no guard file, but on any later start a missing one
+	// means the last signed slot was lost, so the slot guard cannot refuse a
+	// second header for it. Starting is still allowed; operators are told.
+	fresh := guard.Fresh()
+	if fresh {
+		p.logger.Warn(
+			"guard file missing or empty: starting with no record of signed slots; expected only on a first start",
+			"path", cfg.GuardPath,
+		)
+	}
+	p.metrics.setGuardFresh(fresh)
+	return p, nil
 }
 
 // currentSlot computes the current absolute slot from the profile's slot
@@ -501,6 +513,12 @@ func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		guardErr = p.guard.Authorize(vkeyHex, period)
 	}
 	if guardErr != nil {
+		switch {
+		case errors.Is(guardErr, ErrSlotEquivocation):
+			p.metrics.incSlotGuardRefusal("equivocation")
+		case errors.Is(guardErr, ErrSlotRollback):
+			p.metrics.incSlotGuardRefusal("rollback")
+		}
 		p.metrics.incSign("error")
 		return nil, guardErr
 	}
@@ -808,4 +826,5 @@ func (p *profile) close() {
 	p.active = nil
 	p.staged.close()
 	p.staged = nil
+	p.guard.Close()
 }

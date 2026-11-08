@@ -430,7 +430,8 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 }
 
-// Close wipes all key material in every profile.
+// Close wipes all key material in every profile and releases the guard file
+// locks.
 func (a *Agent) Close() {
 	for _, p := range a.profiles {
 		p.close()

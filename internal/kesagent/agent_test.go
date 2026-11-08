@@ -428,6 +428,7 @@ func TestInstallRefusedByGuardFloor(t *testing.T) {
 	if err := g.Authorize("prev", 100); err != nil {
 		t.Fatalf("seed guard: %v", err)
 	}
+	g.Close() // release the guard file lock for the agent
 
 	cfg := Config{
 		Mode:              ModeServeKey,

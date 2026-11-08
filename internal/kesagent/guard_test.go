@@ -56,7 +56,9 @@ func TestPeriodGuardDurable(t *testing.T) {
 	if err := g.Authorize("vk", 42); err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	// Reopen from disk: the floor must survive.
+	// Reopen from disk: the floor must survive. Close first, as a restart
+	// does, to release the guard file lock.
+	g.Close()
 	g2, err := NewPeriodGuard(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -110,6 +112,7 @@ func TestPeriodGuardHeaderSlot(t *testing.T) {
 	}
 
 	// The record survives a restart, and a new key changes nothing.
+	g.Close()
 	g2, err := NewPeriodGuard(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)

@@ -36,6 +36,8 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 	m.setCurrentPeriod(42)
 	m.setExhausted(true)
 	m.addConns(1)
+	m.incSlotGuardRefusal("equivocation")
+	m.setGuardFresh(true)
 
 	mfs, err := reg.Gather()
 	if err != nil {
@@ -53,6 +55,10 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 		"bursa_kesagent_current_period":      "Current absolute KES period of the active key.",
 		"bursa_kesagent_exhausted":           "1 when the active KES key has exhausted its evolutions, else 0.",
 		"bursa_kesagent_service_connections": "Currently connected service-socket clients.",
+		"bursa_kesagent_slot_guard_refusals_total": "Block headers the slot " +
+			"guard refused, by reason (equivocation|rollback).",
+		"bursa_kesagent_guard_fresh": "1 when the profile's guard file was " +
+			"missing or empty at startup, so no signed slot was known, else 0.",
 	}
 	for name, help := range want {
 		gotHelp, ok := got[name]
@@ -86,4 +92,6 @@ func TestMetricsNilReceiverSafe(t *testing.T) {
 	m.setExhausted(false)
 	m.addConns(1)
 	m.addConns(-1)
+	m.incSlotGuardRefusal("rollback")
+	m.setGuardFresh(true)
 }
