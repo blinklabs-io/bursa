@@ -15,9 +15,16 @@
 package main
 
 import (
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/kesagent"
 )
 
 func TestParseSocketMode(t *testing.T) {
@@ -221,5 +228,73 @@ func TestLoadColdVKeyMalformedTextFileOfLength32(t *testing.T) {
 		t.Fatal(
 			"expected loadColdVKey to reject malformed text-shaped 32-byte input",
 		)
+	}
+}
+
+func TestAttestedServiceConfigProviders(t *testing.T) {
+	t.Parallel()
+	const addr = "unix:///run/bursa/attester.sock"
+	cfg, err := attestedServiceConfig(config.KESAgentConfig{
+		AttestationProvider: kesagent.MTLSProvider,
+	})
+	if err != nil || cfg.Provider != kesagent.MTLSProvider || cfg.Attester != nil {
+		t.Fatalf("mtls config = %+v, %v", cfg, err)
+	}
+	if _, err := attestedServiceConfig(config.KESAgentConfig{
+		AttestationProvider: kesagent.MTLSProvider,
+		AttesterAddress:     addr,
+	}); err == nil {
+		t.Fatal("mtls with attester_address accepted")
+	}
+	if _, err := attestedServiceConfig(config.KESAgentConfig{}); err == nil {
+		t.Fatal("no provider accepted")
+	}
+	if _, err := attestedServiceConfig(config.KESAgentConfig{
+		AttesterAddress: addr,
+	}); err == nil {
+		t.Fatal("attester without a provider accepted")
+	}
+	for _, provider := range []string{"nitro", "confidential-space"} {
+		if _, err := attestedServiceConfig(config.KESAgentConfig{
+			AttestationProvider: provider,
+		}); err == nil {
+			t.Fatalf("%s without attester_address accepted", provider)
+		}
+		cfg, err := attestedServiceConfig(config.KESAgentConfig{
+			AttestationProvider: provider,
+			AttesterAddress:     addr,
+		})
+		if err != nil || cfg.Provider != provider || cfg.Attester == nil {
+			t.Fatalf("%s with attester refused: %v", provider, err)
+		}
+	}
+}
+
+func TestServerCertFingerprint(t *testing.T) {
+	t.Parallel()
+	certFile, _ := writeConfidentialSpaceTLSFixture(t)
+	data, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(data)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	got, err := serverCertFingerprint(certFile)
+	if err != nil {
+		t.Fatalf("serverCertFingerprint: %v", err)
+	}
+	if got != hex.EncodeToString(sum[:]) {
+		t.Fatalf("fingerprint = %q, want %q", got, hex.EncodeToString(sum[:]))
+	}
+	if _, err := serverCertFingerprint(filepath.Join(t.TempDir(), "none")); err == nil {
+		t.Fatal("missing certificate accepted")
 	}
 }

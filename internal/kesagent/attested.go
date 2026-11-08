@@ -21,7 +21,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +40,11 @@ import (
 
 const (
 	// AttestedProtocolID is the protocol spoken by an attested KES workload.
-	AttestedProtocolID   = "bursa-attested-kes/1"
+	AttestedProtocolID = "bursa-attested-kes/1"
+	// MTLSProvider is the attestation provider for a workload that is
+	// authenticated only by its TLS server certificate. It carries no
+	// evidence; clients must pin the server certificate public key.
+	MTLSProvider         = "mtls"
 	attestationNonceSize = 32
 	attesterMaxResponse  = 1 << 20
 )
@@ -90,6 +96,7 @@ type AttestationVerifier interface {
 
 // AttestedServiceConfig configures the remotely reachable KES sign service.
 // Provider is a stable adapter name such as "nitro" or "confidential-space".
+// The "mtls" provider has no Attester and sends no evidence.
 type AttestedServiceConfig struct {
 	Provider string
 	Attester Attester
@@ -160,7 +167,8 @@ func VerifyAttestation(
 	coldVKey, expectedOpCert []byte,
 	verifier AttestationVerifier,
 ) error {
-	if verifier == nil || req.Type != "attestation_request" ||
+	mtls := expectedProvider == MTLSProvider
+	if (verifier == nil && !mtls) || req.Type != "attestation_request" ||
 		req.Protocol != AttestedProtocolID ||
 		len(req.Nonce) != attestationNonceSize {
 		return ErrAttestation
@@ -171,7 +179,8 @@ func VerifyAttestation(
 		resp.Provider != expectedProvider ||
 		len(resp.KESVKey) != 32 ||
 		len(resp.OpCert) == 0 ||
-		len(resp.Attestation) == 0 {
+		// Evidence is required except for mtls, which must carry none.
+		(len(resp.Attestation) == 0) == !mtls {
 		return ErrAttestation
 	}
 	if subtle.ConstantTimeCompare(req.Nonce, resp.Nonce) != 1 {
@@ -189,6 +198,10 @@ func VerifyAttestation(
 	}
 	if err := ledger.VerifyOpCertSignature(decoded.LedgerOpCert(), coldVKey); err != nil {
 		return ErrAttestation
+	}
+	if mtls {
+		// No evidence: the pinned TLS server key is the authentication.
+		return nil
 	}
 	binding := AttestationBinding(
 		req.Nonce,
@@ -230,9 +243,12 @@ func (a *Agent) ServeAttestedService(
 	if a.cfg.Mode != ModeSign {
 		return errors.New("kesagent: attested service requires sign mode")
 	}
-	if cfg.Provider == "" || cfg.Attester == nil {
+	if cfg.Provider == "" {
+		return errors.New("kesagent: attested service requires provider")
+	}
+	if (cfg.Provider == MTLSProvider) != (cfg.Attester == nil) {
 		return errors.New(
-			"kesagent: attested service requires provider and attester",
+			"kesagent: attested service requires an attester, except for the mtls provider, which takes none",
 		)
 	}
 	conns := newConnSet()
@@ -333,6 +349,13 @@ func (a *Agent) serveAttestedConn(
 		state.opcert,
 		state.period,
 	)
+	if cfg.Provider == MTLSProvider {
+		if err := writeFrame(conn, resp); err != nil {
+			return
+		}
+		a.handleSign(ctx, conn)
+		return
+	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)
 	if err != nil || len(resp.Attestation) == 0 {
 		resp.Attestation = nil
@@ -456,4 +479,11 @@ func (a *HTTPAttester) Evidence(
 		return nil, ErrAttestation
 	}
 	return out.Attestation, nil
+}
+
+// SPKIFingerprint is the hex SHA-256 of a certificate's DER
+// SubjectPublicKeyInfo, the value a client pins for the mtls provider.
+func SPKIFingerprint(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(sum[:])
 }

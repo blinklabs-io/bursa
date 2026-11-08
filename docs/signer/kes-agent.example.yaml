@@ -64,6 +64,9 @@ kes_agent:
   # binding-specific evidence over a local Unix socket.
   # attestation_provider: "nitro"  # or "confidential-space"
   # attester_address: "unix:///run/bursa/attester.sock"
+  # Without platform evidence: attestation_provider: "mtls" (no
+  # attester_address). Clients must pin the server certificate public key; the
+  # agent logs its SHA-256 SPKI fingerprint at startup as server_spki_sha256.
 
 # Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
 # port to 0 to disable it. Non-loopback addresses and addresses that carry a

@@ -76,6 +76,26 @@ protocol binding at `POST /v1/attest` over HTTPS, loopback HTTP, or a Unix
 socket. Static evidence is insufficient because every connection has a fresh
 challenge.
 
+### mtls provider
+
+Without platform evidence, set `attestation_provider: "mtls"`. There is no
+attester and `attester_address` must be unset. The agent answers the challenge
+with an empty `attestation`, and the authentication is the TLS server
+certificate: the client must pin the agent's server certificate public key
+(SHA-256 of its SubjectPublicKeyInfo) in its TLS configuration and refuse any
+other key. This provides no workload measurement; use `nitro` or
+`confidential-space` where a measured workload is required. Compute the pin
+with:
+
+```sh
+openssl x509 -in server.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256
+```
+
+At startup the agent logs the same value as `server_spki_sha256` (message
+"attested KES server certificate public key"). `nitro` and
+`confidential-space` are unchanged and still require `attester_address`. With
+no provider configured the agent refuses to start.
+
 ## Key lifecycle (control socket)
 
 1. **`gen-staged-key`** - the agent generates a fresh staged KES key pair and

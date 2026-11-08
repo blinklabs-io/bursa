@@ -163,6 +163,13 @@ POST /v1/attest
 It returns the same protocol and binding plus `attestation`. Static or replayed
 evidence fails because each Dingo connection supplies a fresh nonce.
 
+With provider `mtls` there is no adapter and `attestation` is empty. The
+client accepts empty evidence only when it expects `mtls`, and refuses
+non-empty evidence for it; every other provider refuses empty evidence. The
+nonce, opcert and period checks still apply. The server is authenticated by
+the client pinning the SHA-256 SPKI fingerprint of the agent's TLS server
+certificate; the protocol itself measures nothing.
+
 ## Control socket
 
 Request/response. The client sends a `Command` frame; the server replies with a

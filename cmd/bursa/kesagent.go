@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -224,21 +225,26 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
-		attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
-		if err != nil || kc.AttestationProvider == "" {
-			if err == nil {
-				err = errors.New("kes_agent.attestation_provider is required")
-			}
+		attestedCfg, err = attestedServiceConfig(kc)
+		if err != nil {
 			logger.Error("invalid attested KES configuration", "error", err)
 			_ = attestedLn.Close()
 			_ = serviceLn.Close()
 			_ = controlLn.Close()
 			return 1
 		}
-		attestedCfg = kesagent.AttestedServiceConfig{
-			Provider: kc.AttestationProvider,
-			Attester: attester,
+		fingerprint, err := serverCertFingerprint(kc.AttestedTLSCertFile)
+		if err != nil {
+			logger.Error("invalid attested KES certificate", "error", err)
+			_ = attestedLn.Close()
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
 		}
+		logger.Info(
+			"attested KES server certificate public key",
+			"server_spki_sha256", fingerprint,
+		)
 	}
 
 	ctx, stop := signal.NotifyContext(
@@ -294,6 +300,61 @@ func runKesAgent(configFile string) int {
 	_ = os.Remove(kc.ControlSocket)
 	logger.Info("kes-agent shutdown complete")
 	return exitCode
+}
+
+// attestedServiceConfig builds the attested service provider and attester.
+// The mtls provider has no attester and rejects attester_address; every other
+// provider needs the workload-local adapter at attester_address.
+func attestedServiceConfig(
+	kc config.KESAgentConfig,
+) (kesagent.AttestedServiceConfig, error) {
+	if kc.AttestationProvider == "" {
+		return kesagent.AttestedServiceConfig{}, errors.New(
+			"kes_agent.attestation_provider is required",
+		)
+	}
+	if kc.AttestationProvider == kesagent.MTLSProvider {
+		if kc.AttesterAddress != "" {
+			return kesagent.AttestedServiceConfig{}, errors.New(
+				"kes_agent.attester_address is not used with the mtls provider",
+			)
+		}
+		return kesagent.AttestedServiceConfig{
+			Provider: kc.AttestationProvider,
+		}, nil
+	}
+	attester, err := kesagent.NewHTTPAttester(kc.AttesterAddress)
+	if err != nil {
+		return kesagent.AttestedServiceConfig{}, err
+	}
+	return kesagent.AttestedServiceConfig{
+		Provider: kc.AttestationProvider,
+		Attester: attester,
+	}, nil
+}
+
+// serverCertFingerprint returns the SHA-256 SPKI fingerprint of the first
+// certificate in certFile, which clients pin for the mtls provider.
+func serverCertFingerprint(certFile string) (string, error) {
+	pemData, err := os.ReadFile(certFile)
+	if err != nil {
+		return "", fmt.Errorf("read attested KES certificate: %w", err)
+	}
+	for {
+		var block *pem.Block
+		block, pemData = pem.Decode(pemData)
+		if block == nil {
+			return "", errors.New("attested KES certificate has no certificate")
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return "", fmt.Errorf("parse attested KES certificate: %w", err)
+		}
+		return kesagent.SPKIFingerprint(cert), nil
+	}
 }
 
 func listenAttestedKES(
