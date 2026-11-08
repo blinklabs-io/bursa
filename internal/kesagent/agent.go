@@ -240,11 +240,13 @@ func newProfile(
 	fresh := guard.Fresh()
 	if fresh {
 		p.logger.Warn(
-			"guard file missing or empty: starting with no record of signed slots; expected only on a first start",
+			"guard file missing or empty: starting with no record of "+
+				"signed slots; expected only on a first start",
 			"path", cfg.GuardPath,
 		)
 	}
 	p.metrics.setGuardFresh(fresh)
+	p.metrics.initSlotGuardRefusals()
 	return p, nil
 }
 

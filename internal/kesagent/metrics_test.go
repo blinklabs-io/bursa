@@ -93,5 +93,6 @@ func TestMetricsNilReceiverSafe(t *testing.T) {
 	m.addConns(1)
 	m.addConns(-1)
 	m.incSlotGuardRefusal("rollback")
+	m.initSlotGuardRefusals()
 	m.setGuardFresh(true)
 }

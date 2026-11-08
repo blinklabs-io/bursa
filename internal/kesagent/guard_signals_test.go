@@ -144,6 +144,11 @@ func TestSlotGuardRefusalsAreCounted(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(a.Close)
+	// Both reasons have a series from startup, so the first refusal is an
+	// increase a rate or increase query can see.
+	if n := testutil.CollectAndCount(m.slotGuardRefusals); n != 2 {
+		t.Fatalf("refusal series at startup = %d, want 2", n)
+	}
 	a.now = func() time.Time { return atPeriod(5) }
 	vkey, err := a.GenStagedKey()
 	if err != nil {

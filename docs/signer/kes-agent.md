@@ -145,7 +145,8 @@ first header signed for a slot wins. The record survives restarts and key
 installs, since slots are absolute. A guard file from an earlier version loads
 with no slot record. Each refusal is counted in
 `bursa_kesagent_slot_guard_refusals_total` with a `reason` of `equivocation`
-(a different body for a signed slot) or `rollback` (a lower slot).
+(a different body for a signed slot) or `rollback` (a lower slot); both
+series start at 0 for every profile.
 
 While it runs, the agent holds an exclusive lock on `<guard_file>.lock`, a file
 next to the guard file that it creates if needed and leaves in place on exit.

@@ -147,6 +147,17 @@ func (m *Metrics) incSlotGuardRefusal(reason string) {
 	}
 }
 
+// initSlotGuardRefusals creates the profile's refusal series at zero, so the
+// first refusal shows up as an increase rather than a new series.
+func (m *Metrics) initSlotGuardRefusals() {
+	if m == nil {
+		return
+	}
+	for _, reason := range []string{"equivocation", "rollback"} {
+		m.slotGuardRefusals.WithLabelValues(m.profile, reason).Add(0)
+	}
+}
+
 // setGuardFresh records whether the profile's guard file had no prior record
 // when the profile opened it.
 func (m *Metrics) setGuardFresh(v bool) {
