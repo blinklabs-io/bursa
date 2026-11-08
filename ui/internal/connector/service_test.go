@@ -416,6 +416,55 @@ func TestServiceSignTxInspectionFailureDoesNotPromptOrSign(t *testing.T) {
 	}
 }
 
+func TestServiceUnpairDuringInspectionReturnsRefused(t *testing.T) {
+	origin := "https://inspection.example"
+	release := make(chan struct{})
+	be := &blockingInspectBackend{
+		fakeBackend: &fakeBackend{
+			inspectSummary: spend.TxSummary{Fee: "170000"},
+		},
+		started: make(chan string, 1),
+		release: release,
+	}
+	s := NewService(t.TempDir(), be, nil)
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"ext",
+			token,
+			origin,
+			"signTx",
+			json.RawMessage(`{"tx":"cafebabe","partialSign":false}`),
+		)
+		result <- err
+	}()
+	select {
+	case <-be.started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach inspection")
+	}
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, ErrRefused) {
+		t.Fatalf("signTx error = %v, want ErrRefused", err)
+	}
+	if be.signTxCalled {
+		t.Fatal("revoked request reached SignTx")
+	}
+}
+
 func TestServiceSignTxInspectionUsesQueueAdmission(t *testing.T) {
 	origin := "https://bounded.example"
 	release := make(chan struct{})
@@ -836,6 +885,61 @@ func TestServiceProtectedReadSerializesAccountRebinding(t *testing.T) {
 	}
 }
 
+func TestServiceAuthorizedReadSerializesUnpair(t *testing.T) {
+	be := &blockingBalanceBackend{
+		balanceStarted: make(chan struct{}),
+		releaseBalance: make(chan struct{}),
+		rebound:        make(chan struct{}),
+	}
+	s := NewService(t.TempDir(), be, nil)
+	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
+	s.SetActiveAccount(
+		identity.WalletID,
+		&wallet.Account{AccountIndex: identity.AccountIndex},
+	)
+	const origin = "https://race.example"
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			context.Background(),
+			"ext",
+			token,
+			origin,
+			"getBalance",
+			nil,
+		)
+		readDone <- err
+	}()
+	<-be.balanceStarted
+	if s.pairingMu.TryLock() {
+		s.pairingMu.Unlock()
+		t.Fatal("authorized read did not hold the pairing read lock")
+	}
+
+	unpairDone := make(chan error, 1)
+	go func() { unpairDone <- s.Unpair() }()
+	select {
+	case err := <-unpairDone:
+		t.Fatalf("Unpair returned during authorized read: %v", err)
+	default:
+	}
+	close(be.releaseBalance)
+	if err := <-readDone; err != nil {
+		t.Fatalf("getBalance: %v", err)
+	}
+	if err := <-unpairDone; err != nil {
+		t.Fatalf("Unpair: %v", err)
+	}
+}
+
 func TestServicePendingApprovalRejectsIdentitySwitch(t *testing.T) {
 	t.Run("enable", func(t *testing.T) {
 		s := NewService(t.TempDir(), &fakeBackend{}, nil)
@@ -950,6 +1054,164 @@ func TestServiceUnpair(t *testing.T) {
 	}
 	if s.VerifyToken("anything", "ext") {
 		t.Fatal("token should be invalid after unpair")
+	}
+}
+
+func TestServiceUnpairRefusesPendingAuthorizedRequest(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	bindTestIdentity(s)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"ext",
+			token,
+			"https://pending.example",
+			"enable",
+			nil,
+		)
+		done <- err
+	}()
+	pendingID := waitForPendingID(t, s)
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+	if _, err := s.ConfirmPairForTest("ext"); err != nil {
+		t.Fatalf("re-pair: %v", err)
+	}
+	if err := <-done; !errors.Is(err, ErrRefused) {
+		t.Fatalf("pending request error = %v, want ErrRefused", err)
+	}
+	if pending := s.Pending(); len(pending) != 0 {
+		t.Fatalf("pending requests after unpair = %v, want none", pending)
+	}
+	if err := s.Decide(pendingID, Decision{Approved: true}); !errors.Is(
+		err,
+		ErrUnknownRequest,
+	) && !errors.Is(err, ErrAlreadyDecided) {
+		t.Fatalf("revoked request remained decidable: %v", err)
+	}
+	if s.grants.IsGranted(
+		"https://pending.example",
+		accountIdentity{WalletID: "test-wallet", AccountIndex: 0},
+	) {
+		t.Fatal("revoked pending request created a grant")
+	}
+}
+
+func TestServiceUnpairWaitsForAuthorizedExecution(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	requestCtx := context.WithValue(
+		context.Background(),
+		pairingAuthorityContextKey{},
+		pairingAuthority{
+			extensionID: "chrome-extension://ext",
+			token:       token,
+		},
+	)
+	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	executing := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.promptAndAwait(
+			requestCtx,
+			req,
+			func(Decision) (json.RawMessage, error) {
+				return s.withPairingAuthority(
+					requestCtx,
+					func() (json.RawMessage, error) {
+						close(executing)
+						<-release
+						return json.RawMessage(`true`), nil
+					},
+				)
+			},
+		)
+		result <- err
+	}()
+	if err := s.Decide(req.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	<-executing
+
+	unpairDone := make(chan error, 1)
+	go func() { unpairDone <- s.Unpair() }()
+	if s.pairingMu.TryLock() {
+		s.pairingMu.Unlock()
+		t.Fatal("authorized execution did not hold the pairing read lock")
+	}
+	select {
+	case err := <-unpairDone:
+		t.Fatalf("Unpair returned during authorized execution: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatalf("authorized execution: %v", err)
+	}
+	if err := <-unpairDone; err != nil {
+		t.Fatalf("Unpair: %v", err)
+	}
+}
+
+func TestServiceApprovedRequestRefusedAfterUnpair(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	requestCtx := context.WithValue(
+		context.Background(),
+		pairingAuthorityContextKey{},
+		pairingAuthority{
+			extensionID: "chrome-extension://ext",
+			token:       token,
+		},
+	)
+	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := s.Decide(req.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+
+	executed := false
+	_, err = s.promptAndAwait(
+		requestCtx,
+		req,
+		func(Decision) (json.RawMessage, error) {
+			return s.withPairingAuthority(
+				requestCtx,
+				func() (json.RawMessage, error) {
+					executed = true
+					return json.RawMessage(`true`), nil
+				},
+			)
+		},
+	)
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("approved request error = %v, want ErrRefused", err)
+	}
+	if executed {
+		t.Fatal("revoked approved request executed")
 	}
 }
 

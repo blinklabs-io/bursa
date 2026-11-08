@@ -662,8 +662,10 @@ func handleConnectorRequest(svc *connector.Service) http.HandlerFunc {
 			return
 		}
 
-		result, err := svc.Handle(
+		result, err := svc.HandleAuthorized(
 			r.Context(),
+			r.Header.Get("Origin"),
+			r.Header.Get("X-Bursa-Token"),
 			body.Origin,
 			body.Method,
 			body.Params,

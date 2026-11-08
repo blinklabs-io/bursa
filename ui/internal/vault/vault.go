@@ -538,7 +538,7 @@ func (v *Vault) EnableTPM(vaultPassword string, pcrBound bool) error {
 		vek,
 		vaultPassword,
 		&sec,
-		v.activeAccounts,
+		env.ActiveAccounts,
 	)
 }
 
@@ -563,7 +563,7 @@ func (v *Vault) DisableTPM(vaultPassword string) error {
 		vek,
 		vaultPassword,
 		nil,
-		v.activeAccounts,
+		env.ActiveAccounts,
 	)
 }
 

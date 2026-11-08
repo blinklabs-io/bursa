@@ -37,10 +37,17 @@ type Decision struct {
 }
 
 type waiter struct {
-	req     Request
-	done    chan Decision
-	ready   bool
-	decided bool
+	req         Request
+	done        chan queueResult
+	authority   *pairingAuthority
+	terminalErr error
+	ready       bool
+	decided     bool
+}
+
+type queueResult struct {
+	decision Decision
+	err      error
 }
 
 type Queue struct {
@@ -76,11 +83,39 @@ func (q *Queue) Submit(
 	return q.publish(req.ID, nil)
 }
 
+func (q *Queue) submitAuthorized(
+	origin, method string,
+	params json.RawMessage,
+	authority pairingAuthority,
+) (*Request, error) {
+	req, err := q.reserveAuthorized(origin, method, params, authority)
+	if err != nil {
+		return nil, err
+	}
+	return q.publish(req.ID, nil)
+}
+
 // reserve claims queue capacity without exposing a request to approval clients.
 // Callers must publish the complete request or cancel the reservation.
 func (q *Queue) reserve(
 	origin, method string,
 	params json.RawMessage,
+) (*Request, error) {
+	return q.reserveWithAuthority(origin, method, params, nil)
+}
+
+func (q *Queue) reserveAuthorized(
+	origin, method string,
+	params json.RawMessage,
+	authority pairingAuthority,
+) (*Request, error) {
+	return q.reserveWithAuthority(origin, method, params, &authority)
+}
+
+func (q *Queue) reserveWithAuthority(
+	origin, method string,
+	params json.RawMessage,
+	authority *pairingAuthority,
 ) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -100,7 +135,11 @@ func (q *Queue) reserve(
 		Params:  params,
 		Created: q.now(),
 	}
-	q.waiters[r.ID] = &waiter{req: r, done: make(chan Decision, 1)}
+	q.waiters[r.ID] = &waiter{
+		req:       r,
+		done:      make(chan queueResult, 1),
+		authority: authority,
+	}
 	return &r, nil
 }
 
@@ -108,8 +147,14 @@ func (q *Queue) publish(id string, effects *spend.TxSummary) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	w, ok := q.waiters[id]
-	if !ok || w.decided || w.ready {
+	if !ok || w.ready {
 		return nil, ErrUnknownRequest
+	}
+	if w.decided {
+		if w.terminalErr != nil {
+			return nil, w.terminalErr
+		}
+		return nil, ErrAlreadyDecided
 	}
 	w.req.Effects = effects
 	w.ready = true
@@ -141,33 +186,33 @@ func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {
 	t := time.NewTimer(q.timeout)
 	defer t.Stop()
 	select {
-	case d := <-w.done:
-		return d, nil
+	case result := <-w.done:
+		return result.decision, result.err
 	case <-t.C:
 		// A Decide may have fired at the very instant the timer expired: it sets
 		// decided=true and sends on the buffered done channel while this select
 		// simultaneously chose the timeout branch. Prefer a delivered decision so
 		// the SPA/dApp (which saw Decide succeed) and the signing path agree on
 		// the outcome instead of the caller reporting a spurious timeout.
-		return drainDecision(w.done)
+		return drainQueueResult(w.done)
 	case <-ctx.Done():
 		// Same tie-break as the timeout branch: honour a decision that landed
 		// concurrently with cancellation.
 		select {
-		case d := <-w.done:
-			return d, nil
+		case result := <-w.done:
+			return result.decision, result.err
 		default:
 			return Decision{}, ctx.Err()
 		}
 	}
 }
 
-// drainDecision returns a decision already buffered on done, or ErrTimeout if
+// drainQueueResult returns a result already buffered on done, or ErrTimeout if
 // none is present. It never blocks.
-func drainDecision(done <-chan Decision) (Decision, error) {
+func drainQueueResult(done <-chan queueResult) (Decision, error) {
 	select {
-	case d := <-done:
-		return d, nil
+	case result := <-done:
+		return result.decision, result.err
 	default:
 		return Decision{}, ErrTimeout
 	}
@@ -188,8 +233,26 @@ func (q *Queue) Decide(id string, d Decision) error {
 	q.notifyLocked()
 	q.mu.Unlock()
 
-	w.done <- d
+	w.done <- queueResult{decision: d}
 	return nil
+}
+
+func (q *Queue) cancelAuthority(authority pairingAuthority) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	cancelled := false
+	for _, w := range q.waiters {
+		if w.decided || w.authority == nil || *w.authority != authority {
+			continue
+		}
+		w.decided = true
+		w.terminalErr = ErrRefused
+		w.done <- queueResult{err: ErrRefused}
+		cancelled = true
+	}
+	if cancelled {
+		q.notifyLocked()
+	}
 }
 
 func (q *Queue) Pending() []Request {
