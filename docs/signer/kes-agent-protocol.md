@@ -179,6 +179,14 @@ POST /v1/attest
 It returns the same protocol and binding plus `attestation`. Static or replayed
 evidence fails because each Dingo connection supplies a fresh nonce.
 
+With provider `none` there is no adapter and `attestation` is empty. The
+client accepts empty evidence only when it expects `none`, and refuses
+non-empty evidence for it; every other provider refuses empty evidence. The
+nonce, opcert and period checks still apply. The protocol itself measures
+nothing; transport authentication, such as a client pinning the SHA-256 SPKI
+fingerprint of the agent's TLS server certificate, is separate from the
+provider.
+
 ## Control socket
 
 Request/response. The client sends a `Command` frame; the server replies with a

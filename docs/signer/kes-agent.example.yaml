@@ -73,16 +73,23 @@ kes_agent:
   #     guard_file: "/var/lib/bursa/kes-agent/preprod-pool.json"
 
   # Optional remote sign service for Dingo. This is available only in sign
-  # mode and always requires a client certificate issued by the configured CA.
+  # mode. TLS 1.3 is used by default; a client certificate is requested only
+  # when attested_client_ca_file is set.
   # attested_listen_address: ":9443"
   # attested_tls_cert_file: "/run/secrets/kes-agent/tls.crt"
   # attested_tls_key_file: "/run/secrets/kes-agent/tls.key"
   # attested_client_ca_file: "/run/secrets/kes-agent/dingo-ca.pem"
+  # Alternatively serve plain TCP (transport security provided elsewhere); the
+  # TLS files above must then be unset.
+  # attested_plaintext: false
 
   # The provider adapter runs inside the measured workload and produces fresh,
   # binding-specific evidence over a local Unix socket.
   # attestation_provider: "nitro"  # or "confidential-space"
   # attester_address: "unix:///run/bursa/attester.sock"
+  # Without platform evidence: attestation_provider: "none" (no
+  # attester_address). A client may pin the server certificate public key; the
+  # agent logs its SHA-256 SPKI fingerprint at startup as server_spki_sha256.
 
 # Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
 # port to 0 to disable it. Non-loopback addresses and addresses that carry a

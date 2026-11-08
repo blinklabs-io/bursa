@@ -21,7 +21,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +40,12 @@ import (
 
 const (
 	// AttestedProtocolID is the protocol spoken by an attested KES workload.
-	AttestedProtocolID   = "bursa-attested-kes/1"
+	AttestedProtocolID = "bursa-attested-kes/1"
+	// NoEvidenceProvider is the attestation provider for a workload that
+	// supplies no platform evidence. The attestation field is empty and the
+	// protocol measures nothing; any transport authentication is configured
+	// separately on the client and the agent.
+	NoEvidenceProvider   = "none"
 	attestationNonceSize = 32
 	attesterMaxResponse  = 1 << 20
 )
@@ -90,9 +97,18 @@ type AttestationVerifier interface {
 
 // AttestedServiceConfig configures the remotely reachable KES sign service.
 // Provider is a stable adapter name such as "nitro" or "confidential-space".
+// The "none" provider has no Attester and sends no evidence.
 type AttestedServiceConfig struct {
 	Provider string
 	Attester Attester
+	// Plaintext serves the protocol on plain TCP connections. The listener is
+	// then not expected to be TLS, and no remote-peer authentication is done by
+	// the agent.
+	Plaintext bool
+	// ClientCertOptional accepts a TLS connection without a client
+	// certificate. It is for a listener configured without a client CA; the
+	// default requires a verified client certificate.
+	ClientCertOptional bool
 }
 
 type attestedKeyState struct {
@@ -146,7 +162,8 @@ func VerifyAttestation(
 	coldVKey, expectedOpCert []byte,
 	verifier AttestationVerifier,
 ) error {
-	if verifier == nil || req.Type != "attestation_request" ||
+	noEvidence := expectedProvider == NoEvidenceProvider
+	if (verifier == nil && !noEvidence) || req.Type != "attestation_request" ||
 		req.Protocol != AttestedProtocolID ||
 		len(req.Nonce) != attestationNonceSize {
 		return ErrAttestation
@@ -157,7 +174,8 @@ func VerifyAttestation(
 		resp.Provider != expectedProvider ||
 		len(resp.KESVKey) != 32 ||
 		len(resp.OpCert) == 0 ||
-		len(resp.Attestation) == 0 {
+		// Evidence is required except for none, which must carry none.
+		(len(resp.Attestation) == 0) == !noEvidence {
 		return ErrAttestation
 	}
 	if subtle.ConstantTimeCompare(req.Nonce, resp.Nonce) != 1 {
@@ -174,6 +192,13 @@ func VerifyAttestation(
 		return ErrAttestation
 	}
 	if err := ledger.VerifyOpCertSignature(decoded.LedgerOpCert(), coldVKey); err != nil {
+		return ErrAttestation
+	}
+	if noEvidence {
+		// No evidence: the pinned TLS server key is the authentication.
+		return nil
+	}
+	if verifier == nil {
 		return ErrAttestation
 	}
 	binding := AttestationBinding(
@@ -205,9 +230,11 @@ func NewAttestationRequest() (AttestationRequest, error) {
 	return req, nil
 }
 
-// ServeAttestedService serves sign mode over mutually authenticated TLS. The
-// listener may be TCP or another stream transport, but every accepted
-// connection must be a TLS connection with a verified client certificate.
+// ServeAttestedService serves sign mode. The listener may be TCP or another
+// stream transport. By default every accepted connection must be a TLS
+// connection with a verified client certificate; cfg.ClientCertOptional
+// relaxes the certificate requirement and cfg.Plaintext serves plain
+// connections.
 func (a *Agent) ServeAttestedService(
 	ctx context.Context,
 	ln net.Listener,
@@ -216,9 +243,12 @@ func (a *Agent) ServeAttestedService(
 	if a.cfg.Mode != ModeSign {
 		return errors.New("kesagent: attested service requires sign mode")
 	}
-	if cfg.Provider == "" || cfg.Attester == nil {
+	if cfg.Provider == "" {
+		return errors.New("kesagent: attested service requires provider")
+	}
+	if (cfg.Provider == NoEvidenceProvider) != (cfg.Attester == nil) {
 		return errors.New(
-			"kesagent: attested service requires provider and attester",
+			"kesagent: attested service requires an attester, except for the none provider, which takes none",
 		)
 	}
 	conns := newConnSet()
@@ -250,7 +280,7 @@ func (a *Agent) ServeAttestedService(
 			defer wg.Done()
 			defer conns.remove(conn)
 			defer conn.Close()
-			if err := authenticateRemotePeer(ctx, conn); err != nil {
+			if err := authenticateRemotePeer(ctx, conn, cfg); err != nil {
 				a.logger.Warn("refusing unauthenticated KES peer", "error", err)
 				return
 			}
@@ -259,7 +289,19 @@ func (a *Agent) ServeAttestedService(
 	}
 }
 
-func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
+// authenticateRemotePeer completes the TLS handshake and checks the client
+// certificate the listener's TLS configuration verified. A plaintext service
+// does no peer authentication. A TLS service requires a verified client
+// certificate unless cfg.ClientCertOptional is set, which is for a listener
+// that requests none.
+func authenticateRemotePeer(
+	ctx context.Context,
+	conn net.Conn,
+	cfg AttestedServiceConfig,
+) error {
+	if cfg.Plaintext {
+		return nil
+	}
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		return ErrUnauthenticatedPeer
@@ -272,6 +314,9 @@ func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
 	}
 	if err := tlsConn.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("%w: %w", ErrUnauthenticatedPeer, err)
+	}
+	if cfg.ClientCertOptional {
+		return nil
 	}
 	state := tlsConn.ConnectionState()
 	if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
@@ -319,6 +364,13 @@ func (a *Agent) serveAttestedConn(
 		state.opcert,
 		state.period,
 	)
+	if cfg.Provider == NoEvidenceProvider {
+		if err := writeFrame(conn, resp); err != nil {
+			return
+		}
+		a.handleSign(ctx, conn)
+		return
+	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)
 	if err != nil || len(resp.Attestation) == 0 {
 		resp.Attestation = nil
@@ -442,4 +494,11 @@ func (a *HTTPAttester) Evidence(
 		return nil, ErrAttestation
 	}
 	return out.Attestation, nil
+}
+
+// SPKIFingerprint is the hex SHA-256 of a certificate's DER
+// SubjectPublicKeyInfo, the value a client pins for the none provider.
+func SPKIFingerprint(cert *x509.Certificate) string {
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(sum[:])
 }
