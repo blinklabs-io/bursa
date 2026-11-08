@@ -135,6 +135,7 @@ func TestWipeDeviceDeletesEveryArmoryObject(t *testing.T) {
 	)
 	chip.bins[last.RecordID()] = []byte("unreadable")
 	chip.bins[profile.SignLogHeadID] = []byte("head")
+	chip.bins[hostKeysStageID] = bytes.Repeat([]byte{1}, hostListSize)
 	plant(chip, outsideIDs...)
 
 	code, body := wipePost(t, s, "/wipe/objects", struct{}{})
