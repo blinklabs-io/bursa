@@ -31,6 +31,16 @@ func signCounter(
 ) (*SignResponse, error) {
 	payload := make([]byte, 48)
 	binary.BigEndian.PutUint64(payload[32:40], counter)
+	return signPayload(service, pub, payload, nonce)
+}
+
+// signPayload signs the exact 48-byte opcert payload with a fresh challenge.
+func signPayload(
+	service *Service,
+	pub []byte,
+	payload []byte,
+	nonce byte,
+) (*SignResponse, error) {
 	request := &backend.AttestedRequest{
 		Version: backend.AttestedProtocol, Purpose: backend.PurposeOpCert,
 		KeyHash: backend.HashPublicKey(pub).String(),
@@ -84,8 +94,11 @@ func TestSealedCounterSurvivesRestart(t *testing.T) {
 
 	restarted, _, _ := newTestService(t, evidence)
 	require.NoError(t, reloadWithState(restarted, env, signed.SealedState))
-	_, err = signCounter(restarted, env.PublicKey, 5, 2)
-	require.ErrorContains(t, err, "issue counter is not increasing")
+	// an equal counter now re-signs an identical payload, with the
+	// signature already issued
+	again, err := signCounter(restarted, env.PublicKey, 5, 2)
+	require.NoError(t, err)
+	require.Equal(t, signed.Signature, again.Signature)
 	_, err = signCounter(restarted, env.PublicKey, 4, 3)
 	require.ErrorContains(t, err, "issue counter is not increasing")
 	_, err = signCounter(restarted, env.PublicKey, 6, 4)
@@ -115,9 +128,9 @@ func TestReloadRefusesUnauthenticSealedState(t *testing.T) {
 	sealKey := testSealKey(t)
 	foreignPub, _, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
-	foreignPool, err := sealCounterState(sealKey, foreignPub, env.KMSKeyID, 5)
+	foreignPool, err := sealCounterState(sealKey, foreignPub, env.KMSKeyID, 5, hashPayload(make([]byte, 48)))
 	require.NoError(t, err)
-	foreignKMS, err := sealCounterState(sealKey, env.PublicKey, testForeignKMSKey, 5)
+	foreignKMS, err := sealCounterState(sealKey, env.PublicKey, testForeignKMSKey, 5, hashPayload(make([]byte, 48)))
 	require.NoError(t, err)
 	tampered := bytes.Clone(signed.SealedState)
 	tampered[len(tampered)-1] ^= 1
@@ -160,11 +173,15 @@ func TestReloadNeverLowersLoadedCounter(t *testing.T) {
 	require.NoError(t, err)
 
 	// a higher stored state does raise it
-	high, err := sealCounterState(testSealKey(t), env.PublicKey, env.KMSKeyID, 20)
+	// (the stored hash is of another payload, so counter 20 stays refused)
+	high, err := sealCounterState(
+		testSealKey(t), env.PublicKey, env.KMSKeyID, 20,
+		hashPayload(make([]byte, 48)),
+	)
 	require.NoError(t, err)
 	require.NoError(t, reloadWithState(service, env, high))
 	_, err = signCounter(service, env.PublicKey, 20, 5)
-	require.ErrorContains(t, err, "issue counter is not increasing")
+	require.ErrorContains(t, err, "different payload")
 	_, err = signCounter(service, env.PublicKey, 21, 6)
 	require.NoError(t, err)
 }

@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -37,6 +38,11 @@ type enclaveAPI interface {
 // it leaves time to release the signature.
 const defaultSignTimeout = 20 * time.Second
 
+// errSigningStopped is why a proxy that failed to save state signs nothing.
+var errSigningStopped = errors.New(
+	"an earlier sealed counter state save failed; signing is stopped until the proxy restarts",
+)
+
 // sealedStateSaver durably persists the sealed counter state.
 type sealedStateSaver interface {
 	SaveSealedState(context.Context, []byte) error
@@ -58,8 +64,10 @@ type ProxyHandler struct {
 	signTimeout time.Duration
 	// saveFailed is set, under the slot, once a save fails. A failed write
 	// can still land after a later one and roll the stored state back, so
-	// the proxy signs nothing more until it restarts and reloads.
-	saveFailed bool
+	// the proxy signs nothing more until it restarts and reloads. It is
+	// atomic because inventory reads it without taking the slot, to report
+	// the stopped state.
+	saveFailed atomic.Bool
 }
 
 // NewProxyHandler constructs the host-side signer proxy.
@@ -119,7 +127,16 @@ func (p *ProxyHandler) signAndPersist(
 	ctx context.Context,
 	request backend.AttestedRequest,
 ) (backend.AttestedResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.signTimeout)
+	deadline := time.Now().Add(p.signTimeout)
+	// The save runs to the same deadline but ignores the client's
+	// cancellation: a client that goes away after the enclave counted the
+	// issue number must not abort the save and stop the proxy.
+	saveCtx, cancelSave := context.WithDeadline(
+		context.WithoutCancel(ctx),
+		deadline,
+	)
+	defer cancelSave()
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	select {
 	case p.signSlot <- struct{}{}:
@@ -127,10 +144,8 @@ func (p *ProxyHandler) signAndPersist(
 		return backend.AttestedResponse{}, ctx.Err()
 	}
 	defer func() { <-p.signSlot }()
-	if p.saveFailed {
-		return backend.AttestedResponse{}, errors.New(
-			"an earlier sealed counter state save failed; restart the proxy",
-		)
+	if p.saveFailed.Load() {
+		return backend.AttestedResponse{}, errSigningStopped
 	}
 	response, err := p.enclave.Sign(ctx, request)
 	if err != nil {
@@ -141,8 +156,8 @@ func (p *ProxyHandler) signAndPersist(
 			"enclave returned no sealed counter state",
 		)
 	}
-	if err := p.saver.SaveSealedState(ctx, response.SealedState); err != nil {
-		p.saveFailed = true
+	if err := p.saver.SaveSealedState(saveCtx, response.SealedState); err != nil {
+		p.saveFailed.Store(true)
 		// the enclave has counted this issue number; the operator needs the
 		// cause to choose a recovery
 		slog.Error(
@@ -163,6 +178,17 @@ func (p *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := decodeRequest(w, r, &request); err != nil {
 			http.Error(w, "invalid inventory request", http.StatusBadRequest)
+			return
+		}
+		// A stopped proxy still reaches a healthy enclave, so inventory would
+		// succeed while every sign fails. Refusing it makes a signer that
+		// loads this backend while the proxy is stopped fail closed.
+		if p.saveFailed.Load() {
+			http.Error(
+				w,
+				errSigningStopped.Error(),
+				http.StatusServiceUnavailable,
+			)
 			return
 		}
 		response, err := p.enclave.Inventory(r.Context(), request.Nonce)

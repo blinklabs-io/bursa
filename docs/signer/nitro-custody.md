@@ -183,12 +183,20 @@ KES period (uint64 big endian)
 
 Requests require a fresh 32-byte nonce and one-time signer challenge. The
 enclave rejects an absent or invalid signer authorization, challenge or nonce
-replay, non-increasing counters, a wrong key hash or role, malformed payloads,
-and unsupported protocol versions. The signer verifies the returned Ed25519
+replay, a counter below the stored one, an equal counter with a different
+payload, a wrong key hash or role, malformed payloads, and unsupported
+protocol versions. The signer verifies the returned Ed25519
 signature before constructing the operational certificate.
 
-The enclave seals the highest issued counter with every signature it
-returns. The sealing key is derived with HKDF from the KMS data key under its
+The enclave seals the highest issued counter, with the SHA-256 of the exact
+48-byte payload signed at it, with every signature it returns. A request at
+the stored counter whose payload hashes to the stored value is signed again:
+Ed25519 is deterministic, so the signature is the one already issued and
+nothing new exists. Any other payload at that counter (a different KES key or
+period) is refused, as is a lower counter. SHA-256 is already the enclave's
+hash for the sealing key and authenticated data; the digest sits inside the
+sealed record, where the host cannot read or forge it. The sealing key is
+derived with HKDF from the KMS data key under its
 own label, so only the enclave can seal or open the state, and the
 authenticated data binds the pool public key, the KMS key ID, and a state
 version. The proxy writes the sealed state to the same Secrets Manager secret
@@ -203,15 +211,31 @@ this change hold the envelope only and still load.
 
 If the write fails or times out, the request fails, no signature is released,
 and the proxy logs the cause and refuses every later sign until it restarts,
-since the failed write can still land after a newer one. The running enclave
-has still counted that issue number and refuses it until the enclave and the
-proxy are restarted. A write
-reported as failed can still have been stored, and a stored write's response
-can fail to reach the signer; then the reloaded state already holds the number
-and the restart does not clear it. Restoring the previous secret version makes
-the number signable again. That is the same rollback a host can perform, so do
-it only when the signer's watermark has no record of the issue number and the
-host is trusted not to have kept the withheld signature.
+since the failed write can still land after a newer one. While stopped, the
+proxy also answers inventory with HTTP 503, so a signer started against it
+fails closed; a proxy restart clears it. The running enclave has still counted
+the issue number. After the restart reloads the stored state, a retry of the
+same request (same payload, fresh nonce and challenge) is signed again and its
+state saved, whether or not the failed write landed: a reload never lowers
+the running enclave's counter, which keeps its payload hash. Only an enclave
+that restarted and loaded an older state signs the retry as a new counter.
+
+The same re-sign recovers a response lost between the enclave and the signer,
+and a signer whose watermark commit failed: the signer commits an issue
+counter only after it holds a verified signature, so it has no record of the
+number and passes the retry to the enclave. Once the signer has committed the
+number, its watermark refuses a retry of it, even when the signer's own
+response to its caller was lost. A commit error whose outcome is unknown, such
+as a connection lost before the store confirmed, may have recorded the number,
+and the retry is then refused the same way.
+
+The sealed state is versioned. A state of the previous version holds no
+payload hash; it still loads and allows no re-sign at its counter, so an equal
+counter is refused until a higher one is signed. A tampered or malformed
+state, a hash of the wrong length, or an unknown version refuses the reload.
+An enclave image that predates the current version refuses a current state,
+so returning to it after a signature needs the secret version written before
+the upgrade.
 
 Each signature writes a new secret version. Secrets Manager keeps every
 version created in the last 24 hours, so more than about 100 signatures in a
@@ -239,7 +263,8 @@ Two signer features are refused by design:
 - `chain_counter` requests. The signer sends these as `opcert-next`, which
   accepts the same chain counter again so a KES rotation can reuse an issue
   number. The enclave's counter only increases, so it never signs a second
-  certificate at an issue number it has already used. Send `issue_counter`
+  certificate at an issue number it has already used (it repeats only the
+  identical payload, which yields the same signature). Send `issue_counter`
   instead.
 - A backend `profile`. The enclave signs no profile binding, so leave
   `profile` unset on a `nitro` backend; with it set, the inventory request is

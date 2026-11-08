@@ -16,6 +16,8 @@ package signer
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -472,5 +474,49 @@ func TestSignOpCert_CounterOffMode(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.watermarkConflicts); got != 0 {
 		t.Fatalf("watermark_conflicts_total = %v, want 0", got)
+	}
+}
+
+// TestSignOpCert_BackendFailureRecordsNoCounter pins the ordering a custody
+// retry depends on: a counter is committed only after a verified signature,
+// so a backend failure leaves no record and the same request can be retried.
+func TestSignOpCert_BackendFailureRecordsNoCounter(t *testing.T) {
+	k := newFakeKey(t)
+	c, _ := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeEnforce,
+	)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	k.signErr = errors.New("enclave sign unavailable")
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeBackend {
+		t.Fatalf("failed sign: want CodeBackend, got (code=%s, err=%v)", code, err)
+	}
+
+	// a signature that fails verification records nothing either
+	k.signErr = nil
+	_, wrong, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := k.priv
+	k.priv = wrong
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeInternal {
+		t.Fatalf("unverified signature: want CodeInternal, got (code=%s, err=%v)", code, err)
+	}
+	k.priv = priv
+
+	res, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String())
+	if err != nil || res == nil {
+		t.Fatalf("retry of counter 3: got (code=%s, err=%v)", code, err)
+	}
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeConflict {
+		t.Fatalf("counter 3 after a signed retry: want CodeConflict, got (code=%s, err=%v)", code, err)
 	}
 }
