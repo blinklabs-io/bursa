@@ -17,9 +17,11 @@ package kesagent
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -112,6 +114,12 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 		now:     time.Now,
 	}
 	guards := make(map[string]string, len(profileCfgs))
+	type guardFile struct {
+		name string
+		info os.FileInfo
+	}
+	var existingGuards []guardFile
+	pools := make(map[string]string, len(profileCfgs))
 	for _, pc := range profileCfgs {
 		if !profileNamePattern.MatchString(pc.Name) {
 			a.Close()
@@ -146,7 +154,40 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 				)
 			}
 			guards[abs] = pc.Name
+			// The same file reached through a symlink or a hard link.
+			if info, err := os.Stat(abs); err == nil {
+				for _, g := range existingGuards {
+					if os.SameFile(g.info, info) {
+						a.Close()
+						return nil, fmt.Errorf(
+							"kesagent: profiles %q and %q share guard file %q",
+							g.name,
+							pc.Name,
+							abs,
+						)
+					}
+				}
+				existingGuards = append(
+					existingGuards,
+					guardFile{name: pc.Name, info: info},
+				)
+			}
 		}
+		// Each profile keeps its own slot record, so two profiles for one
+		// pool on one network would each sign a header for the same slot:
+		// two blocks from the pool in that slot. One cold key stays allowed
+		// on several networks, which a different genesis start tells apart.
+		poolKey := hex.EncodeToString(pc.ColdVKey) + "@" +
+			pc.SystemStart.UTC().Format(time.RFC3339Nano)
+		if other, dup := pools[poolKey]; dup {
+			a.Close()
+			return nil, fmt.Errorf(
+				"kesagent: profiles %q and %q are the same pool on the same network",
+				other,
+				pc.Name,
+			)
+		}
+		pools[poolKey] = pc.Name
 		p, err := newProfile(pc, cfg.Mode, logger, metrics, &a.now)
 		if err != nil {
 			a.Close()

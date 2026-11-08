@@ -470,3 +470,35 @@ func TestServeAttestedServiceRefusesSeveralProfiles(t *testing.T) {
 		t.Fatalf("ServeAttestedService with two profiles: err = %v, want ErrAmbiguousProfile", err)
 	}
 }
+
+// Reproduces the review finding: two profiles for one pool on one network
+// each signed a different header for the same slot.
+func TestNewRefusesTwoProfilesForOnePoolOnOneNetwork(t *testing.T) {
+	cold := newColdKey(t)
+	_, err := New(Config{
+		Mode: ModeSign,
+		Profiles: []ProfileConfig{
+			profileOn(t, networkA, "pool", cold),
+			profileOn(t, networkA, "pool-rotated", cold),
+		},
+	}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "same pool on the same network") {
+		t.Fatalf("err = %v, want a same-pool refusal", err)
+	}
+}
+
+func TestNewRefusesAGuardFileReachedThroughALink(t *testing.T) {
+	coldA, coldB := newColdKey(t), newColdKey(t)
+	a := profileOn(t, networkA, "pool-a", coldA)
+	if err := os.WriteFile(a.GuardPath, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := profileOn(t, networkB, "pool-b", coldB)
+	if err := os.Symlink(a.GuardPath, b.GuardPath); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	_, err := New(Config{Mode: ModeSign, Profiles: []ProfileConfig{a, b}}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "share guard file") {
+		t.Fatalf("err = %v, want a shared guard file refusal", err)
+	}
+}
