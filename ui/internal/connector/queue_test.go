@@ -52,17 +52,17 @@ func TestQueueTimeout(t *testing.T) {
 	}
 }
 
-// TestDrainDecision covers the timeout/cancel tie-break: a decision buffered on
+// TestDrainQueueResult covers the timeout/cancel tie-break: a decision buffered on
 // the done channel at the instant the timer fires must be returned rather than
 // dropped in favour of a spurious ErrTimeout.
-func TestDrainDecision(t *testing.T) {
-	done := make(chan Decision, 1)
-	if _, err := drainDecision(done); err != ErrTimeout {
+func TestDrainQueueResult(t *testing.T) {
+	done := make(chan queueResult, 1)
+	if _, err := drainQueueResult(done); err != ErrTimeout {
 		t.Fatalf("empty channel: want ErrTimeout, got %v", err)
 	}
 
-	done <- Decision{Approved: true, Password: "pw"}
-	d, err := drainDecision(done)
+	done <- queueResult{decision: Decision{Approved: true, Password: "pw"}}
+	d, err := drainQueueResult(done)
 	if err != nil {
 		t.Fatalf("buffered decision: unexpected error %v", err)
 	}
@@ -91,7 +91,7 @@ func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
 	if !ok {
 		t.Fatalf("no waiter registered for %s", req.ID)
 	}
-	if got := <-w.done; !got.Approved {
+	if got := <-w.done; !got.decision.Approved {
 		t.Fatalf("first decision = %+v, want approved", got)
 	}
 
@@ -100,6 +100,47 @@ func TestQueueRejectsDuplicateAfterDecisionConsumed(t *testing.T) {
 			"duplicate Decide after consumed decision = %v, want ErrAlreadyDecided",
 			err,
 		)
+	}
+}
+
+func TestQueueCancelsOnlyMatchingPairingAuthority(t *testing.T) {
+	nextID := 0
+	q := NewQueue(time.Now, func() (string, error) {
+		nextID++
+		return fmt.Sprintf("req%d", nextID), nil
+	}, time.Second)
+	authority := pairingAuthority{extensionID: "ext", token: "old-token"}
+	revoked, err := q.submitAuthorized(
+		"https://dapp.example",
+		"enable",
+		nil,
+		authority,
+	)
+	if err != nil {
+		t.Fatalf("submit authorized: %v", err)
+	}
+	remote, err := q.Submit("remote", "remoteSubmitTx", nil)
+	if err != nil {
+		t.Fatalf("submit remote: %v", err)
+	}
+
+	q.cancelAuthority(authority)
+	if _, err := q.Await(context.Background(), revoked.ID); !errors.Is(
+		err,
+		ErrRefused,
+	) {
+		t.Fatalf("revoked request error = %v, want ErrRefused", err)
+	}
+	pending := q.Pending()
+	if len(pending) != 1 || pending[0].ID != remote.ID {
+		t.Fatalf("pending after cancellation = %v, want only remote", pending)
+	}
+	if err := q.Decide(remote.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide remote: %v", err)
+	}
+	decision, err := q.Await(context.Background(), remote.ID)
+	if err != nil || !decision.Approved {
+		t.Fatalf("remote result = %+v, %v", decision, err)
 	}
 }
 

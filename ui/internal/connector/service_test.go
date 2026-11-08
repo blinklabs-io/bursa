@@ -953,6 +953,112 @@ func TestServiceUnpair(t *testing.T) {
 	}
 }
 
+func TestServiceUnpairRefusesPendingAuthorizedRequest(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	bindTestIdentity(s)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"ext",
+			token,
+			"https://pending.example",
+			"enable",
+			nil,
+		)
+		done <- err
+	}()
+	pendingID := waitForPendingID(t, s)
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+	if _, err := s.ConfirmPairForTest("ext"); err != nil {
+		t.Fatalf("re-pair: %v", err)
+	}
+	if err := <-done; !errors.Is(err, ErrRefused) {
+		t.Fatalf("pending request error = %v, want ErrRefused", err)
+	}
+	if pending := s.Pending(); len(pending) != 0 {
+		t.Fatalf("pending requests after unpair = %v, want none", pending)
+	}
+	if err := s.Decide(pendingID, Decision{Approved: true}); !errors.Is(
+		err,
+		ErrUnknownRequest,
+	) && !errors.Is(err, ErrAlreadyDecided) {
+		t.Fatalf("revoked request remained decidable: %v", err)
+	}
+	if s.grants.IsGranted(
+		"https://pending.example",
+		accountIdentity{WalletID: "test-wallet", AccountIndex: 0},
+	) {
+		t.Fatal("revoked pending request created a grant")
+	}
+}
+
+func TestServiceUnpairWaitsForAuthorizedExecution(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	requestCtx := context.WithValue(
+		context.Background(),
+		pairingAuthorityContextKey{},
+		pairingAuthority{
+			extensionID: "chrome-extension://ext",
+			token:       token,
+		},
+	)
+	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	executing := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.promptAndAwait(
+			requestCtx,
+			req,
+			func(Decision) (json.RawMessage, error) {
+				close(executing)
+				<-release
+				return json.RawMessage(`true`), nil
+			},
+		)
+		result <- err
+	}()
+	if err := s.Decide(req.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	<-executing
+
+	unpairDone := make(chan error, 1)
+	go func() { unpairDone <- s.Unpair() }()
+	if s.pairingMu.TryLock() {
+		s.pairingMu.Unlock()
+		t.Fatal("authorized execution did not hold the pairing read lock")
+	}
+	select {
+	case err := <-unpairDone:
+		t.Fatalf("Unpair returned during authorized execution: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatalf("authorized execution: %v", err)
+	}
+	if err := <-unpairDone; err != nil {
+		t.Fatalf("Unpair: %v", err)
+	}
+}
+
 // TestServiceNetworkIDAndIsEnabled checks non-blocking read methods.
 func TestServiceNetworkIDAndIsEnabled(t *testing.T) {
 	be := &fakeBackend{networkID: 1}

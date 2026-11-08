@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -812,6 +813,101 @@ func TestConnectorRequest(t *testing.T) {
 			)
 		}
 	})
+}
+
+func TestConnectorRequestUnpairRevokesPendingAuthorization(t *testing.T) {
+	const (
+		extID      = "chrome-extension://pending-revocation"
+		dappOrigin = "https://pending.example"
+	)
+	svc, token := newTestService(t, extID)
+	mux := http.NewServeMux()
+	registerConnector(mux, svc)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost/connector/request",
+		strings.NewReader(
+			`{"origin":"`+dappOrigin+`","method":"enable","params":null}`,
+		),
+	)
+	request.Header.Set("Origin", extID)
+	request.Header.Set("X-Bursa-Token", token)
+	requestResult := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		mux.ServeHTTP(requestResult, request)
+		close(done)
+	}()
+
+	var pendingID string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		pending := svc.Pending()
+		if len(pending) > 0 {
+			pendingID = pending[0].ID
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if pendingID == "" {
+		t.Fatal("request did not reach approval queue")
+	}
+
+	unpair := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost/connector/unpair",
+		nil,
+	)
+	unpair.Header.Set("Origin", "http://localhost")
+	unpairResult := httptest.NewRecorder()
+	mux.ServeHTTP(unpairResult, unpair)
+	if unpairResult.Code != http.StatusOK {
+		t.Fatalf("unpair status = %d, want 200", unpairResult.Code)
+	}
+
+	code, err := svc.BeginPair(extID)
+	if err != nil {
+		t.Fatalf("BeginPair: %v", err)
+	}
+	if _, err := svc.ConfirmPair(extID, code); err != nil {
+		t.Fatalf("ConfirmPair: %v", err)
+	}
+
+	decision := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost/connector/decide",
+		strings.NewReader(
+			fmt.Sprintf(
+				`{"id":%q,"approved":true,"password":""}`,
+				pendingID,
+			),
+		),
+	)
+	decision.Header.Set("Origin", "http://localhost")
+	decisionResult := httptest.NewRecorder()
+	mux.ServeHTTP(decisionResult, decision)
+	if decisionResult.Code == http.StatusOK {
+		t.Fatal("revoked request remained approvable")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("connector request did not return after unpair")
+	}
+	if requestResult.Code != http.StatusForbidden {
+		t.Fatalf(
+			"request status = %d, want 403; body: %s",
+			requestResult.Code,
+			requestResult.Body.String(),
+		)
+	}
+	for _, origin := range svc.Grants() {
+		if origin == dappOrigin {
+			t.Fatal("revoked request created a grant")
+		}
+	}
 }
 
 // TestConnectorSelfRevoke tests POST /connector/self-revoke: the
