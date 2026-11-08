@@ -20,7 +20,7 @@ Operator documentation for the two bursa signing daemons:
 | [`runbook.md`](runbook.md) | Deploy, TLS, auth, backends, watermark, health, metrics |
 | [`attested-custody.md`](attested-custody.md) | Attested TEE key custody: protocol, AWS Nitro and GCP Confidential Space backends, trust boundaries |
 | [`nitro-custody.md`](nitro-custody.md) | AWS Nitro enclave workload, host proxy, KMS recipient policy, reproducible EIF and PCR rotation |
-| [`security.md`](security.md) | Threat model, custody guarantees, dev-only file backend |
+| [`security.md`](security.md) | Threat model, custody guarantees, file backend defaults |
 | [`kes-agent.md`](kes-agent.md) | KES agent daemon operation |
 | [`embedded-block-production.md`](embedded-block-production.md) | Dingo custody split, supported backends, rotation and failures |
 | [`openapi.yaml`](openapi.yaml) | OpenAPI 3 spec for the signer `/v1` HTTP API |
@@ -35,9 +35,9 @@ Systemd units, an `EnvironmentFile` example, and a Dockerfile live in
 
 | Capability | Support |
 |------------|---------|
-| Auth | mTLS client certificate, authorized-keys Ed25519 request signing, and JWT bearer (HS256 shared secret or JWKS RS256/ES256/EdDSA); precedence mTLS > request-signing > JWT; optional per-subject caller ACL |
-| Transport | Server-side TLS (TLS 1.2+); loopback may run plaintext. Optional mutual TLS verifies client certificates against a configured CA bundle |
-| Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (SOPS-encrypted keys from GCP Secret Manager or a local directory), `software`/`file` (in-process plaintext, dev-only) |
+| Auth | mTLS client certificate, authorized-keys Ed25519 request signing, and JWT bearer (HS256 shared secret or JWKS RS256/ES256/EdDSA); precedence mTLS > request-signing > JWT; optional per-subject caller ACL; `auth_none` for deployments that identify callers outside the signer |
+| Transport | Server-side TLS (TLS 1.2+), or plain TCP on loopback by default and on any address with `plaintext`. Optional mutual TLS verifies client certificates against a configured CA bundle. The modes in use are logged at startup |
+| Custody backends | `nitro` and `confidential-space` (keys held in an attested TEE), `vault` (Transit, remote signing), `pkcs11` (HSM, keys never leave the token; CGO, `-tags pkcs11`), `sops` (SOPS-encrypted keys from GCP Secret Manager or a local directory), `software`/`file` (keys loaded into process memory) |
 | Operations | `tx`, `cip8`, `opcert` signing; key list/detail with effective policy |
 | Anti-double-sign | Watermark store: `mem` (non-durable; only with `warn` or `off`), `file` (SQLite), or shared HA-safe `postgres`; modes off/warn/enforce |
 | Observability | Static liveness on `/healthz`, dependency-aware readiness on `/readyz`, Prometheus `/metrics` on a dedicated loopback listener |
@@ -61,7 +61,7 @@ SIGNER_DEV_KEYS="$SIGNER_DEV_DIR/keys"
 #   - clear jwks_url (blank string) and leave jwt_secret blank. The helper
 #     generated SIGNER_JWT_SECRET in the owner-only auth.env file (exactly one
 #     of jwt_secret and jwks_url may be set)
-#   - clear tls_cert_file and tls_key_file (loopback may run plaintext)
+#   - clear tls_cert_file and tls_key_file (a loopback listener uses plain TCP)
 #   - replace the `backends:` list with a single software entry:
 #       backends:
 #         - name: "local-dev"

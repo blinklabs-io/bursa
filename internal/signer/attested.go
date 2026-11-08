@@ -17,6 +17,7 @@ package signer
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -64,14 +65,7 @@ func buildNitroBackend(
 	if c.Address == "" {
 		return nil, errors.New("nitro backend requires address")
 	}
-	if c.HostKeyFile == "" {
-		return nil, errors.New("nitro backend requires host_key_file")
-	}
-	hostKey, err := readArmoryHostKey(c.HostKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("host_key_file: %w", err)
-	}
-	enclave, err := backend.NewHostKeyHTTPEnclave(c.Address, c.Profile, hostKey)
+	enclave, err := newAttestedEnclave(c)
 	if err != nil {
 		return nil, err
 	}
@@ -92,11 +86,13 @@ func buildConfidentialSpaceBackend(
 	if err != nil {
 		return nil, fmt.Errorf("invalid jwks_url: %w", err)
 	}
-	if err := checkJWKSURL(u); err != nil {
+	if err := checkJWKSURL(u, c.JWKSPlaintext); err != nil {
 		return nil, err
 	}
 	verifier, err := backend.NewConfidentialSpaceVerifier(
-		func(ctx context.Context) (jose.JSONWebKeySet, error) { return fetchJWKS(ctx, jwksURL) },
+		func(ctx context.Context) (jose.JSONWebKeySet, error) {
+			return fetchJWKS(ctx, jwksURL, c.JWKSPlaintext)
+		},
 		c.Audience,
 		c.ImageDigest,
 	)
@@ -127,21 +123,7 @@ func buildArmoryBackend(
 	if c.Profile == "" {
 		return nil, errors.New("armory backend requires profile")
 	}
-	if c.HostKeyFile == "" {
-		return loadAttestedBackend(ctx, c, verifier)
-	}
-	hostKey, err := readArmoryHostKey(c.HostKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("host_key_file: %w", err)
-	}
-	if c.Address == "" {
-		return nil, fmt.Errorf("%s backend requires address", c.Type)
-	}
-	enclave, err := backend.NewHostKeyHTTPEnclave(c.Address, c.Profile, hostKey)
-	if err != nil {
-		return nil, err
-	}
-	return loadAttestedEnclave(ctx, c, enclave, verifier)
+	return loadAttestedBackend(ctx, c, verifier)
 }
 
 // armoryHostKeyType is the envelope type armory-pool host-key writes.
@@ -185,31 +167,120 @@ func loadAttestedBackend(
 	if c.Address == "" {
 		return nil, fmt.Errorf("%s backend requires address", c.Type)
 	}
-	var (
-		enclave *backend.HTTPEnclave
-		err     error
-	)
-	if c.Type == "confidential-space" {
-		if c.TLSCAFile == "" || c.TLSClientCertFile == "" ||
-			c.TLSClientKeyFile == "" {
-			return nil, errors.New(
-				"confidential-space backend requires tls_ca_file, tls_client_cert_file, and tls_client_key_file",
-			)
-		}
-		enclave, err = backend.NewProfiledMTLSHTTPEnclave(
-			c.Address,
-			c.Profile,
-			c.TLSCAFile,
-			c.TLSClientCertFile,
-			c.TLSClientKeyFile,
-		)
-	} else {
-		enclave, err = backend.NewProfiledHTTPEnclave(c.Address, c.Profile)
-	}
+	enclave, err := newAttestedEnclave(c)
 	if err != nil {
 		return nil, err
 	}
 	return loadAttestedEnclave(ctx, c, enclave, verifier)
+}
+
+// newAttestedEnclave connects to the enclave at c.Address.
+//
+// A confidential-space address uses https unless c.Plaintext permits http or
+// a unix socket. Armory and nitro accept http, https, or a unix socket. Over
+// https the CA and client certificate files are optional; they have no
+// handshake to apply to on any other address, so they are refused there.
+// Armory and nitro sign each request with host_key_file when it is set; the
+// device decides whether to accept a request without that signature.
+func newAttestedEnclave(c config.SignerBackendConfig) (*backend.HTTPEnclave, error) {
+	u, err := url.Parse(c.Address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid enclave address: %w", err)
+	}
+	if c.Type == "confidential-space" && u.Scheme != "https" && !c.Plaintext {
+		return nil, errors.New(
+			"confidential-space address must use https; set plaintext: true for an http or unix address",
+		)
+	}
+	files := backend.EnclaveTLSFiles{
+		CAFile:         c.TLSCAFile,
+		ClientCertFile: c.TLSClientCertFile,
+		ClientKeyFile:  c.TLSClientKeyFile,
+	}
+	hasTLSFiles := files.CAFile != "" || files.ClientCertFile != "" ||
+		files.ClientKeyFile != ""
+	if hasTLSFiles && u.Scheme != "https" {
+		return nil, errors.New(
+			"tls_ca_file, tls_client_cert_file, and tls_client_key_file apply only to an https address",
+		)
+	}
+	var tlsConfig *tls.Config
+	if u.Scheme == "https" &&
+		(hasTLSFiles || c.Type == "confidential-space") {
+		if c.Type == "confidential-space" {
+			files.MinVersion = tls.VersionTLS13
+		}
+		tlsConfig, err = backend.LoadEnclaveTLSConfig(files)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var hostKey ed25519.PrivateKey
+	if c.HostKeyFile != "" && c.Type != "confidential-space" {
+		hostKey, err = readArmoryHostKey(c.HostKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("host_key_file: %w", err)
+		}
+	}
+	return backend.NewConfiguredHTTPEnclave(
+		c.Address,
+		c.Profile,
+		tlsConfig,
+		hostKey,
+	)
+}
+
+// DescribeBackendTransport returns how the signer reaches backend c, for an
+// INFO log line, or "" for a backend without a network transport setting.
+func DescribeBackendTransport(c config.SignerBackendConfig) string {
+	scheme := func() string {
+		u, err := url.Parse(c.Address)
+		if err != nil {
+			return "unparsed address"
+		}
+		switch u.Scheme {
+		case "https":
+			return "https"
+		case "http":
+			return "plain http"
+		case "unix":
+			return "unix socket"
+		default:
+			return u.Scheme
+		}
+	}
+	switch c.Type {
+	case "vault":
+		return scheme()
+	case "confidential-space", "armory", "nitro":
+		mode := scheme()
+		if mode == "https" {
+			if c.TLSCAFile != "" {
+				mode += ", tls_ca_file"
+			} else {
+				mode += ", system roots"
+			}
+			if c.TLSClientCertFile != "" {
+				mode += ", client certificate"
+			}
+		}
+		if c.Type == "confidential-space" {
+			jwks := "https"
+			if c.JWKSURL != "" {
+				if u, err := url.Parse(c.JWKSURL); err == nil &&
+					u.Scheme == "http" {
+					jwks = "plain http"
+				}
+			}
+			return mode + "; jwks: " + jwks
+		}
+		if c.HostKeyFile != "" {
+			return mode + "; host key: signed requests"
+		}
+		return mode + "; host key: none"
+	default:
+		return ""
+	}
 }
 
 func loadAttestedEnclave(
@@ -233,41 +304,50 @@ func loadAttestedEnclave(
 }
 
 // errJWKSURLPolicy is returned for a JWKS location that is neither HTTPS nor
-// loopback HTTP.
+// loopback HTTP, when jwks_plaintext is not set.
 var errJWKSURLPolicy = errors.New(
-	"jwks_url must use https; plain http is allowed only for loopback addresses",
+	"jwks_url must use https, or http on a loopback host; set jwks_plaintext: true for http on other hosts",
 )
 
-// checkJWKSURL applies the JWKS location policy. Keys fetched over cleartext
-// could be substituted in transit, which would let a forged attestation token
-// verify.
-func checkJWKSURL(u *url.URL) error {
-	if u.Scheme != "https" &&
-		(u.Scheme != "http" || !backend.IsLoopbackHost(u.Hostname())) {
+// checkJWKSURL applies the JWKS location policy: https, or http on a loopback
+// host, or http on any host when plaintext is set.
+func checkJWKSURL(u *url.URL, plaintext bool) error {
+	switch {
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http" &&
+		(plaintext || backend.IsLoopbackHost(u.Hostname())):
+		return nil
+	default:
 		return errJWKSURLPolicy
 	}
-	return nil
 }
 
-// jwksClient applies the JWKS location policy to every redirect hop, not only
-// to the configured URL.
-var jwksClient = &http.Client{
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("jwks fetch: stopped after 10 redirects")
-		}
-		return checkJWKSURL(req.URL)
-	},
+// newJWKSClient applies the JWKS location policy to every redirect hop, not
+// only to the configured URL.
+func newJWKSClient(plaintext bool) *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("jwks fetch: stopped after 10 redirects")
+			}
+			return checkJWKSURL(req.URL, plaintext)
+		},
+	}
 }
 
-// fetchJWKS downloads a JSON Web Key Set over HTTPS or loopback HTTP.
-func fetchJWKS(ctx context.Context, url string) (jose.JSONWebKeySet, error) {
+// fetchJWKS downloads a JSON Web Key Set under the JWKS location policy.
+func fetchJWKS(
+	ctx context.Context,
+	url string,
+	plaintext bool,
+) (jose.JSONWebKeySet, error) {
 	var set jose.JSONWebKeySet
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return set, err
 	}
-	resp, err := jwksClient.Do(req)
+	resp, err := newJWKSClient(plaintext).Do(req)
 	if err != nil {
 		return set, err
 	}

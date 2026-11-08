@@ -46,14 +46,17 @@ func CallerFromContext(ctx context.Context) string {
 type Validator func(token string) (subject string, err error)
 
 var errJWKSURLPolicy = errors.New(
-	"jwks_url must use https; plain http is allowed only for loopback addresses",
+	"jwks_url must use https, or http on a loopback host; set jwks_plaintext: true for http on other hosts",
 )
 
 // checkJWKSURL applies the key transport policy to configured locations and
-// every resolved redirect destination.
-func checkJWKSURL(u *url.URL) error {
+// every resolved redirect destination: https, or http on a loopback host, or
+// http on any host when plaintext is set.
+func checkJWKSURL(u *url.URL, plaintext bool) error {
 	if u != nil &&
-		(u.Scheme == "https" || (u.Scheme == "http" && backend.IsLoopbackHost(u.Hostname()))) {
+		(u.Scheme == "https" ||
+			(u.Scheme == "http" &&
+				(plaintext || backend.IsLoopbackHost(u.Hostname())))) {
 		return nil
 	}
 	return errJWKSURLPolicy
@@ -105,16 +108,38 @@ func HS256Validator(secret []byte, issuer, audience string) Validator {
 // enforced when non-empty. This is the production validator (design §12);
 // HS256Validator remains for dev/simple deployments.
 //
-// Plain http is rejected unless the host is loopback (dev escape hatch).
+// jwksURL uses https, or http on a loopback host. JWKSValidatorWithOptions
+// can permit http on other hosts.
 func JWKSValidator(
 	ctx context.Context,
 	jwksURL, issuer, audience string,
+) (Validator, error) {
+	return JWKSValidatorWithOptions(
+		ctx,
+		jwksURL,
+		issuer,
+		audience,
+		JWKSOptions{},
+	)
+}
+
+// JWKSOptions adjusts how JWKSValidatorWithOptions fetches its key set.
+type JWKSOptions struct {
+	// Plaintext permits an http jwks URL, and http redirects, on any host.
+	Plaintext bool
+}
+
+// JWKSValidatorWithOptions is JWKSValidator with JWKSOptions.
+func JWKSValidatorWithOptions(
+	ctx context.Context,
+	jwksURL, issuer, audience string,
+	opts JWKSOptions,
 ) (Validator, error) {
 	u, err := url.Parse(jwksURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid jwks url: %w", err)
 	}
-	if err := checkJWKSURL(u); err != nil {
+	if err := checkJWKSURL(u, opts.Plaintext); err != nil {
 		return nil, err
 	}
 
@@ -130,7 +155,7 @@ func JWKSValidator(
 							"jwks fetch: stopped after 10 redirects",
 						)
 					}
-					return checkJWKSURL(req.URL)
+					return checkJWKSURL(req.URL, opts.Plaintext)
 				},
 			},
 			NoErrorReturnFirstHTTPReq: &noError,
@@ -139,19 +164,19 @@ func JWKSValidator(
 	if err != nil {
 		return nil, fmt.Errorf("fetch jwks %q: %w", jwksURL, err)
 	}
-	opts := []jwt.ParserOption{
+	parserOpts := []jwt.ParserOption{
 		jwt.WithExpirationRequired(),
 		jwt.WithValidMethods([]string{"RS256", "ES256", "EdDSA"}),
 	}
 	if issuer != "" {
-		opts = append(opts, jwt.WithIssuer(issuer))
+		parserOpts = append(parserOpts, jwt.WithIssuer(issuer))
 	}
 	if audience != "" {
-		opts = append(opts, jwt.WithAudience(audience))
+		parserOpts = append(parserOpts, jwt.WithAudience(audience))
 	}
 	return func(token string) (string, error) {
 		claims := jwt.RegisteredClaims{}
-		if _, err := jwt.ParseWithClaims(token, &claims, kf.Keyfunc, opts...); err != nil {
+		if _, err := jwt.ParseWithClaims(token, &claims, kf.Keyfunc, parserOpts...); err != nil {
 			return "", err
 		}
 		return claims.Subject, nil
@@ -309,6 +334,20 @@ func AuthMiddleware(chain []Authenticator, next http.Handler) http.Handler {
 		}
 		write401(w, "authentication required", challenge)
 	})
+}
+
+// AnonymousCaller is the caller identity of a request that presents no
+// credential when Server.SetAnonymousCaller is enabled (signer.auth_none).
+const AnonymousCaller = "anonymous"
+
+// anonymousAuthenticator ends the chain by attributing a request that no
+// earlier scheme claimed to a fixed caller.
+type anonymousAuthenticator struct{ caller string }
+
+func (a anonymousAuthenticator) Authenticate(
+	*http.Request,
+) (string, bool, error) {
+	return a.caller, true, nil
 }
 
 // JWTMiddleware authenticates requests with a single JWT Authenticator,

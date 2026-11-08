@@ -987,7 +987,6 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		{"nitro non-hex PCR", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: "zz"}}, "pcrs[0]"},
 		{"nitro zero PCR0", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: strings.Repeat("00", 48)}}, "all zeros"},
 		{"nitro without address", config.SignerBackendConfig{Type: "nitro", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "address"},
-		{"nitro without host key", config.SignerBackendConfig{Type: "nitro", Address: "http://127.0.0.1:1", RootCAFile: root, PCRs: map[uint]string{0: goodPCR}}, "host_key_file"},
 		{"confidential-space without audience", config.SignerBackendConfig{Type: "confidential-space", Address: "http://127.0.0.1:1", ImageDigest: "sha256:aa"}, "audience"},
 		{"confidential-space cleartext jwks", config.SignerBackendConfig{
 			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://example.com/jwks",
@@ -995,9 +994,29 @@ func TestBuildAttestedBackendsRejectBadConfig(t *testing.T) {
 		{"confidential-space without address", config.SignerBackendConfig{
 			Type: "confidential-space", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
 		}, "address"},
-		{"confidential-space without mTLS identity", config.SignerBackendConfig{
+		{"confidential-space client certificate without key", config.SignerBackendConfig{
 			Type: "confidential-space", Address: "https://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
+			TLSClientCertFile: "/client.pem",
+		}, "tls_client_key_file"},
+		{"confidential-space plain http by default", config.SignerBackendConfig{
+			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
+		}, "plaintext: true"},
+		{"confidential-space TLS files on plain http", config.SignerBackendConfig{
+			Type: "confidential-space", Address: "http://127.0.0.1:1", Audience: "a", ImageDigest: goodDigest, JWKSURL: "http://127.0.0.1:1/jwks",
+			Plaintext: true, TLSCAFile: root,
+		}, "only to an https address"},
+		{"armory TLS files on plain http", config.SignerBackendConfig{
+			Type: "armory", Address: "http://127.0.0.1:1", Profile: "p@preview", IdentityPublicKey: strings.Repeat("ab", 32),
+			TLSCAFile: root,
+		}, "only to an https address"},
+		{"armory client key without certificate", config.SignerBackendConfig{
+			Type: "armory", Address: "https://127.0.0.1:1", Profile: "p@preview", IdentityPublicKey: strings.Repeat("ab", 32),
+			TLSClientKeyFile: "/client.key",
 		}, "tls_client_cert_file"},
+		{"nitro TLS files on a unix socket", config.SignerBackendConfig{
+			Type: "nitro", Address: "unix:///run/enclave.sock", RootCAFile: root, PCRs: map[uint]string{0: goodPCR},
+			TLSClientCertFile: "/client.pem", TLSClientKeyFile: "/client.key",
+		}, "only to an https address"},
 		{"armory without identity key", config.SignerBackendConfig{Type: "armory", Address: "http://127.0.0.1:1", Profile: "p@preview"}, "identity_public_key"},
 		{"armory non-hex identity key", config.SignerBackendConfig{
 			Type: "armory", Address: "http://127.0.0.1:1", Profile: "p@preview", IdentityPublicKey: strings.Repeat("zz", 32),
@@ -1038,7 +1057,7 @@ func TestFetchJWKSRefusesRedirectToCleartext(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	if _, err := fetchJWKS(ctx, srv.URL); !errors.Is(err, errJWKSURLPolicy) {
+	if _, err := fetchJWKS(ctx, srv.URL, false); !errors.Is(err, errJWKSURLPolicy) {
 		t.Fatalf("got %v, want errJWKSURLPolicy", err)
 	}
 }

@@ -161,13 +161,24 @@ Cardano operation validation, watermarks, role guard for operational
 certificates, and signature verification all run in the signer before and after
 the enclave call. A plain `Sign` on an attested key is refused.
 
-The Nitro signer can reach its enclave through an `http://`, `https://` or
-`unix:///path` address because attestation and response verification protect
-that protocol across the host proxy; the proxy-to-enclave gRPC hop uses mutual
-TLS for proxy authorization. Confidential Space requires an `https://`
-address, a pinned server CA, and a signer client certificate. Forwarding the
-address onto the platform's vsock or workload port remains the deployment's
-job.
+The Nitro and armory signers reach their device through an `http://`,
+`https://` or `unix:///path` address; attestation and response verification
+protect the protocol on every one of them, and the Nitro proxy-to-enclave gRPC
+hop uses mutual TLS for proxy authorization. Confidential Space uses an
+`https://` address by default, and `plaintext: true` permits an `http://` or
+`unix:///path` address.
+
+Over `https://`, every attested backend takes the same optional TLS settings:
+
+- `tls_ca_file` verifies the server certificate; the system roots are used
+  when it is unset.
+- `tls_client_cert_file` and `tls_client_key_file` present a client
+  certificate. They are set together.
+
+These files apply only to an `https://` address and are refused on any other.
+Forwarding the address onto the platform's vsock or workload port remains the
+deployment's job. The transport of each backend is logged at startup, for
+example `signer backend transport: https, tls_ca_file, client certificate`.
 
 ## AWS Nitro Enclaves
 
@@ -176,7 +187,7 @@ backends:
   - name: "nitro"
     type: "nitro"
     address: "unix:///run/bursa/enclave.sock"   # host proxy to the enclave vsock
-    host_key_file: "/etc/bursa/signer/nitro-host.skey"
+    host_key_file: "/etc/bursa/signer/nitro-host.skey" # optional; see below
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 hex: image measurement from the built EIF>"
@@ -192,6 +203,11 @@ backends:
   the current time, and its ES384 signature must verify under the leaf key.
 - Boot fails if attestation fails. Re-attestation (for example after an enclave
   restart) is `AttestedBackend.Load`, which drops all keys before verifying.
+- `host_key_file` signs every signing request with the signer authority key,
+  as the armory host key does (below). It is optional: without it requests are
+  not host-key signed and the enclave decides whether to accept them. The
+  production enclave in [`nitro-custody.md`](nitro-custody.md) has the
+  authority key built in and expects it.
 
 Operators wire the enclave side as follows; these controls live in AWS and in
 the enclave image, outside the signer:
@@ -225,12 +241,18 @@ backends:
     tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
     tls_client_cert_file: "/etc/bursa/confidential-space-client.pem"
     tls_client_key_file: "/etc/bursa/confidential-space-client-key.pem"
+    # plaintext: false                            # true permits an http or unix address
     # jwks_url: defaults to Google's published token signing keys
+    # jwks_plaintext: false                       # true permits an http jwks_url on any host
 ```
+
+The three TLS files are optional (see above); the workload described below
+expects all three.
 
 The signer accepts a token only when all of these hold:
 
-- it is RS256-signed by a key in the JWKS (HTTPS, or loopback HTTP, only);
+- it is RS256-signed by a key in the JWKS, fetched over https, http on a
+  loopback host, or http on any host with `jwks_plaintext: true`;
 - issuer is `https://confidentialcomputing.googleapis.com`, audience equals
   `audience`, and `iat`, `nbf`, and `exp` are present and valid;
 - `dbgstat` is `disabled-since-boot`, `swname` is `CONFIDENTIAL_SPACE`, and
@@ -433,6 +455,9 @@ backends:
     protocol: "negotiate"                       # optional: "1" (default), "negotiate", or "2"
 ```
 
+The address may also be `https://`, with the optional TLS settings described
+above.
+
 The USB armory Mk II holds the pool cold key and the owner stake key in its
 SE050 secure element, one profile per pool and network. Its signing firmware
 serves this protocol at `/v1/inventory` and `/v1/sign`.
@@ -550,7 +575,9 @@ challenge from `/v1/challenge` before each signature and adds `challenge`,
 `host_key` and `host_signature` to the request: an Ed25519 signature over
 `AttestedRequestBinding`, the domain `bursa-armory-request/1` followed by the
 request fields and the challenge, length-prefixed as in the response binding.
-A device with a registered host key refuses requests without it. The file
+A device with a registered host key refuses requests without it. Without
+`host_key_file` requests are not host-key signed and the device decides
+whether to accept them. The file
 must not be readable by group or others, and an unreadable or malformed file
 fails startup. A multi image (below) authenticates inventory requests as well:
 a host-key enclave whose unauthenticated `/v1/inventory` request is refused

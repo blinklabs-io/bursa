@@ -29,7 +29,7 @@ servers:
   - url: https://signer.example.internal:8090
     description: Signer over TLS (production)
   - url: http://127.0.0.1:8090
-    description: Loopback (development, plaintext permitted)
+    description: Signer on loopback over plain TCP
 tags:
   - name: sign
   - name: keys

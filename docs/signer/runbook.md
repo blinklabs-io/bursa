@@ -25,26 +25,34 @@ key passphrase) should be delivered via environment variables, not the file.
 
 Boot performs eager validation and exits non-zero on any of:
 
-- no authentication mode configured, or both `signer.jwt_secret` and
-  `signer.jwks_url` set;
+- no authentication mode configured and `signer.auth_none` unset, or both
+  `signer.jwt_secret` and `signer.jwks_url` set;
 - `signer.jwt_secret` shorter than 32 bytes;
 - only one of `tls_cert_file` / `tls_key_file` set;
-- a non-loopback listen address without TLS;
+- `signer.client_ca_cert` without server TLS, or
+  `signer.require_client_cert` without `signer.client_ca_cert`;
+- a non-loopback listen address without TLS and `signer.plaintext` unset;
 - a software/file backend on a non-loopback address without
   `allow_insecure_file_backend` (see [security.md](security.md));
 - a `signer.policy_hook_url` that is not an absolute HTTPS URL;
 - no backends configured, or the same key hash served by two backends;
 - invalid policy, watermark, or caller ACL.
 
+At startup the signer logs the request auth modes, the listener transport, and
+each backend's transport at INFO, for example `signer listener: plain TCP` or
+`signer request auth: jwt (jwks)`.
+
 ## 3. Authentication
 
-At least one auth mode must be configured. The modes are composable and all
-resolve to a single caller identity fed to the caller ACL. When more than one is
-enabled, they are tried in a fixed precedence: **mTLS client cert >
-authorized-keys request signing > JWT bearer**. The first scheme that presents a
-credential decides the request - a valid credential authenticates it, an invalid
-one rejects it (there is no fall-through to a weaker scheme once a credential is
-presented). An empty chain fails closed.
+Configure at least one auth mode, or set `signer.auth_none: true` (below). The
+modes are composable and all resolve to a single caller identity fed to the
+caller ACL. When more than one is enabled, they are tried in a fixed
+precedence: **mTLS client cert > authorized-keys request signing > JWT
+bearer**. The first scheme that presents a credential decides the request - a
+valid credential authenticates it, an invalid one rejects it (there is no
+fall-through to another scheme once a credential is presented). With no mode
+configured and `auth_none` unset the signer does not start, and an empty chain
+answers every request with 401.
 
 ### JWT bearer
 
@@ -52,11 +60,24 @@ Configure **at most one** validator:
 
 - **HS256** (`signer.jwt_secret`, >=32 bytes) - development / simple.
 - **JWKS** (`signer.jwks_url`) - production. Verifies RS256/ES256/EdDSA against
-  the identity provider's published keys.
+  the identity provider's published keys. The URL uses https, or http on a
+  loopback host; `signer.jwks_plaintext: true` (env `SIGNER_JWKS_PLAINTEXT`)
+  permits http on any host, including redirects.
 
 `signer.jwt_issuer` and `signer.jwt_audience` are enforced when set; leave them
 unset only if you intend to accept any issuer/audience (a warning is logged).
 The caller identity is the token `sub` claim.
+
+### No request authentication
+
+`signer.auth_none: true` (env `SIGNER_AUTH_NONE`) starts the signer without a
+request auth mode, for deployments where callers are identified outside the
+signer, such as by a service mesh or a private network. A request that presents
+no credential is attributed to the caller `anonymous`. `signer.callers` and
+`signer.caller_policies` apply to that caller like any other: with a caller ACL
+configured, list `anonymous` with the keys it may use. `auth_none` may also be
+combined with the other modes, in which case presented credentials are still
+verified by their scheme and only requests without one use `anonymous`.
 
 ### mTLS client certificate
 
@@ -119,9 +140,11 @@ existence probing).
 ## 4. TLS
 
 The signer serves server-side TLS when both `tls_cert_file` and `tls_key_file`
-are set (TLS 1.2 minimum). A non-loopback listen address without TLS is refused
-at boot. Loopback listeners may run plaintext (for local development or when a
-co-located proxy terminates TLS).
+are set (TLS 1.2 minimum). Without them the listener uses plain TCP: on a
+loopback address by default, and on any address with `signer.plaintext: true`
+(env `SIGNER_PLAINTEXT`), for example when a proxy or mesh sidecar provides
+TLS. `signer.plaintext` has no effect when TLS files are set. The listener
+transport in use is logged at startup.
 
 For mutual TLS, set `signer.client_ca_cert` and optionally
 `signer.require_client_cert` as described under
@@ -139,7 +162,8 @@ Vault Transit signing. The private key never leaves Vault; the signer sends the
 digest and receives the signature. Only standard (non-extended) Ed25519 keys are
 supported. Configure `address`, `transit_mount`, the token env var
 (`token_env`, default `VAULT_TOKEN`), and an explicit `keys` list naming each
-Transit key and its Cardano type.
+Transit key and its Cardano type. `address` uses https, or http on a loopback
+host; `plaintext: true` on the backend permits http on any host.
 
 ### sops
 
@@ -161,11 +185,12 @@ Decryption uses the standard SOPS key sources, such as an age identity in
 `SOPS_AGE_KEY_FILE` or `SOPS_AGE_KEY`. Encrypt the key files to a recipient
 that unlocks nothing else.
 
-### software / file (development only)
+### software / file
 
-Loads plaintext (or passphrase-encrypted) `*.skey` files from `path` directly
-into process memory. Passphrase-encrypted files require `passphrase_env`. This
-backend is gated by `allow_insecure_file_backend` on non-loopback addresses;
+Loads unencrypted (or passphrase-encrypted) `*.skey` files from `path` directly
+into process memory. Passphrase-encrypted files require `passphrase_env`. On a
+non-loopback listen address this backend needs
+`allow_insecure_file_backend: true` (the key name is kept for compatibility);
 see [security.md](security.md).
 
 ### pkcs11 (HSM; requires `-tags pkcs11`)

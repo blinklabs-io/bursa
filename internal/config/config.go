@@ -108,12 +108,21 @@ type SignerConfig struct {
 	// RequestSignSkewSeconds is the ± timestamp window (seconds) accepted for
 	// authorized-keys request signatures. Zero uses the 60s default.
 	RequestSignSkewSeconds int `yaml:"request_sign_skew_seconds"   envconfig:"SIGNER_REQUEST_SIGN_SKEW_SECONDS"`
-	// AllowInsecureFileBackend opts in to running the plaintext software/file
-	// key backend while bound to a non-loopback address. The software backend
-	// loads private key material into process memory and is intended for
-	// development only; production deployments should use a Vault or SOPS
-	// backend. Defaults to false: boot fails if a software/file backend is
-	// configured on a non-loopback listen address without this flag.
+	// AuthNone permits a signer with no request authentication configured.
+	// Requests that present no credential are then attributed to the fixed
+	// caller "anonymous", which signer.callers and signer.caller_policies may
+	// name. Credentials that are presented are still verified by their scheme.
+	AuthNone bool `yaml:"auth_none"                   envconfig:"SIGNER_AUTH_NONE"`
+	// Plaintext permits a plain TCP listener on a non-loopback address. It has
+	// no effect when tls_cert_file and tls_key_file are set.
+	Plaintext bool `yaml:"plaintext"                   envconfig:"SIGNER_PLAINTEXT"`
+	// JWKSPlaintext permits an http jwks_url (and http redirects) on any host.
+	// Without it, jwks_url uses https, or http on a loopback host.
+	JWKSPlaintext bool `yaml:"jwks_plaintext"              envconfig:"SIGNER_JWKS_PLAINTEXT"`
+	// AllowInsecureFileBackend permits the software key backend, which holds
+	// key material in process memory, while the signer listens on a
+	// non-loopback address. The key name is kept for compatibility. Defaults
+	// to false.
 	AllowInsecureFileBackend bool                        `yaml:"allow_insecure_file_backend" envconfig:"SIGNER_ALLOW_INSECURE_FILE_BACKEND"`
 	Watermark                SignerWatermarkConfig       `yaml:"watermark"`
 	Backends                 []SignerBackendConfig       `yaml:"backends"`
@@ -184,12 +193,14 @@ type SignerBackendConfig struct {
 	Audience          string                   `yaml:"audience"`             // confidential-space: audience the attestation token must carry
 	ImageDigest       string                   `yaml:"image_digest"`         // confidential-space: required container image digest (sha256:...)
 	JWKSURL           string                   `yaml:"jwks_url"`             // confidential-space: token signing keys (default: Google's published set)
-	TLSCAFile         string                   `yaml:"tls_ca_file"`          // confidential-space: PEM CA for the workload HTTPS certificate
-	TLSClientCertFile string                   `yaml:"tls_client_cert_file"` // confidential-space: PEM client certificate presented to the workload
-	TLSClientKeyFile  string                   `yaml:"tls_client_key_file"`  // confidential-space: PEM private key for tls_client_cert_file
+	TLSCAFile         string                   `yaml:"tls_ca_file"`          // confidential-space, armory, nitro: optional PEM CA for an https address (system roots when unset)
+	TLSClientCertFile string                   `yaml:"tls_client_cert_file"` // confidential-space, armory, nitro: optional PEM client certificate for an https address
+	TLSClientKeyFile  string                   `yaml:"tls_client_key_file"`  // confidential-space, armory, nitro: PEM private key for tls_client_cert_file
+	Plaintext         bool                     `yaml:"plaintext"`            // vault: permit http on any host; confidential-space: permit an http or unix address
+	JWKSPlaintext     bool                     `yaml:"jwks_plaintext"`       // confidential-space: permit an http jwks_url on any host
 	Profile           string                   `yaml:"profile"`              // confidential-space: optional workload profile; armory: required device profile; Nitro leaves this empty
 	IdentityPublicKey string                   `yaml:"identity_public_key"`  // armory: device identity public key (hex), pinned
-	HostKeyFile       string                   `yaml:"host_key_file"`        // armory/nitro: host signing key file authenticating signing requests
+	HostKeyFile       string                   `yaml:"host_key_file"`        // armory/nitro: optional host signing key file authenticating signing requests
 	Protocol          string                   `yaml:"protocol"`             // armory: sign protocol for transaction bodies: "1" (default), "negotiate" (version 2, falling back to 1), or "2" (version 2 only)
 }
 

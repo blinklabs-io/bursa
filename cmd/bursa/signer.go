@@ -92,8 +92,9 @@ func signerCommand() *cobra.Command {
 		Short: "Run the Cardano remote signing service",
 		Long: `Run the Cardano remote signing service.
 
-Authentication (at least one mode must be configured; modes are composable and
-resolve to a single caller identity fed to the signer.callers ACL):
+Authentication (configure at least one mode, or set signer.auth_none; modes
+are composable and resolve to a single caller identity fed to the
+signer.callers ACL):
 
   JWT bearer          at most one of signer.jwt_secret (HS256, dev/simple) or
                       signer.jwks_url (RS256/ES256/EdDSA via JWKS, production);
@@ -108,6 +109,13 @@ resolve to a single caller identity fed to the signer.callers ACL):
                       sends X-Bursa-{Signature,Timestamp,Nonce,Key}. Rejected
                       outside signer.request_sign_skew_seconds (default 60) or on
                       a reused (key,nonce). Caller is the named key.
+  None                signer.auth_none: true. A request that presents no
+                      credential is attributed to the caller "anonymous";
+                      presented credentials are still verified.
+
+Transport: TLS with signer.tls_cert_file and signer.tls_key_file. Without TLS
+the listener uses plain TCP on a loopback address, or on any address with
+signer.plaintext: true. The modes in use are logged at startup.
 
 Without a signer.callers ACL, any authenticated caller may use any configured
 key.`,
@@ -166,18 +174,12 @@ key.`,
 					os.Exit(1)
 				}
 			}
-			if !hasJWT && !hasMTLS && !hasReqSign {
-				logger.Error(
-					"at least one auth mode must be configured (signer.jwt_secret, signer.jwks_url, signer.client_ca_cert, or signer.authorized_keys)",
-				)
+			authMode, err := checkSignerAuth(cfg.Signer)
+			if err != nil {
+				logger.Error("invalid signer auth", "error", err)
 				os.Exit(1)
 			}
-			if cfg.Signer.RequireClientCert && !hasMTLS {
-				logger.Error(
-					"signer.require_client_cert requires signer.client_ca_cert",
-				)
-				os.Exit(1)
-			}
+			logger.Info(authMode)
 			authorizedKeys, err := signer.BuildAuthorizedKeys(
 				cfg.Signer.AuthorizedKeys,
 			)
@@ -209,17 +211,14 @@ key.`,
 				)
 			}
 
-			// Insecure-file-backend guardrail: the software/file backend loads
-			// plaintext key material in-process. Refuse to start when exposed on
-			// a non-loopback address unless explicitly opted in; warn loudly
-			// otherwise. Run this BEFORE BuildBackends so a refused, unsafe
-			// configuration is rejected before any key material is read off
-			// disk or decrypted into process memory.
-			if warn, gerr := signer.CheckFileBackendGuard(cfg.Signer.Backends, cfg.Signer.ListenAddress, cfg.Signer.AllowInsecureFileBackend); gerr != nil {
-				logger.Error("insecure file backend refused", "error", gerr)
+			// The software backend default is applied BEFORE BuildBackends so a
+			// refused configuration is rejected before any key material is read
+			// off disk or decrypted into process memory.
+			if msg, gerr := signer.CheckFileBackendGuard(cfg.Signer.Backends, cfg.Signer.ListenAddress, cfg.Signer.AllowInsecureFileBackend); gerr != nil {
+				logger.Error("software key backend not started", "error", gerr)
 				os.Exit(1)
-			} else if warn != "" {
-				logger.Warn(warn)
+			} else if msg != "" {
+				logger.Info(msg)
 			}
 
 			// Signal-cancellable root context for graceful shutdown.
@@ -245,6 +244,17 @@ key.`,
 			if len(backends) == 0 {
 				logger.Error("no signer backends configured")
 				os.Exit(1)
+			}
+			for _, bc := range cfg.Signer.Backends {
+				if mode := signer.DescribeBackendTransport(bc); mode != "" {
+					logger.Info(
+						"signer backend transport: "+mode,
+						"backend",
+						bc.Name,
+						"type",
+						bc.Type,
+					)
+				}
 			}
 			resolver := backend.NewResolver(backends...)
 
@@ -295,11 +305,12 @@ key.`,
 			var validate api.Validator
 			switch {
 			case hasJWKS:
-				validate, err = api.JWKSValidator(
+				validate, err = api.JWKSValidatorWithOptions(
 					ctx,
 					cfg.Signer.JWKSURL,
 					cfg.Signer.JWTIssuer,
 					cfg.Signer.JWTAudience,
+					api.JWKSOptions{Plaintext: cfg.Signer.JWKSPlaintext},
 				)
 				if err != nil {
 					logger.Error(
@@ -309,6 +320,7 @@ key.`,
 					)
 					os.Exit(1)
 				}
+				logger.Info(describeSignerJWKS(cfg.Signer))
 			case hasSecret:
 				// Require a minimum of 32 bytes so the shared secret is not
 				// trivially brute-forceable.
@@ -344,6 +356,9 @@ key.`,
 					api.NewRequestSigningAuthenticator(authorizedKeys, skew),
 				)
 			}
+			if cfg.Signer.AuthNone {
+				srv.SetAnonymousCaller()
+			}
 
 			// Readiness probe: verify the process's runtime dependencies are
 			// usable. Backends were validated at boot (the process exits above
@@ -364,33 +379,18 @@ key.`,
 				cfg.Signer.ListenAddress,
 				cfg.Signer.ListenPort,
 			)
-			tlsConfigured := cfg.Signer.TLSCertFile != "" ||
-				cfg.Signer.TLSKeyFile != ""
-			if (cfg.Signer.TLSCertFile == "") != (cfg.Signer.TLSKeyFile == "") {
+			listenerMode, err := checkSignerListener(cfg.Signer)
+			if err != nil {
 				logger.Error(
-					"signer TLS requires both tls_cert_file and tls_key_file",
-				)
-				os.Exit(1)
-			}
-			// mTLS verifies client certs during the TLS handshake, so it needs
-			// server TLS enabled.
-			if hasMTLS && !tlsConfigured {
-				logger.Error(
-					"signer.client_ca_cert requires server TLS (signer.tls_cert_file and signer.tls_key_file)",
-				)
-				os.Exit(1)
-			}
-			if !tlsConfigured &&
-				!signer.IsLoopbackListenAddress(cfg.Signer.ListenAddress) {
-				logger.Error(
-					"refusing plaintext signer listener on non-loopback address",
+					"invalid signer listener",
 					"listen_address",
 					cfg.Signer.ListenAddress,
-					"hint",
-					"configure signer.tls_cert_file and signer.tls_key_file or bind signer.listen_address to localhost/127.0.0.1",
+					"error",
+					err,
 				)
 				os.Exit(1)
 			}
+			tlsConfigured := cfg.Signer.TLSCertFile != ""
 			httpServer := newSignerHTTPServer(addr, mux)
 			if tlsConfigured {
 				tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
@@ -414,6 +414,7 @@ key.`,
 				}
 				httpServer.TLSConfig = tlsCfg
 			}
+			logger.Info(listenerMode, "address", addr)
 			logger.Info(
 				"starting bursa signer",
 				"address",

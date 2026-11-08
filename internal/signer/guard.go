@@ -69,7 +69,7 @@ func IsLoopbackListenAddress(addr string) bool {
 	return err == nil && parsed.IsLoopback()
 }
 
-// isSoftwareFileBackend reports whether c is the plaintext, in-process
+// isSoftwareFileBackend reports whether c is the in-process
 // software/file key backend. The only key-backend types BuildBackends accepts
 // are "software", "sops", and "vault" (config.SignerBackendConfig.Type); a
 // literal Type of "file" is not a valid key backend (it is only a watermark
@@ -79,22 +79,19 @@ func isSoftwareFileBackend(c config.SignerBackendConfig) bool {
 	return c.Type == "software"
 }
 
-// CheckFileBackendGuard enforces the production posture for the plaintext
-// software/file key backend. That backend loads private key material into
-// process memory (see internal/signer/backend/software.go) and is intended for
-// development only; production deployments should custody keys in Vault or SOPS.
+// CheckFileBackendGuard applies the default for the software key backend,
+// which holds key material in process memory (see
+// internal/signer/backend/software.go).
 //
-// The returned warning string is non-empty whenever a software/file backend is
-// configured; the caller should log it loudly. The returned error is non-nil
-// when such a backend is configured while the signer binds a non-loopback
-// address (including the all-interfaces empty address) and the operator has not
-// explicitly opted in via allowInsecure (signer.allow_insecure_file_backend).
-// On a loopback address, or with the opt-in set, boot proceeds and only the
-// warning is returned.
+// The returned message is non-empty whenever a software backend is configured;
+// the caller logs it at INFO. The returned error is non-nil when such a
+// backend is configured while the signer binds a non-loopback address
+// (including the all-interfaces empty address) and allowFileBackend
+// (signer.allow_insecure_file_backend) is not set.
 func CheckFileBackendGuard(
 	backends []config.SignerBackendConfig,
 	listenAddress string,
-	allowInsecure bool,
+	allowFileBackend bool,
 ) (string, error) {
 	var names []string
 	for _, c := range backends {
@@ -105,15 +102,15 @@ func CheckFileBackendGuard(
 	if len(names) == 0 {
 		return "", nil
 	}
-	warn := fmt.Sprintf(
-		"software/file key backend(s) %v load plaintext private key material into process memory (development only); prefer a vault or sops backend in production",
+	msg := fmt.Sprintf(
+		"signer key custody: software backend(s) %v hold key material in process memory",
 		names,
 	)
-	if IsLoopbackListenAddress(listenAddress) || allowInsecure {
-		return warn, nil
+	if IsLoopbackListenAddress(listenAddress) || allowFileBackend {
+		return msg, nil
 	}
-	return warn, fmt.Errorf(
-		"refusing to start: software/file key backend(s) %v hold plaintext key material and signer.listen_address %q is not loopback; use a vault/sops backend or set signer.allow_insecure_file_backend: true to override (development only)",
+	return msg, fmt.Errorf(
+		"software key backend(s) %v with non-loopback signer.listen_address %q: set signer.allow_insecure_file_backend: true to permit this, or use a vault, sops, pkcs11, or attested backend",
 		names,
 		listenAddress,
 	)

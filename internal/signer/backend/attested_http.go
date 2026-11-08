@@ -71,7 +71,7 @@ func NewProfiledHTTPEnclave(address, profile string) (*HTTPEnclave, error) {
 }
 
 // NewMTLSHTTPEnclave connects to an HTTPS workload using TLS 1.3, a pinned
-// server CA, and a mandatory client certificate.
+// server CA, and a client certificate, all three of which it needs.
 func NewMTLSHTTPEnclave(
 	address, caFile, certFile, keyFile string,
 ) (*HTTPEnclave, error) {
@@ -85,34 +85,83 @@ func NewProfiledMTLSHTTPEnclave(
 ) (*HTTPEnclave, error) {
 	u, err := url.Parse(address)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return nil, errors.New("authenticated enclave address must use https")
+		return nil, errors.New("TLS settings require an https enclave address")
 	}
-	rootPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read tls_ca_file: %w", err)
+	if caFile == "" {
+		return nil, errors.New("tls_ca_file is not set")
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(rootPEM) {
-		return nil, errors.New("tls_ca_file contains no certificates")
+	if certFile == "" || keyFile == "" {
+		return nil, errors.New(
+			"tls_client_cert_file and tls_client_key_file are not set",
+		)
 	}
-	certPEM, err := os.ReadFile(certFile)
-	if err != nil {
-		return nil, fmt.Errorf("read TLS client certificate: %w", err)
-	}
-	keyPEM, err := bursa.ReadSecretKeyFile(keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("read TLS client private key: %w", err)
-	}
-	defer clear(keyPEM)
-	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("load TLS client certificate: %w", err)
-	}
-	return newHTTPEnclave(address, profile, &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		RootCAs:      roots,
-		Certificates: []tls.Certificate{certificate},
+	tlsConfig, err := LoadEnclaveTLSConfig(EnclaveTLSFiles{
+		CAFile:         caFile,
+		ClientCertFile: certFile,
+		ClientKeyFile:  keyFile,
+		MinVersion:     tls.VersionTLS13,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return newHTTPEnclave(address, profile, tlsConfig)
+}
+
+// EnclaveTLSFiles names the optional PEM files for an https enclave
+// connection.
+type EnclaveTLSFiles struct {
+	// CAFile verifies the enclave server certificate. When empty the system
+	// roots are used.
+	CAFile string
+	// ClientCertFile and ClientKeyFile are a client certificate presented to
+	// the enclave. They are set together or not at all.
+	ClientCertFile string
+	ClientKeyFile  string
+	// MinVersion is the minimum TLS version; zero means TLS 1.2.
+	MinVersion uint16
+}
+
+// LoadEnclaveTLSConfig builds a client TLS configuration from files. Every
+// file is optional, except that a client certificate needs its key and the
+// reverse.
+func LoadEnclaveTLSConfig(files EnclaveTLSFiles) (*tls.Config, error) {
+	if (files.ClientCertFile == "") != (files.ClientKeyFile == "") {
+		return nil, errors.New(
+			"tls_client_cert_file and tls_client_key_file must be set together",
+		)
+	}
+	cfg := &tls.Config{MinVersion: files.MinVersion}
+	if cfg.MinVersion == 0 {
+		cfg.MinVersion = tls.VersionTLS12
+	}
+	if files.CAFile != "" {
+		rootPEM, err := os.ReadFile(files.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read tls_ca_file: %w", err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(rootPEM) {
+			return nil, errors.New("tls_ca_file contains no certificates")
+		}
+		cfg.RootCAs = roots
+	}
+	if files.ClientCertFile != "" {
+		certPEM, err := os.ReadFile(files.ClientCertFile)
+		if err != nil {
+			return nil, fmt.Errorf("read TLS client certificate: %w", err)
+		}
+		keyPEM, err := bursa.ReadSecretKeyFile(files.ClientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read TLS client private key: %w", err)
+		}
+		defer clear(keyPEM)
+		certificate, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("load TLS client certificate: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{certificate}
+	}
+	return cfg, nil
 }
 
 // NewHostKeyHTTPEnclave is a profiled enclave that authenticates every
@@ -125,7 +174,21 @@ func NewHostKeyHTTPEnclave(
 	if len(hostKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("host key must be an Ed25519 private key")
 	}
-	e, err := newHTTPEnclave(address, profile, nil)
+	return NewConfiguredHTTPEnclave(address, profile, nil, hostKey)
+}
+
+// NewConfiguredHTTPEnclave is a profiled enclave with an optional client TLS
+// configuration, which needs an https address, and an optional host key,
+// which authenticates every signing request as NewHostKeyHTTPEnclave does.
+func NewConfiguredHTTPEnclave(
+	address, profile string,
+	tlsConfig *tls.Config,
+	hostKey ed25519.PrivateKey,
+) (*HTTPEnclave, error) {
+	if hostKey != nil && len(hostKey) != ed25519.PrivateKeySize {
+		return nil, errors.New("host key must be an Ed25519 private key")
+	}
+	e, err := newHTTPEnclave(address, profile, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +218,7 @@ func newHTTPEnclave(
 		if tlsConfig != nil {
 			if u.Scheme != "https" {
 				return nil, errors.New(
-					"authenticated enclave address must use https",
+					"TLS settings require an https enclave address",
 				)
 			}
 			client.Transport = &http.Transport{
@@ -170,7 +233,7 @@ func newHTTPEnclave(
 	case "unix":
 		if tlsConfig != nil {
 			return nil, errors.New(
-				"authenticated enclave address must use https",
+				"TLS settings require an https enclave address",
 			)
 		}
 		if u.Path == "" {

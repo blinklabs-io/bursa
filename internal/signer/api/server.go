@@ -112,7 +112,9 @@ type Server struct {
 	validate Validator     // JWT bearer authenticator (nil when JWT is unconfigured)
 	mtlsAuth Authenticator // mTLS client-cert authenticator (nil when disabled)
 	reqSign  Authenticator // authorized-keys request-signing authenticator (nil when disabled)
-	logger   *slog.Logger
+	// anonymous, when set, is the last scheme in the chain (signer.auth_none).
+	anonymous Authenticator
+	logger    *slog.Logger
 }
 
 // NewServer builds the API server. validate is the JWT bearer Validator and may
@@ -146,6 +148,13 @@ func (s *Server) SetRequestSigningAuthenticator(
 	a Authenticator,
 ) {
 	s.reqSign = a
+}
+
+// SetAnonymousCaller attributes a request that presents no credential to
+// AnonymousCaller instead of rejecting it. Credentials that are presented are
+// still verified by their scheme, and the caller ACL still applies.
+func (s *Server) SetAnonymousCaller() {
+	s.anonymous = anonymousAuthenticator{caller: AnonymousCaller}
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -784,7 +793,7 @@ func (s *Server) Handler() http.Handler {
 		// Auth chain precedence: mTLS (transport identity) > request-signing >
 		// JWT bearer. The first scheme that presents a credential decides the
 		// request; only schemes presenting nothing are skipped. An empty chain
-		// fails closed (always 401).
+		// fails closed (always 401) unless the anonymous caller is enabled.
 		var chain []Authenticator
 		if s.mtlsAuth != nil {
 			chain = append(chain, s.mtlsAuth)
@@ -794,6 +803,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		if s.validate != nil {
 			chain = append(chain, JWTAuthenticator(s.validate))
+		}
+		if s.anonymous != nil {
+			chain = append(chain, s.anonymous)
 		}
 		AuthMiddleware(chain, mux).ServeHTTP(w, r)
 	})

@@ -50,9 +50,10 @@ func buildVaultBackend(
 	if err != nil {
 		return nil, fmt.Errorf("invalid vault address: %w", err)
 	}
-	if u.Scheme != "https" && !backend.IsLoopbackHost(u.Hostname()) {
+	if u.Scheme != "https" && !c.Plaintext &&
+		!backend.IsLoopbackHost(u.Hostname()) {
 		return nil, errors.New(
-			"vault address must use https; plain http is allowed only for loopback addresses (the token would travel in cleartext)",
+			"vault address must use https, or http on a loopback host; set plaintext: true for http on other hosts",
 		)
 	}
 	if len(c.Keys) == 0 {

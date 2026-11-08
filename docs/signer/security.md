@@ -9,12 +9,12 @@ protect them:
 
 | Asset | Threat | Control |
 |-------|--------|---------|
-| Private key material | Exfiltration from the signer host | Prefer custody where the key never enters the signer process - a PKCS#11 HSM token or Vault Transit; keep the plaintext software backend on loopback/dev only |
+| Private key material | Exfiltration from the signer host | Prefer custody where the key never enters the signer process - a PKCS#11 HSM token or Vault Transit; the software backend holds keys in process memory |
 | The signing capability | Unauthorized callers | mTLS client certificates, authorized-keys Ed25519 request signing (timestamp window + nonce replay cache), or bearer JWT (HS256/JWKS) with configured `iss`/`aud` checks; per-subject caller ACL over the resolved identity |
 | Correct-but-unwanted signatures | Over-broad key use | Deny-by-default per-key policy (`allowed_requests`, `backend`, tx/cip8 policy) |
 | Consensus safety / key reuse | Double-signing, period rollback | Watermark store in `enforce` mode; KES period guard in the KES agent |
 | Request contents | Leakage via logs/errors | No secrets or raw CBOR logged; 5xx bodies masked; audit IDs correlate |
-| Transport | Eavesdropping / tampering | Server-side TLS required off-loopback |
+| Transport | Eavesdropping / tampering | Server-side TLS, optional client certificates; a non-loopback plain TCP listener needs `signer.plaintext`, for deployments where TLS is provided around the signer |
 
 Out of scope: the signer trusts its configuration file and host. Protect the
 config, the TLS key, the JWT secret / Vault token, and any key files with
@@ -41,6 +41,10 @@ All three resolve to a single caller identity fed to the per-subject caller ACL.
 Only schemes presenting no credential fall through to the next configured
 scheme; an invalid credential rejects the request.
 
+With `signer.auth_none: true` the signer also starts without any of these, for
+deployments that identify callers outside it. Requests without a credential
+are then attributed to the caller `anonymous`, which the caller ACL can name.
+
 ## Custody guarantees
 
 **Keys never leave the HSM/Vault.** With the `pkcs11` backend the private key
@@ -62,39 +66,39 @@ local directory and decrypts them **in process** at boot; the decrypted key then
 memory for the process lifetime. This is stronger than plaintext-at-rest but
 still places key material in the signer's address space.
 
-## The file/software backend is development-only
+## The file/software backend
 
-The `software` (a.k.a. `file`) backend loads plaintext `*.skey` files (or
+The `software` (a.k.a. `file`) backend loads unencrypted `*.skey` files (or
 passphrase-decrypts them) directly into process memory
-(`internal/signer/backend/software.go`). It exists for local development and
-testing. **Never use it in production**, mirroring Signatory's guidance to never
-run the file backend in production.
+(`internal/signer/backend/software.go`), so the keys are readable by anything
+that can read the process memory or the key directory. The `pkcs11`, `vault`,
+and attested backends keep keys out of the signer process.
 
-The signer enforces this with a guardrail:
+Defaults:
 
 - If a `software`/`file` backend is configured **and** the listen address is
   non-loopback (including the all-interfaces empty address) **and**
-  `signer.allow_insecure_file_backend` is not set, the signer **refuses to
-  boot** with a clear error.
-- On a loopback address, or with `allow_insecure_file_backend: true` explicitly
-  set, boot proceeds but a **loud warning** is logged on every start.
+  `signer.allow_insecure_file_backend` is not set, the signer does not start
+  and names the option in its error.
+- On a loopback address, or with `allow_insecure_file_backend: true` set, the
+  signer starts and logs the software backends in use at INFO.
 
-Set `allow_insecure_file_backend: true` only for deliberate, isolated
-development setups where you understand that plaintext keys are exposed to
-anything that can read the process memory or the key directory.
+The `allow_insecure_file_backend` key name is kept for compatibility with
+existing configurations.
 
 ## Deployment hardening checklist
 
 - Run under a dedicated, unprivileged service user; use the provided systemd
   hardening (`NoNewPrivileges`, `ProtectSystem=strict`, `MemoryDenyWriteExecute`,
   etc.).
-- Terminate/serve TLS (TLS 1.2+); never expose a plaintext non-loopback listener.
+- Serve TLS (TLS 1.2+), or set `signer.plaintext` where TLS is provided around
+  the signer (a proxy or mesh sidecar).
 - Prefer mTLS client certificates (with `require_client_cert`) or
   authorized-keys request signing for machine callers. When using JWT, use
   JWKS with `iss` and `aud` enforced and rotate signing keys at the IdP.
 - Configure a caller ACL so each subject reaches only the keys it needs.
-- Prefer the `pkcs11` (HSM) or `vault` backend so keys never enter the process;
-  reserve `software`/`file` for development.
+- Prefer the `pkcs11` (HSM), `vault`, or an attested backend so keys never
+  enter the process.
 - Run the watermark in `enforce` mode with a durable `file` (SQLite) store for
   one active signer. Multiple replicas for the same keys require one shared
   `postgres` store; never point active replicas at independent databases or

@@ -24,9 +24,8 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
-// IsLoopbackHost reports whether host is localhost or a loopback IP.
-// Plaintext transport to a non-loopback host is a credential/key-substitution
-// vector; callers use this to gate http:// endpoints.
+// IsLoopbackHost reports whether host is localhost or a loopback IP. Callers
+// use it to accept http:// endpoints on loopback by default.
 func IsLoopbackHost(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
