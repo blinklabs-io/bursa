@@ -88,7 +88,7 @@ other key. This provides no workload measurement; use `nitro` or
 with:
 
 ```sh
-openssl x509 -in server.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256
+openssl x509 -in server.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -r | cut -d' ' -f1
 ```
 
 At startup the agent logs the same value as `server_spki_sha256` (message
