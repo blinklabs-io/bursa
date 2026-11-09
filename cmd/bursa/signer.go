@@ -111,6 +111,9 @@ resolve to a single caller identity fed to the signer.callers ACL):
 
 Without a signer.callers ACL, any authenticated caller may use any configured
 key.`,
+		// A non-root command with subcommands accepts stray arguments by
+		// default, so a misspelled subcommand would start the service.
+		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			logging.ConfigureJSON()
 
