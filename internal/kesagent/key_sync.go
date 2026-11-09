@@ -140,6 +140,10 @@ func (p *profile) installedAlreadyLocked(
 		}
 		p.markSeenLocked(rec.Generation, rec.OpCert)
 	}
+	// As in installShared: a key staged here is either the one installed or
+	// one the store no longer holds.
+	p.staged.close()
+	p.staged = nil
 	return p.infoLocked(), nil
 }
 
@@ -191,7 +195,7 @@ func (p *profile) syncInstalledKey(ctx context.Context) error {
 		return nil
 	}
 	// Read under the lock: a read taken before a concurrent local install
-	// would otherwise look newer than the key that install just activated.
+	// would otherwise look older than the key that install just activated.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	rec, ok, err := p.keys.Installed(ctx, p.keyPool, p.keyNetwork)
