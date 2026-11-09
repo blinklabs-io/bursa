@@ -277,14 +277,6 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 	return nil
 }
 
-// LastSignedSlot returns the slot of the last header signed and whether one
-// has been signed.
-func (g *PeriodGuard) LastSignedSlot() (uint64, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.slot, g.slotSet
-}
-
 // AuthorizeHeader is Authorize for a block header body at an absolute slot.
 // Besides the period floor it allows one header body per slot and never an
 // older slot: a slot above the last signed one is recorded durably before it

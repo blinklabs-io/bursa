@@ -61,7 +61,7 @@ func TestPeriodGuardLock(t *testing.T) {
 				if err != nil {
 					t.Fatalf("reopen: %v", err)
 				}
-				if slot, ok := g2.LastSignedSlot(); !ok || slot != 100 {
+				if slot, ok := lastSignedSlot(g2); !ok || slot != 100 {
 					t.Fatalf("reloaded slot = %d %v, want 100 true", slot, ok)
 				}
 				return

@@ -176,8 +176,8 @@ func TestAgentTellsOneColdKeyOnTwoNetworksApartByKESKey(t *testing.T) {
 	// header routes to the other profile, whose slot record is its own.
 	mustSign(t, a, pa, pa.header.encode(t))
 	mustSign(t, a, pb, pb.header.encode(t))
-	slotA, _ := named(t, a, "mainnet-pool").guard.LastSignedSlot()
-	slotB, _ := named(t, a, "testnet-pool").guard.LastSignedSlot()
+	slotA, _ := lastSignedSlot(named(t, a, "mainnet-pool").guard)
+	slotB, _ := lastSignedSlot(named(t, a, "testnet-pool").guard)
 	if slotA != 52 || slotB != 25 {
 		t.Fatalf("last signed slots = %d, %d; want 52, 25", slotA, slotB)
 	}
@@ -222,7 +222,7 @@ func TestSignHeaderForRefusesAHeaderOfAnotherProfile(t *testing.T) {
 	if !errors.Is(err, ErrProfileMismatch) {
 		t.Fatalf("pool B header on a pool A session: err = %v, want ErrProfileMismatch", err)
 	}
-	if _, set := named(t, a, "pool-b").guard.LastSignedSlot(); set {
+	if _, set := lastSignedSlot(named(t, a, "pool-b").guard); set {
 		t.Fatal("a refused header reached pool B's slot record")
 	}
 	if _, err := a.signHeaderFor(named(t, a, "pool-a"), pa.period, pa.header.encode(t)); err != nil {

@@ -72,6 +72,9 @@ type KESAgentConfig struct {
 	ShelleyStartTime string `yaml:"shelley_start_time"      envconfig:"KESAGENT_SHELLEY_START_TIME"`
 	// SlotLength is the wall-clock length of one slot in seconds (default 1).
 	SlotLength float64 `yaml:"slot_length"             envconfig:"KESAGENT_SLOT_LENGTH"`
+	// MaxClockSkew (Go duration, default 5s) is how far ahead of the agent's
+	// clock a header's slot may be before sign refuses it.
+	MaxClockSkew string `yaml:"max_clock_skew"          envconfig:"KESAGENT_MAX_CLOCK_SKEW"`
 	// SlotsPerKESPeriod is the number of slots per KES period (e.g. 129600).
 	SlotsPerKESPeriod uint64 `yaml:"slots_per_kes_period"    envconfig:"KESAGENT_SLOTS_PER_KES_PERIOD"`
 	// MaxKESEvolutions is the max opcert evolutions (mainnet 62).
@@ -138,6 +141,7 @@ type KESAgentProfileConfig struct {
 	SlotLength        float64 `yaml:"slot_length"`
 	SlotsPerKESPeriod uint64  `yaml:"slots_per_kes_period"`
 	MaxKESEvolutions  uint64  `yaml:"max_kes_evolutions"`
+	MaxClockSkew      string  `yaml:"max_clock_skew"`
 	GuardFile         string  `yaml:"guard_file"`
 }
 
