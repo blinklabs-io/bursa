@@ -35,7 +35,8 @@ For the socket wire format, see
 One agent can serve several pools, on one network or several. Each pool is a
 profile in `kes_agent.profiles` with:
 
-- `name`: 1-64 letters, digits, `.`, `_` or `-`, unique in the agent;
+- `name`: 1-64 characters, starting with an ASCII letter or digit and followed
+  by ASCII letters, digits, `.`, `_` or `-`, unique in the agent;
 - its own `cold_vkey_file` or `cold_vkey_hex`;
 - its network's `system_start`, `slot_length` (default 1),
   `slots_per_kes_period` and `max_kes_evolutions` (default 62);
@@ -61,7 +62,8 @@ and `info` without a name lists every profile.
 A configuration without `profiles` serves one profile named `default` from the
 single-pool settings (`cold_vkey_file`, `system_start`, `guard_file` and so
 on), and its existing guard file is that profile's state. Setting `profiles`
-together with those single-pool settings is refused at startup.
+together with those single-pool settings is refused at startup, as is a
+top-level `slot_length` or `max_kes_evolutions` other than its default.
 
 ## Sockets
 
@@ -145,7 +147,9 @@ again (a retry), but a different body for a signed slot or a lower slot is
 refused. Several producers can therefore share one agent for a pool, and the
 first header signed for a slot wins. The record survives restarts and key
 installs, since slots are absolute. A guard file from an earlier version loads
-with no slot record. Each refusal is counted in
+with no slot record, so slots signed before the upgrade are not covered: until
+the first header after the upgrade is recorded, a header for a slot the earlier
+version already signed is accepted even with a different body. Each refusal is counted in
 `bursa_kesagent_slot_guard_refusals_total` with a `reason` of `equivocation`
 (a different body for a signed slot) or `rollback` (a lower slot); both
 series start at 0 for every profile.

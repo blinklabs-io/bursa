@@ -15,6 +15,7 @@
 package kesagent
 
 import (
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -113,6 +114,58 @@ func TestNewRefusesAnIncompleteShelleyAnchor(t *testing.T) {
 			_, err := New(Config{Mode: ModeSign, Profiles: []ProfileConfig{tc.pc}}, nil, nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// An anchor slot above math.MaxInt64 could wrap the current-slot sum to a
+// low slot, so New refuses it.
+func TestNewRefusesAShelleyAnchorThatCouldWrap(t *testing.T) {
+	cold := newColdKey(t)
+	_, err := New(Config{Mode: ModeSign, Profiles: []ProfileConfig{{
+		Name:              "p",
+		SystemStart:       mustTime(t, "2022-06-01T00:00:00Z"),
+		ShelleyStartSlot:  math.MaxUint64,
+		ShelleyStartTime:  mustTime(t, "2022-06-21T00:00:00Z"),
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 129600,
+		ColdVKey:          cold.pub,
+		GuardPath:         filepath.Join(t.TempDir(), "guard.json"),
+	}}}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "shelley_start_slot") {
+		t.Fatalf("err = %v, want a refused shelley_start_slot", err)
+	}
+}
+
+// The single-pool anchor fields are ignored when profiles are set, so New
+// refuses them alongside profiles like the other single-pool fields.
+func TestNewRefusesSinglePoolAnchorWithProfiles(t *testing.T) {
+	cold := newColdKey(t)
+	pc := ProfileConfig{
+		Name:              "p",
+		SystemStart:       mustTime(t, "2022-06-01T00:00:00Z"),
+		SlotLength:        time.Second,
+		SlotsPerKESPeriod: 129600,
+		ColdVKey:          cold.pub,
+		GuardPath:         filepath.Join(t.TempDir(), "guard.json"),
+	}
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"shelley_start_slot", Config{ShelleyStartSlot: 86400}},
+		{"shelley_start_time", Config{
+			ShelleyStartTime: mustTime(t, "2022-06-21T00:00:00Z"),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			cfg.Mode = ModeSign
+			cfg.Profiles = []ProfileConfig{pc}
+			_, err := New(cfg, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), "not both") {
+				t.Fatalf("err = %v, want profiles and single-pool fields refused", err)
 			}
 		})
 	}
