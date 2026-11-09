@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -90,17 +91,28 @@ func attestedTLSConfigs(t *testing.T) (*tls.Config, *tls.Config) {
 	return server, client
 }
 
+// acceptCounter signals once its listener has accepted want connections, so a
+// test can act only after the server has taken every connection it dialed.
+type acceptCounter struct {
+	net.Listener
+	want  int64
+	n     atomic.Int64
+	ready chan struct{}
+}
+
+func (l *acceptCounter) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil && l.n.Add(1) == l.want {
+		close(l.ready)
+	}
+	return c, err
+}
+
 // TestAttestedServiceServesPeerDuringHandshakeFlood covers a remote client
 // that opens TCP connections and never completes the TLS handshake. Those
-// connections must not take the slots an authenticated block producer needs.
+// connections must not lock out an authenticated block producer, even one
+// dialing from the same address as the flood.
 func TestAttestedServiceServesPeerDuringHandshakeFlood(t *testing.T) {
-	// The flood needs a second loopback source address. Linux routes all of
-	// 127.0.0.0/8 to lo, but macOS assigns only 127.0.0.1 to lo0 by default.
-	probe, err := net.Listen("tcp", "127.0.0.2:0")
-	if err != nil {
-		t.Skipf("127.0.0.2 is not a usable loopback address here: %v", err)
-	}
-	_ = probe.Close()
 	a, _, _ := newHeaderAgent(t)
 	serverCfg, clientCfg := attestedTLSConfigs(t)
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
@@ -108,12 +120,17 @@ func TestAttestedServiceServesPeerDuringHandshakeFlood(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	addr := raw.Addr().String()
+	counted := &acceptCounter{
+		Listener: raw,
+		want:     maxTrackedConns,
+		ready:    make(chan struct{}),
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		done <- a.ServeAttestedService(
 			ctx,
-			tls.NewListener(raw, serverCfg),
+			tls.NewListener(counted, serverCfg),
 			AttestedServiceConfig{Provider: "nitro", Attester: bindingAttester{}},
 		)
 	}()
@@ -126,10 +143,7 @@ func TestAttestedServiceServesPeerDuringHandshakeFlood(t *testing.T) {
 		}
 	})
 
-	flood := net.Dialer{
-		Timeout:   2 * time.Second,
-		LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 2)},
-	}
+	flood := net.Dialer{Timeout: 2 * time.Second}
 	for range maxTrackedConns {
 		c, err := flood.Dial("tcp", addr)
 		if err != nil {
@@ -137,12 +151,14 @@ func TestAttestedServiceServesPeerDuringHandshakeFlood(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = c.Close() })
 	}
+	select {
+	case <-counted.ready:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("server accepted %d of %d flood connections", counted.n.Load(), maxTrackedConns)
+	}
 
 	conn, err := tls.DialWithDialer(
-		&net.Dialer{
-			Timeout:   3 * time.Second,
-			LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)},
-		},
+		&net.Dialer{Timeout: 3 * time.Second},
 		"tcp",
 		addr,
 		clientCfg,
@@ -161,52 +177,93 @@ func TestAttestedServiceServesPeerDuringHandshakeFlood(t *testing.T) {
 	}
 }
 
-func TestHandshakeGateBudgets(t *testing.T) {
+// sourceConn is a pipe end that reports a chosen remote address and records
+// whether it was closed.
+type sourceConn struct {
+	net.Conn
+	addr   net.Addr
+	closed atomic.Bool
+}
+
+func (c *sourceConn) RemoteAddr() net.Addr { return c.addr }
+
+func (c *sourceConn) Close() error {
+	c.closed.Store(true)
+	return c.Conn.Close()
+}
+
+func newSourceConn(t *testing.T, addr net.Addr) *sourceConn {
+	t.Helper()
+	a, b := net.Pipe()
+	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
+	return &sourceConn{Conn: a, addr: addr}
+}
+
+func TestHandshakeSetEvictsOldest(t *testing.T) {
 	tcp := func(ip string) net.Addr {
 		return &net.TCPAddr{IP: net.ParseIP(ip), Port: 1}
 	}
-	g := newHandshakeGate()
-	var held []string
+	s := newHandshakeSet()
+	sameHost := make([]*sourceConn, 0, maxPendingHandshakesPerHost)
 	for range maxPendingHandshakesPerHost {
-		host, ok := g.acquire(tcp("192.0.2.1"))
-		if !ok {
-			t.Fatal("per-host budget refused too early")
+		c := newSourceConn(t, tcp("192.0.2.1"))
+		if !s.add(c) {
+			t.Fatal("add refused before closeAll")
 		}
-		held = append(held, host)
+		sameHost = append(sameHost, c)
 	}
-	if _, ok := g.acquire(tcp("192.0.2.1")); ok {
-		t.Fatal("per-host budget exceeded")
+	other := newSourceConn(t, tcp("198.51.100.1"))
+	s.add(other)
+	if sameHost[0].closed.Load() || other.closed.Load() {
+		t.Fatal("a connection was evicted below its source budget")
 	}
-	if _, ok := g.acquire(tcp("2001:db8::1")); !ok {
-		t.Fatal("another host refused while one host is at its budget")
+	s.add(newSourceConn(t, tcp("192.0.2.1")))
+	if !sameHost[0].closed.Load() {
+		t.Fatal("a source over its budget did not evict its oldest handshake")
 	}
-	for i := 2; i <= maxPendingHandshakesPerHost; i++ {
-		if _, ok := g.acquire(tcp(fmt.Sprintf("2001:db8::%d", i))); !ok {
-			t.Fatal("IPv6 /64 refused before its budget")
-		}
+	if other.closed.Load() || sameHost[1].closed.Load() {
+		t.Fatal("eviction took a connection other than the source's oldest")
 	}
-	if _, ok := g.acquire(tcp("2001:db8::ffff")); ok {
-		t.Fatal("addresses in one IPv6 /64 escaped the per-host budget")
+	s.remove(sameHost[0])
+	s.mu.Lock()
+	if got := s.perHost["192.0.2.1"]; got != maxPendingHandshakesPerHost {
+		t.Errorf("per-source count after evict and remove = %d", got)
 	}
-	g.release(held[0])
-	if _, ok := g.acquire(tcp("192.0.2.1")); !ok {
-		t.Fatal("released slot was not reusable")
+	s.mu.Unlock()
+
+	v6 := make([]*sourceConn, 0, maxPendingHandshakesPerHost)
+	for i := 1; i <= maxPendingHandshakesPerHost; i++ {
+		c := newSourceConn(t, tcp(fmt.Sprintf("2001:db8::%d", i)))
+		s.add(c)
+		v6 = append(v6, c)
+	}
+	s.add(newSourceConn(t, tcp("2001:db8::ffff")))
+	if !v6[0].closed.Load() {
+		t.Fatal("addresses in one IPv6 /64 escaped the per-source budget")
 	}
 
-	g = newHandshakeGate()
-	pipe, other := net.Pipe()
-	defer pipe.Close()
-	defer other.Close()
-	for i := range maxPendingHandshakes {
-		if _, ok := g.acquire(pipe.RemoteAddr()); !ok {
-			t.Fatalf("non-IP peer %d refused below the global budget", i)
-		}
+	s = newHandshakeSet()
+	global := make([]*sourceConn, 0, maxPendingHandshakes)
+	for range maxPendingHandshakes {
+		c := newSourceConn(t, nil)
+		s.add(c)
+		global = append(global, c)
 	}
-	if _, ok := g.acquire(tcp("192.0.2.9")); ok {
-		t.Fatal("global handshake budget exceeded")
+	s.add(newSourceConn(t, tcp("192.0.2.9")))
+	if !global[0].closed.Load() || global[1].closed.Load() {
+		t.Fatal("a full global budget did not evict exactly the oldest handshake")
 	}
-	g.release("")
-	if _, ok := g.acquire(tcp("192.0.2.9")); !ok {
-		t.Fatal("released global slot was not reusable")
+	s.mu.Lock()
+	if len(s.conns) != maxPendingHandshakes {
+		t.Errorf("tracked %d handshakes, want %d", len(s.conns), maxPendingHandshakes)
+	}
+	s.mu.Unlock()
+
+	s.closeAll()
+	if !global[1].closed.Load() {
+		t.Fatal("closeAll left a pending handshake open")
+	}
+	if s.add(newSourceConn(t, tcp("192.0.2.9"))) {
+		t.Fatal("add accepted a connection after closeAll")
 	}
 }

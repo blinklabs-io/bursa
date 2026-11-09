@@ -223,9 +223,8 @@ func (a *Agent) ServeAttestedService(
 	// Connections still in the TLS handshake are tracked apart from
 	// authenticated ones, so a peer without a client certificate can never
 	// hold a slot a block producer needs.
-	pending := newConnSet()
+	pending := newHandshakeSet()
 	conns := newConnSet()
-	gate := newHandshakeGate()
 	srvCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -246,13 +245,7 @@ func (a *Agent) ServeAttestedService(
 				return fmt.Errorf("kesagent: attested service accept: %w", err)
 			}
 		}
-		host, ok := gate.acquire(conn.RemoteAddr())
-		if !ok {
-			_ = conn.Close()
-			continue
-		}
 		if !pending.add(conn) {
-			gate.release(host)
 			_ = conn.Close()
 			continue
 		}
@@ -262,12 +255,18 @@ func (a *Agent) ServeAttestedService(
 			defer conn.Close()
 			err := authenticateRemotePeer(ctx, conn)
 			pending.remove(conn)
-			gate.release(host)
 			if err != nil {
 				a.logger.Warn("refusing unauthenticated KES peer", "error", err)
 				return
 			}
 			if !conns.add(conn) {
+				if srvCtx.Err() == nil {
+					a.logger.Warn(
+						"refusing authenticated KES peer: connection limit reached",
+						"limit", maxTrackedConns,
+						"remote", conn.RemoteAddr().String(),
+					)
+				}
 				return
 			}
 			defer conns.remove(conn)
@@ -280,65 +279,139 @@ const (
 	// maxPendingHandshakes bounds connections that have not yet completed
 	// mutual TLS. Each one holds a slot for at most frameIOTimeout.
 	maxPendingHandshakes = 64
-	// maxPendingHandshakesPerHost keeps one remote address from taking the
-	// whole handshake budget. Block producers dial from a handful of hosts and
-	// hold one long-lived connection each, so a few concurrent handshakes per
-	// address is ample.
+	// maxPendingHandshakesPerHost keeps one source from taking the whole
+	// handshake budget. Block producers dial from a handful of hosts and hold
+	// one long-lived connection each, so a few concurrent handshakes per
+	// source is ample.
 	maxPendingHandshakesPerHost = 4
 )
 
-// handshakeGate admits a connection to the TLS handshake only while both the
-// global and the per-source budgets have room. A source is an IPv4 address or
-// an IPv6 /64. A non-IP transport has no source
-// address to separate peers by, so only the global budget applies to it.
-type handshakeGate struct {
+// handshakeSet tracks connections still in the TLS handshake. When a budget is
+// full, a new connection evicts the oldest pending handshake from its own
+// source, or else the oldest overall, instead of being refused. A refusal
+// would let a peer that opens connections and never finishes the handshake
+// hold every slot for frameIOTimeout and lock out a producer's reconnect, even
+// from a shared address. With eviction, a stalled connection holds its slot
+// only until newer ones arrive, and a producer's handshake, which completes in
+// a round trip or two, is lost only to an attacker opening a full budget of
+// connections within that window.
+//
+// A source is an IPv4 address or an IPv6 /64. A non-IP transport has no
+// source address to separate peers by, so only the global budget applies.
+type handshakeSet struct {
 	mu      sync.Mutex
-	total   int
+	closed  bool
+	next    uint64
+	conns   map[net.Conn]pendingHandshake
 	perHost map[string]int
 }
 
-func newHandshakeGate() *handshakeGate {
-	return &handshakeGate{perHost: make(map[string]int)}
+type pendingHandshake struct {
+	host string
+	seq  uint64
 }
 
-// acquire reserves a handshake slot for addr and returns the key to release
-// it with.
-func (g *handshakeGate) acquire(addr net.Addr) (string, bool) {
-	host := ""
-	if tcp, ok := addr.(*net.TCPAddr); ok {
-		host = tcp.IP.String()
-		if tcp.IP.To4() == nil {
-			// One IPv6 subscriber is routinely delegated a whole /64.
-			host = tcp.IP.Mask(net.CIDRMask(64, 128)).String()
+func newHandshakeSet() *handshakeSet {
+	return &handshakeSet{
+		conns:   make(map[net.Conn]pendingHandshake),
+		perHost: make(map[string]int),
+	}
+}
+
+func handshakeSource(addr net.Addr) string {
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return ""
+	}
+	if tcp.IP.To4() == nil {
+		// One IPv6 subscriber is routinely delegated a whole /64.
+		return tcp.IP.Mask(net.CIDRMask(64, 128)).String()
+	}
+	return tcp.IP.String()
+}
+
+// add admits c, closing the pending handshake it evicts if a budget was full.
+// It returns false only after closeAll, in which case the caller closes c.
+func (s *handshakeSet) add(c net.Conn) bool {
+	host := handshakeSource(c.RemoteAddr())
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
+	var evicted net.Conn
+	switch {
+	case host != "" && s.perHost[host] >= maxPendingHandshakesPerHost:
+		evicted = s.oldestLocked(host, true)
+	case len(s.conns) >= maxPendingHandshakes:
+		evicted = s.oldestLocked("", false)
+	}
+	if evicted != nil {
+		s.removeLocked(evicted)
+	}
+	s.next++
+	s.conns[c] = pendingHandshake{host: host, seq: s.next}
+	if host != "" {
+		s.perHost[host]++
+	}
+	s.mu.Unlock()
+	if evicted != nil {
+		_ = evicted.Close()
+	}
+	return true
+}
+
+func (s *handshakeSet) oldestLocked(host string, sameHost bool) net.Conn {
+	var oldest net.Conn
+	var seq uint64
+	for c, p := range s.conns {
+		if sameHost && p.host != host {
+			continue
+		}
+		if oldest == nil || p.seq < seq {
+			oldest, seq = c, p.seq
 		}
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.total >= maxPendingHandshakes {
-		return "", false
-	}
-	if host != "" && g.perHost[host] >= maxPendingHandshakesPerHost {
-		return "", false
-	}
-	g.total++
-	if host != "" {
-		g.perHost[host]++
-	}
-	return host, true
+	return oldest
 }
 
-func (g *handshakeGate) release(host string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.total--
-	if host == "" {
+// remove stops tracking c. It is a no-op for a connection already evicted.
+func (s *handshakeSet) remove(c net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.removeLocked(c)
+}
+
+func (s *handshakeSet) removeLocked(c net.Conn) {
+	p, ok := s.conns[c]
+	if !ok {
 		return
 	}
-	if g.perHost[host] <= 1 {
-		delete(g.perHost, host)
+	delete(s.conns, c)
+	if p.host == "" {
 		return
 	}
-	g.perHost[host]--
+	if s.perHost[p.host] <= 1 {
+		delete(s.perHost, p.host)
+		return
+	}
+	s.perHost[p.host]--
+}
+
+// closeAll closes every pending handshake and refuses later additions.
+func (s *handshakeSet) closeAll() {
+	s.mu.Lock()
+	s.closed = true
+	pending := make([]net.Conn, 0, len(s.conns))
+	for c := range s.conns {
+		pending = append(pending, c)
+	}
+	clear(s.conns)
+	clear(s.perHost)
+	s.mu.Unlock()
+	for _, c := range pending {
+		_ = c.Close()
+	}
 }
 
 func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
