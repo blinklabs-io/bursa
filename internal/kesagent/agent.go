@@ -172,12 +172,13 @@ type profile struct {
 	mu      sync.Mutex
 	active  *keyState
 	staged  *keyState
+	subs    map[int]chan KeyPush
+	nextSub int
+
 	// activeVKey is a copy of active's verification key, nil with no active
 	// key. setActiveLocked keeps it in step with active so header routing
 	// can read it without taking mu, which sign holds across guard writes.
 	activeVKey atomic.Pointer[[]byte]
-	subs    map[int]chan KeyPush
-	nextSub int
 
 	// guardedPeriod/guardedSet track the active KES period most recently
 	// authorized for release. A transient guard-store failure leaves this at
