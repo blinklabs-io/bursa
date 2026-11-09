@@ -28,6 +28,10 @@ const (
 // chain is empty: a testnet build serves every testnet.
 const chain = ""
 
+// multiScope is set only for a multi image, which authenticates inventory
+// requests too; this is a single-scope image.
+const multiScope = false
+
 // configureScope fixes the image to the testnet scope.
 func configureScope(svc *device.Service, report *Report) {
 	svc.SetNetwork(network, chain)

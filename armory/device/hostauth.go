@@ -107,6 +107,40 @@ func (s *Service) RequireHostAuth() {
 	s.requireHostAuth = true
 }
 
+// Host authentication modes, as hostAuthMode reports them.
+const (
+	hostAuthRequired  = "host auth: required"
+	hostAuthBootstrap = "host auth: bootstrap, no host key registered, unsigned requests accepted"
+	// a mainnet single-scope image signs only for a registered host key,
+	// but takes its admin requests unsigned until the first is registered
+	hostAuthBootstrapAdmin = "host auth: bootstrap, no host key registered, unsigned provisioning and wipe requests accepted; signing requires a host key"
+	// a multi provisioning image takes the device's first host key unsigned
+	hostAuthFirstKey = "host auth: required; no host key registered, the first host key is accepted unsigned"
+	hostAuthBadList  = "host auth: host key list unreadable, authenticated requests refused until a restart reads a valid list or a device wipe"
+)
+
+// hostAuthMode reports, in one line, how the service authenticates requests
+// with the host keys it holds now; the caller holds the service lock. Routes
+// that never take host authentication, such as /v1/challenge and
+// /wipe/device, are not covered.
+func (s *Service) hostAuthMode() string {
+	switch {
+	case s.hostKeysBad:
+		return hostAuthBadList
+	case len(s.hostEntries) != 0:
+		// a key of another scope also means unsigned requests are refused
+		return hostAuthRequired
+	case s.multi() && s.firstHostKeyOpen:
+		return hostAuthFirstKey
+	case s.multi():
+		return hostAuthRequired
+	case s.requireHostAuth:
+		return hostAuthBootstrapAdmin
+	default:
+		return hostAuthBootstrap
+	}
+}
+
 // hostEntry is one stored host key with the scope it was registered for.
 type hostEntry struct {
 	key     []byte
@@ -625,6 +659,7 @@ func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 		s.logf("write host keys: %v", err)
 		s.setHostEntries(nil)
 		s.hostKeysBad = true
+		s.logf("%s", s.hostAuthMode())
 
 		return HostKeyResponse{}, errDevice
 	}
@@ -642,6 +677,8 @@ func (s *Service) writeHostKeys(entries []hostEntry) (HostKeyResponse, error) {
 	for _, k := range s.hostKeys {
 		s.logf("host key %x", keyHash(k))
 	}
+
+	s.logf("%s", s.hostAuthMode())
 
 	return HostKeyResponse{HostKeys: s.listedKeys()}, nil
 }

@@ -294,7 +294,7 @@ func (s *Service) SetNetwork(id uint8, chain string) {
 	// a mainnet build signs only for a registered host key
 	if id == 1 {
 		s.requireHostAuth = true
-		s.logf("signing requires a registered host key")
+		s.logf("mainnet image: signing takes only requests signed by a registered host key")
 	}
 }
 
@@ -417,6 +417,7 @@ func (s *Service) SetChip(chip Chip) error {
 	s.chip = chip
 	s.profiles = profiles
 	s.badSlots = bad
+	s.logf("%s", s.hostAuthMode())
 
 	return nil
 }
