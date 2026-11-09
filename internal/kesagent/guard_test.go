@@ -163,3 +163,23 @@ func TestPeriodGuardLoadsFileWithoutSlot(t *testing.T) {
 		t.Fatalf("floor kept across upgrade: want ErrPeriodRollback, got %v", err)
 	}
 }
+
+// TestPeriodGuardHeaderRetryAtHigherPeriodRaisesFloor verifies that the
+// identical header for a recorded slot, presented at a period above the
+// floor, raises the floor instead of returning before persisting.
+func TestPeriodGuardHeaderRetryAtHigherPeriodRaisesFloor(t *testing.T) {
+	g, err := NewPeriodGuard(filepath.Join(t.TempDir(), "guard.json"))
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	body := []byte("header")
+	if err := g.AuthorizeHeader("aa", 1, 10, body); err != nil {
+		t.Fatalf("AuthorizeHeader period 1: %v", err)
+	}
+	if err := g.AuthorizeHeader("aa", 2, 10, body); err != nil {
+		t.Fatalf("AuthorizeHeader period 2: %v", err)
+	}
+	if err := g.Authorize("aa", 1); !errors.Is(err, ErrPeriodRollback) {
+		t.Fatalf("Authorize period 1 after the floor rose: got %v, want ErrPeriodRollback", err)
+	}
+}
