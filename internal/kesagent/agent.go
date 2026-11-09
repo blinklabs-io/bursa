@@ -16,6 +16,7 @@ package kesagent
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
@@ -88,6 +90,22 @@ type Config struct {
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	GuardPath         string        // durable monotonic period store path
 	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
+
+	// SharedGuard, when set, holds every profile's period floor and signed
+	// slot records in place of guard files, so several agent replicas can
+	// share them. The caller owns it and closes it after Agent.Close. Profiles
+	// must then leave GuardPath unset.
+	SharedGuard SharedGuardStore
+
+	// KeyStore and KeySealer, set together and only with SharedGuard, make
+	// the replicas share each profile's KES key: GenStagedKey seals the new
+	// key with KeySealer and writes it to KeyStore as staged, InstallKey
+	// marks it installed, and every replica loads the installed key (SyncKeys
+	// at startup, then every KeyPollInterval while Run runs). Without them
+	// the key lives only in this agent's memory. The caller owns KeyStore.
+	KeyStore        KeyStore
+	KeySealer       *KeySealer
+	KeyPollInterval time.Duration // default 10s
 }
 
 // ProfileConfig configures one profile: a pool's cold verification key, the
@@ -148,7 +166,7 @@ type profile struct {
 	mode    string
 	logger  *slog.Logger
 	metrics *Metrics
-	guard   *PeriodGuard
+	guard   slotGuard
 	nowFn   *func() time.Time // the agent's clock
 
 	mu      sync.Mutex
@@ -167,6 +185,27 @@ type profile struct {
 	// the prior period so the evolved key stays private and Tick retries.
 	guardedPeriod uint64
 	guardedSet    bool
+
+	// Shared key store, when configured. keyPool and keyNetwork name the
+	// profile's records as the shared guard names its own.
+	keys       KeyStore
+	sealer     *KeySealer
+	keyPool    string
+	keyNetwork string
+	// seenGen/seenOpCert identify the installed record this replica last
+	// installed or loaded; a record that differs is loaded on the next sync.
+	// A local drop-key leaves them set, so the dropped key is not reloaded
+	// until a new one is installed (or the agent restarts).
+	seenGen    uint64
+	seenOpCert []byte
+	seenSet    bool
+	// loadErr is why the installed record could not be read or loaded; a
+	// sign request with no active key reports it. lastKeyErr keeps the same
+	// failure from being logged on every poll.
+	loadErr    error
+	lastKeyErr string
+	// loadErrPub mirrors loadErr for Ready, which reads it without p.mu.
+	loadErrPub atomic.Pointer[error]
 }
 
 func (p *profile) now() time.Time { return (*p.nowFn)() }
@@ -196,13 +235,17 @@ func (p *profile) maxEvolutions() uint64 {
 	return m
 }
 
-// newProfile validates cfg and opens the profile's durable period guard.
+// newProfile validates cfg and opens the profile's durable period guard: its
+// guard file, or its records in shared when shared is set.
 func newProfile(
 	cfg ProfileConfig,
 	mode string,
 	logger *slog.Logger,
 	metrics *Metrics,
 	nowFn *func() time.Time,
+	shared SharedGuardStore,
+	keys KeyStore,
+	sealer *KeySealer,
 ) (*profile, error) {
 	if cfg.Depth == 0 {
 		cfg.Depth = kes.CardanoKesDepth
@@ -259,12 +302,28 @@ func newProfile(
 	if len(cfg.ColdVKey) != ed25519.PublicKeySize {
 		return nil, ErrColdVKey
 	}
-	if cfg.GuardPath == "" {
+	var guard slotGuard
+	switch {
+	case shared != nil && cfg.GuardPath != "":
+		// Refused rather than ignored, so no one believes the file still
+		// guards the profile.
+		return nil, errors.New(
+			"kesagent: guard_path must be unset when a shared guard store is configured",
+		)
+	case shared != nil:
+		g, err := newSharedGuard(shared, cfg.ColdVKey, cfg.SystemStart)
+		if err != nil {
+			return nil, err
+		}
+		guard = g
+	case cfg.GuardPath == "":
 		return nil, errors.New("kesagent: guard_path is required")
-	}
-	guard, err := NewPeriodGuard(cfg.GuardPath)
-	if err != nil {
-		return nil, err
+	default:
+		g, err := NewPeriodGuard(cfg.GuardPath)
+		if err != nil {
+			return nil, err
+		}
+		guard = g
 	}
 	p := &profile{
 		cfg:     cfg,
@@ -275,11 +334,23 @@ func newProfile(
 		nowFn:   nowFn,
 		subs:    make(map[int]chan KeyPush),
 	}
+	if keys != nil {
+		poolKey := backend.HashPublicKey(cfg.ColdVKey)
+		p.keys = keys
+		p.sealer = sealer
+		p.keyPool = hex.EncodeToString(poolKey[:])
+		p.keyNetwork = cfg.SystemStart.UTC().Format(time.RFC3339Nano)
+	}
 	// A first start has no guard file, but on any later start a missing one
 	// means the last signed slot was lost, so the slot guard cannot refuse a
 	// second header for it. Starting is still allowed; operators are told.
 	fresh := guard.Fresh()
-	if fresh {
+	if fresh && shared != nil {
+		p.logger.Warn(
+			"shared guard store has no period floor for this profile: " +
+				"expected only on its first start against the store",
+		)
+	} else if fresh {
 		p.logger.Warn(
 			"guard file missing or empty: starting with no record of "+
 				"signed slots; expected only on a first start",
@@ -318,6 +389,11 @@ func (p *profile) currentKESPeriod() uint64 {
 // GenStagedKey generates a fresh KES key into the staging slot and returns its
 // verification key. Any previously staged key is dropped and wiped.
 func (p *profile) GenStagedKey() ([]byte, error) {
+	return p.genStagedKey(context.Background())
+}
+
+// genStagedKey is GenStagedKey; ctx bounds the shared key store write.
+func (p *profile) genStagedKey(ctx context.Context) ([]byte, error) {
 	var seed [kes.SeedSize]byte
 	if _, err := rand.Read(seed[:]); err != nil {
 		return nil, fmt.Errorf("kesagent: read entropy: %w", err)
@@ -327,6 +403,12 @@ func (p *profile) GenStagedKey() ([]byte, error) {
 	sk, vkey, err := kes.KeyGen(p.cfg.Depth, seed[:])
 	if err != nil {
 		return nil, fmt.Errorf("kesagent: keygen: %w", err)
+	}
+	if p.keys != nil {
+		if err := p.stageShared(ctx, sk, vkey); err != nil {
+			securemem.Wipe(sk.Data)
+			return nil, err
+		}
 	}
 	buf, err := securemem.New(len(sk.Data))
 	if err != nil {
@@ -367,10 +449,25 @@ func (p *profile) GenStagedKey() ([]byte, error) {
 // verification key and the staged KES key, promotes the staged key to active,
 // evolves it to the current period, and (serve-key mode) pushes it. It returns
 // the resulting agent info.
+//
+// With a shared key store the staged key is the one in the store, whichever
+// replica generated it, and the install is recorded there so every replica
+// loads it.
 func (p *profile) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
+	return p.installKey(context.Background(), opcertBytes)
+}
+
+// installKey is InstallKey; ctx bounds the shared key store calls.
+func (p *profile) installKey(
+	ctx context.Context,
+	opcertBytes []byte,
+) (*AgentInfo, error) {
 	dec, err := bursa.DecodeOpCert(opcertBytes)
 	if err != nil {
 		return nil, err
+	}
+	if p.keys != nil {
+		return p.installShared(ctx, dec, opcertBytes)
 	}
 
 	p.mu.Lock()
@@ -379,40 +476,74 @@ func (p *profile) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 	if p.staged == nil {
 		return nil, ErrNoStagedKey
 	}
+	cur, maxEvol, err := p.checkOpCert(dec, p.staged.vkey)
+	if err != nil {
+		return nil, err
+	}
+	ks := p.staged
+	p.staged = nil
+	if err := p.activateLocked(
+		ks, dec, opcertBytes, cur, maxEvol, nil, "installed KES key",
+	); err != nil {
+		return nil, err
+	}
+	return p.infoLocked(), nil
+}
+
+// checkOpCert checks a decoded operational certificate for the KES key
+// kesVKey: it carries the configured cold key and a valid signature by it,
+// commits to kesVKey, and covers the current KES period. It returns the
+// current period and the profile's evolution ceiling.
+func (p *profile) checkOpCert(
+	dec *bursa.DecodedOpCert,
+	kesVKey []byte,
+) (uint64, uint64, error) {
 	// The agent holds only the cold vkey; the opcert must carry the same one.
 	if !bytes.Equal(dec.ColdVKey, p.cfg.ColdVKey) {
-		return nil, ErrOpCertColdVK
+		return 0, 0, ErrOpCertColdVK
 	}
 	// Verify the cold-key signature over the OCertSignable representation.
 	if err := ledger.VerifyOpCertSignature(dec.LedgerOpCert(), p.cfg.ColdVKey); err != nil {
-		return nil, fmt.Errorf("kesagent: opcert signature invalid: %w", err)
+		return 0, 0, fmt.Errorf("kesagent: opcert signature invalid: %w", err)
 	}
 	// The opcert must commit to the staged KES vkey.
-	if !bytes.Equal(dec.KESVKey, p.staged.vkey) {
-		return nil, ErrOpCertKESVK
+	if !bytes.Equal(dec.KESVKey, kesVKey) {
+		return 0, 0, ErrOpCertKESVK
 	}
 	// Period sanity: not from the future, and not already expired.
 	cur := p.currentKESPeriod()
 	if dec.KESPeriod > cur {
-		return nil, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"kesagent: opcert KES period %d is in the future (current %d)",
 			dec.KESPeriod, cur,
 		)
 	}
 	maxEvol := p.maxEvolutions()
 	if cur-dec.KESPeriod >= maxEvol {
-		return nil, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"kesagent: opcert expired: %d evolutions since period %d >= max %d",
 			cur-dec.KESPeriod, dec.KESPeriod, maxEvol,
 		)
 	}
+	return cur, maxEvol, nil
+}
 
-	// Promote staged -> active, but keep the previous active key around
+// activateLocked makes ks, certified by dec, the active key: it evolves ks to
+// period cur, authorizes that period with the guard, runs commit when set,
+// and then serves ks. If any step fails the previous active key stays active.
+// msg is the log line for success. Caller holds p.mu.
+func (p *profile) activateLocked(
+	ks *keyState,
+	dec *bursa.DecodedOpCert,
+	opcertBytes []byte,
+	cur, maxEvol uint64,
+	commit func() error,
+	msg string,
+) error {
+	// Promote ks to active, but keep the previous active key around
 	// (undestroyed) until authorization is known to succeed: a rollback
 	// refusal below must not leave the agent with no working key at all.
 	oldActive := p.active
-	ks := p.staged
-	p.staged = nil
 	ks.startPeriod = dec.KESPeriod
 	ks.maxEvol = maxEvol
 	ks.opcert = append([]byte(nil), opcertBytes...)
@@ -428,11 +559,15 @@ func (p *profile) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 		// failure (see the buf.Set failure path); treat it the same as a
 		// guard refusal and restore the previous key.
 		p.setActiveLocked(oldActive)
-		return nil, errors.New(
+		return errors.New(
 			"kesagent: failed to evolve newly installed key to the current period",
 		)
 	}
-	if err := p.guard.Authorize(hex.EncodeToString(ks.vkey), p.active.absPeriod()); err != nil {
+	err := p.guard.Authorize(hex.EncodeToString(ks.vkey), p.active.absPeriod())
+	if err == nil && commit != nil {
+		err = commit()
+	}
+	if err != nil {
 		// Roll back the install: keep serving the previous active key
 		// rather than discarding a working key on a rollback refusal.
 		p.active.close()
@@ -443,7 +578,7 @@ func (p *profile) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 		// before this call can still be sitting in a subscriber's channel;
 		// drain those so a producer cannot sign below the committed floor.
 		p.dropQueuedPushesBelowFloorLocked()
-		return nil, err
+		return err
 	}
 	oldActive.close()
 	p.guardedPeriod = p.active.absPeriod()
@@ -451,12 +586,12 @@ func (p *profile) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
 	p.metrics.setCurrentPeriod(p.active.absPeriod())
 	p.metrics.setExhausted(p.active.exhausted)
 	p.broadcastLocked()
-	p.logger.Info("installed KES key",
+	p.logger.Info(msg,
 		"kes_vkey", hex.EncodeToString(ks.vkey),
 		"start_period", ks.startPeriod,
 		"active_period", p.active.absPeriod(),
 	)
-	return p.infoLocked(), nil
+	return nil
 }
 
 // DropKey wipes the active and/or staged key. target is "active", "staged", or
@@ -515,7 +650,7 @@ func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 	defer p.mu.Unlock()
 	if p.active == nil {
 		p.metrics.incSign("error")
-		return nil, ErrNoActiveKey
+		return nil, p.noKeyErrorLocked()
 	}
 	var slot uint64
 	if typed {

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -329,6 +330,77 @@ func TestPostgres_ConcurrentAdvanceExactlyOneWins(t *testing.T) {
 		if v, _, _ := replicaA.CounterFor(ctx, key, scope); v != target {
 			t.Fatalf("target %d: stored counter %d, want %d", target, v, target)
 		}
+	}
+}
+
+// TestPostgres_ConcurrentSchemaCreation opens several stores at once on a
+// schema with no watermark tables, as replicas starting together on an empty
+// database do. Every open must succeed.
+func TestPostgres_ConcurrentSchemaCreation(t *testing.T) {
+	dsn := testPGDSN(t)
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	defer admin.Close()
+	key := randKey(t)
+	schema := fmt.Sprintf("bursa_schema_race_%x", key[:8])
+	quoted := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	defer func() {
+		if _, err := admin.Exec(
+			context.Background(),
+			"DROP SCHEMA "+quoted+" CASCADE",
+		); err != nil {
+			t.Errorf("drop schema: %v", err)
+		}
+	}()
+	// pgx passes unknown connection parameters to the server as run-time
+	// parameters, so search_path puts the new tables in the fresh schema.
+	schemaDSN := dsn + " search_path=" + schema
+	if strings.Contains(dsn, "://") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		schemaDSN = dsn + sep + "search_path=" + schema
+	}
+
+	const replicas = 8
+	start := make(chan struct{})
+	errs := make([]error, replicas)
+	var wg sync.WaitGroup
+	for i := range replicas {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			wm, err := NewPostgresWatermark(ctx, schemaDSN)
+			if err == nil {
+				wm.Close()
+			}
+			errs[i] = err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("replica %d: NewPostgresWatermark: %v", i, err)
+		}
+	}
+	var tables int
+	if err := admin.QueryRow(ctx,
+		`SELECT count(*) FROM information_schema.tables WHERE table_schema = $1`,
+		schema,
+	).Scan(&tables); err != nil {
+		t.Fatalf("count tables: %v", err)
+	}
+	if tables != 2 {
+		t.Fatalf("tables in fresh schema = %d, want 2", tables)
 	}
 }
 

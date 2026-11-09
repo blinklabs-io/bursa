@@ -139,16 +139,49 @@ func (s *PostgresWatermark) initSchema(ctx context.Context) error {
 			updated_at BIGINT NOT NULL DEFAULT extract(epoch from now())::bigint
 		)`,
 	}
+	// Replicas starting together on an empty database would otherwise race:
+	// concurrent CREATE TABLE IF NOT EXISTS for one name can fail with a
+	// unique violation on the catalog. A transaction-scoped advisory lock
+	// makes them create the tables one at a time.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin postgres watermark schema transaction: %w", err)
+	}
+	defer func(rollbackBase context.Context) {
+		rollbackCtx, cancel := context.WithTimeout(rollbackBase, time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}(context.WithoutCancel(ctx))
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock($1)`,
+		schemaAdvisoryLockID,
+	); err != nil {
+		return fmt.Errorf("lock postgres watermark schema: %w", err)
+	}
 	for _, q := range stmts {
-		if _, err := s.pool.Exec(ctx, q); err != nil {
+		if _, err := tx.Exec(ctx, q); err != nil {
 			return fmt.Errorf("create postgres watermark schema: %w", err)
 		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit postgres watermark schema: %w", err)
 	}
 	return nil
 }
 
+// schemaAdvisoryLockID is the advisory lock key initSchema holds while it
+// creates the watermark tables. Its value is arbitrary but fixed.
+const schemaAdvisoryLockID int64 = 0x62757273615f776d // "bursa_wm"
+
 // Close releases the underlying connection pool.
 func (s *PostgresWatermark) Close() { s.pool.Close() }
+
+// Pool returns the store's connection pool, for a caller that keeps its own
+// tables in the same database, such as the KES agent's sealed key store. The
+// pool already passed the connection checks NewPostgresWatermark applies. The
+// store still owns it: Close closes it.
+func (s *PostgresWatermark) Pool() *pgxpool.Pool { return s.pool }
 
 // Ping verifies the Postgres backend can write both watermark tables. The
 // readiness writes run in a transaction that is always rolled back.
