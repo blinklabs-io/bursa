@@ -69,7 +69,8 @@ var ErrGuardLocked = errors.New("kesagent: guard file is locked")
 // A durable guard holds an exclusive lock on a sidecar file (the guard path
 // plus ".lock") from NewPeriodGuard until Close, so a second agent process on
 // the same guard file fails to start. The sidecar, not the guard file, is
-// locked because every write replaces the guard file by a rename.
+// locked because every write replaces the guard file by a rename. The lock
+// uses flock and is not taken on platforms without it (Windows, AIX).
 type PeriodGuard struct {
 	mu    sync.Mutex
 	path  string // empty => in-memory only (non-durable)
@@ -118,8 +119,15 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 		return g, nil
 	}
 	// Lock before reading, so the record loaded is the one this process
-	// alone will advance.
-	lock, err := lockGuardFile(path + ".lock")
+	// alone will advance. The sidecar is named from the guard directory with
+	// symlinks resolved, so two spellings of one directory share one lock;
+	// resolving it also fails here, on every platform, when the directory
+	// is missing. A hard link to the guard file is not detected.
+	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return nil, fmt.Errorf("kesagent: guard directory: %w", err)
+	}
+	lock, err := lockGuardFile(filepath.Join(dir, filepath.Base(path)) + ".lock")
 	if err != nil {
 		return nil, err
 	}
