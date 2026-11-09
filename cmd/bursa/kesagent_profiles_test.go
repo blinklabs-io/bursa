@@ -148,3 +148,28 @@ func TestKESAgentProfilesRefusesTopLevelSchedule(t *testing.T) {
 		})
 	}
 }
+
+func TestKESAgentProfilesParsesMaxClockSkew(t *testing.T) {
+	kc := config.KESAgentConfig{
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-10-25T00:00:00Z",
+		SlotLength:        1,
+		SlotsPerKESPeriod: 129600,
+		MaxClockSkew:      "2s",
+		GuardFile:         "/var/lib/bursa/guard.json",
+	}
+	got, err := kesAgentProfiles(kc)
+	if err != nil {
+		t.Fatalf("kesAgentProfiles: %v", err)
+	}
+	if got[0].MaxClockSkew != 2*time.Second {
+		t.Fatalf("max_clock_skew = %v, want 2s", got[0].MaxClockSkew)
+	}
+	for _, bad := range []string{"soon", "0s", "-1s"} {
+		kc.MaxClockSkew = bad
+		if _, err := kesAgentProfiles(kc); err == nil ||
+			!strings.Contains(err.Error(), "max_clock_skew") {
+			t.Fatalf("max_clock_skew %q: err = %v, want a refusal", bad, err)
+		}
+	}
+}

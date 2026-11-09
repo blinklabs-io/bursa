@@ -90,11 +90,12 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			SlotLength:        cfg.SlotLength,
 			SlotsPerKESPeriod: cfg.SlotsPerKESPeriod,
 			MaxKESEvolutions:  cfg.MaxKESEvolutions,
+			MaxClockSkew:      cfg.MaxClockSkew,
 			ColdVKey:          cfg.ColdVKey,
 			GuardPath:         cfg.GuardPath,
 		}}
 	} else if cfg.ColdVKey != nil || cfg.GuardPath != "" ||
-		!cfg.SystemStart.IsZero() {
+		!cfg.SystemStart.IsZero() || cfg.MaxClockSkew != 0 {
 		return nil, errors.New(
 			"kesagent: set either profiles or the single-pool fields, not both",
 		)

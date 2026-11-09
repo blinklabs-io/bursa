@@ -43,6 +43,10 @@ kes_agent:
   slot_length: 1                   # env: KESAGENT_SLOT_LENGTH
   slots_per_kes_period: 129600     # env: KESAGENT_SLOTS_PER_KES_PERIOD
 
+  # How far ahead of this host's clock a header's slot may be before sign
+  # refuses it (Go duration string). Default 5s.
+  # max_clock_skew: "5s"           # env: KESAGENT_MAX_CLOCK_SKEW
+
   # Max opcert evolutions (62 on mainnet and Preprod).
   max_kes_evolutions: 62           # env: KESAGENT_MAX_KES_EVOLUTIONS
 
@@ -72,6 +76,7 @@ kes_agent:
   #     slot_length: 1               # default 1
   #     slots_per_kes_period: 129600
   #     max_kes_evolutions: 62       # default 62
+  #     max_clock_skew: "5s"         # default 5s
   #     guard_file: "/var/lib/bursa/kes-agent/preprod-pool.json"
 
   # Optional remote sign service for Dingo. This is available only in sign
