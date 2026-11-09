@@ -177,16 +177,17 @@ the same `path` under distinct profiles, each holding the same cold key:
   profile: "pool@preprod"
 ```
 
-A profiled sops backend serves a request only under its own profile and
-refuses one that names another. Its opcert counter, chain floor and issued
-records are kept per profile. It adds no binding signature: the backend signs
-in process, so no proxy sits between the profile and the key. Opcert records
-written before the backend had a profile still bound its requests while it is
-the key's only holder; once a second profile holds the key they are not read
+A profiled sops backend refuses a request that names another profile; a
+request that names no profile is served while the backend is the key's only
+holder. Its opcert counter, chain floor and issued records are kept per
+profile. It adds no binding signature: the backend signs in process, so no
+proxy sits between the profile and the key. Opcert records written before the
+backend had a profile still bound its requests while it is the key's only
+holder; once a second profile holds the key they are not read
 and each profile starts empty, so migrate them first (see Profile routing). For
-a profile with no records and a pool already on chain, the first certificate
-uses `opcert-next` with the on-chain counter. A sops backend without `profile`
-behaves as before.
+a profile with no records and a pool already on chain, issue the first
+certificate with a `chain_counter` request carrying the on-chain counter. A
+sops backend without `profile` behaves as before.
 
 ### software / file (development only)
 
