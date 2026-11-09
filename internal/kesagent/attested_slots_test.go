@@ -94,6 +94,13 @@ func attestedTLSConfigs(t *testing.T) (*tls.Config, *tls.Config) {
 // that opens TCP connections and never completes the TLS handshake. Those
 // connections must not take the slots an authenticated block producer needs.
 func TestAttestedServiceServesPeerDuringHandshakeFlood(t *testing.T) {
+	// The flood needs a second loopback source address. Linux routes all of
+	// 127.0.0.0/8 to lo, but macOS assigns only 127.0.0.1 to lo0 by default.
+	probe, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		t.Skipf("127.0.0.2 is not a usable loopback address here: %v", err)
+	}
+	_ = probe.Close()
 	a, _, _ := newHeaderAgent(t)
 	serverCfg, clientCfg := attestedTLSConfigs(t)
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
