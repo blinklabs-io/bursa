@@ -27,6 +27,7 @@ Boot performs eager validation and exits non-zero on any of:
 
 - no authentication mode configured, or both `signer.jwt_secret` and
   `signer.jwks_url` set;
+- `signer.jwt_secret` or `signer.jwks_url` set without `signer.jwt_audience`;
 - `signer.jwt_secret` shorter than 32 bytes;
 - only one of `tls_cert_file` / `tls_key_file` set;
 - a non-loopback listen address without TLS;
