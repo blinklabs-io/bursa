@@ -56,7 +56,9 @@ kes_agent:
   # Several pools, on one network or several, can be served by one agent in
   # sign mode. profiles replaces the single-pool settings above
   # (cold_vkey_file/cold_vkey_hex, system_start, slots_per_kes_period,
-  # guard_file); each profile has its own keys, schedule and guard file.
+  # guard_file), which must be removed; slot_length and max_kes_evolutions
+  # must be removed or left at their defaults (1 and 62). Each profile has
+  # its own keys, schedule and guard file.
   # Control commands then take the profile name. YAML only.
   # profiles:
   #   - name: "mainnet-pool"

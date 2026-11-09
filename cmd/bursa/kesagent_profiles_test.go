@@ -115,3 +115,36 @@ func TestKESAgentProfilesRefusesMixedOrIncompleteConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestKESAgentProfilesRefusesTopLevelSchedule verifies that a top-level
+// slot_length or max_kes_evolutions other than the config default is refused
+// with profiles rather than silently replaced by each profile's own value.
+func TestKESAgentProfilesRefusesTopLevelSchedule(t *testing.T) {
+	pc := config.KESAgentProfileConfig{
+		Name:              "pool",
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-10-25T00:00:00Z",
+		SlotsPerKESPeriod: 129600,
+		GuardFile:         "/var/lib/bursa/pool.json",
+	}
+	for _, tc := range []struct {
+		name             string
+		slotLength       float64
+		maxKESEvolutions uint64
+	}{
+		{name: "slot_length", slotLength: 2, maxKESEvolutions: 62},
+		{name: "max_kes_evolutions", slotLength: 1, maxKESEvolutions: 50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := kesAgentProfiles(config.KESAgentConfig{
+				SlotLength:       tc.slotLength,
+				MaxKESEvolutions: tc.maxKESEvolutions,
+				Profiles:         []config.KESAgentProfileConfig{pc},
+			})
+			if err == nil ||
+				!strings.Contains(err.Error(), "replaces slot_length and max_kes_evolutions") {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+		})
+	}
+}

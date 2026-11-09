@@ -87,7 +87,8 @@ type KESAgentConfig struct {
 	// Profiles lets one agent serve several pools, on one network or many.
 	// When it is set, the single-pool fields above (cold_vkey_file,
 	// cold_vkey_hex, system_start, slots_per_kes_period, guard_file) must
-	// be left unset. Profiles are configured in YAML only.
+	// be left unset, and slot_length and max_kes_evolutions at their
+	// defaults. Profiles are configured in YAML only.
 	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`
 }
 
