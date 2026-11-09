@@ -285,7 +285,7 @@ jobs:
 
       # Sign Windows builds
       - name: Set up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0 https://github.com/actions/setup-java/releases/tag/v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0 https://github.com/actions/setup-java/releases/tag/v6.2.0
         if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
         with:
           java-version: 17
@@ -747,7 +747,7 @@ jobs:
 
       # ---- Windows signing (tags only): sign the .exe BEFORE the MSI wraps it
       - name: Set up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0 https://github.com/actions/setup-java/releases/tag/v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0 https://github.com/actions/setup-java/releases/tag/v6.2.0
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
         with:
           java-version: 21
