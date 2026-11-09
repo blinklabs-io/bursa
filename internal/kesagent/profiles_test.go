@@ -310,7 +310,10 @@ func TestNewRefusesInvalidProfiles(t *testing.T) {
 	sameGuard := a2
 	sameGuard.GuardPath = shared
 	sameGuardToo := a1
-	sameGuardToo.GuardPath = filepath.Join(filepath.Dir(shared), ".", "guard.json")
+	// Spelled with a "." segment that filepath.Join would clean away, so New
+	// has to normalize it to see the shared file.
+	sep := string(filepath.Separator)
+	sameGuardToo.GuardPath = filepath.Dir(shared) + sep + "." + sep + "guard.json"
 	dup := a2
 	dup.Name = "pool-a"
 	badName := a2

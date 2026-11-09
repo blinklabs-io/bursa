@@ -95,6 +95,14 @@ func (m *Metrics) forProfile(name string) *Metrics {
 	}
 	v := *m
 	v.profile = name
+	// Create the children now so each profile exports zero-valued series
+	// before its first event, as an unlabelled gauge would.
+	m.servedKeys.WithLabelValues(name)
+	m.signs.WithLabelValues(name, "ok")
+	m.signs.WithLabelValues(name, "error")
+	m.evolutions.WithLabelValues(name)
+	m.currentPer.WithLabelValues(name)
+	m.exhausted.WithLabelValues(name)
 	return &v
 }
 

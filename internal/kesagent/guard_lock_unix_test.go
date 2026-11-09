@@ -18,6 +18,7 @@ package kesagent
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -123,4 +124,65 @@ func TestNewRefusesAGuardFileHeldByAnotherAgent(t *testing.T) {
 		t.Fatalf("New after the first agent closed: %v", err)
 	}
 	again.Close()
+}
+
+// TestPeriodGuardLockSharedAcrossDirectoryAliases verifies that a guard file
+// opened through a symlinked directory takes the same lock as the real path,
+// so two spellings of one guard file cannot both be opened.
+func TestPeriodGuardLockSharedAcrossDirectoryAliases(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "alias")
+	if err := os.Symlink(realDir, alias); err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewPeriodGuard(filepath.Join(realDir, "guard.json"))
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	t.Cleanup(g.Close)
+	g2, err := NewPeriodGuard(filepath.Join(alias, "guard.json"))
+	if err == nil {
+		g2.Close()
+	}
+	if !errors.Is(err, ErrGuardLocked) {
+		t.Fatalf("open through alias: err = %v, want ErrGuardLocked", err)
+	}
+}
+
+// TestPeriodGuardLockSharedThroughAFileSymlink verifies that a symlink to a
+// guard file takes the same lock as the file it points to.
+func TestPeriodGuardLockSharedThroughAFileSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "guard.json")
+	g, err := NewPeriodGuard(target)
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	t.Cleanup(g.Close)
+	if err := g.Authorize("00", 1); err != nil {
+		t.Fatalf("Authorize: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	g2, err := NewPeriodGuard(link)
+	if err == nil {
+		g2.Close()
+	}
+	if !errors.Is(err, ErrGuardLocked) {
+		t.Fatalf("open through symlink: err = %v, want ErrGuardLocked", err)
+	}
+}
+
+// TestPeriodGuardRefusesAMissingDirectory verifies that a guard whose
+// directory does not exist fails when it is opened.
+func TestPeriodGuardRefusesAMissingDirectory(t *testing.T) {
+	_, err := NewPeriodGuard(filepath.Join(t.TempDir(), "absent", "guard.json"))
+	if err == nil {
+		t.Fatal("NewPeriodGuard with a missing directory succeeded")
+	}
 }

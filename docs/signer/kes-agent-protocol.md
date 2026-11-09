@@ -91,7 +91,11 @@ verification key is the header's issuer key and whose active KES vkey is the
 one its operational certificate names. When `profile` is present, that must be
 the profile the header routes to; otherwise the request is refused with `header
 belongs to a different profile`. A header that matches no profile is refused
-with `no such profile`.
+with `no such profile`, and one that matches more than one profile with
+`request does not select exactly one profile`. An agent with a single profile
+does not route: it checks the header against that profile, so a header for
+another pool is refused with that check's error, such as `issuer key is not
+this pool's cold key`.
 
 Server -> client:
 
