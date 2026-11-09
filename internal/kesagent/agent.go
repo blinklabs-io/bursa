@@ -46,6 +46,12 @@ var (
 	ErrFuturePeriod = errors.New(
 		"kesagent: requested KES period is in the future",
 	)
+	// ErrFutureSlot is returned for a header whose slot is ahead of the
+	// agent's current slot by more than its clock-skew allowance.
+	// Recording such a slot would refuse every earlier slot until it.
+	ErrFutureSlot = errors.New(
+		"kesagent: header slot is ahead of the current slot",
+	)
 	ErrOpCertColdVK = errors.New(
 		"kesagent: opcert cold vkey does not match configured cold vkey",
 	)
@@ -68,6 +74,7 @@ type Config struct {
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	EvolveInterval    time.Duration // scheduler tick (default 1m)
 	GuardPath         string        // durable monotonic period store path
+	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
 	Version           string        // agent version string (for info)
 }
 
@@ -172,6 +179,12 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	if cfg.MaxKESEvolutions == 0 {
 		cfg.MaxKESEvolutions = 62
 	}
+	if cfg.MaxClockSkew < 0 {
+		return nil, errors.New("kesagent: max_clock_skew must not be negative")
+	}
+	if cfg.MaxClockSkew == 0 {
+		cfg.MaxClockSkew = DefaultMaxClockSkew
+	}
 	if len(cfg.ColdVKey) != ed25519.PublicKeySize {
 		return nil, ErrColdVKey
 	}
@@ -193,6 +206,20 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 		subs:    make(map[int]chan KeyPush),
 		now:     time.Now,
 	}, nil
+}
+
+// DefaultMaxClockSkew is the clock-skew allowance for a header's slot when
+// none is configured: five one-second slots.
+const DefaultMaxClockSkew = 5 * time.Second
+
+// currentSlot computes the current absolute slot from SystemStart and the
+// agent clock. Before SystemStart it is slot 0.
+func (a *Agent) currentSlot() uint64 {
+	elapsed := a.now().Sub(a.cfg.SystemStart)
+	if elapsed <= 0 {
+		return 0
+	}
+	return uint64(elapsed / a.cfg.SlotLength) // #nosec G115 -- elapsed and SlotLength are positive
 }
 
 // kesPeriodDuration is the wall-clock length of one KES period.
@@ -431,6 +458,17 @@ func (a *Agent) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		a.metrics.incSign("error")
 		return nil, fmt.Errorf("%w: requested %d, current %d",
 			ErrFuturePeriod, period, currentPeriod)
+	}
+	if typed {
+		// A slot recorded ahead of the clock would refuse every earlier
+		// slot until the clock reached it.
+		current := a.currentSlot()
+		ahead := uint64(a.cfg.MaxClockSkew / a.cfg.SlotLength) // #nosec G115 -- both positive
+		if slot > current && slot-current > ahead {
+			a.metrics.incSign("error")
+			return nil, fmt.Errorf("%w: slot %d, current %d, allowance %d slots",
+				ErrFutureSlot, slot, current, ahead)
+		}
 	}
 	if period < a.active.absPeriod() {
 		a.metrics.incSign("error")
