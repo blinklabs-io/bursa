@@ -42,11 +42,8 @@ import (
 const (
 	// AttestedProtocolID is the protocol spoken by an attested KES workload.
 	AttestedProtocolID = wire.AttestedProtocolID
-	// NoEvidenceProvider is the attestation provider for a workload that
-	// supplies no platform evidence. The attestation field is empty and the
-	// protocol measures nothing; any transport authentication is configured
-	// separately on the client and the agent.
-	NoEvidenceProvider   = "none"
+	// NoEvidenceProvider is defined in kesagent/wire.
+	NoEvidenceProvider   = wire.NoEvidenceProvider
 	attestationNonceSize = 32
 	attesterMaxResponse  = 1 << 20
 )

@@ -19,6 +19,11 @@ const (
 	ProtocolID = "bursa-kes-agent/1"
 	// AttestedProtocolID is the protocol spoken by an attested KES workload.
 	AttestedProtocolID = "bursa-attested-kes/1"
+	// NoEvidenceProvider is the attestation provider for a workload that
+	// supplies no platform evidence. The attestation field is empty and the
+	// protocol measures nothing; any transport authentication is configured
+	// separately on the client and the agent.
+	NoEvidenceProvider = "none"
 )
 
 // Socket modes for the service socket.
