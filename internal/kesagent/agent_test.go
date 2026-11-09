@@ -36,12 +36,12 @@ func TestCurrentKESPeriodMath(t *testing.T) {
 		kes.CardanoKesDepth,
 		atPeriod(5).Add(5*time.Second),
 	)
-	if got := a.currentKESPeriod(); got != 5 {
+	if got := sole(t, a).currentKESPeriod(); got != 5 {
 		t.Fatalf("currentKESPeriod = %d, want 5", got)
 	}
 	// Before genesis -> 0.
 	a.now = func() time.Time { return epoch.Add(-time.Hour) }
-	if got := a.currentKESPeriod(); got != 0 {
+	if got := sole(t, a).currentKESPeriod(); got != 0 {
 		t.Fatalf("pre-genesis currentKESPeriod = %d, want 0", got)
 	}
 }
@@ -375,8 +375,11 @@ func TestEvolveExhaustion(t *testing.T) {
 func TestEvolveToLockedDiscardsKeyWhenStoreFails(t *testing.T) {
 	cold := newColdKey(t)
 	a := testAgent(t, ModeSign, cold, kes.CardanoKesDepth, atPeriod(1))
-	metrics := NewMetrics()
-	a.metrics = metrics
+	metrics := NewMetrics().forProfile(DefaultProfileName)
+	if metrics == nil {
+		t.Fatal("forProfile returned nil")
+	}
+	sole(t, a).metrics = metrics
 	vkey, _ := a.GenStagedKey()
 	if _, err := a.InstallKey(makeOpCert(t, vkey, 1, 1, cold)); err != nil {
 		t.Fatalf("InstallKey: %v", err)
@@ -391,17 +394,19 @@ func TestEvolveToLockedDiscardsKeyWhenStoreFails(t *testing.T) {
 
 	// Ask for a later period so evolveToLocked actually iterates and reaches
 	// the store step.
-	a.mu.Lock()
-	a.evolveToLocked(a.active.absPeriod() + 1)
-	active := a.active
-	a.mu.Unlock()
+	sole(t, a).mu.Lock()
+	sole(t, a).evolveToLocked(sole(t, a).active.absPeriod() + 1)
+	active := sole(t, a).active
+	sole(t, a).mu.Unlock()
 
 	if active != nil {
 		t.Fatal(
 			"active key retained after a failed store; it holds a zeroized buffer",
 		)
 	}
-	if got := testutil.ToFloat64(metrics.exhausted); got != 0 {
+	if got := testutil.ToFloat64(
+		metrics.exhausted.WithLabelValues(DefaultProfileName),
+	); got != 0 {
 		t.Fatalf(
 			"exhausted gauge = %v, want 0 (no active key, not an exhausted one)",
 			got,
@@ -423,6 +428,7 @@ func TestInstallRefusedByGuardFloor(t *testing.T) {
 	if err := g.Authorize("prev", 100); err != nil {
 		t.Fatalf("seed guard: %v", err)
 	}
+	g.Close() // release the guard file lock for the agent
 
 	cfg := Config{
 		Mode:              ModeServeKey,
@@ -515,23 +521,23 @@ func TestSubscribeRefusesKeyBelowGuardFloor(t *testing.T) {
 	}
 
 	// Sanity: with the floor at the active period, a subscriber gets the key.
-	id, _, current := a.subscribe()
+	id, _, current := sole(t, a).subscribe()
 	if current == nil {
 		t.Fatal("subscribe returned no key push while the key is at the floor")
 	}
 	securemem.Wipe(current.KESSignKey)
-	a.unsubscribe(id)
+	sole(t, a).unsubscribe(id)
 
 	// Advance the floor past the active key, as a failed install would.
-	a.mu.Lock()
-	active := a.active.absPeriod()
-	a.mu.Unlock()
-	if err := a.guard.Authorize("newer-key", active+1); err != nil {
+	sole(t, a).mu.Lock()
+	active := sole(t, a).active.absPeriod()
+	sole(t, a).mu.Unlock()
+	if err := sole(t, a).guard.Authorize("newer-key", active+1); err != nil {
 		t.Fatalf("advance guard floor: %v", err)
 	}
 
-	id, _, current = a.subscribe()
-	defer a.unsubscribe(id)
+	id, _, current = sole(t, a).subscribe()
+	defer sole(t, a).unsubscribe(id)
 	if current != nil {
 		securemem.Wipe(current.KESSignKey)
 		t.Fatalf("subscribe served a key at period %d below guard floor %d",
@@ -548,8 +554,9 @@ func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
 	}
 
 	// Make the next guard write fail before it can replace the durable floor.
-	guardPath := a.guard.path
-	a.guard.path = filepath.Join(t.TempDir(), "missing", "guard.json")
+	fileGuard := sole(t, a).guard.(*PeriodGuard)
+	guardPath := fileGuard.path
+	fileGuard.path = filepath.Join(t.TempDir(), "missing", "guard.json")
 	a.now = func() time.Time { return atPeriod(2) }
 	a.Tick()
 
@@ -560,23 +567,23 @@ func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
 			info.MonotonicFloor,
 		)
 	}
-	id, _, current := a.subscribe()
+	id, _, current := sole(t, a).subscribe()
 	if current != nil {
 		securemem.Wipe(current.KESSignKey)
-		a.unsubscribe(id)
+		sole(t, a).unsubscribe(id)
 		t.Fatalf(
 			"subscribe released period %d after its guard persistence failed",
 			current.Period,
 		)
 	}
-	a.unsubscribe(id)
+	sole(t, a).unsubscribe(id)
 
 	// Restoring persistence lets the next tick authorize the already-evolved
 	// key and makes that exact period available to a new subscriber.
-	a.guard.path = guardPath
+	fileGuard.path = guardPath
 	a.Tick()
-	id, _, current = a.subscribe()
-	defer a.unsubscribe(id)
+	id, _, current = sole(t, a).subscribe()
+	defer sole(t, a).unsubscribe(id)
 	if current == nil {
 		t.Fatal(
 			"subscribe returned no key after guard authorization retry succeeded",
@@ -605,16 +612,16 @@ func TestQueuedPushBelowFloorIsDroppedOnRollback(t *testing.T) {
 	}
 
 	// A subscriber with a push queued at the current (soon to be stale) period.
-	id, ch, current := a.subscribe()
-	defer a.unsubscribe(id)
+	id, ch, current := sole(t, a).subscribe()
+	defer sole(t, a).unsubscribe(id)
 	if current == nil {
 		t.Fatal("subscribe returned no key push")
 	}
 	securemem.Wipe(current.KESSignKey)
-	a.mu.Lock()
-	a.broadcastLocked()
-	active := a.active.absPeriod()
-	a.mu.Unlock()
+	sole(t, a).mu.Lock()
+	sole(t, a).broadcastLocked()
+	active := sole(t, a).active.absPeriod()
+	sole(t, a).mu.Unlock()
 	if len(ch) != 1 {
 		t.Fatalf(
 			"queued pushes = %d, want 1 before the floor advances",
@@ -624,12 +631,12 @@ func TestQueuedPushBelowFloorIsDroppedOnRollback(t *testing.T) {
 
 	// Advance the floor past the queued push, as a committed-but-failed
 	// install would, then run the drain.
-	if err := a.guard.Authorize("newer-key", active+1); err != nil {
+	if err := sole(t, a).guard.Authorize("newer-key", active+1); err != nil {
 		t.Fatalf("advance floor: %v", err)
 	}
-	a.mu.Lock()
-	a.dropQueuedPushesBelowFloorLocked()
-	a.mu.Unlock()
+	sole(t, a).mu.Lock()
+	sole(t, a).dropQueuedPushesBelowFloorLocked()
+	sole(t, a).mu.Unlock()
 
 	if len(ch) != 0 {
 		kp := <-ch

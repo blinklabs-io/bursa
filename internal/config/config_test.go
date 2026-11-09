@@ -423,3 +423,38 @@ func TestDefaultDebugListenAddressIsLoopback(t *testing.T) {
 		t.Fatalf("default debug listen address = %q, want 127.0.0.1", got)
 	}
 }
+
+func TestLoadConfigFile_KESAgentProfiles(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "kes-agent.yaml")
+	if err := os.WriteFile(cfgFile, []byte(`kes_agent:
+  mode: sign
+  profiles:
+    - name: mainnet-pool
+      cold_vkey_file: /etc/bursa/mainnet-cold.vkey
+      system_start: "2017-09-23T21:44:51Z"
+      slots_per_kes_period: 129600
+      guard_file: /var/lib/bursa/mainnet.json
+    - name: preview-pool
+      cold_vkey_hex: "00"
+      system_start: "2022-10-25T00:00:00Z"
+      slot_length: 1
+      slots_per_kes_period: 129600
+      max_kes_evolutions: 62
+      guard_file: /var/lib/bursa/preview.json
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFile(cfgFile)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	got := cfg.KESAgent.Profiles
+	if len(got) != 2 ||
+		got[0].Name != "mainnet-pool" ||
+		got[0].ColdVKeyFile != "/etc/bursa/mainnet-cold.vkey" ||
+		got[0].SlotsPerKESPeriod != 129600 ||
+		got[1].GuardFile != "/var/lib/bursa/preview.json" ||
+		got[1].MaxKESEvolutions != 62 {
+		t.Fatalf("profiles = %+v", got)
+	}
+}

@@ -25,10 +25,12 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/gouroboros/kes"
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
@@ -47,7 +49,7 @@ var (
 		"kesagent: requested KES period is in the future",
 	)
 	// ErrFutureSlot is returned for a header whose slot is ahead of the
-	// agent's current slot by more than its clock-skew allowance.
+	// profile's current slot by more than its clock-skew allowance.
 	// Recording such a slot would refuse every earlier slot until it.
 	ErrFutureSlot = errors.New(
 		"kesagent: header slot is ahead of the current slot",
@@ -63,19 +65,68 @@ var (
 	)
 )
 
-// Config configures an Agent.
+// Config configures an Agent. An agent serves one or more profiles, each a
+// pool on a network. Profiles lists them; when it is empty, the single-pool
+// fields below form one profile named DefaultProfileName, which is how a
+// configuration written before profiles keeps working unchanged.
 type Config struct {
-	Mode              string        // ModeServeKey | ModeSign
-	Depth             uint64        // KES tree depth (default kes.CardanoKesDepth)
-	SystemStart       time.Time     // Shelley genesis system start
+	Mode           string        // ModeServeKey | ModeSign
+	EvolveInterval time.Duration // scheduler tick (default 1m)
+	Version        string        // agent version string (for info)
+	Profiles       []ProfileConfig
+
+	// Single-pool fields, used only when Profiles is empty.
+	Depth       uint64    // KES tree depth (default kes.CardanoKesDepth)
+	SystemStart time.Time // Shelley genesis system start
+	// ShelleyStartSlot and ShelleyStartTime anchor the slot clock at the
+	// first Shelley slot, for networks whose Byron era ran with longer slots
+	// (mainnet, preprod). Without them the anchor is slot 0 at SystemStart,
+	// which is right only where every slot has had SlotLength since genesis.
+	ShelleyStartSlot  uint64
+	ShelleyStartTime  time.Time
 	SlotLength        time.Duration // wall-clock duration of one slot
 	SlotsPerKESPeriod uint64        // slots per KES period
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
 	ColdVKey          []byte        // 32-byte pool cold verification key
-	EvolveInterval    time.Duration // scheduler tick (default 1m)
 	GuardPath         string        // durable monotonic period store path
 	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
-	Version           string        // agent version string (for info)
+
+	// SharedGuard, when set, holds every profile's period floor and signed
+	// slot records in place of guard files, so several agent replicas can
+	// share them. The caller owns it and closes it after Agent.Close. Profiles
+	// must then leave GuardPath unset.
+	SharedGuard SharedGuardStore
+
+	// KeyStore and KeySealer, set together and only with SharedGuard, make
+	// the replicas share each profile's KES key: GenStagedKey seals the new
+	// key with KeySealer and writes it to KeyStore as staged, InstallKey
+	// marks it installed, and every replica loads the installed key (SyncKeys
+	// at startup, then every KeyPollInterval while Run runs). Without them
+	// the key lives only in this agent's memory. The caller owns KeyStore.
+	KeyStore        KeyStore
+	KeySealer       *KeySealer
+	KeyPollInterval time.Duration // default 10s
+}
+
+// ProfileConfig configures one profile: a pool's cold verification key, the
+// genesis parameters of the network it forges on, and the durable guard file
+// that holds its period floor and last signed slot.
+type ProfileConfig struct {
+	Name        string
+	Depth       uint64    // KES tree depth (default kes.CardanoKesDepth)
+	SystemStart time.Time // Shelley genesis system start
+	// ShelleyStartSlot and ShelleyStartTime anchor the slot clock at the
+	// first Shelley slot, for networks whose Byron era ran with longer slots
+	// (mainnet, preprod). Without them the anchor is slot 0 at SystemStart,
+	// which is right only where every slot has had SlotLength since genesis.
+	ShelleyStartSlot  uint64
+	ShelleyStartTime  time.Time
+	SlotLength        time.Duration // wall-clock duration of one slot
+	SlotsPerKESPeriod uint64        // slots per KES period
+	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
+	ColdVKey          []byte        // 32-byte pool cold verification key
+	GuardPath         string        // durable monotonic period store path
+	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
 }
 
 // keyState is the in-memory state of a KES key. The raw secret key bytes live
@@ -106,13 +157,17 @@ func (k *keyState) close() {
 	}
 }
 
-// Agent is the KES agent core: key custody, evolution, signing, and serve-key
-// broadcast. It is safe for concurrent use.
-type Agent struct {
-	cfg     Config
+// profile is one pool on one network: its staged and active KES keys, its
+// period guard and its serve-key subscribers. Each profile has its own lock
+// and guard file, so a refusal, a slow guard write or a key change in one
+// profile never holds up another.
+type profile struct {
+	cfg     ProfileConfig
+	mode    string
 	logger  *slog.Logger
 	metrics *Metrics
-	guard   *PeriodGuard
+	guard   slotGuard
+	nowFn   *func() time.Time // the agent's clock
 
 	mu      sync.Mutex
 	active  *keyState
@@ -120,13 +175,51 @@ type Agent struct {
 	subs    map[int]chan KeyPush
 	nextSub int
 
+	// activeVKey is a copy of active's verification key, nil with no active
+	// key. setActiveLocked keeps it in step with active so header routing
+	// can read it without taking mu, which sign holds across guard writes.
+	activeVKey atomic.Pointer[[]byte]
+
 	// guardedPeriod/guardedSet track the active KES period most recently
 	// authorized for release. A transient guard-store failure leaves this at
 	// the prior period so the evolved key stays private and Tick retries.
 	guardedPeriod uint64
 	guardedSet    bool
 
-	now func() time.Time // injectable clock (tests)
+	// Shared key store, when configured. keyPool and keyNetwork name the
+	// profile's records as the shared guard names its own.
+	keys       KeyStore
+	sealer     *KeySealer
+	keyPool    string
+	keyNetwork string
+	// seenGen/seenOpCert identify the installed record this replica last
+	// installed or loaded; a record that differs is loaded on the next sync.
+	// A local drop-key leaves them set, so the dropped key is not reloaded
+	// until a new one is installed (or the agent restarts).
+	seenGen    uint64
+	seenOpCert []byte
+	seenSet    bool
+	// loadErr is why the installed record could not be read or loaded; a
+	// sign request with no active key reports it. lastKeyErr keeps the same
+	// failure from being logged on every poll.
+	loadErr    error
+	lastKeyErr string
+	// loadErrPub mirrors loadErr for Ready, which reads it without p.mu.
+	loadErrPub atomic.Pointer[error]
+}
+
+func (p *profile) now() time.Time { return (*p.nowFn)() }
+
+// setActiveLocked sets the active key and its routing snapshot. Caller must
+// hold p.mu.
+func (p *profile) setActiveLocked(ks *keyState) {
+	p.active = ks
+	if ks == nil {
+		p.activeVKey.Store(nil)
+		return
+	}
+	vkey := append([]byte(nil), ks.vkey...)
+	p.activeVKey.Store(&vkey)
 }
 
 // maxEvolutions returns the effective evolution ceiling for keys created
@@ -134,28 +227,51 @@ type Agent struct {
 // evolutions and the KES tree's cryptographic evolution limit. Cardano
 // treats an opcert as expired once MaxKESEvolutions is reached even when the
 // KES tree itself could evolve further.
-func (a *Agent) maxEvolutions() uint64 {
-	m := a.cfg.MaxKESEvolutions
-	if treeMax := kes.MaxPeriod(a.cfg.Depth); treeMax < m {
+func (p *profile) maxEvolutions() uint64 {
+	m := p.cfg.MaxKESEvolutions
+	if treeMax := kes.MaxPeriod(p.cfg.Depth); treeMax < m {
 		m = treeMax
 	}
 	return m
 }
 
-// New constructs an Agent, validating configuration and opening the durable
-// period guard.
-func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	if cfg.Mode != ModeServeKey && cfg.Mode != ModeSign {
-		return nil, fmt.Errorf("kesagent: invalid mode %q", cfg.Mode)
-	}
+// newProfile validates cfg and opens the profile's durable period guard: its
+// guard file, or its records in shared when shared is set.
+func newProfile(
+	cfg ProfileConfig,
+	mode string,
+	logger *slog.Logger,
+	metrics *Metrics,
+	nowFn *func() time.Time,
+	shared SharedGuardStore,
+	keys KeyStore,
+	sealer *KeySealer,
+) (*profile, error) {
 	if cfg.Depth == 0 {
 		cfg.Depth = kes.CardanoKesDepth
 	}
 	if cfg.SystemStart.IsZero() {
 		return nil, errors.New("kesagent: system_start is required")
+	}
+	if cfg.ShelleyStartTime.IsZero() && cfg.ShelleyStartSlot != 0 {
+		return nil, errors.New(
+			"kesagent: shelley_start_slot requires shelley_start_time",
+		)
+	}
+	if !cfg.ShelleyStartTime.IsZero() &&
+		cfg.ShelleyStartTime.Before(cfg.SystemStart) {
+		return nil, errors.New(
+			"kesagent: shelley_start_time is before system_start",
+		)
+	}
+	// currentSlot adds at most math.MaxInt64 elapsed slots to the anchor
+	// slot, so an anchor at or below math.MaxInt64 cannot wrap the sum.
+	if cfg.ShelleyStartSlot > math.MaxInt64 {
+		return nil, fmt.Errorf(
+			"kesagent: shelley_start_slot %d exceeds %d",
+			cfg.ShelleyStartSlot,
+			int64(math.MaxInt64),
+		)
 	}
 	if cfg.SlotLength <= 0 {
 		return nil, errors.New("kesagent: slot_length must be positive")
@@ -165,10 +281,8 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			"kesagent: slots_per_kes_period must be positive",
 		)
 	}
-	// SlotLength > 0 is guaranteed above, so guard the KES-period-duration
-	// multiplication (SlotLength * SlotsPerKESPeriod) against int64 overflow.
-	// An oversized slots_per_kes_period would otherwise wrap to a non-positive
-	// duration and silently freeze currentKESPeriod at 0, stalling evolution.
+	// A KES period longer than a time.Duration can hold is no real network's
+	// and means a misconfigured slot_length or slots_per_kes_period.
 	if cfg.SlotsPerKESPeriod > uint64(math.MaxInt64)/uint64(cfg.SlotLength) {
 		return nil, fmt.Errorf(
 			"kesagent: slot_length (%s) * slots_per_kes_period (%d) overflows the KES period duration",
@@ -188,73 +302,113 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	if len(cfg.ColdVKey) != ed25519.PublicKeySize {
 		return nil, ErrColdVKey
 	}
-	if cfg.EvolveInterval <= 0 {
-		cfg.EvolveInterval = time.Minute
-	}
-	if cfg.GuardPath == "" {
+	var guard slotGuard
+	switch {
+	case shared != nil && cfg.GuardPath != "":
+		// Refused rather than ignored, so no one believes the file still
+		// guards the profile.
+		return nil, errors.New(
+			"kesagent: guard_path must be unset when a shared guard store is configured",
+		)
+	case shared != nil:
+		g, err := newSharedGuard(shared, cfg.ColdVKey, cfg.SystemStart)
+		if err != nil {
+			return nil, err
+		}
+		guard = g
+	case cfg.GuardPath == "":
 		return nil, errors.New("kesagent: guard_path is required")
+	default:
+		g, err := NewPeriodGuard(cfg.GuardPath)
+		if err != nil {
+			return nil, err
+		}
+		guard = g
 	}
-	guard, err := NewPeriodGuard(cfg.GuardPath)
-	if err != nil {
-		return nil, err
-	}
-	return &Agent{
+	p := &profile{
 		cfg:     cfg,
-		logger:  logger,
-		metrics: metrics,
+		mode:    mode,
+		logger:  logger.With("profile", cfg.Name),
+		metrics: metrics.forProfile(cfg.Name),
 		guard:   guard,
+		nowFn:   nowFn,
 		subs:    make(map[int]chan KeyPush),
-		now:     time.Now,
-	}, nil
+	}
+	if keys != nil {
+		poolKey := backend.HashPublicKey(cfg.ColdVKey)
+		p.keys = keys
+		p.sealer = sealer
+		p.keyPool = hex.EncodeToString(poolKey[:])
+		p.keyNetwork = cfg.SystemStart.UTC().Format(time.RFC3339Nano)
+	}
+	// A first start has no guard file, but on any later start a missing one
+	// means the last signed slot was lost, so the slot guard cannot refuse a
+	// second header for it. Starting is still allowed; operators are told.
+	fresh := guard.Fresh()
+	if fresh && shared != nil {
+		p.logger.Warn(
+			"shared guard store has no period floor for this profile: " +
+				"expected only on its first start against the store",
+		)
+	} else if fresh {
+		p.logger.Warn(
+			"guard file missing or empty: starting with no record of "+
+				"signed slots; expected only on a first start",
+			"path", cfg.GuardPath,
+		)
+	}
+	p.metrics.setGuardFresh(fresh)
+	p.metrics.initSlotGuardRefusals()
+	return p, nil
 }
 
-// DefaultMaxClockSkew is the clock-skew allowance for a header's slot when
-// none is configured: five one-second slots.
+// DefaultMaxClockSkew is the clock-skew allowance for a header's slot when a
+// profile sets none: five one-second slots.
 const DefaultMaxClockSkew = 5 * time.Second
 
-// currentSlot computes the current absolute slot from SystemStart and the
-// agent clock. Before SystemStart it is slot 0.
-func (a *Agent) currentSlot() uint64 {
-	elapsed := a.now().Sub(a.cfg.SystemStart)
-	if elapsed <= 0 {
-		return 0
+// currentSlot computes the current absolute slot from the profile's slot
+// clock anchor: the first Shelley slot and its time when configured,
+// otherwise slot 0 at SystemStart. Before the anchor it is the anchor slot.
+func (p *profile) currentSlot() uint64 {
+	anchorSlot, anchorTime := uint64(0), p.cfg.SystemStart
+	if !p.cfg.ShelleyStartTime.IsZero() {
+		anchorSlot, anchorTime = p.cfg.ShelleyStartSlot, p.cfg.ShelleyStartTime
 	}
-	return uint64(elapsed / a.cfg.SlotLength) // #nosec G115 -- elapsed and SlotLength are positive
+	elapsed := p.now().Sub(anchorTime)
+	if elapsed <= 0 {
+		return anchorSlot
+	}
+	return anchorSlot + uint64(elapsed/p.cfg.SlotLength) // #nosec G115 -- elapsed and SlotLength are positive
 }
 
-// kesPeriodDuration is the wall-clock length of one KES period.
-func (a *Agent) kesPeriodDuration() time.Duration {
-	return a.cfg.SlotLength * time.Duration(
-		a.cfg.SlotsPerKESPeriod,
-	) // #nosec G115
-}
-
-// currentKESPeriod computes the current absolute KES period from genesis
-// parameters and the agent clock.
-func (a *Agent) currentKESPeriod() uint64 {
-	elapsed := a.now().Sub(a.cfg.SystemStart)
-	if elapsed <= 0 {
-		return 0
-	}
-	per := a.kesPeriodDuration()
-	if per <= 0 {
-		return 0
-	}
-	return uint64(elapsed / per) // #nosec G115
+// currentKESPeriod is the absolute KES period of the current slot.
+func (p *profile) currentKESPeriod() uint64 {
+	return p.currentSlot() / p.cfg.SlotsPerKESPeriod
 }
 
 // GenStagedKey generates a fresh KES key into the staging slot and returns its
 // verification key. Any previously staged key is dropped and wiped.
-func (a *Agent) GenStagedKey() ([]byte, error) {
+func (p *profile) GenStagedKey() ([]byte, error) {
+	return p.genStagedKey(context.Background())
+}
+
+// genStagedKey is GenStagedKey; ctx bounds the shared key store write.
+func (p *profile) genStagedKey(ctx context.Context) ([]byte, error) {
 	var seed [kes.SeedSize]byte
 	if _, err := rand.Read(seed[:]); err != nil {
 		return nil, fmt.Errorf("kesagent: read entropy: %w", err)
 	}
 	defer securemem.Wipe(seed[:])
 
-	sk, vkey, err := kes.KeyGen(a.cfg.Depth, seed[:])
+	sk, vkey, err := kes.KeyGen(p.cfg.Depth, seed[:])
 	if err != nil {
 		return nil, fmt.Errorf("kesagent: keygen: %w", err)
+	}
+	if p.keys != nil {
+		if err := p.stageShared(ctx, sk, vkey); err != nil {
+			securemem.Wipe(sk.Data)
+			return nil, err
+		}
 	}
 	buf, err := securemem.New(len(sk.Data))
 	if err != nil {
@@ -262,7 +416,7 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 		return nil, err
 	}
 	if !buf.Locked() {
-		a.logger.Warn(
+		p.logger.Warn(
 			"KES secret key buffer could not be locked in memory (mlock unavailable or refused); key material may be swappable to disk",
 		)
 	}
@@ -275,15 +429,15 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 		sk.Data,
 	) // transient heap copy erased; material now only in buf
 
-	ks := &keyState{depth: a.cfg.Depth, period: 0, buf: buf, vkey: vkey}
+	ks := &keyState{depth: p.cfg.Depth, period: 0, buf: buf, vkey: vkey}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.staged.close()
-	a.staged = ks
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.staged.close()
+	p.staged = ks
 	vkeyOut := make([]byte, len(vkey))
 	copy(vkeyOut, vkey)
-	a.logger.Info(
+	p.logger.Info(
 		"generated staged KES key",
 		"kes_vkey",
 		hex.EncodeToString(vkey),
@@ -295,129 +449,182 @@ func (a *Agent) GenStagedKey() ([]byte, error) {
 // verification key and the staged KES key, promotes the staged key to active,
 // evolves it to the current period, and (serve-key mode) pushes it. It returns
 // the resulting agent info.
-func (a *Agent) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
+//
+// With a shared key store the staged key is the one in the store, whichever
+// replica generated it, and the install is recorded there so every replica
+// loads it.
+func (p *profile) InstallKey(opcertBytes []byte) (*AgentInfo, error) {
+	return p.installKey(context.Background(), opcertBytes)
+}
+
+// installKey is InstallKey; ctx bounds the shared key store calls.
+func (p *profile) installKey(
+	ctx context.Context,
+	opcertBytes []byte,
+) (*AgentInfo, error) {
 	dec, err := bursa.DecodeOpCert(opcertBytes)
 	if err != nil {
 		return nil, err
 	}
+	if p.keys != nil {
+		return p.installShared(ctx, dec, opcertBytes)
+	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	if a.staged == nil {
+	if p.staged == nil {
 		return nil, ErrNoStagedKey
 	}
+	cur, maxEvol, err := p.checkOpCert(dec, p.staged.vkey)
+	if err != nil {
+		return nil, err
+	}
+	ks := p.staged
+	p.staged = nil
+	if err := p.activateLocked(
+		ks, dec, opcertBytes, cur, maxEvol, nil, "installed KES key",
+	); err != nil {
+		return nil, err
+	}
+	return p.infoLocked(), nil
+}
+
+// checkOpCert checks a decoded operational certificate for the KES key
+// kesVKey: it carries the configured cold key and a valid signature by it,
+// commits to kesVKey, and covers the current KES period. It returns the
+// current period and the profile's evolution ceiling.
+func (p *profile) checkOpCert(
+	dec *bursa.DecodedOpCert,
+	kesVKey []byte,
+) (uint64, uint64, error) {
 	// The agent holds only the cold vkey; the opcert must carry the same one.
-	if !bytes.Equal(dec.ColdVKey, a.cfg.ColdVKey) {
-		return nil, ErrOpCertColdVK
+	if !bytes.Equal(dec.ColdVKey, p.cfg.ColdVKey) {
+		return 0, 0, ErrOpCertColdVK
 	}
 	// Verify the cold-key signature over the OCertSignable representation.
-	if err := ledger.VerifyOpCertSignature(dec.LedgerOpCert(), a.cfg.ColdVKey); err != nil {
-		return nil, fmt.Errorf("kesagent: opcert signature invalid: %w", err)
+	if err := ledger.VerifyOpCertSignature(dec.LedgerOpCert(), p.cfg.ColdVKey); err != nil {
+		return 0, 0, fmt.Errorf("kesagent: opcert signature invalid: %w", err)
 	}
 	// The opcert must commit to the staged KES vkey.
-	if !bytes.Equal(dec.KESVKey, a.staged.vkey) {
-		return nil, ErrOpCertKESVK
+	if !bytes.Equal(dec.KESVKey, kesVKey) {
+		return 0, 0, ErrOpCertKESVK
 	}
 	// Period sanity: not from the future, and not already expired.
-	cur := a.currentKESPeriod()
+	cur := p.currentKESPeriod()
 	if dec.KESPeriod > cur {
-		return nil, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"kesagent: opcert KES period %d is in the future (current %d)",
 			dec.KESPeriod, cur,
 		)
 	}
-	maxEvol := a.maxEvolutions()
+	maxEvol := p.maxEvolutions()
 	if cur-dec.KESPeriod >= maxEvol {
-		return nil, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"kesagent: opcert expired: %d evolutions since period %d >= max %d",
 			cur-dec.KESPeriod, dec.KESPeriod, maxEvol,
 		)
 	}
+	return cur, maxEvol, nil
+}
 
-	// Promote staged -> active, but keep the previous active key around
+// activateLocked makes ks, certified by dec, the active key: it evolves ks to
+// period cur, authorizes that period with the guard, runs commit when set,
+// and then serves ks. If any step fails the previous active key stays active.
+// msg is the log line for success. Caller holds p.mu.
+func (p *profile) activateLocked(
+	ks *keyState,
+	dec *bursa.DecodedOpCert,
+	opcertBytes []byte,
+	cur, maxEvol uint64,
+	commit func() error,
+	msg string,
+) error {
+	// Promote ks to active, but keep the previous active key around
 	// (undestroyed) until authorization is known to succeed: a rollback
 	// refusal below must not leave the agent with no working key at all.
-	oldActive := a.active
-	ks := a.staged
-	a.staged = nil
+	oldActive := p.active
 	ks.startPeriod = dec.KESPeriod
 	ks.maxEvol = maxEvol
 	ks.opcert = append([]byte(nil), opcertBytes...)
 	ks.issueNumber = dec.IssueNumber
 	ks.coldSig = append([]byte(nil), dec.ColdSig...)
 	ks.exhausted = false
-	a.active = ks
+	p.setActiveLocked(ks)
 
 	// Evolve to the current period and serve.
-	a.evolveToLocked(cur)
-	if a.active == nil {
-		// evolveToLocked can only clear a.active on an internal key-store
+	p.evolveToLocked(cur)
+	if p.active == nil {
+		// evolveToLocked can only clear p.active on an internal key-store
 		// failure (see the buf.Set failure path); treat it the same as a
 		// guard refusal and restore the previous key.
-		a.active = oldActive
-		return nil, errors.New(
+		p.setActiveLocked(oldActive)
+		return errors.New(
 			"kesagent: failed to evolve newly installed key to the current period",
 		)
 	}
-	if err := a.guard.Authorize(hex.EncodeToString(ks.vkey), a.active.absPeriod()); err != nil {
+	err := p.guard.Authorize(hex.EncodeToString(ks.vkey), p.active.absPeriod())
+	if err == nil && commit != nil {
+		err = commit()
+	}
+	if err != nil {
 		// Roll back the install: keep serving the previous active key
 		// rather than discarding a working key on a rollback refusal.
-		a.active.close()
-		a.active = oldActive
+		p.active.close()
+		p.setActiveLocked(oldActive)
 		// The floor may have advanced anyway (a rename that committed before a
 		// later step failed), which would leave the restored key below it.
 		// buildKeyPushLocked refuses to build such a push, but a push built
 		// before this call can still be sitting in a subscriber's channel;
 		// drain those so a producer cannot sign below the committed floor.
-		a.dropQueuedPushesBelowFloorLocked()
-		return nil, err
+		p.dropQueuedPushesBelowFloorLocked()
+		return err
 	}
 	oldActive.close()
-	a.guardedPeriod = a.active.absPeriod()
-	a.guardedSet = true
-	a.metrics.setCurrentPeriod(a.active.absPeriod())
-	a.metrics.setExhausted(a.active.exhausted)
-	a.broadcastLocked()
-	a.logger.Info("installed KES key",
+	p.guardedPeriod = p.active.absPeriod()
+	p.guardedSet = true
+	p.metrics.setCurrentPeriod(p.active.absPeriod())
+	p.metrics.setExhausted(p.active.exhausted)
+	p.broadcastLocked()
+	p.logger.Info(msg,
 		"kes_vkey", hex.EncodeToString(ks.vkey),
 		"start_period", ks.startPeriod,
-		"active_period", a.active.absPeriod(),
+		"active_period", p.active.absPeriod(),
 	)
-	return a.infoLocked(), nil
+	return nil
 }
 
 // DropKey wipes the active and/or staged key. target is "active", "staged", or
 // "all" (default "all").
-func (a *Agent) DropKey(target string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+func (p *profile) DropKey(target string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	switch target {
 	case "active":
-		a.active.close()
-		a.active = nil
-		a.guardedSet = false
+		p.active.close()
+		p.setActiveLocked(nil)
+		p.guardedSet = false
 	case "staged":
-		a.staged.close()
-		a.staged = nil
+		p.staged.close()
+		p.staged = nil
 	case "", "all":
-		a.active.close()
-		a.active = nil
-		a.staged.close()
-		a.staged = nil
-		a.guardedSet = false
+		p.active.close()
+		p.setActiveLocked(nil)
+		p.staged.close()
+		p.staged = nil
+		p.guardedSet = false
 	default:
 		return fmt.Errorf("kesagent: unknown drop target %q", target)
 	}
 	// Dropping only the staged key leaves the active key (and its exhaustion
 	// state) untouched; derive the gauge from whatever remains active rather
 	// than always clearing it.
-	if a.active != nil {
-		a.metrics.setExhausted(a.active.exhausted)
+	if p.active != nil {
+		p.metrics.setExhausted(p.active.exhausted)
 	} else {
-		a.metrics.setExhausted(false)
+		p.metrics.setExhausted(false)
 	}
-	a.logger.Info("dropped KES key", "target", target)
+	p.logger.Info("dropped KES key", "target", target)
 	return nil
 }
 
@@ -425,8 +632,8 @@ func (a *Agent) DropKey(target string) error {
 // key is evolved forward as needed, but never beyond the wall-clock period
 // derived from the configured genesis schedule. It never signs a period below
 // the monotonic floor or below the active key's current period.
-func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
-	return a.sign(period, msg, false)
+func (p *profile) Sign(period uint64, msg []byte) ([]byte, error) {
+	return p.sign(period, msg, false)
 }
 
 // SignHeader is Sign for a request that must be a Praos block header body: the
@@ -434,202 +641,208 @@ func (a *Agent) Sign(period uint64, msg []byte) ([]byte, error) {
 // carry the operational certificate fields and issuer key the agent installed.
 // Sign mode serves only this entry point, so the key cannot be used as an
 // oracle for arbitrary messages.
-func (a *Agent) SignHeader(period uint64, headerBody []byte) ([]byte, error) {
-	return a.sign(period, headerBody, true)
+func (p *profile) SignHeader(period uint64, headerBody []byte) ([]byte, error) {
+	return p.sign(period, headerBody, true)
 }
 
-func (a *Agent) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.active == nil {
-		a.metrics.incSign("error")
-		return nil, ErrNoActiveKey
+func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.active == nil {
+		p.metrics.incSign("error")
+		return nil, p.noKeyErrorLocked()
 	}
 	var slot uint64
 	if typed {
 		var err error
-		if slot, err = a.checkHeaderLocked(period, msg); err != nil {
-			a.metrics.incSign("error")
+		if slot, err = p.checkHeaderLocked(period, msg); err != nil {
+			p.metrics.incSign("error")
 			return nil, err
 		}
 	}
-	currentPeriod := a.currentKESPeriod()
+	currentPeriod := p.currentKESPeriod()
 	if period > currentPeriod {
-		a.metrics.incSign("error")
+		p.metrics.incSign("error")
 		return nil, fmt.Errorf("%w: requested %d, current %d",
 			ErrFuturePeriod, period, currentPeriod)
 	}
 	if typed {
 		// A slot recorded ahead of the clock would refuse every earlier
 		// slot until the clock reached it.
-		current := a.currentSlot()
-		ahead := uint64(a.cfg.MaxClockSkew / a.cfg.SlotLength) // #nosec G115 -- both positive
+		current := p.currentSlot()
+		ahead := uint64(p.cfg.MaxClockSkew / p.cfg.SlotLength) // #nosec G115 -- both positive
 		if slot > current && slot-current > ahead {
-			a.metrics.incSign("error")
+			p.metrics.incSign("error")
 			return nil, fmt.Errorf("%w: slot %d, current %d, allowance %d slots",
 				ErrFutureSlot, slot, current, ahead)
 		}
 	}
-	if period < a.active.absPeriod() {
-		a.metrics.incSign("error")
+	if period < p.active.absPeriod() {
+		p.metrics.incSign("error")
 		return nil, fmt.Errorf("%w: requested %d, key at %d",
-			ErrPastPeriod, period, a.active.absPeriod())
+			ErrPastPeriod, period, p.active.absPeriod())
 	}
-	if period > a.active.absPeriod() {
-		a.evolveToLocked(period)
+	if period > p.active.absPeriod() {
+		p.evolveToLocked(period)
 	}
-	if a.active == nil {
+	if p.active == nil {
 		// evolveToLocked discarded the key after a store failure.
-		a.metrics.incSign("error")
+		p.metrics.incSign("error")
 		return nil, ErrNoActiveKey
 	}
-	if a.active.absPeriod() != period {
-		a.metrics.incSign("error")
+	if p.active.absPeriod() != period {
+		p.metrics.incSign("error")
 		return nil, fmt.Errorf("%w: cannot reach period %d (key ends at %d)",
-			ErrExhausted, period, a.active.endPeriod())
+			ErrExhausted, period, p.active.endPeriod())
 	}
-	vkeyHex := hex.EncodeToString(a.active.vkey)
+	vkeyHex := hex.EncodeToString(p.active.vkey)
 	var guardErr error
 	if typed {
 		// One header body per slot, never an older slot: the record is durable
 		// before the signature leaves the agent, so producers sharing this
 		// agent cannot publish two blocks for the pool in one slot.
-		guardErr = a.guard.AuthorizeHeader(vkeyHex, period, slot, msg)
+		guardErr = p.guard.AuthorizeHeader(vkeyHex, period, slot, msg)
 	} else {
-		guardErr = a.guard.Authorize(vkeyHex, period)
+		guardErr = p.guard.Authorize(vkeyHex, period)
 	}
 	if guardErr != nil {
-		a.metrics.incSign("error")
+		switch {
+		case errors.Is(guardErr, ErrSlotEquivocation):
+			p.metrics.incSlotGuardRefusal("equivocation")
+		case errors.Is(guardErr, ErrSlotRollback):
+			p.metrics.incSlotGuardRefusal("rollback")
+		}
+		p.metrics.incSign("error")
 		return nil, guardErr
 	}
 	sk := &kes.SecretKey{
-		Depth:  a.active.depth,
-		Period: a.active.period,
-		Data:   a.active.buf.Bytes(),
+		Depth:  p.active.depth,
+		Period: p.active.period,
+		Data:   p.active.buf.Bytes(),
 	}
-	sig, err := kes.Sign(sk, a.active.period, msg)
+	sig, err := kes.Sign(sk, p.active.period, msg)
 	if err != nil {
-		a.metrics.incSign("error")
+		p.metrics.incSign("error")
 		return nil, fmt.Errorf("kesagent: sign: %w", err)
 	}
-	a.metrics.incSign("ok")
-	a.metrics.setCurrentPeriod(a.active.absPeriod())
+	p.metrics.incSign("ok")
+	p.metrics.setCurrentPeriod(p.active.absPeriod())
 	return sig, nil
 }
 
 // storeEvolvedKey writes an evolved KES key into the active locked buffer. It
 // is a variable so tests can exercise the discard-on-failure branch in
 // evolveToLocked, which is otherwise unreachable: Buffer.Set fails only on a
-// closed buffer or a length mismatch, and a.mu serializes both away in every
+// closed buffer or a length mismatch, and p.mu serializes both away in every
 // real call path.
 var storeEvolvedKey = func(buf *securemem.Buffer, data []byte) error {
 	return buf.Set(data)
 }
 
 // evolveToLocked evolves the active key forward until its absolute period
-// reaches targetAbs or the key is exhausted. Caller must hold a.mu.
-func (a *Agent) evolveToLocked(targetAbs uint64) {
-	for a.active != nil && a.active.absPeriod() < targetAbs {
-		nextInternal := a.active.period + 1
-		if nextInternal >= a.active.maxEvol {
-			if !a.active.exhausted {
-				a.active.exhausted = true
-				a.metrics.setExhausted(true)
-				a.logger.Warn("KES key exhausted; a new key must be installed",
-					"kes_vkey", hex.EncodeToString(a.active.vkey),
-					"active_period", a.active.absPeriod(),
+// reaches targetAbs or the key is exhausted. Caller must hold p.mu.
+func (p *profile) evolveToLocked(targetAbs uint64) {
+	for p.active != nil && p.active.absPeriod() < targetAbs {
+		nextInternal := p.active.period + 1
+		if nextInternal >= p.active.maxEvol {
+			if !p.active.exhausted {
+				p.active.exhausted = true
+				p.metrics.setExhausted(true)
+				p.logger.Warn("KES key exhausted; a new key must be installed",
+					"kes_vkey", hex.EncodeToString(p.active.vkey),
+					"active_period", p.active.absPeriod(),
 					"target_period", targetAbs,
 				)
 			}
 			return
 		}
 		cur := &kes.SecretKey{
-			Depth:  a.active.depth,
-			Period: a.active.period,
-			Data:   a.active.buf.Bytes(),
+			Depth:  p.active.depth,
+			Period: p.active.period,
+			Data:   p.active.buf.Bytes(),
 		}
 		next, err := kes.Update(cur) // reads (and internally copies) cur.Data
 		if err != nil {
-			if !a.active.exhausted {
-				a.active.exhausted = true
-				a.metrics.setExhausted(true)
-				a.logger.Warn("KES key update failed; marking exhausted",
+			if !p.active.exhausted {
+				p.active.exhausted = true
+				p.metrics.setExhausted(true)
+				p.logger.Warn("KES key update failed; marking exhausted",
 					"error", err,
-					"kes_vkey", hex.EncodeToString(a.active.vkey),
+					"kes_vkey", hex.EncodeToString(p.active.vkey),
 				)
 			}
 			return
 		}
 		// Interim forward-erasure: wipe the spent key material now, then install
 		// the evolved key. TODO adopt gouroboros SecretKey.Zeroize once pinned.
-		a.active.buf.Zeroize()
-		if err := storeEvolvedKey(a.active.buf, next.Data); err != nil {
+		p.active.buf.Zeroize()
+		if err := storeEvolvedKey(p.active.buf, next.Data); err != nil {
 			securemem.Wipe(next.Data)
-			a.logger.Error(
+			p.logger.Error(
 				"failed to store evolved KES key; discarding the key",
 				"error",
 				err,
 			)
 			// The buffer was already zeroized above and next.Data failed to
-			// land, so a.active.period is stale relative to its now-zeroed
+			// land, so p.active.period is stale relative to its now-zeroed
 			// buffer contents. Discard the key entirely rather than leaving
 			// it installed: Sign() would otherwise happily sign over the
 			// zeroed buffer for the (unchanged) period it still reports.
-			a.active.close()
-			a.active = nil
+			p.active.close()
+			p.setActiveLocked(nil)
 			// No active key exists at all now, so "exhausted" (which implies a
 			// key that reached its final period) is the wrong signal; clear it
 			// rather than reporting a false key-exhaustion health state.
-			a.metrics.setExhausted(false)
+			p.metrics.setExhausted(false)
 			return
 		}
 		securemem.Wipe(next.Data) // erase the transient evolved copy
-		a.active.period = next.Period
-		a.metrics.incEvolutions()
+		p.active.period = next.Period
+		p.metrics.incEvolutions()
 	}
 }
 
 // activeAuthorizedLocked reports whether the active key's exact period passed
-// its most recent guard authorization. Caller holds a.mu.
-func (a *Agent) activeAuthorizedLocked() bool {
-	return a.active != nil && a.guardedSet &&
-		a.guardedPeriod == a.active.absPeriod()
+// its most recent guard authorization. Caller holds p.mu.
+func (p *profile) activeAuthorizedLocked() bool {
+	return p.active != nil && p.guardedSet &&
+		p.guardedPeriod == p.active.absPeriod()
 }
 
-// buildKeyPushLocked builds a KeyPush for the current active key. Caller holds a.mu.
-func (a *Agent) buildKeyPushLocked() (KeyPush, bool) {
+// buildKeyPushLocked builds a KeyPush for the current active key. Caller holds p.mu.
+func (p *profile) buildKeyPushLocked() (KeyPush, bool) {
 	// The active key advances before Tick persists the new guard floor. Do not
 	// release that evolved key until authorization for its exact period succeeds;
 	// guardedPeriod remains at the last successful period so Tick can retry.
-	if !a.activeAuthorizedLocked() {
+	if !p.activeAuthorizedLocked() {
 		return KeyPush{}, false
 	}
 	// Never hand a producer a key for a period the guard has already moved past:
 	// serving it would let the producer sign below the monotonic floor, which is
 	// the rollback the guard exists to prevent. The two can diverge when an
 	// install advances the floor but then fails and restores the previous key.
-	if floor, set := a.guard.Floor(); set && a.active.absPeriod() < floor {
-		a.logger.Warn("refusing to serve a key below the period guard floor",
-			"active_period", a.active.absPeriod(),
+	if floor, set := p.guard.Floor(); set && p.active.absPeriod() < floor {
+		p.logger.Warn("refusing to serve a key below the period guard floor",
+			"active_period", p.active.absPeriod(),
 			"floor", floor,
-			"kes_vkey", hex.EncodeToString(a.active.vkey),
+			"kes_vkey", hex.EncodeToString(p.active.vkey),
 		)
 		return KeyPush{}, false
 	}
 	return KeyPush{
 		Type:       "key_push",
-		Period:     a.active.absPeriod(),
-		Depth:      a.active.depth,
-		KESSignKey: a.active.buf.Clone(),
-		KESVKey:    append([]byte(nil), a.active.vkey...),
-		OpCert:     append([]byte(nil), a.active.opcert...),
+		Period:     p.active.absPeriod(),
+		Depth:      p.active.depth,
+		KESSignKey: p.active.buf.Clone(),
+		KESVKey:    append([]byte(nil), p.active.vkey...),
+		OpCert:     append([]byte(nil), p.active.opcert...),
 	}, true
 }
 
 // broadcastLocked pushes the current key to all serve-key subscribers. Caller
-// holds a.mu.
-func (a *Agent) broadcastLocked() {
-	base, ok := a.buildKeyPushLocked()
+// holds p.mu.
+func (p *profile) broadcastLocked() {
+	base, ok := p.buildKeyPushLocked()
 	if !ok {
 		return
 	}
@@ -639,7 +852,7 @@ func (a *Agent) broadcastLocked() {
 	// needed, so superseded key material does not linger on the swappable heap
 	// and defeat the forward-erasure done on evolution.
 	defer securemem.Wipe(base.KESSignKey)
-	for _, ch := range a.subs {
+	for _, ch := range p.subs {
 		kp := base
 		kp.KESSignKey = append([]byte(nil), base.KESSignKey...)
 		// Latest-wins: drain and wipe any stale push, then enqueue the newest.
@@ -650,7 +863,7 @@ func (a *Agent) broadcastLocked() {
 		}
 		select {
 		case ch <- kp:
-			a.metrics.incServedKeys()
+			p.metrics.incServedKeys()
 		default:
 			// Subscriber channel is still full (shouldn't happen since we just
 			// drained it above, but be defensive): wipe the copy we could not
@@ -661,22 +874,22 @@ func (a *Agent) broadcastLocked() {
 }
 
 // dropQueuedPushesBelowFloorLocked drains and wipes any queued key push whose
-// period is below the guard floor. Caller holds a.mu.
+// period is below the guard floor. Caller holds p.mu.
 //
 // buildKeyPushLocked refuses to build a below-floor push, but that only covers
 // pushes not yet built: a push enqueued while the key and the floor still
 // agreed stays in its subscriber's buffered channel, and a serve-key client
 // reading it would be handed a key for a period the floor has since passed.
-func (a *Agent) dropQueuedPushesBelowFloorLocked() {
-	floor, set := a.guard.Floor()
+func (p *profile) dropQueuedPushesBelowFloorLocked() {
+	floor, set := p.guard.Floor()
 	if !set {
 		return
 	}
-	for id, ch := range a.subs {
+	for id, ch := range p.subs {
 		select {
 		case kp := <-ch:
 			if kp.Period < floor {
-				a.logger.Warn(
+				p.logger.Warn(
 					"dropping queued KES key push below the guard floor",
 					"subscriber",
 					id,
@@ -701,124 +914,110 @@ func (a *Agent) dropQueuedPushesBelowFloorLocked() {
 
 // subscribe registers a serve-key subscriber and returns its id, its channel,
 // and the current key push (if a key is active) to send immediately.
-func (a *Agent) subscribe() (int, chan KeyPush, *KeyPush) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	id := a.nextSub
-	a.nextSub++
+func (p *profile) subscribe() (int, chan KeyPush, *KeyPush) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	id := p.nextSub
+	p.nextSub++
 	ch := make(chan KeyPush, 1)
-	a.subs[id] = ch
-	if kp, ok := a.buildKeyPushLocked(); ok {
+	p.subs[id] = ch
+	if kp, ok := p.buildKeyPushLocked(); ok {
 		return id, ch, &kp
 	}
 	return id, ch, nil
 }
 
-func (a *Agent) unsubscribe(id int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+func (p *profile) unsubscribe(id int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	// Drain and wipe any key push still queued for this subscriber so its
 	// plaintext signing-key copy does not outlive the subscription on the heap.
-	if ch, ok := a.subs[id]; ok {
+	if ch, ok := p.subs[id]; ok {
 		select {
 		case kp := <-ch:
 			securemem.Wipe(kp.KESSignKey)
 		default:
 		}
 	}
-	delete(a.subs, id)
+	delete(p.subs, id)
 }
 
 // Tick advances the scheduler once: it evolves the active key to the current
 // period and, if it advanced, authorizes and broadcasts the new key.
-func (a *Agent) Tick() {
-	cur := a.currentKESPeriod()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.metrics.setCurrentPeriod(cur)
-	if a.active == nil {
+func (p *profile) Tick() {
+	cur := p.currentKESPeriod()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.metrics.setCurrentPeriod(cur)
+	if p.active == nil {
 		return
 	}
-	a.evolveToLocked(cur)
-	if a.active == nil {
+	p.evolveToLocked(cur)
+	if p.active == nil {
 		// evolveToLocked discarded the key after a store failure.
 		return
 	}
-	newAbs := a.active.absPeriod()
-	a.metrics.setCurrentPeriod(newAbs)
-	a.metrics.setExhausted(a.active.exhausted)
+	newAbs := p.active.absPeriod()
+	p.metrics.setCurrentPeriod(newAbs)
+	p.metrics.setExhausted(p.active.exhausted)
 	// Authorize (and broadcast) whenever the current period hasn't already
 	// been successfully authorized: gating only on "did the in-memory key
 	// just evolve" would mean a transient guard-store failure (e.g. a full
 	// disk) is never retried, since evolveToLocked has already advanced
-	// a.active in memory and won't advance it again for the same period.
-	if a.activeAuthorizedLocked() {
+	// p.active in memory and won't advance it again for the same period.
+	if p.activeAuthorizedLocked() {
 		return
 	}
-	if err := a.guard.Authorize(hex.EncodeToString(a.active.vkey), newAbs); err != nil {
-		a.logger.Error("period guard refused evolved key; not serving",
+	if err := p.guard.Authorize(hex.EncodeToString(p.active.vkey), newAbs); err != nil {
+		p.logger.Error("period guard refused evolved key; not serving",
 			"error", err, "period", newAbs)
 		return
 	}
-	a.guardedPeriod = newAbs
-	a.guardedSet = true
-	a.broadcastLocked()
-	a.logger.Info("evolved KES key", "active_period", newAbs)
+	p.guardedPeriod = newAbs
+	p.guardedSet = true
+	p.broadcastLocked()
+	p.logger.Info("evolved KES key", "active_period", newAbs)
 }
 
-// Run drives the evolution scheduler until ctx is cancelled.
-func (a *Agent) Run(ctx context.Context) {
-	a.Tick() // evolve immediately on start
-	ticker := time.NewTicker(a.cfg.EvolveInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			a.Tick()
-		}
-	}
+// info returns a status snapshot of the profile.
+func (p *profile) info() *AgentInfo {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.infoLocked()
 }
 
-// Info returns a status snapshot.
-func (a *Agent) Info() *AgentInfo {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.infoLocked()
-}
-
-func (a *Agent) infoLocked() *AgentInfo {
-	floor, floorSet := a.guard.Floor()
+func (p *profile) infoLocked() *AgentInfo {
+	floor, floorSet := p.guard.Floor()
 	info := &AgentInfo{
-		Version:          a.cfg.Version,
-		Mode:             a.cfg.Mode,
-		CurrentPeriod:    a.currentKESPeriod(),
+		Profile:          p.cfg.Name,
+		Mode:             p.mode,
+		CurrentPeriod:    p.currentKESPeriod(),
 		MonotonicFloor:   floor,
 		FloorInitialized: floorSet,
 	}
-	if a.active != nil {
+	if p.active != nil {
 		info.HasActiveKey = true
-		info.ActivePeriod = a.active.absPeriod()
-		info.ActiveStart = a.active.startPeriod
-		info.ActiveEnd = a.active.endPeriod()
-		info.ActiveKESVKey = append([]byte(nil), a.active.vkey...)
-		info.ActiveIssueNumber = a.active.issueNumber
-		info.ActiveOpCert = append([]byte(nil), a.active.opcert...)
-		info.Exhausted = a.active.exhausted
+		info.ActivePeriod = p.active.absPeriod()
+		info.ActiveStart = p.active.startPeriod
+		info.ActiveEnd = p.active.endPeriod()
+		info.ActiveKESVKey = append([]byte(nil), p.active.vkey...)
+		info.ActiveIssueNumber = p.active.issueNumber
+		info.ActiveOpCert = append([]byte(nil), p.active.opcert...)
+		info.Exhausted = p.active.exhausted
 	}
-	if a.staged != nil {
-		info.StagedKESVKey = append([]byte(nil), a.staged.vkey...)
+	if p.staged != nil {
+		info.StagedKESVKey = append([]byte(nil), p.staged.vkey...)
 	}
 	return info
 }
 
-// Close wipes all key material.
-func (a *Agent) Close() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.active.close()
-	a.active = nil
-	a.staged.close()
-	a.staged = nil
+// close wipes all key material.
+func (p *profile) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.active.close()
+	p.setActiveLocked(nil)
+	p.staged.close()
+	p.staged = nil
+	p.guard.Close()
 }

@@ -126,3 +126,24 @@ func tamperOpCertKESVkey(t *testing.T, opcert, newVkey []byte) []byte {
 	}
 	return b
 }
+
+// sole returns a single-profile test agent's profile.
+func sole(t *testing.T, a *Agent) *profile {
+	t.Helper()
+	p, err := a.soleProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// named returns the agent's profile called name, failing the test if there is
+// none.
+func named(t *testing.T, a *Agent, name string) *profile {
+	t.Helper()
+	p := a.byName[name]
+	if p == nil {
+		t.Fatalf("no profile %q", name)
+	}
+	return p
+}

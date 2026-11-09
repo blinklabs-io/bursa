@@ -53,7 +53,10 @@ func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
 	// just the ctx-cancellation goroutine above: a listener closed externally
 	// (or any non-context Accept error) must also unblock handlers already
 	// parked in a blocking read, or wg.Wait() below hangs forever.
+	// Cancel srvCtx first, so a handler blocked in a shared key store call
+	// returns now instead of at its own timeout.
 	defer func() {
+		cancel()
 		conns.closeAll()
 		wg.Wait()
 	}()
@@ -77,12 +80,12 @@ func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
 		go func() {
 			defer wg.Done()
 			defer conns.remove(conn)
-			a.handleControlConn(conn)
+			a.handleControlConn(srvCtx, conn)
 		}()
 	}
 }
 
-func (a *Agent) handleControlConn(conn net.Conn) {
+func (a *Agent) handleControlConn(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	// Send the handshake Hello frame (matches the service socket; see the
 	// package doc comment in protocol.go).
@@ -98,7 +101,7 @@ func (a *Agent) handleControlConn(conn net.Conn) {
 			}
 			return
 		}
-		reply := a.dispatch(cmd)
+		reply := a.dispatch(ctx, cmd)
 		if err := writeFrame(conn, reply); err != nil {
 			a.logger.Debug("control write failed", "error", err)
 			return
@@ -106,32 +109,44 @@ func (a *Agent) handleControlConn(conn net.Conn) {
 	}
 }
 
-// dispatch executes a single control command and returns its reply.
-func (a *Agent) dispatch(cmd Command) Reply {
+// dispatch executes a single control command and returns its reply. Key
+// commands act on cmd.Profile, which may be omitted when the agent has one
+// profile. ctx bounds any shared key store calls the command makes.
+func (a *Agent) dispatch(ctx context.Context, cmd Command) Reply {
 	switch cmd.Command {
-	case CmdGenStagedKey:
-		vkey, err := a.GenStagedKey()
-		if err != nil {
-			return Reply{Ok: false, Error: err.Error()}
-		}
-		return Reply{Ok: true, KESVKey: vkey, Info: a.Info()}
-	case CmdInstallKey:
-		info, err := a.InstallKey(cmd.OpCert)
-		if err != nil {
-			return Reply{Ok: false, Error: err.Error()}
-		}
-		return Reply{Ok: true, Info: info}
-	case CmdDropKey:
-		if err := a.DropKey(cmd.Target); err != nil {
-			return Reply{Ok: false, Error: err.Error()}
-		}
-		return Reply{Ok: true, Info: a.Info()}
 	case CmdInfo:
-		return Reply{Ok: true, Info: a.Info()}
+		if cmd.Profile == "" && len(a.profiles) > 1 {
+			return Reply{Ok: true, Profiles: a.ProfilesInfo()}
+		}
+	case CmdGenStagedKey, CmdInstallKey, CmdDropKey:
 	default:
 		return Reply{
 			Ok:    false,
 			Error: fmt.Sprintf("unknown command %q", cmd.Command),
 		}
+	}
+	p, err := a.profileByName(cmd.Profile)
+	if err != nil {
+		return Reply{Ok: false, Error: err.Error()}
+	}
+	switch cmd.Command {
+	case CmdGenStagedKey:
+		vkey, err := p.genStagedKey(ctx)
+		if err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{Ok: true, KESVKey: vkey, Info: a.profileInfo(p)}
+	case CmdInstallKey:
+		if _, err := p.installKey(ctx, cmd.OpCert); err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{Ok: true, Info: a.profileInfo(p)}
+	case CmdDropKey:
+		if err := p.DropKey(cmd.Target); err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{Ok: true, Info: a.profileInfo(p)}
+	default: // CmdInfo
+		return Reply{Ok: true, Info: a.profileInfo(p)}
 	}
 }
