@@ -49,18 +49,25 @@ func TestAPIAuthConfig_Env(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.Api.ListenAddress != "0.0.0.0" || cfg.Api.JWTSecret != "01234567890123456789012345678901" {
+	if cfg.Api.ListenAddress != "0.0.0.0" ||
+		cfg.Api.JWTSecret != "01234567890123456789012345678901" {
 		t.Fatalf("API listen/auth env not loaded: %+v", cfg.Api)
 	}
 	if cfg.Api.TLSCertFile != "/run/secrets/api-cert.pem" ||
 		cfg.Api.TLSKeyFile != "/run/secrets/api-key.pem" {
 		t.Fatalf("API TLS env not loaded: %+v", cfg.Api)
 	}
-	if cfg.Api.JWTIssuer != "https://issuer.example" || cfg.Api.JWTAudience != "bursa-api" {
+	if cfg.Api.JWTIssuer != "https://issuer.example" ||
+		cfg.Api.JWTAudience != "bursa-api" {
 		t.Fatalf("API JWT claim constraints not loaded: %+v", cfg.Api)
 	}
-	if len(cfg.Api.JWTAdminSubjects) != 2 || cfg.Api.JWTAdminSubjects[0] != "wallet-admin" || cfg.Api.JWTAdminSubjects[1] != "backup-admin" {
-		t.Fatalf("API JWT admin subjects not loaded: %+v", cfg.Api.JWTAdminSubjects)
+	if len(cfg.Api.JWTAdminSubjects) != 2 ||
+		cfg.Api.JWTAdminSubjects[0] != "wallet-admin" ||
+		cfg.Api.JWTAdminSubjects[1] != "backup-admin" {
+		t.Fatalf(
+			"API JWT admin subjects not loaded: %+v",
+			cfg.Api.JWTAdminSubjects,
+		)
 	}
 }
 
@@ -110,6 +117,7 @@ signer:
     - name: "primary"
       type: "software"
       path: "/tmp/keys"
+      profile: "pool@preview"
   keys:
     - hash: "00000000000000000000000000000000000000000000000000000001"
       backend: "primary"
@@ -132,7 +140,10 @@ signer:
 	}
 
 	if cfg.Signer.ListenAddress != "127.0.0.1" {
-		t.Errorf("listen_address: got %q, want 127.0.0.1", cfg.Signer.ListenAddress)
+		t.Errorf(
+			"listen_address: got %q, want 127.0.0.1",
+			cfg.Signer.ListenAddress,
+		)
 	}
 	if cfg.Signer.ListenPort != 9090 {
 		t.Errorf("listen_port: got %d, want 9090", cfg.Signer.ListenPort)
@@ -141,13 +152,23 @@ signer:
 		t.Errorf("jwt_secret: got %q, want supersecret", cfg.Signer.JWTSecret)
 	}
 	if cfg.Signer.TLSCertFile != "/tmp/cert.pem" {
-		t.Errorf("tls_cert_file: got %q, want /tmp/cert.pem", cfg.Signer.TLSCertFile)
+		t.Errorf(
+			"tls_cert_file: got %q, want /tmp/cert.pem",
+			cfg.Signer.TLSCertFile,
+		)
 	}
 	if cfg.Signer.TLSKeyFile != "/tmp/key.pem" {
-		t.Errorf("tls_key_file: got %q, want /tmp/key.pem", cfg.Signer.TLSKeyFile)
+		t.Errorf(
+			"tls_key_file: got %q, want /tmp/key.pem",
+			cfg.Signer.TLSKeyFile,
+		)
 	}
-	if len(cfg.Signer.Backends) != 1 || cfg.Signer.Backends[0].Name != "primary" {
+	if len(cfg.Signer.Backends) != 1 ||
+		cfg.Signer.Backends[0].Name != "primary" {
 		t.Errorf("backends not loaded: %+v", cfg.Signer.Backends)
+	}
+	if got := cfg.Signer.Backends[0].Profile; got != "pool@preview" {
+		t.Errorf("backend profile: got %q, want pool@preview", got)
 	}
 	if len(cfg.Signer.Keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(cfg.Signer.Keys))
@@ -212,8 +233,13 @@ signer:
 	if len(cfg.Signer.Keys) != 0 {
 		t.Fatalf("keys persisted across loads: %+v", cfg.Signer.Keys)
 	}
-	if cfg.Signer.Watermark.Type != "mem" || cfg.Signer.Watermark.Mode != "enforce" || cfg.Signer.Watermark.Path != "" {
-		t.Fatalf("watermark did not reset to defaults: %+v", cfg.Signer.Watermark)
+	if cfg.Signer.Watermark.Type != "mem" ||
+		cfg.Signer.Watermark.Mode != "enforce" ||
+		cfg.Signer.Watermark.Path != "" {
+		t.Fatalf(
+			"watermark did not reset to defaults: %+v",
+			cfg.Signer.Watermark,
+		)
 	}
 }
 
@@ -235,6 +261,16 @@ func TestAPIListenAddressDefaultsToLoopback(t *testing.T) {
 		t.Fatalf(
 			"default API listen address: got %q, want 127.0.0.1",
 			cfg.Api.ListenAddress,
+		)
+	}
+}
+
+func TestMetricsListenAddressDefaultsToLoopback(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Metrics.ListenAddress != "127.0.0.1" {
+		t.Fatalf(
+			"default metrics listen address: got %q, want 127.0.0.1",
+			cfg.Metrics.ListenAddress,
 		)
 	}
 }
@@ -318,10 +354,16 @@ func TestKESAgentConfig_SocketModeDefaults(t *testing.T) {
 		t.Fatalf("LoadConfigFile: %v", err)
 	}
 	if cfg.KESAgent.ServiceSocketMode != "0600" {
-		t.Errorf("default service_socket_mode: got %q, want 0600", cfg.KESAgent.ServiceSocketMode)
+		t.Errorf(
+			"default service_socket_mode: got %q, want 0600",
+			cfg.KESAgent.ServiceSocketMode,
+		)
 	}
 	if cfg.KESAgent.ControlSocketMode != "0600" {
-		t.Errorf("default control_socket_mode: got %q, want 0600", cfg.KESAgent.ControlSocketMode)
+		t.Errorf(
+			"default control_socket_mode: got %q, want 0600",
+			cfg.KESAgent.ControlSocketMode,
+		)
 	}
 }
 
@@ -346,10 +388,16 @@ kes_agent:
 		t.Fatalf("LoadConfigFile: %v", err)
 	}
 	if cfg.KESAgent.ServiceSocketMode != "0660" {
-		t.Errorf("service_socket_mode: got %q, want 0660", cfg.KESAgent.ServiceSocketMode)
+		t.Errorf(
+			"service_socket_mode: got %q, want 0660",
+			cfg.KESAgent.ServiceSocketMode,
+		)
 	}
 	if cfg.KESAgent.ControlSocketMode != "0600" {
-		t.Errorf("control_socket_mode: got %q, want 0600", cfg.KESAgent.ControlSocketMode)
+		t.Errorf(
+			"control_socket_mode: got %q, want 0600",
+			cfg.KESAgent.ControlSocketMode,
+		)
 	}
 
 	// Env override must beat the file value, and each field has its own
@@ -362,7 +410,10 @@ kes_agent:
 		t.Fatalf("LoadConfigFile (env override): %v", err)
 	}
 	if cfg2.KESAgent.ServiceSocketMode != "0640" {
-		t.Errorf("env override service_socket_mode: got %q, want 0640", cfg2.KESAgent.ServiceSocketMode)
+		t.Errorf(
+			"env override service_socket_mode: got %q, want 0640",
+			cfg2.KESAgent.ServiceSocketMode,
+		)
 	}
 }
 

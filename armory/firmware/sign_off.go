@@ -12,14 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !unix
+//go:build !testnet
 
-package storage
+package main
 
-// syncDirectory is a no-op off unix. Windows has no directory-flush primitive:
-// os.Open yields a GENERIC_READ handle and FlushFileBuffers needs
-// GENERIC_WRITE, so the call fails rather than adding durability. The root
-// package settled this the same way in directory_sync_unsupported.go.
-func syncDirectory(string) error {
-	return nil
-}
+// testnetSign is empty: only a TESTNET=1 build serves the unauthenticated /sign.
+const testnetSign = ""
+
+// testnetRoutes is empty: only a TESTNET=1 build serves /sign and its /pubkey.
+var testnetRoutes []string

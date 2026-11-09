@@ -10,6 +10,7 @@ import (
 
 	apollo "github.com/Salvionied/apollo/v2"
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/ui/internal/txwitness"
 	gcbor "github.com/blinklabs-io/gouroboros/cbor"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/blinklabs-io/gouroboros/ledger/conway"
@@ -32,11 +33,20 @@ func TestPolicyFromScript_RoundTrip(t *testing.T) {
 		t.Fatalf("PolicyFromScript: %v", err)
 	}
 	if got.Threshold != 2 || len(got.Participants) != 3 {
-		t.Fatalf("got %d-of-%d, want 2-of-3", got.Threshold, len(got.Participants))
+		t.Fatalf(
+			"got %d-of-%d, want 2-of-3",
+			got.Threshold,
+			len(got.Participants),
+		)
 	}
 	for i, part := range got.Participants {
 		if part.KeyHashHex != in.Participants[i].KeyHashHex {
-			t.Errorf("participant %d key hash = %s, want %s", i, part.KeyHashHex, in.Participants[i].KeyHashHex)
+			t.Errorf(
+				"participant %d key hash = %s, want %s",
+				i,
+				part.KeyHashHex,
+				in.Participants[i].KeyHashHex,
+			)
 		}
 	}
 }
@@ -63,7 +73,11 @@ func TestPolicyFromScript_TimeLocked(t *testing.T) {
 		t.Errorf("invalid_after = %v, want %d", got.InvalidAfter, after)
 	}
 	if got.Threshold != 1 || len(got.Participants) != 1 {
-		t.Fatalf("got %d-of-%d, want 1-of-1", got.Threshold, len(got.Participants))
+		t.Fatalf(
+			"got %d-of-%d, want 1-of-1",
+			got.Threshold,
+			len(got.Participants),
+		)
 	}
 }
 
@@ -111,7 +125,10 @@ func TestPolicyFromScript_RejectsMultipleThresholdClauses(t *testing.T) {
 		t.Fatalf("NewScriptAll: %v", err)
 	}
 	if _, err := PolicyFromScript(all); !errors.Is(err, ErrInvalidTx) {
-		t.Fatalf("PolicyFromScript(two threshold clauses) error = %v, want ErrInvalidTx", err)
+		t.Fatalf(
+			"PolicyFromScript(two threshold clauses) error = %v, want ErrInvalidTx",
+			err,
+		)
 	}
 }
 
@@ -147,7 +164,11 @@ func TestPolicyFromScript_RejectsInvalidThresholds(t *testing.T) {
 				t.Fatalf("decode script: %v", err)
 			}
 			if _, err := PolicyFromScript(ns); !errors.Is(err, ErrInvalidTx) {
-				t.Fatalf("PolicyFromScript threshold %d error = %v, want ErrInvalidTx", tc.n, err)
+				t.Fatalf(
+					"PolicyFromScript threshold %d error = %v, want ErrInvalidTx",
+					tc.n,
+					err,
+				)
 			}
 		})
 	}
@@ -190,7 +211,11 @@ func TestInspectTx_EmbeddedScript(t *testing.T) {
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("11", 32), 0, 10_000_000)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -203,7 +228,11 @@ func TestInspectTx_EmbeddedScript(t *testing.T) {
 		t.Fatal("expected IsMultiSig")
 	}
 	if info.Threshold != 2 || len(info.Participants) != 3 {
-		t.Errorf("got %d-of-%d, want 2-of-3", info.Threshold, len(info.Participants))
+		t.Errorf(
+			"got %d-of-%d, want 2-of-3",
+			info.Threshold,
+			len(info.Participants),
+		)
 	}
 	if info.SignedCount != 0 {
 		t.Errorf("signed_count = %d, want 0", info.SignedCount)
@@ -212,14 +241,21 @@ func TestInspectTx_EmbeddedScript(t *testing.T) {
 		t.Error("Build attaches the script, so ScriptEmbedded should be true")
 	}
 	if info.Label != acct.Label {
-		t.Errorf("label = %q, want %q (recovered via FindByScriptHash)", info.Label, acct.Label)
+		t.Errorf(
+			"label = %q, want %q (recovered via FindByScriptHash)",
+			info.Label,
+			acct.Label,
+		)
 	}
 	if info.ScriptHash == "" {
 		t.Error("expected a non-empty script hash")
 	}
 	for _, p := range info.Participants {
 		if p.Signed {
-			t.Errorf("participant %s reported signed on an unsigned tx", p.KeyHash)
+			t.Errorf(
+				"participant %s reported signed on an unsigned tx",
+				p.KeyHash,
+			)
 		}
 	}
 }
@@ -250,10 +286,15 @@ func TestInspectTx_MintOnlyIsNotMultiSig(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if info.IsMultiSig {
-		t.Errorf("mint-only native script must not be classified multisig: %+v", info)
+		t.Errorf(
+			"mint-only native script must not be classified multisig: %+v",
+			info,
+		)
 	}
 	if info.ScriptEmbedded {
-		t.Error("mint-only tx must not report ScriptEmbedded (routed to the vkey path)")
+		t.Error(
+			"mint-only tx must not report ScriptEmbedded (routed to the vkey path)",
+		)
 	}
 }
 
@@ -278,7 +319,11 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -295,10 +340,17 @@ func TestInspectTx_MultiSigSpendPlusMint(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig {
-		t.Fatalf("unrelated mint script must not suppress real spend classification: %+v", info)
+		t.Fatalf(
+			"unrelated mint script must not suppress real spend classification: %+v",
+			info,
+		)
 	}
 	if info.Threshold != 2 || len(info.Participants) != 2 {
-		t.Errorf("got %d-of-%d, want 2-of-2", info.Threshold, len(info.Participants))
+		t.Errorf(
+			"got %d-of-%d, want 2-of-2",
+			info.Threshold,
+			len(info.Participants),
+		)
 	}
 }
 
@@ -307,14 +359,21 @@ func TestInspectTx_SharedPaymentAndMintScript(t *testing.T) {
 	svc := NewService(fc, nil, &memAccounts{})
 	_, khA, _ := multiSigKeyHash(t, mnemonicA)
 	_, khB, _ := multiSigKeyHash(t, mnemonicB)
-	acct, err := createForTest(svc, CreateRequest{Label: "treasury", Network: "preview", Policy: Policy{
-		Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
-	}})
+	acct, err := createForTest(
+		svc,
+		CreateRequest{Label: "treasury", Network: "preview", Policy: Policy{
+			Threshold: 2, Participants: []Participant{{KeyHashHex: khA}, {KeyHashHex: khB}},
+		}},
+	)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -323,13 +382,21 @@ func TestInspectTx_SharedPaymentAndMintScript(t *testing.T) {
 		t.Fatalf("decodeScript: %v", err)
 	}
 	tx := decodeConwayTx(t, built.UnsignedTxCBOR)
-	injectMint(t, &tx, hex.EncodeToString(mintScript.Hash().Bytes()), tx.WitnessSet.NativeScripts())
+	injectMint(
+		t,
+		&tx,
+		hex.EncodeToString(mintScript.Hash().Bytes()),
+		tx.WitnessSet.NativeScripts(),
+	)
 	info, err := svc.InspectTx(encodeConwayTx(t, &tx))
 	if err != nil {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig || info.Threshold != 2 || len(info.Participants) != 2 {
-		t.Fatalf("shared payment/mint script must classify as 2-of-2 multisig: %+v", info)
+		t.Fatalf(
+			"shared payment/mint script must classify as 2-of-2 multisig: %+v",
+			info,
+		)
 	}
 }
 
@@ -347,8 +414,10 @@ func TestInspectTx_ScriptWithdrawalIsUnsupported(t *testing.T) {
 	svc := NewService(fc, nil, &memAccounts{})
 
 	stakeScript, err := composeScript(Policy{
-		Threshold:    1,
-		Participants: []Participant{{KeyHashHex: hex.EncodeToString(bytesRepeat(5, 28))}},
+		Threshold: 1,
+		Participants: []Participant{
+			{KeyHashHex: hex.EncodeToString(bytesRepeat(5, 28))},
+		},
 	})
 	if err != nil {
 		t.Fatalf("composeScript: %v", err)
@@ -360,10 +429,16 @@ func TestInspectTx_ScriptWithdrawalIsUnsupported(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig || !info.ScriptEmbedded {
-		t.Fatalf("stake-script withdrawal should classify as an embedded multisig: %+v", info)
+		t.Fatalf(
+			"stake-script withdrawal should classify as an embedded multisig: %+v",
+			info,
+		)
 	}
 	if info.Threshold != 0 || len(info.Participants) != 0 {
-		t.Fatalf("stake-script withdrawal must NOT be treated as a payment-multisig spend (want threshold 0, no participants): %+v", info)
+		t.Fatalf(
+			"stake-script withdrawal must NOT be treated as a payment-multisig spend (want threshold 0, no participants): %+v",
+			info,
+		)
 	}
 }
 
@@ -379,8 +454,10 @@ func TestInspectTx_VotingProcedureScriptIsUnsupported(t *testing.T) {
 	svc := NewService(fc, nil, &memAccounts{})
 
 	voteScript, err := composeScript(Policy{
-		Threshold:    1,
-		Participants: []Participant{{KeyHashHex: hex.EncodeToString(bytesRepeat(6, 28))}},
+		Threshold: 1,
+		Participants: []Participant{
+			{KeyHashHex: hex.EncodeToString(bytesRepeat(6, 28))},
+		},
 	})
 	if err != nil {
 		t.Fatalf("composeScript: %v", err)
@@ -392,10 +469,16 @@ func TestInspectTx_VotingProcedureScriptIsUnsupported(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig || !info.ScriptEmbedded {
-		t.Fatalf("governance-vote script should classify as an embedded multisig: %+v", info)
+		t.Fatalf(
+			"governance-vote script should classify as an embedded multisig: %+v",
+			info,
+		)
 	}
 	if info.Threshold != 0 || len(info.Participants) != 0 {
-		t.Fatalf("governance-vote script must NOT be treated as a payment-multisig spend (want threshold 0, no participants): %+v", info)
+		t.Fatalf(
+			"governance-vote script must NOT be treated as a payment-multisig spend (want threshold 0, no participants): %+v",
+			info,
+		)
 	}
 }
 
@@ -410,8 +493,10 @@ func TestInspectTx_StakeScriptAlsoMintIsUnsupported(t *testing.T) {
 	svc := NewService(fc, nil, &memAccounts{})
 
 	script, err := composeScript(Policy{
-		Threshold:    1,
-		Participants: []Participant{{KeyHashHex: hex.EncodeToString(bytesRepeat(9, 28))}},
+		Threshold: 1,
+		Participants: []Participant{
+			{KeyHashHex: hex.EncodeToString(bytesRepeat(9, 28))},
+		},
 	})
 	if err != nil {
 		t.Fatalf("composeScript: %v", err)
@@ -423,10 +508,16 @@ func TestInspectTx_StakeScriptAlsoMintIsUnsupported(t *testing.T) {
 		t.Fatalf("InspectTx: %v", err)
 	}
 	if !info.IsMultiSig || !info.ScriptEmbedded {
-		t.Fatalf("stake script reused as a mint policy should classify as an embedded multisig: %+v", info)
+		t.Fatalf(
+			"stake script reused as a mint policy should classify as an embedded multisig: %+v",
+			info,
+		)
 	}
 	if info.Threshold != 0 || len(info.Participants) != 0 {
-		t.Fatalf("stake-script-also-mint must NOT be routed to the vkey path (want threshold 0, no participants): %+v", info)
+		t.Fatalf(
+			"stake-script-also-mint must NOT be routed to the vkey path (want threshold 0, no participants): %+v",
+			info,
+		)
 	}
 }
 
@@ -445,17 +536,29 @@ func TestStakeScriptCredentialHashes_Certificate(t *testing.T) {
 		tx.Body.TxCertificates = []lcommon.CertificateWrapper{{
 			Type: uint(lcommon.CertificateTypeStakeDeregistration),
 			Certificate: &lcommon.StakeDeregistrationCertificate{
-				StakeCredential: lcommon.Credential{CredType: credType, Credential: credHash},
+				StakeCredential: lcommon.Credential{
+					CredType:   credType,
+					Credential: credHash,
+				},
 			},
 		}}
 		return tx
 	}
 
 	if got := stakeScriptCredentialHashes(scriptCred(lcommon.CredentialTypeScriptHash)); !got[scriptHashHex] {
-		t.Fatalf("stake-deregistration script credential %s not collected: %v", scriptHashHex, got)
+		t.Fatalf(
+			"stake-deregistration script credential %s not collected: %v",
+			scriptHashHex,
+			got,
+		)
 	}
-	if got := stakeScriptCredentialHashes(scriptCred(lcommon.CredentialTypeAddrKeyHash)); len(got) != 0 {
-		t.Fatalf("addr-key-hash credential must not be collected as a stake script: %v", got)
+	if got := stakeScriptCredentialHashes(scriptCred(lcommon.CredentialTypeAddrKeyHash)); len(
+		got,
+	) != 0 {
+		t.Fatalf(
+			"addr-key-hash credential must not be collected as a stake script: %v",
+			got,
+		)
 	}
 }
 
@@ -494,7 +597,11 @@ func TestStakeScriptCredentialHashes_VotingProcedure(t *testing.T) {
 	}
 	for _, kh := range [][28]byte{drepKey, ccHotKey, poolKey} {
 		if got[hex.EncodeToString(kh[:])] {
-			t.Errorf("key-hash voter %x must not be collected as a stake script: %v", kh, got)
+			t.Errorf(
+				"key-hash voter %x must not be collected as a stake script: %v",
+				kh,
+				got,
+			)
 		}
 	}
 	if len(got) != 2 {
@@ -506,7 +613,11 @@ func TestStakeScriptCredentialHashes_VotingProcedure(t *testing.T) {
 // carry a reward-account withdrawal keyed by ns's script hash, plus ns in the
 // witness set — the shape a script-credentialed (stake-purpose) withdrawal
 // takes. See mintOnlyTxHex for why this is done at the gouroboros struct level.
-func injectScriptWithdrawal(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) string {
+func injectScriptWithdrawal(
+	t *testing.T,
+	fc *fakeChain,
+	ns *bursa.NativeScript,
+) string {
 	t.Helper()
 	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
 
@@ -515,7 +626,11 @@ func injectScriptWithdrawal(t *testing.T, fc *fakeChain, ns *bursa.NativeScript)
 	// script hash.
 	scriptHash := ns.Hash()
 	raw := append(
-		[]byte{byte(lcommon.AddressTypeNoneScript<<4 | lcommon.AddressNetworkTestnet)},
+		[]byte{
+			byte(
+				lcommon.AddressTypeNoneScript<<4 | lcommon.AddressNetworkTestnet,
+			),
+		},
 		scriptHash.Bytes()...,
 	)
 	addr, err := lcommon.NewAddressFromBytes(raw)
@@ -523,7 +638,10 @@ func injectScriptWithdrawal(t *testing.T, fc *fakeChain, ns *bursa.NativeScript)
 		t.Fatalf("reward addr: %v", err)
 	}
 	tx.Body.TxWithdrawals = map[*lcommon.Address]uint64{&addr: 1_000_000}
-	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType(
+		[]lcommon.NativeScript{*ns},
+		true,
+	)
 
 	tx.SetCbor(nil)
 	tx.Body.SetCbor(nil)
@@ -535,18 +653,28 @@ func injectScriptWithdrawal(t *testing.T, fc *fakeChain, ns *bursa.NativeScript)
 // governance voting procedure cast by a DRep-script voter keyed by ns's script
 // hash, plus ns in the witness set — the shape a vote-by-native-script tx takes.
 // See mintOnlyTxHex for why this is done at the gouroboros struct level.
-func injectScriptVote(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) string {
+func injectScriptVote(
+	t *testing.T,
+	fc *fakeChain,
+	ns *bursa.NativeScript,
+) string {
 	t.Helper()
 	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
 
 	var voterHash [28]byte
 	copy(voterHash[:], ns.Hash().Bytes())
-	voter := &lcommon.Voter{Type: lcommon.VoterTypeDRepScriptHash, Hash: voterHash}
+	voter := &lcommon.Voter{
+		Type: lcommon.VoterTypeDRepScriptHash,
+		Hash: voterHash,
+	}
 	govAction := &lcommon.GovActionId{GovActionIdx: 0}
 	tx.Body.TxVotingProcedures = lcommon.VotingProcedures{
 		voter: {govAction: lcommon.VotingProcedure{Vote: 1}},
 	}
-	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType(
+		[]lcommon.NativeScript{*ns},
+		true,
+	)
 
 	tx.SetCbor(nil)
 	tx.Body.SetCbor(nil)
@@ -559,10 +687,19 @@ func injectScriptVote(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) strin
 // hash as a mint policy — a stake/gov script reused as a mint policy. InspectTx
 // must let the stake purpose dominate the mint purpose and classify it as an
 // unsupported stake/gov multisig, not route it to the vkey path.
-func injectScriptWithdrawalAndMint(t *testing.T, fc *fakeChain, ns *bursa.NativeScript) string {
+func injectScriptWithdrawalAndMint(
+	t *testing.T,
+	fc *fakeChain,
+	ns *bursa.NativeScript,
+) string {
 	t.Helper()
 	tx := decodeConwayTx(t, injectScriptWithdrawal(t, fc, ns))
-	injectMint(t, &tx, hex.EncodeToString(ns.Hash().Bytes()), []lcommon.NativeScript{*ns})
+	injectMint(
+		t,
+		&tx,
+		hex.EncodeToString(ns.Hash().Bytes()),
+		[]lcommon.NativeScript{*ns},
+	)
 	return encodeConwayTx(t, &tx)
 }
 
@@ -578,7 +715,12 @@ func injectScriptWithdrawalAndMint(t *testing.T, fc *fakeChain, ns *bursa.Native
 // loaded via LoadTxCbor (GetTxCbor just re-serializes whatever is in the
 // loaded struct) — so post-hoc injection has to happen at the gouroboros
 // struct level, decoding then re-encoding the CBOR directly.
-func mintOnlyTxHex(t *testing.T, fc *fakeChain, mintScript *bursa.NativeScript, policyIDHex string) string {
+func mintOnlyTxHex(
+	t *testing.T,
+	fc *fakeChain,
+	mintScript *bursa.NativeScript,
+	policyIDHex string,
+) string {
 	t.Helper()
 	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
 	injectMint(t, &tx, policyIDHex, []lcommon.NativeScript{*mintScript})
@@ -591,10 +733,17 @@ func mintOnlyTxHex(t *testing.T, fc *fakeChain, mintScript *bursa.NativeScript, 
 // the result carries both the original spend script and the new mint policy
 // script. See mintOnlyTxHex for why this happens at the struct level rather
 // than through Apollo's builder methods.
-func addMintToTx(t *testing.T, unsignedTxCBOR string, mintScript *bursa.NativeScript, policyIDHex string) string {
+func addMintToTx(
+	t *testing.T,
+	unsignedTxCBOR string,
+	mintScript *bursa.NativeScript,
+	policyIDHex string,
+) string {
 	t.Helper()
 	tx := decodeConwayTx(t, unsignedTxCBOR)
-	scripts := append([]lcommon.NativeScript{*mintScript}, tx.WitnessSet.NativeScripts()...)
+	scripts := append(
+		[]lcommon.NativeScript{*mintScript},
+		tx.WitnessSet.NativeScripts()...)
 	injectMint(t, &tx, policyIDHex, scripts)
 	return encodeConwayTx(t, &tx)
 }
@@ -616,7 +765,12 @@ func decodeConwayTx(t *testing.T, txHex string) conway.ConwayTransaction {
 // injectMint sets tx.Body.TxMint to mint one unit under policyIDHex and
 // replaces the witness set's native scripts with scripts, clearing the CBOR
 // caches so re-encoding reflects the change.
-func injectMint(t *testing.T, tx *conway.ConwayTransaction, policyIDHex string, scripts []lcommon.NativeScript) {
+func injectMint(
+	t *testing.T,
+	tx *conway.ConwayTransaction,
+	policyIDHex string,
+	scripts []lcommon.NativeScript,
+) {
 	t.Helper()
 	policyBytes, err := hex.DecodeString(policyIDHex)
 	if err != nil {
@@ -671,12 +825,17 @@ func TestInspectTx_RejectsUnboundEmbeddedScript(t *testing.T) {
 	fc := newFakeChain()
 	svc := NewService(fc, nil, &memAccounts{})
 	_, kh, _ := multiSigKeyHash(t, mnemonicA)
-	ns, err := composeScript(Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: kh}}})
+	ns, err := composeScript(
+		Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: kh}}},
+	)
 	if err != nil {
 		t.Fatalf("composeScript: %v", err)
 	}
 	tx := decodeConwayTx(t, ordinaryUnsignedTxHex(t, fc))
-	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType([]lcommon.NativeScript{*ns}, true)
+	tx.WitnessSet.WsNativeScripts = gcbor.NewSetType(
+		[]lcommon.NativeScript{*ns},
+		true,
+	)
 	tx.SetCbor(nil)
 	tx.WitnessSet.SetCbor(nil)
 
@@ -694,7 +853,10 @@ func TestInspectTx_RejectsUnboundEmbeddedScript(t *testing.T) {
 func TestInspectTx_MalformedHex(t *testing.T) {
 	fc := newFakeChain()
 	svc := NewService(fc, nil, &memAccounts{})
-	if _, err := svc.InspectTx("not-hex-at-all"); !errors.Is(err, ErrInvalidTx) {
+	if _, err := svc.InspectTx("not-hex-at-all"); !errors.Is(
+		err,
+		ErrInvalidTx,
+	) {
 		t.Fatalf("InspectTx(bad hex) error = %v, want ErrInvalidTx", err)
 	}
 }
@@ -710,7 +872,10 @@ func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "good",
 		Network: "preview",
-		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: khA}}},
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: khA}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -723,7 +888,12 @@ func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 
 	// Inject a second, corrupt account directly into the store (bypassing
 	// Create, which would validate the script).
-	corrupt := Account{ID: "corrupt", Label: "corrupt", Network: "preview", ScriptCBOR: "zz-not-hex"}
+	corrupt := Account{
+		ID:         "corrupt",
+		Label:      "corrupt",
+		Network:    "preview",
+		ScriptCBOR: "zz-not-hex",
+	}
 	svc.accounts.(*memAccounts).add(corrupt)
 
 	got, ok, err := svc.FindByScriptHash(wantHash)
@@ -734,7 +904,8 @@ func TestFindByScriptHash_SkipsDecodeErrors(t *testing.T) {
 		t.Fatalf("FindByScriptHash = %+v, %v, want %s, true", got, ok, acct.ID)
 	}
 
-	if _, ok, err := svc.FindByScriptHash(strings.Repeat("ab", 28)); err != nil || ok {
+	if _, ok, err := svc.FindByScriptHash(strings.Repeat("ab", 28)); err != nil ||
+		ok {
 		t.Fatalf("FindByScriptHash(unknown) = %v, %v, want false, nil", ok, err)
 	}
 }
@@ -758,14 +929,21 @@ func TestCosignImported_AddsAndMerges(t *testing.T) {
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "solo",
 		Network: "preview",
-		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: mk.KeyHashHex}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("22", 32), 0, 10_000_000)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -775,7 +953,10 @@ func TestCosignImported_AddsAndMerges(t *testing.T) {
 		t.Fatalf("CosignImported: %v", err)
 	}
 	if !res.Added || res.SignedCount != 1 || res.Threshold != 1 {
-		t.Fatalf("CosignImported = %+v, want Added=true SignedCount=1 Threshold=1", res)
+		t.Fatalf(
+			"CosignImported = %+v, want Added=true SignedCount=1 Threshold=1",
+			res,
+		)
 	}
 	if res.TxCBOR == "" {
 		t.Fatal("expected non-empty tx_cbor")
@@ -795,6 +976,80 @@ func TestCosignImported_AddsAndMerges(t *testing.T) {
 	}
 }
 
+func TestCosignImportedRejectsAuxiliaryData(t *testing.T) {
+	fc := newFakeChain()
+	svc := NewService(fc, newTestKeystore(t, mnemonicA), &memAccounts{})
+	mk, err := svc.MyKey("test-password-123")
+	if err != nil {
+		t.Fatalf("MyKey: %v", err)
+	}
+	acct, err := createForTest(svc, CreateRequest{
+		Label:   "solo",
+		Network: "preview",
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: mk.KeyHashHex}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	fc.addUTxO(acct.ScriptAddress, strings.Repeat("22", 32), 0, 10_000_000)
+	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{
+		To: externalAddr(t), Lovelace: "1000000",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	raw, err := hex.DecodeString(built.UnsignedTxCBOR)
+	if err != nil {
+		t.Fatalf("decode transaction hex: %v", err)
+	}
+	var parts []gcbor.RawMessage
+	if _, err := gcbor.Decode(raw, &parts); err != nil || len(parts) != 4 {
+		t.Fatalf("decode transaction: %v", err)
+	}
+	metadata, err := lcommon.DecodeMetadatumRaw([]byte{0xa1, 0x01, 0x61, 0x61})
+	if err != nil {
+		t.Fatalf("decode metadata fixture: %v", err)
+	}
+	hash := lcommon.Blake2b256Hash(metadata.Cbor())
+	var body map[uint64]gcbor.RawMessage
+	if _, err := gcbor.Decode(parts[0], &body); err != nil {
+		t.Fatalf("decode transaction body: %v", err)
+	}
+	if body == nil {
+		t.Fatal("decode transaction body: nil map")
+	}
+	body[7], err = gcbor.Encode(hash)
+	if err != nil {
+		t.Fatalf("encode auxiliary data hash: %v", err)
+	}
+	bodyRaw, err := gcbor.Encode(body)
+	if err != nil {
+		t.Fatalf("encode transaction body: %v", err)
+	}
+	raw, err = gcbor.Encode([]gcbor.RawMessage{
+		bodyRaw,
+		parts[1],
+		parts[2],
+		metadata.Cbor(),
+	})
+	if err != nil {
+		t.Fatalf("encode transaction with metadata: %v", err)
+	}
+
+	_, err = svc.CosignImported(hex.EncodeToString(raw), "test-password-123")
+	if !errors.Is(err, ErrInvalidTx) ||
+		!errors.Is(err, txwitness.ErrImportedAuxiliaryData) {
+		t.Fatalf(
+			"CosignImported error = %v, want ErrInvalidTx and ErrImportedAuxiliaryData",
+			err,
+		)
+	}
+}
+
 // TestCosignImported_NotAParticipant builds an account whose sole participant
 // is a foreign key-hash the wallet does not own, and asserts CosignImported
 // refuses with ErrInvalidRequest rather than silently signing a script it
@@ -807,19 +1062,29 @@ func TestCosignImported_NotAParticipant(t *testing.T) {
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "foreign",
 		Network: "preview",
-		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: strings.Repeat("ab", 28)}}},
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: strings.Repeat("ab", 28)}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("33", 32), 0, 10_000_000)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if _, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123"); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123"); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Fatalf("CosignImported error = %v, want ErrInvalidRequest", err)
 	}
 }
@@ -860,8 +1125,11 @@ func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
 		Label:   "joint",
 		Network: "preview",
 		Policy: Policy{
-			Threshold:    2,
-			Participants: []Participant{{KeyHashHex: mkA.KeyHashHex}, {KeyHashHex: mkB.KeyHashHex}},
+			Threshold: 2,
+			Participants: []Participant{
+				{KeyHashHex: mkA.KeyHashHex},
+				{KeyHashHex: mkB.KeyHashHex},
+			},
 		},
 	})
 	if err != nil {
@@ -869,7 +1137,11 @@ func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("44", 32), 0, 10_000_000)
 
-	built, err := svcA.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svcA.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -903,7 +1175,10 @@ func TestCosignImported_PreservesOtherCosigner(t *testing.T) {
 	}
 	for _, p := range info.Participants {
 		if !p.Signed {
-			t.Errorf("participant %s not signed, want both participants signed", p.KeyHash)
+			t.Errorf(
+				"participant %s not signed, want both participants signed",
+				p.KeyHash,
+			)
 		}
 	}
 }
@@ -935,16 +1210,29 @@ func TestSubmitImported_BelowThresholdRejected(t *testing.T) {
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("55", 32), 0, 10_000_000)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	signed, err := svc.CosignImported(built.UnsignedTxCBOR, "test-password-123") // 1 of 2
+	signed, err := svc.CosignImported(
+		built.UnsignedTxCBOR,
+		"test-password-123",
+	) // 1 of 2
 	if err != nil {
 		t.Fatalf("CosignImported: %v", err)
 	}
-	if _, err := svc.SubmitImported(context.Background(), signed.TxCBOR); !errors.Is(err, ErrInvalidWitness) {
-		t.Fatalf("SubmitImported error = %v, want ErrInvalidWitness (below threshold)", err)
+	if _, err := svc.SubmitImported(context.Background(), signed.TxCBOR); !errors.Is(
+		err,
+		ErrInvalidWitness,
+	) {
+		t.Fatalf(
+			"SubmitImported error = %v, want ErrInvalidWitness (below threshold)",
+			err,
+		)
 	}
 }
 
@@ -963,14 +1251,21 @@ func TestSubmitImported_ThresholdMetBroadcasts(t *testing.T) {
 	acct, err := createForTest(svc, CreateRequest{
 		Label:   "1of1",
 		Network: "preview",
-		Policy:  Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: mk.KeyHashHex}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("66", 32), 0, 10_000_000)
 
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -997,13 +1292,20 @@ func TestSubmitImportedClassifiesBackendTimeout(t *testing.T) {
 	}
 	acct, err := createForTest(svc, CreateRequest{
 		Label: "1of1", Network: "preview",
-		Policy: Policy{Threshold: 1, Participants: []Participant{{KeyHashHex: mk.KeyHashHex}}},
+		Policy: Policy{
+			Threshold:    1,
+			Participants: []Participant{{KeyHashHex: mk.KeyHashHex}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	fc.addUTxO(acct.ScriptAddress, strings.Repeat("77", 32), 0, 10_000_000)
-	built, err := svc.Build(context.Background(), acct.ID, BuildRequest{To: externalAddr(t), Lovelace: "1000000"})
+	built, err := svc.Build(
+		context.Background(),
+		acct.ID,
+		BuildRequest{To: externalAddr(t), Lovelace: "1000000"},
+	)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -1025,10 +1327,20 @@ func TestSubmitImportedClassifiesBackendTimeout(t *testing.T) {
 				t.Fatal("SubmitImported returned nil error")
 			}
 			if got := errors.Is(err, ErrSubmitUnknown); got != tc.unknown {
-				t.Fatalf("ErrSubmitUnknown = %t, want %t: %v", got, tc.unknown, err)
+				t.Fatalf(
+					"ErrSubmitUnknown = %t, want %t: %v",
+					got,
+					tc.unknown,
+					err,
+				)
 			}
 			if got := errors.Is(err, ErrSubmitRejected); got == tc.unknown {
-				t.Fatalf("ErrSubmitRejected = %t for unknown=%t: %v", got, tc.unknown, err)
+				t.Fatalf(
+					"ErrSubmitRejected = %t for unknown=%t: %v",
+					got,
+					tc.unknown,
+					err,
+				)
 			}
 		})
 	}

@@ -37,7 +37,10 @@ type fakeChain struct {
 	calls int
 }
 
-func (f *fakeChain) Asset(_ context.Context, asset string) (chain.AssetInfo, error) {
+func (f *fakeChain) Asset(
+	_ context.Context,
+	asset string,
+) (chain.AssetInfo, error) {
 	f.calls++
 	if err := f.errs[asset]; err != nil {
 		return chain.AssetInfo{}, err
@@ -88,7 +91,12 @@ func (f *fakeFetcher) callCount() int {
 // newTestService builds a Service over the supplied fakes with media OFF and a
 // throwaway data dir. The fetcher factory hands back ff (and records that a
 // client was requested) so no real libp2p host is ever created.
-func newTestService(t *testing.T, fc *fakeChain, units UnitsProvider, ff *fakeFetcher) (*Service, *int) {
+func newTestService(
+	t *testing.T,
+	fc *fakeChain,
+	units UnitsProvider,
+	ff *fakeFetcher,
+) (*Service, *int) {
 	t.Helper()
 	starts := 0
 	factory := func(_ context.Context) (fetcher, error) {
@@ -126,7 +134,11 @@ func TestOffByDefault(t *testing.T) {
 		t.Fatalf("Image while disabled = %v, want ErrMediaDisabled", err)
 	}
 	if *starts != 0 || ff.callCount() != 0 {
-		t.Fatalf("disabled Image started=%d fetched=%d; want 0/0 (nothing should touch IPFS)", *starts, ff.callCount())
+		t.Fatalf(
+			"disabled Image started=%d fetched=%d; want 0/0 (nothing should touch IPFS)",
+			*starts,
+			ff.callCount(),
+		)
 	}
 }
 
@@ -135,7 +147,15 @@ func TestEnableStartsClientAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	starts := 0
 	factory := func(_ context.Context) (fetcher, error) { starts++; return ff, nil }
-	s, err := NewService(context.Background(), Config{Chain: &fakeChain{}, Units: staticUnits("u"), DataDir: dir, factory: factory})
+	s, err := NewService(
+		context.Background(),
+		Config{
+			Chain:   &fakeChain{},
+			Units:   staticUnits("u"),
+			DataDir: dir,
+			factory: factory,
+		},
+	)
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
@@ -161,7 +181,15 @@ func TestEnableStartsClientAndPersists(t *testing.T) {
 	starts2 := 0
 	ff2 := &fakeFetcher{}
 	factory2 := func(_ context.Context) (fetcher, error) { starts2++; return ff2, nil }
-	s2, err := NewService(context.Background(), Config{Chain: &fakeChain{}, Units: staticUnits("u"), DataDir: dir, factory: factory2})
+	s2, err := NewService(
+		context.Background(),
+		Config{
+			Chain:   &fakeChain{},
+			Units:   staticUnits("u"),
+			DataDir: dir,
+			factory: factory2,
+		},
+	)
 	if err != nil {
 		t.Fatalf("NewService (reload): %v", err)
 	}
@@ -169,7 +197,10 @@ func TestEnableStartsClientAndPersists(t *testing.T) {
 		t.Fatal("persisted enable not loaded on reload")
 	}
 	if starts2 != 1 {
-		t.Fatalf("reloaded service started client %d times, want 1 (persisted opt-in)", starts2)
+		t.Fatalf(
+			"reloaded service started client %d times, want 1 (persisted opt-in)",
+			starts2,
+		)
 	}
 }
 
@@ -240,7 +271,12 @@ func TestDisablePreventsConcurrentLazyStart(t *testing.T) {
 	}
 	ff := &fakeFetcher{data: validTestPNG()}
 	s, starts := newTestService(t, &fakeChain{infos: map[string]chain.AssetInfo{
-		"u": {OnchainMetadata: ipfsMeta("Token", "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")},
+		"u": {
+			OnchainMetadata: ipfsMeta(
+				"Token",
+				"ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			),
+		},
 	}}, units, ff)
 
 	// Model an enabled service whose earlier client startup failed, so Image
@@ -273,10 +309,24 @@ func ipfsMeta(name, image string) json.RawMessage {
 
 func TestListDiscoversFromMetadata(t *testing.T) {
 	fc := &fakeChain{infos: map[string]chain.AssetInfo{
-		"policyAname1": {Asset: "policyAname1", OnchainMetadata: ipfsMeta("Token One", "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")},
-		"policyBname2": {Asset: "policyBname2", OnchainMetadata: ipfsMeta("Token Two", "https://example.com/x.png")}, // non-ipfs → no CID
+		"policyAname1": {
+			Asset: "policyAname1",
+			OnchainMetadata: ipfsMeta(
+				"Token One",
+				"ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			),
+		},
+		"policyBname2": {
+			Asset:           "policyBname2",
+			OnchainMetadata: ipfsMeta("Token Two", "https://example.com/x.png"),
+		}, // non-ipfs → no CID
 	}}
-	s, _ := newTestService(t, fc, staticUnits("policyBname2", "policyAname1"), &fakeFetcher{})
+	s, _ := newTestService(
+		t,
+		fc,
+		staticUnits("policyBname2", "policyAname1"),
+		&fakeFetcher{},
+	)
 	got, err := s.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -285,16 +335,25 @@ func TestListDiscoversFromMetadata(t *testing.T) {
 		t.Fatalf("len(List) = %d, want 2", len(got))
 	}
 	// Sorted by unit: policyAname1 first.
-	if got[0].Unit != "policyAname1" || got[0].Name != "Token One" || got[0].ImageCID == "" {
+	if got[0].Unit != "policyAname1" || got[0].Name != "Token One" ||
+		got[0].ImageCID == "" {
 		t.Fatalf("nft[0] = %+v, want Token One with an ipfs CID", got[0])
 	}
 	if got[1].Unit != "policyBname2" || got[1].ImageCID != "" {
-		t.Fatalf("nft[1] = %+v, want Token Two with NO CID (non-ipfs image)", got[1])
+		t.Fatalf(
+			"nft[1] = %+v, want Token Two with NO CID (non-ipfs image)",
+			got[1],
+		)
 	}
 }
 
 func TestListNoWallet(t *testing.T) {
-	s, _ := newTestService(t, &fakeChain{}, func(context.Context) ([]string, error) { return nil, ErrNoWallet }, &fakeFetcher{})
+	s, _ := newTestService(
+		t,
+		&fakeChain{},
+		func(context.Context) ([]string, error) { return nil, ErrNoWallet },
+		&fakeFetcher{},
+	)
 	_, err := s.List(context.Background())
 	if !errors.Is(err, ErrNoWallet) {
 		t.Fatalf("List with no wallet = %v, want ErrNoWallet", err)
@@ -309,7 +368,12 @@ func TestListSkipsAssetLookupFailure(t *testing.T) {
 		},
 		errs: map[string]error{"bad": failing},
 	}
-	s, _ := newTestService(t, fc, staticUnits("bad", "missing", "good"), &fakeFetcher{})
+	s, _ := newTestService(
+		t,
+		fc,
+		staticUnits("bad", "missing", "good"),
+		&fakeFetcher{},
+	)
 	got, err := s.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -348,7 +412,10 @@ func TestImageFetchesCachesAndReuses(t *testing.T) {
 		t.Fatalf("Image (cached): %v", err)
 	}
 	if ff.callCount() != 1 {
-		t.Fatalf("fetch calls = %d after cached Image, want 1 (served from cache)", ff.callCount())
+		t.Fatalf(
+			"fetch calls = %d after cached Image, want 1 (served from cache)",
+			ff.callCount(),
+		)
 	}
 
 	// List should now report cached=true for the asset.
@@ -382,7 +449,11 @@ func TestImageMemoRevalidatesOwnershipWithoutMetadataLookup(t *testing.T) {
 		t.Fatalf("cached Image: %v", err)
 	}
 	if unitCalls != 2 || fc.calls != 1 {
-		t.Fatalf("lookup calls after cached image = units:%d asset:%d, want 2/1", unitCalls, fc.calls)
+		t.Fatalf(
+			"lookup calls after cached image = units:%d asset:%d, want 2/1",
+			unitCalls,
+			fc.calls,
+		)
 	}
 }
 
@@ -430,7 +501,10 @@ func TestImageMemoRefusesTransferredAsset(t *testing.T) {
 		t.Fatalf("first Image: %v", err)
 	}
 	held = false
-	if _, err := s.Image(context.Background(), "u"); !errors.Is(err, ErrNoWallet) {
+	if _, err := s.Image(context.Background(), "u"); !errors.Is(
+		err,
+		ErrNoWallet,
+	) {
 		t.Fatalf("memoized Image after transfer = %v, want ErrNoWallet", err)
 	}
 }
@@ -459,17 +533,28 @@ func TestImageMemoCacheMissRechecksOwnership(t *testing.T) {
 		t.Fatalf("remove cached image: %v", err)
 	}
 	held = false
-	if _, err := s.Image(context.Background(), "u"); !errors.Is(err, ErrNoWallet) {
+	if _, err := s.Image(context.Background(), "u"); !errors.Is(
+		err,
+		ErrNoWallet,
+	) {
 		t.Fatalf("Image after ownership change = %v, want ErrNoWallet", err)
 	}
 	if ff.callCount() != 1 {
-		t.Fatalf("fetch calls after ownership change = %d, want 1", ff.callCount())
+		t.Fatalf(
+			"fetch calls after ownership change = %d, want 1",
+			ff.callCount(),
+		)
 	}
 }
 
 func TestImageRefusesAssetNotHeld(t *testing.T) {
 	fc := &fakeChain{infos: map[string]chain.AssetInfo{
-		"heldUnit": {OnchainMetadata: ipfsMeta("Held", "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")},
+		"heldUnit": {
+			OnchainMetadata: ipfsMeta(
+				"Held",
+				"ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			),
+		},
 	}}
 	ff := &fakeFetcher{data: validTestPNG()}
 	s, _ := newTestService(t, fc, staticUnits("heldUnit"), ff)
@@ -482,7 +567,10 @@ func TestImageRefusesAssetNotHeld(t *testing.T) {
 		t.Fatalf("Image for unheld asset = %v, want ErrNoWallet", err)
 	}
 	if ff.callCount() != 0 {
-		t.Fatalf("fetch called %d times for unheld asset; want 0", ff.callCount())
+		t.Fatalf(
+			"fetch called %d times for unheld asset; want 0",
+			ff.callCount(),
+		)
 	}
 }
 
@@ -510,14 +598,19 @@ func TestServeImageStatusCodes(t *testing.T) {
 	}}
 
 	// Disabled → 403.
-	s, _ := newTestService(t, fc, staticUnits("u"), &fakeFetcher{data: validTestPNG()})
+	s, _ := newTestService(
+		t,
+		fc,
+		staticUnits("u"),
+		&fakeFetcher{data: validTestPNG()},
+	)
 	rec := httptest.NewRecorder()
 	s.ServeImage(context.Background(), rec, "u")
 	if rec.Code != 403 {
 		t.Fatalf("ServeImage disabled = %d, want 403", rec.Code)
 	}
 
-	// Enabled → 200 with bytes + immutable cache header.
+	// Enabled → 200 with bytes + a Cache-Control header.
 	if err := s.SetEnabled(true); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
@@ -528,6 +621,33 @@ func TestServeImageStatusCodes(t *testing.T) {
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc == "" {
 		t.Fatal("ServeImage missing Cache-Control header")
+	}
+}
+
+// The image route answers only for assets the active wallet holds and only
+// while media consent is on, so a stored copy would let any same-site page
+// replay it from the browser cache without reaching those checks.
+func TestServeImageSuccessIsNotStored(t *testing.T) {
+	cid := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+	fc := &fakeChain{infos: map[string]chain.AssetInfo{
+		"u": {OnchainMetadata: ipfsMeta("T", "ipfs://"+cid)},
+	}}
+	s, _ := newTestService(
+		t,
+		fc,
+		staticUnits("u"),
+		&fakeFetcher{data: validTestPNG()},
+	)
+	if err := s.SetEnabled(true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	s.ServeImage(context.Background(), rec, "u")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ServeImage = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
 }
 
@@ -545,7 +665,11 @@ func TestServeImageRejectsExecutableContent(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeImage(context.Background(), rec, "u")
 	if rec.Code != http.StatusUnsupportedMediaType {
-		t.Fatalf("ServeImage HTML = %d, want %d", rec.Code, http.StatusUnsupportedMediaType)
+		t.Fatalf(
+			"ServeImage HTML = %d, want %d",
+			rec.Code,
+			http.StatusUnsupportedMediaType,
+		)
 	}
 	if got := rec.Header().Get("Cache-Control"); got != "" {
 		t.Fatalf("rejected response Cache-Control = %q, want empty", got)
@@ -566,7 +690,11 @@ func TestServeImageRejectsDecompressionBomb(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.ServeImage(context.Background(), rec, "u")
 	if rec.Code != http.StatusUnsupportedMediaType {
-		t.Fatalf("ServeImage bomb = %d, want %d", rec.Code, http.StatusUnsupportedMediaType)
+		t.Fatalf(
+			"ServeImage bomb = %d, want %d",
+			rec.Code,
+			http.StatusUnsupportedMediaType,
+		)
 	}
 	if s.cache.has(cid) {
 		t.Fatal("decompression bomb was cached")

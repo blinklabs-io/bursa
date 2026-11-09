@@ -45,59 +45,82 @@ func CallerFromContext(ctx context.Context) string {
 // Validator parses+validates a bearer token and returns the caller subject.
 type Validator func(token string) (subject string, err error)
 
-var errJWKSURLPolicy = errors.New("jwks_url must use https; plain http is allowed only for loopback addresses")
+var errJWKSURLPolicy = errors.New(
+	"jwks_url must use https; plain http is allowed only for loopback addresses",
+)
+
+// ErrAudienceRequired is returned by the validator constructors when no
+// audience is configured. Without one, a token the same trust source issued for
+// a different relying party would authenticate here.
+var ErrAudienceRequired = errors.New("jwt audience is required")
 
 // checkJWKSURL applies the key transport policy to configured locations and
 // every resolved redirect destination.
 func checkJWKSURL(u *url.URL) error {
-	if u != nil && (u.Scheme == "https" || (u.Scheme == "http" && backend.IsLoopbackHost(u.Hostname()))) {
+	if u != nil &&
+		(u.Scheme == "https" || (u.Scheme == "http" && backend.IsLoopbackHost(u.Hostname()))) {
 		return nil
 	}
 	return errJWKSURLPolicy
 }
 
 // HS256Validator validates HS256 tokens against a shared secret (dev/simple mode).
-// Production deployments should prefer JWKSValidator. issuer and audience are
-// enforced when non-empty, identically to JWKSValidator. Without a configured
-// caller ACL (signer.callers), any holder of a valid token may use any
-// configured key.
-func HS256Validator(secret []byte, issuer, audience string) Validator {
+// Production deployments should prefer JWKSValidator. Every token must carry
+// audience in its aud claim; an empty audience returns ErrAudienceRequired.
+// issuer is enforced when non-empty. Without a configured caller ACL
+// (signer.callers), any holder of a valid token may use any configured key.
+func HS256Validator(secret []byte, issuer, audience string) (Validator, error) {
+	if audience == "" {
+		return nil, ErrAudienceRequired
+	}
 	opts := []jwt.ParserOption{
 		jwt.WithExpirationRequired(),
 		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithAudience(audience),
 	}
 	if issuer != "" {
 		opts = append(opts, jwt.WithIssuer(issuer))
 	}
-	if audience != "" {
-		opts = append(opts, jwt.WithAudience(audience))
-	}
 	return func(token string) (string, error) {
 		claims := jwt.RegisteredClaims{}
-		_, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method %v", t.Header["alg"])
-			}
-			return secret, nil
-		},
+		_, err := jwt.ParseWithClaims(
+			token,
+			&claims,
+			func(t *jwt.Token) (any, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf(
+						"unexpected signing method %v",
+						t.Header["alg"],
+					)
+				}
+				return secret, nil
+			},
 			opts...,
 		)
 		if err != nil {
 			return "", err
 		}
 		return claims.Subject, nil
-	}
+	}, nil
 }
 
 // JWKSValidator validates RS256/ES256/EdDSA bearer tokens against a remote
 // JWKS endpoint. The JWKS is fetched at construction — a misconfigured or
 // unreachable endpoint fails boot — and refreshed in the background by keyfunc
-// (1 h interval, rate-limited unknown-kid refresh). issuer and audience are
-// enforced when non-empty. This is the production validator (design §12);
-// HS256Validator remains for dev/simple deployments.
+// (1 h interval, rate-limited unknown-kid refresh). Every token must carry
+// audience in its aud claim; an empty audience returns ErrAudienceRequired
+// before anything is fetched. issuer is enforced when non-empty. This is the
+// production validator (design §12); HS256Validator remains for dev/simple
+// deployments.
 //
 // Plain http is rejected unless the host is loopback (dev escape hatch).
-func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Validator, error) {
+func JWKSValidator(
+	ctx context.Context,
+	jwksURL, issuer, audience string,
+) (Validator, error) {
+	if audience == "" {
+		return nil, ErrAudienceRequired
+	}
 	u, err := url.Parse(jwksURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid jwks url: %w", err)
@@ -107,29 +130,33 @@ func JWKSValidator(ctx context.Context, jwksURL, issuer, audience string) (Valid
 	}
 
 	noError := false
-	kf, err := keyfunc.NewDefaultOverrideCtx(ctx, []string{jwksURL}, keyfunc.Override{
-		Client: &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 10 {
-					return errors.New("jwks fetch: stopped after 10 redirects")
-				}
-				return checkJWKSURL(req.URL)
+	kf, err := keyfunc.NewDefaultOverrideCtx(
+		ctx,
+		[]string{jwksURL},
+		keyfunc.Override{
+			Client: &http.Client{
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					if len(via) >= 10 {
+						return errors.New(
+							"jwks fetch: stopped after 10 redirects",
+						)
+					}
+					return checkJWKSURL(req.URL)
+				},
 			},
+			NoErrorReturnFirstHTTPReq: &noError,
 		},
-		NoErrorReturnFirstHTTPReq: &noError,
-	})
+	)
 	if err != nil {
 		return nil, fmt.Errorf("fetch jwks %q: %w", jwksURL, err)
 	}
 	opts := []jwt.ParserOption{
 		jwt.WithExpirationRequired(),
 		jwt.WithValidMethods([]string{"RS256", "ES256", "EdDSA"}),
+		jwt.WithAudience(audience),
 	}
 	if issuer != "" {
 		opts = append(opts, jwt.WithIssuer(issuer))
-	}
-	if audience != "" {
-		opts = append(opts, jwt.WithAudience(audience))
 	}
 	return func(token string) (string, error) {
 		claims := jwt.RegisteredClaims{}
@@ -193,10 +220,12 @@ var (
 	errUnknownKey       = errors.New("unknown authorized key")
 	errStaleTimestamp   = errors.New("request timestamp outside allowed window")
 	errReplay           = errors.New("request nonce already used")
-	errNoCertIdentity   = errors.New("client certificate carries no usable identity")
-	errNonceCacheFull   = errors.New("nonce cache full")
-	errBodyTooLarge     = errors.New("request body too large")
-	errNilRequest       = errors.New("nil request")
+	errNoCertIdentity   = errors.New(
+		"client certificate carries no usable identity",
+	)
+	errNonceCacheFull = errors.New("nonce cache full")
+	errBodyTooLarge   = errors.New("request body too large")
+	errNilRequest     = errors.New("nil request")
 )
 
 // Authenticator resolves the caller identity for a request from one credential
@@ -220,7 +249,11 @@ type jwtAuthenticator struct{ validate Validator }
 
 // JWTAuthenticator returns an Authenticator that validates Authorization:
 // Bearer tokens with the supplied Validator.
-func JWTAuthenticator(validate Validator) Authenticator { return jwtAuthenticator{validate} }
+func JWTAuthenticator(
+	validate Validator,
+) Authenticator {
+	return jwtAuthenticator{validate}
+}
 
 func (j jwtAuthenticator) Authenticate(r *http.Request) (string, bool, error) {
 	if r == nil || r.Header == nil {

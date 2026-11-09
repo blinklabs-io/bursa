@@ -1,0 +1,43 @@
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build !mainnet && !multi
+
+package main
+
+import "github.com/blinklabs-io/bursa/armory/device"
+
+// network is the only network id whose profiles this build serves. A testnet
+// build serves every testnet's profiles.
+const (
+	network     uint8 = 0
+	networkName       = "testnet"
+)
+
+// chain is empty: a testnet build serves every testnet.
+const chain = ""
+
+// multiScope is set only for a multi image, which authenticates inventory
+// requests too; this is a single-scope image.
+const multiScope = false
+
+// configureScope fixes the image to the testnet scope.
+func configureScope(svc *device.Service, report *Report) {
+	svc.SetNetwork(network, chain)
+	report.Logf(
+		"network: %s (id %d); other networks' profiles are refused",
+		networkName,
+		network,
+	)
+}

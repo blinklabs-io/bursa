@@ -63,7 +63,9 @@ func TestPolicyKeyFilesUseCardanoCLITypes(t *testing.T) {
 		{"legacy extended signing key", "PolicyExtendedSigningKeyShelley_ed25519_bip32", xskey, "policy_xsk"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			loaded, err := LoadKeyFromBytes(envelopeJSON(t, tc.keyType, tc.key.CborHex))
+			loaded, err := LoadKeyFromBytes(
+				envelopeJSON(t, tc.keyType, tc.key.CborHex),
+			)
 			require.NoError(t, err)
 			assert.Equal(t, wantVKey, loaded.VKey)
 
@@ -91,15 +93,51 @@ func TestGovernanceKeyFilesUseCardanoCLITypes(t *testing.T) {
 		get  func() (KeyFile, error)
 		want string
 	}{
-		{"drep vkey", func() (KeyFile, error) { return GetDRepVKey(drep) }, "DRepVerificationKey_ed25519"},
-		{"drep skey", func() (KeyFile, error) { return GetDRepSKey(drep) }, "DRepExtendedSigningKey_ed25519_bip32"},
-		{"drep xskey", func() (KeyFile, error) { return GetDRepExtendedSKey(drep) }, "DRepExtendedSigningKey_ed25519_bip32"},
-		{"cold vkey", func() (KeyFile, error) { return GetCommitteeColdVKey(cold) }, "ConstitutionalCommitteeColdVerificationKey_ed25519"},
-		{"cold skey", func() (KeyFile, error) { return GetCommitteeColdSKey(cold) }, "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32"},
-		{"cold xskey", func() (KeyFile, error) { return GetCommitteeColdExtendedSKey(cold) }, "ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32"},
-		{"hot vkey", func() (KeyFile, error) { return GetCommitteeHotVKey(hot) }, "ConstitutionalCommitteeHotVerificationKey_ed25519"},
-		{"hot skey", func() (KeyFile, error) { return GetCommitteeHotSKey(hot) }, "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32"},
-		{"hot xskey", func() (KeyFile, error) { return GetCommitteeHotExtendedSKey(hot) }, "ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32"},
+		{
+			"drep vkey",
+			func() (KeyFile, error) { return GetDRepVKey(drep) },
+			"DRepVerificationKey_ed25519",
+		},
+		{
+			"drep skey",
+			func() (KeyFile, error) { return GetDRepSKey(drep) },
+			"DRepExtendedSigningKey_ed25519_bip32",
+		},
+		{
+			"drep xskey",
+			func() (KeyFile, error) { return GetDRepExtendedSKey(drep) },
+			"DRepExtendedSigningKey_ed25519_bip32",
+		},
+		{
+			"cold vkey",
+			func() (KeyFile, error) { return GetCommitteeColdVKey(cold) },
+			"ConstitutionalCommitteeColdVerificationKey_ed25519",
+		},
+		{
+			"cold skey",
+			func() (KeyFile, error) { return GetCommitteeColdSKey(cold) },
+			"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
+		},
+		{
+			"cold xskey",
+			func() (KeyFile, error) { return GetCommitteeColdExtendedSKey(cold) },
+			"ConstitutionalCommitteeColdExtendedSigningKey_ed25519_bip32",
+		},
+		{
+			"hot vkey",
+			func() (KeyFile, error) { return GetCommitteeHotVKey(hot) },
+			"ConstitutionalCommitteeHotVerificationKey_ed25519",
+		},
+		{
+			"hot skey",
+			func() (KeyFile, error) { return GetCommitteeHotSKey(hot) },
+			"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
+		},
+		{
+			"hot xskey",
+			func() (KeyFile, error) { return GetCommitteeHotExtendedSKey(hot) },
+			"ConstitutionalCommitteeHotExtendedSigningKey_ed25519_bip32",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,9 +178,18 @@ func TestGovernanceKeyTypesLoadAndBech32(t *testing.T) {
 		require.NoError(t, err)
 		return v, x
 	}
-	dv, dx := mk(func() (KeyFile, error) { return GetDRepVKey(drep) }, func() (KeyFile, error) { return GetDRepExtendedSKey(drep) })
-	cv, cx := mk(func() (KeyFile, error) { return GetCommitteeColdVKey(cold) }, func() (KeyFile, error) { return GetCommitteeColdExtendedSKey(cold) })
-	hv, hx := mk(func() (KeyFile, error) { return GetCommitteeHotVKey(hot) }, func() (KeyFile, error) { return GetCommitteeHotExtendedSKey(hot) })
+	dv, dx := mk(
+		func() (KeyFile, error) { return GetDRepVKey(drep) },
+		func() (KeyFile, error) { return GetDRepExtendedSKey(drep) },
+	)
+	cv, cx := mk(
+		func() (KeyFile, error) { return GetCommitteeColdVKey(cold) },
+		func() (KeyFile, error) { return GetCommitteeColdExtendedSKey(cold) },
+	)
+	hv, hx := mk(
+		func() (KeyFile, error) { return GetCommitteeHotVKey(hot) },
+		func() (KeyFile, error) { return GetCommitteeHotExtendedSKey(hot) },
+	)
 	roles := []role{
 		{name: "drep", vkey: dv, xkey: dx,
 			cliV: "DRepVerificationKey_ed25519", cliX: "DRepExtendedSigningKey_ed25519_bip32", cliS: "DRepSigningKey_ed25519",
@@ -162,7 +209,9 @@ func TestGovernanceKeyTypesLoadAndBech32(t *testing.T) {
 		for _, typ := range []string{r.cliV, r.legV} {
 			t.Run(r.name+"/"+typ, func(t *testing.T) {
 				t.Parallel()
-				lk, err := LoadKeyFromBytes(envelopeJSON(t, typ, r.vkey.CborHex))
+				lk, err := LoadKeyFromBytes(
+					envelopeJSON(t, typ, r.vkey.CborHex),
+				)
 				require.NoError(t, err)
 				assert.Equal(t, wantVKey, []byte(lk.VKey))
 				kf := KeyFile{Type: typ, CborHex: r.vkey.CborHex}
@@ -172,7 +221,9 @@ func TestGovernanceKeyTypesLoadAndBech32(t *testing.T) {
 		for _, typ := range []string{r.cliX, r.legX} {
 			t.Run(r.name+"/"+typ, func(t *testing.T) {
 				t.Parallel()
-				lk, err := LoadKeyFromBytes(envelopeJSON(t, typ, r.xkey.CborHex))
+				lk, err := LoadKeyFromBytes(
+					envelopeJSON(t, typ, r.xkey.CborHex),
+				)
 				require.NoError(t, err)
 				assert.Equal(t, wantVKey, []byte(lk.VKey))
 				kf := KeyFile{Type: typ, CborHex: r.xkey.CborHex}

@@ -55,7 +55,13 @@ func NewMetrics() *Metrics {
 
 // Register registers the collectors with r (call once at startup).
 func (m *Metrics) Register(r prometheus.Registerer) {
-	r.MustRegister(m.requests, m.denials, m.signDuration, m.backendErrors, m.watermarkConflicts)
+	r.MustRegister(
+		m.requests,
+		m.denials,
+		m.signDuration,
+		m.backendErrors,
+		m.watermarkConflicts,
+	)
 }
 
 func (m *Metrics) observe(reqType, result string) {

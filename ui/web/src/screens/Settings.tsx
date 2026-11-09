@@ -21,18 +21,33 @@ import {
   useHistoryExpiry,
   useTPMStatus,
   useNftMedia,
+  useExternalHandleLookup,
   useAsync,
 } from "../api/hooks";
 import type { AsyncState, NotificationsState } from "../api/hooks";
 import {
   setHistoryExpiry as putHistoryExpiry,
   setAutoLock as putAutoLock,
+  recoverNodeSync,
   ApiError,
   enableTPM,
   disableTPM,
 } from "../api/client";
 import { getConnectorState, revokeGrant, unpair, pendingPairings } from "../api/connector";
-import type { Account, AutoLockSetting, NodeState, TPMStatus, WalletType } from "../api/types";
+import {
+  disableRemoteSubmission,
+  enableRemoteSubmission,
+  getRemoteSubmission,
+  rotateRemoteSubmission,
+} from "../api/remoteSubmission";
+import type {
+  Account,
+  AutoLockSetting,
+  NodeState,
+  RemoteSubmissionStatus,
+  TPMStatus,
+  WalletType,
+} from "../api/types";
 
 interface SettingsProps {
   account: Account;
@@ -70,6 +85,85 @@ function walletTypeStatus(walletType: WalletType): string {
     case "hardware":
       return "Hardware wallet · On-device signing";
   }
+}
+
+function NodeRecoveryCard({ onStarted }: { onStarted: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleRecovery() {
+    if (!acknowledged || recovering) return;
+    setRecovering(true);
+    setError(null);
+    try {
+      await recoverNodeSync();
+      setStarted(true);
+      onStarted();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "An unexpected error occurred");
+    } finally {
+      setRecovering(false);
+    }
+  }
+
+  return (
+    <Card title="Node sync recovery">
+      <p>
+        The embedded node reported a sync failure. A clean retry removes only
+        this network&apos;s local blockchain sync data.
+      </p>
+      <p>
+        Your encrypted vault, wallet keys, wallets, settings, address book,
+        logs, and NFT cache are kept.
+      </p>
+
+      {started ? (
+        <p role="status" className="setting-restart-note">
+          Clean sync started.
+        </p>
+      ) : confirming ? (
+        <>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              disabled={recovering}
+              onChange={(e) => setAcknowledged(e.target.checked)}
+            />{" "}
+            I understand that local blockchain sync data will be deleted and rebuilt.
+          </label>
+          <div className="row-actions">
+            <Button
+              onClick={() => void handleRecovery()}
+              disabled={!acknowledged || recovering}
+            >
+              {recovering ? "Starting clean sync…" : "Delete sync data and retry"}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={recovering}
+              onClick={() => {
+                setConfirming(false);
+                setAcknowledged(false);
+                setError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Button variant="ghost" onClick={() => setConfirming(true)}>
+          Start clean sync recovery
+        </Button>
+      )}
+
+      {error && <p role="alert" className="error-text">{error}</p>}
+    </Card>
+  );
 }
 
 // LeanStorageCard is the user-facing control for the lean-node (history-expiry)
@@ -591,6 +685,40 @@ function GeneralSettings({
   const status = useStatus();
   const tpmStatusQuery = useTPMStatus();
   const [connectorMissing, setConnectorMissing] = useState(false);
+  const [remoteSubmissionMissing, setRemoteSubmissionMissing] = useState(false);
+  const loadRemoteSubmission = useCallback(async () => {
+    try {
+      const state = await getRemoteSubmission();
+      setRemoteSubmissionMissing(false);
+      return state;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        setRemoteSubmissionMissing(true);
+        return null;
+      }
+      throw e;
+    }
+  }, []);
+  const remoteSubmission = useAsync(loadRemoteSubmission, { pollMs: 3000 });
+  const [remoteSubmissionMutation, setRemoteSubmissionMutation] = useState(false);
+  const [remoteSubmissionError, setRemoteSubmissionError] = useState<string | null>(null);
+
+  async function mutateRemoteSubmission(
+    action: () => Promise<RemoteSubmissionStatus>,
+  ) {
+    if (remoteSubmissionMutation) return;
+    setRemoteSubmissionMutation(true);
+    setRemoteSubmissionError(null);
+    try {
+      remoteSubmission.setData(await action());
+    } catch (e) {
+      setRemoteSubmissionError(
+        e instanceof Error ? e.message : "Unable to update remote submission",
+      );
+    } finally {
+      setRemoteSubmissionMutation(false);
+    }
+  }
   const loadConnectorState = useCallback(async () => {
     try {
       const state = await getConnectorState();
@@ -681,6 +809,8 @@ function GeneralSettings({
     }
   }
   const nftMedia = useNftMedia();
+  const externalHandles = useExternalHandleLookup();
+  const remoteSubmissionState = remoteSubmission.data;
 
   return (
     <div className="screen-settings">
@@ -722,11 +852,43 @@ function GeneralSettings({
       </Card>
 
       </div>
+
+      {status.data?.state === "error" && (
+        <NodeRecoveryCard onStarted={status.refresh} />
+      )}
       <LeanStorageCard />
 
       <AutoLockCard setting={autoLock} />
 
       <NotificationsCard notifications={notifications} />
+
+      <Card title="External ADA Handle lookup">
+        <p className="helper-text">
+          Allows Send to offer api.handle.me when the embedded node cannot resolve a Handle.
+          The service is never contacted automatically: every Handle name requires a separate
+          approval before it is disclosed.
+        </p>
+        <StatusPill tone={externalHandles.enabled ? "ok" : "muted"}>
+          {externalHandles.enabled ? "On" : "Off"}
+        </StatusPill>
+        {externalHandles.error && (
+          <p role="alert" className="error-text">{externalHandles.error.message}</p>
+        )}
+        <div className="preview-actions">
+          <Button
+            variant={externalHandles.enabled ? "ghost" : "primary"}
+            disabled={externalHandles.loading || externalHandles.saving}
+            aria-pressed={externalHandles.enabled}
+            onClick={() => void externalHandles.setEnabled(!externalHandles.enabled)}
+          >
+            {externalHandles.saving
+              ? "Saving…"
+              : externalHandles.enabled
+                ? "Turn off external lookup"
+                : "Turn on external lookup"}
+          </Button>
+        </div>
+      </Card>
 
       <Card title="NFT Media">
         {nftMedia.available === false && <p className="helper-text">This build does not include NFT images. Install a Bursa build with NFT media support to enable them.</p>}
@@ -790,6 +952,65 @@ function GeneralSettings({
           {tpmStatusQuery.error && (
             <p className="error-text" role="alert">{tpmStatusQuery.error.message}</p>
           )}
+        </Card>
+      )}
+
+      {!remoteSubmissionMissing && remoteSubmissionState && (
+        <Card title="Remote transaction submission">
+          <p className="helper-text">
+            Accept fully signed transactions from another wallet over a TLS-protected,
+            capability URL. Every transaction still waits for approval here. This access
+            cannot sign transactions or use wallet keys.
+          </p>
+          <StatusPill tone={remoteSubmissionState.enabled ? "ok" : "muted"}>
+            {remoteSubmissionState.enabled ? "Enabled" : "Disabled"}
+          </StatusPill>
+          {remoteSubmissionState.enabled && remoteSubmissionState.endpoint && (
+            <>
+              <p className="helper-text">Submission URL</p>
+              <div className="row-copy">
+                <code className="mono" style={{ wordBreak: "break-all" }}>
+                  {remoteSubmissionState.endpoint}
+                </code>
+                <CopyButton
+                  value={remoteSubmissionState.endpoint}
+                  ariaLabel="Copy remote submission URL"
+                />
+              </div>
+            </>
+          )}
+          {remoteSubmissionError && (
+            <p role="alert" className="error-text">{remoteSubmissionError}</p>
+          )}
+          <div className="preview-actions">
+            <Button
+              variant={remoteSubmissionState.enabled ? "ghost" : "primary"}
+              disabled={remoteSubmissionMutation}
+              onClick={() => void mutateRemoteSubmission(
+                remoteSubmissionState.enabled
+                  ? disableRemoteSubmission
+                  : enableRemoteSubmission,
+              )}
+            >
+              {remoteSubmissionMutation
+                ? "Saving…"
+                : remoteSubmissionState.enabled
+                  ? "Disable access"
+                  : "Enable access"}
+            </Button>
+            {remoteSubmissionState.enabled && (
+              <Button
+                variant="ghost"
+                disabled={remoteSubmissionMutation}
+                onClick={() => void mutateRemoteSubmission(rotateRemoteSubmission)}
+              >
+                Replace URL
+              </Button>
+            )}
+          </div>
+          <p className="helper-text">
+            Disable access or replace the URL at any time to revoke it immediately.
+          </p>
         </Card>
       )}
 

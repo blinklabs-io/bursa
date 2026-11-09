@@ -99,7 +99,12 @@ func AggregateBalance(utxos []chain.UTxO) (Balance, error) {
 		for _, a := range u.Amount {
 			n, ok := new(big.Int).SetString(a.Quantity, 10)
 			if !ok || n.Sign() < 0 {
-				return Balance{}, fmt.Errorf("%w: unit %q quantity %q", ErrInvalidAmountQuantity, a.Unit, a.Quantity)
+				return Balance{}, fmt.Errorf(
+					"%w: unit %q quantity %q",
+					ErrInvalidAmountQuantity,
+					a.Unit,
+					a.Quantity,
+				)
 			}
 			if a.Unit == "lovelace" {
 				lovelace.Add(lovelace, n)
@@ -130,7 +135,12 @@ func MergeTransactions(perAddress [][]chain.AddressTx) []Tx {
 	for _, list := range perAddress {
 		for _, t := range list {
 			if _, ok := seen[t.TxHash]; !ok {
-				seen[t.TxHash] = Tx{TxHash: t.TxHash, TxIndex: t.TxIndex, BlockHeight: t.BlockHeight, BlockTime: t.BlockTime}
+				seen[t.TxHash] = Tx{
+					TxHash:      t.TxHash,
+					TxIndex:     t.TxIndex,
+					BlockHeight: t.BlockHeight,
+					BlockTime:   t.BlockTime,
+				}
 			}
 		}
 	}
@@ -155,7 +165,10 @@ func MergeTransactions(perAddress [][]chain.AddressTx) []Tx {
 // summation. It also reports whether any entry on that side is the wallet's
 // own (hasOwn) and whether any belongs to an outside address (hasExternal) —
 // together these classify a transaction's direction.
-func ownedBalance(ios []chain.TxIO, mine map[string]bool) (bal Balance, hasOwn, hasExternal bool, err error) {
+func ownedBalance(
+	ios []chain.TxIO,
+	mine map[string]bool,
+) (bal Balance, hasOwn, hasExternal bool, err error) {
 	owned := make([]chain.UTxO, 0, len(ios))
 	for _, io := range ios {
 		if mine[io.Address] {
@@ -173,7 +186,10 @@ func ownedBalance(ios []chain.TxIO, mine map[string]bool) (bal Balance, hasOwn, 
 // wallet's own addresses (mine): the direction relative to the wallet, the
 // net lovelace change (signed decimal string), and the per-native-asset
 // deltas (zero-net units omitted).
-func computeTxDelta(inputs, outputs []chain.TxIO, mine map[string]bool) (TxDirection, string, []AssetDelta, error) {
+func computeTxDelta(
+	inputs, outputs []chain.TxIO,
+	mine map[string]bool,
+) (TxDirection, string, []AssetDelta, error) {
 	inBal, hasOwnIn, hasExternalIn, err := ownedBalance(inputs, mine)
 	if err != nil {
 		return "", "", nil, err
@@ -283,7 +299,9 @@ func diffAssetBalances(out, in []AssetBalance) ([]AssetDelta, error) {
 // mirrors dingo's own block-confirmation convention: confirmations = tip
 // height minus the transaction's block height (0 if the tip has not yet
 // caught up to it, which can happen transiently against a syncing node).
-func txConfirmations(tipHeight, blockHeight uint64) (confirmations uint64, pending bool) {
+func txConfirmations(
+	tipHeight, blockHeight uint64,
+) (confirmations uint64, pending bool) {
 	if blockHeight == 0 {
 		return 0, true
 	}

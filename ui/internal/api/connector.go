@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
+	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 )
 
 // connectorTokenVerifier is the minimal surface of connector.Service that the
@@ -46,7 +47,9 @@ type connectorRouteConfig struct {
 
 type connectorRouteOption func(*connectorRouteConfig)
 
-func withConnectorPairingCodeAuthorizer(authorize func(password string) error) connectorRouteOption {
+func withConnectorPairingCodeAuthorizer(
+	authorize func(password string) error,
+) connectorRouteOption {
 	return func(cfg *connectorRouteConfig) {
 		cfg.authorizePairingCode = authorize
 	}
@@ -60,14 +63,19 @@ func withConnectorPairingCodeAuthorizer(authorize func(password string) error) c
 //     Origin headers and rejects the request with 401 if
 //     svc.VerifyToken(token, origin) is false.
 //  4. Passes all other requests to next.
-func connectorMiddleware(svc connectorTokenVerifier, allowedExtensionID func() (string, bool)) func(http.Handler) http.Handler {
+func connectorMiddleware(
+	svc connectorTokenVerifier,
+	allowedExtensionID func() (string, bool),
+) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Set CORS headers when paired.
 			if extID, ok := allowedExtensionID(); ok {
 				w.Header().Set("Access-Control-Allow-Origin", extID)
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Bursa-Token")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().
+					Set("Access-Control-Allow-Headers", "Content-Type, X-Bursa-Token")
+				w.Header().
+					Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			}
 
 			// Handle OPTIONS preflight — respond 204, no body.
@@ -89,7 +97,11 @@ func connectorMiddleware(svc connectorTokenVerifier, allowedExtensionID func() (
 			token := r.Header.Get("X-Bursa-Token")
 			origin := r.Header.Get("Origin")
 			if !svc.VerifyToken(token, origin) {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				writeJSON(
+					w,
+					http.StatusUnauthorized,
+					map[string]string{"error": "unauthorized"},
+				)
 				return
 			}
 
@@ -166,7 +178,11 @@ func strictSameOrigin(r *http.Request) bool {
 // grants/revoke and self-revoke both call svc.RevokeGrant — they exist
 // separately because the SPA and the extension popup reach the API under
 // different auth models (same-origin vs. bearer token).
-func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...connectorRouteOption) {
+func registerConnector(
+	mux *http.ServeMux,
+	svc *connector.Service,
+	opts ...connectorRouteOption,
+) {
 	cfg := connectorRouteConfig{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -176,7 +192,10 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...conne
 	ext := http.NewServeMux()
 	ext.HandleFunc("POST /connector/pair", handleConnectorPair(svc))
 	ext.HandleFunc("POST /connector/request", handleConnectorRequest(svc))
-	ext.HandleFunc("POST /connector/self-revoke", handleConnectorSelfRevoke(svc))
+	ext.HandleFunc(
+		"POST /connector/self-revoke",
+		handleConnectorSelfRevoke(svc),
+	)
 	wrapped := connectorMiddleware(svc, svc.PairedExtensionID)(ext)
 	mux.Handle("/connector/pair", wrapped)
 	mux.Handle("/connector/request", wrapped)
@@ -184,12 +203,25 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...conne
 
 	// SPA-facing (control-session guarded outside this mux and origin checked
 	// in-handler).
-	mux.HandleFunc("GET /connector/events", handleConnectorEvents(svc))
 	mux.HandleFunc("GET /connector/grants", handleConnectorGrants(svc))
-	mux.HandleFunc("POST /connector/grants/revoke", handleConnectorGrantsRevoke(svc))
-	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
+	mux.HandleFunc(
+		"POST /connector/grants/revoke",
+		handleConnectorGrantsRevoke(svc),
+	)
 	mux.HandleFunc("POST /connector/unpair", handleConnectorUnpair(svc))
-	mux.HandleFunc("POST /connector/pending-pairings", handleConnectorPendingPairings(svc, cfg.authorizePairingCode))
+	mux.HandleFunc(
+		"POST /connector/pending-pairings",
+		handleConnectorPendingPairings(svc, cfg.authorizePairingCode),
+	)
+	registerApprovalRoutes(mux, svc)
+}
+
+// registerApprovalRoutes exposes only the wallet-side approval stream and
+// decision endpoint. Remote transaction submission uses this subset even when
+// the browser extension connector is disabled.
+func registerApprovalRoutes(mux *http.ServeMux, svc *connector.Service) {
+	mux.HandleFunc("GET /connector/events", handleConnectorEvents(svc))
+	mux.HandleFunc("POST /connector/decide", handleConnectorDecide(svc))
 }
 
 // handleConnectorGrants handles GET /connector/grants.
@@ -200,7 +232,11 @@ func registerConnector(mux *http.ServeMux, svc *connector.Service, opts ...conne
 func handleConnectorGrants(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !sameOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		extID, paired := svc.PairedExtensionID()
@@ -227,22 +263,38 @@ func handleConnectorGrants(svc *connector.Service) http.HandlerFunc {
 func handleConnectorGrantsRevoke(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		var body struct {
 			Origin string `json:"origin"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid JSON body"},
+			)
 			return
 		}
 		if body.Origin == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "origin is required"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "origin is required"},
+			)
 			return
 		}
 		if err := svc.RevokeGrant(body.Origin); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": err.Error()},
+			)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -257,7 +309,11 @@ func handleConnectorGrantsRevoke(svc *connector.Service) http.HandlerFunc {
 func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		var body struct {
@@ -266,16 +322,34 @@ func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 			Password string `json:"password"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid JSON body"},
+			)
 			return
 		}
-		err := svc.Decide(body.ID, connector.Decision{Approved: body.Approved, Password: body.Password})
+		err := svc.Decide(
+			body.ID,
+			connector.Decision{
+				Approved: body.Approved,
+				Password: body.Password,
+			},
+		)
 		if err != nil {
 			if errors.Is(err, connector.ErrUnknownRequest) {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown request id"})
+				writeJSON(
+					w,
+					http.StatusNotFound,
+					map[string]string{"error": "unknown request id"},
+				)
 				return
 			}
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": err.Error()},
+			)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -290,11 +364,19 @@ func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		if err := svc.Unpair(); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeJSON(
+				w,
+				http.StatusInternalServerError,
+				map[string]string{"error": err.Error()},
+			)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -316,15 +398,27 @@ func handleConnectorSelfRevoke(svc *connector.Service) http.HandlerFunc {
 			Origin string `json:"origin"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid JSON body"},
+			)
 			return
 		}
 		if body.Origin == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "origin is required"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "origin is required"},
+			)
 			return
 		}
 		if err := svc.RevokeGrant(body.Origin); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": err.Error()},
+			)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -336,7 +430,10 @@ type pendingPairingView struct {
 	Code        string `json:"code,omitempty"`
 }
 
-func pendingPairingViews(pairings []connector.PendingPairing, includeCodes bool) []pendingPairingView {
+func pendingPairingViews(
+	pairings []connector.PendingPairing,
+	includeCodes bool,
+) []pendingPairingView {
 	out := make([]pendingPairingView, 0, len(pairings))
 	for _, p := range pairings {
 		v := pendingPairingView{ExtensionID: p.ExtensionID}
@@ -355,24 +452,42 @@ func pendingPairingViews(pairings []connector.PendingPairing, includeCodes bool)
 // browser extension is waiting, but pairing codes are only returned after a
 // vault-password check. Origin is only a browser boundary; local processes can
 // forge it, so it must not be the capability that protects the code.
-func handleConnectorPendingPairings(svc *connector.Service, authorizeCode func(password string) error) http.HandlerFunc {
+func handleConnectorPendingPairings(
+	svc *connector.Service,
+	authorizeCode func(password string) error,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		var body struct {
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil &&
+			!errors.Is(err, io.EOF) {
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid JSON body"},
+			)
 			return
 		}
 
 		includeCodes := false
 		if body.Password != "" {
 			if authorizeCode == nil {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing code reveal is unavailable"})
+				writeJSON(
+					w,
+					http.StatusForbidden,
+					map[string]string{
+						"error": "pairing code reveal is unavailable",
+					},
+				)
 				return
 			}
 			if err := authorizeCode(body.Password); err != nil {
@@ -405,13 +520,21 @@ func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 		// request shape only over a loopback Host; sameOrigin still rejects an
 		// explicit cross-origin request or a DNS-rebound public Host.
 		if !sameOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			http.Error(
+				w,
+				"streaming unsupported",
+				http.StatusInternalServerError,
+			)
 			return
 		}
 
@@ -472,11 +595,16 @@ func handleConnectorEvents(svc *connector.Service) http.HandlerFunc {
 //	TxSignError:     2 UserDeclined
 //	DataSignError:   3 UserDeclined
 //	TxSendError:     1 Refused
-func connectorErrorCode(method string, err error) (httpStatus int, code int, info string) {
+func connectorErrorCode(
+	method string,
+	err error,
+) (httpStatus int, code int, info string) {
 	switch {
-	case errors.Is(err, connector.ErrInvalidParams), errors.Is(err, connector.ErrInvalidOrigin):
+	case errors.Is(err, connector.ErrInvalidParams),
+		errors.Is(err, connector.ErrInvalidOrigin):
 		return http.StatusBadRequest, -1, err.Error()
-	case errors.Is(err, connector.ErrNotGranted), errors.Is(err, connector.ErrRefused):
+	case errors.Is(err, connector.ErrNotGranted),
+		errors.Is(err, connector.ErrRefused):
 		return http.StatusForbidden, -3, err.Error()
 	case errors.Is(err, connector.ErrAddressUsageUnknown):
 		return http.StatusServiceUnavailable, -3, err.Error()
@@ -484,6 +612,8 @@ func connectorErrorCode(method string, err error) (httpStatus int, code int, inf
 		return http.StatusRequestTimeout, -3, "request timed out"
 	case errors.Is(err, connector.ErrQueueFull):
 		return http.StatusTooManyRequests, -3, err.Error()
+	case errors.Is(err, keystore.ErrUnlockLimited):
+		return http.StatusTooManyRequests, -3, keystore.ErrUnlockLimited.Error()
 	case errors.Is(err, connector.ErrUserDeclined):
 		switch method {
 		case "signData":
@@ -532,7 +662,14 @@ func handleConnectorRequest(svc *connector.Service) http.HandlerFunc {
 			return
 		}
 
-		result, err := svc.Handle(r.Context(), body.Origin, body.Method, body.Params)
+		result, err := svc.HandleAuthorized(
+			r.Context(),
+			r.Header.Get("Origin"),
+			r.Header.Get("X-Bursa-Token"),
+			body.Origin,
+			body.Method,
+			body.Params,
+		)
 		if err != nil {
 			status, code, info := connectorErrorCode(body.Method, err)
 			writeJSON(w, status, map[string]any{
@@ -566,22 +703,40 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 		}
 		// Read the whole body through the limit: a decoder stops after the
 		// first JSON value and would accept any amount of trailing data.
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPairRequestBytes))
+		raw, err := io.ReadAll(
+			http.MaxBytesReader(w, r.Body, maxPairRequestBytes),
+		)
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+				writeJSON(
+					w,
+					http.StatusRequestEntityTooLarge,
+					map[string]string{"error": "request body too large"},
+				)
 				return
 			}
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid request body"},
+			)
 			return
 		}
 		if err := json.Unmarshal(raw, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid JSON body"},
+			)
 			return
 		}
 		if req.ExtensionID == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "extension_id is required"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "extension_id is required"},
+			)
 			return
 		}
 		// A browser sets Origin to the extension's own origin and a web page
@@ -589,7 +744,11 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 		// names. Local processes can still forge the header; the pairing code
 		// shown in the app remains the capability that authorizes the token.
 		if !svc.TrustedPairingOrigin(r.Header.Get("Origin"), req.ExtensionID) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing origin refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "pairing origin refused"},
+			)
 			return
 		}
 
@@ -605,7 +764,11 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 				writeJSON(w, status, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
+			writeJSON(
+				w,
+				http.StatusAccepted,
+				map[string]string{"status": "pending"},
+			)
 			return
 		}
 
@@ -613,10 +776,18 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 		token, err := svc.ConfirmPair(req.ExtensionID, req.Code)
 		if err != nil {
 			if errors.Is(err, connector.ErrPairCodeMismatch) {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing code mismatch"})
+				writeJSON(
+					w,
+					http.StatusForbidden,
+					map[string]string{"error": "pairing code mismatch"},
+				)
 				return
 			}
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": err.Error()},
+			)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"token": token})

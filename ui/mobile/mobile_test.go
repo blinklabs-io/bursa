@@ -52,7 +52,14 @@ func TestNewHandleLifecycleBeforeStart(t *testing.T) {
 // opaque handles).
 func gomobileSupported(kind string) bool {
 	switch kind {
-	case "bool", "int", "int64", "float32", "float64", "string", "[]byte", "error",
+	case "bool",
+		"int",
+		"int64",
+		"float32",
+		"float64",
+		"string",
+		"[]byte",
+		"error",
 		"*mobile.App": // exported struct pointer — crosses as an opaque handle
 		return true
 	}
@@ -66,10 +73,21 @@ func gomobileTypeName(typ reflect.Type) string {
 	return typ.String()
 }
 
-func assertGomobileInputs(t *testing.T, name string, typ reflect.Type, offset int, params []string) {
+func assertGomobileInputs(
+	t *testing.T,
+	name string,
+	typ reflect.Type,
+	offset int,
+	params []string,
+) {
 	t.Helper()
 	if typ.NumIn()-offset != len(params) {
-		t.Fatalf("%s param count = %d, want %d", name, typ.NumIn()-offset, len(params))
+		t.Fatalf(
+			"%s param count = %d, want %d",
+			name,
+			typ.NumIn()-offset,
+			len(params),
+		)
 	}
 	for i, want := range params {
 		got := gomobileTypeName(typ.In(i + offset))
@@ -77,15 +95,30 @@ func assertGomobileInputs(t *testing.T, name string, typ reflect.Type, offset in
 			t.Fatalf("%s param %d = %q, want %q", name, i, got, want)
 		}
 		if !gomobileSupported(got) {
-			t.Fatalf("%s param %d type %q is not gomobile-compatible", name, i, got)
+			t.Fatalf(
+				"%s param %d type %q is not gomobile-compatible",
+				name,
+				i,
+				got,
+			)
 		}
 	}
 }
 
-func assertGomobileResults(t *testing.T, name string, typ reflect.Type, results []string) {
+func assertGomobileResults(
+	t *testing.T,
+	name string,
+	typ reflect.Type,
+	results []string,
+) {
 	t.Helper()
 	if typ.NumOut() != len(results) {
-		t.Fatalf("%s result count = %d, want %d", name, typ.NumOut(), len(results))
+		t.Fatalf(
+			"%s result count = %d, want %d",
+			name,
+			typ.NumOut(),
+			len(results),
+		)
 	}
 	for i, want := range results {
 		got := gomobileTypeName(typ.Out(i))
@@ -93,18 +126,33 @@ func assertGomobileResults(t *testing.T, name string, typ reflect.Type, results 
 			t.Fatalf("%s result %d = %q, want %q", name, i, got, want)
 		}
 		if !gomobileSupported(got) {
-			t.Fatalf("%s result %d type %q is not gomobile-compatible", name, i, got)
+			t.Fatalf(
+				"%s result %d type %q is not gomobile-compatible",
+				name,
+				i,
+				got,
+			)
 		}
 	}
 }
 
-func assertGomobileFunc(t *testing.T, name string, typ reflect.Type, params, results []string) {
+func assertGomobileFunc(
+	t *testing.T,
+	name string,
+	typ reflect.Type,
+	params, results []string,
+) {
 	t.Helper()
 	assertGomobileInputs(t, name, typ, 0, params)
 	assertGomobileResults(t, name, typ, results)
 }
 
-func assertGomobileMethod(t *testing.T, appType reflect.Type, name string, params, results []string) {
+func assertGomobileMethod(
+	t *testing.T,
+	appType reflect.Type,
+	name string,
+	params, results []string,
+) {
 	t.Helper()
 	method, ok := appType.MethodByName(name)
 	if !ok {
@@ -124,7 +172,13 @@ func assertGomobileMethod(t *testing.T, appType reflect.Type, name string, param
 // and methods so signature drift fails in plain `go test`, before CI reaches
 // `gomobile bind`.
 func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
-	assertGomobileFunc(t, "New", reflect.TypeOf(New), nil, []string{"*mobile.App"})
+	assertGomobileFunc(
+		t,
+		"New",
+		reflect.TypeOf(New),
+		nil,
+		[]string{"*mobile.App"},
+	)
 
 	type sig struct {
 		method string
@@ -133,7 +187,11 @@ func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
 	}
 	sigs := []sig{
 		{"Start", []string{"string", "string", "bool"}, []string{"error"}},
-		{"StartWithTimeout", []string{"string", "string", "bool", "int64"}, []string{"error"}},
+		{
+			"StartWithTimeout",
+			[]string{"string", "string", "bool", "int64"},
+			[]string{"error"},
+		},
 		{"SetNodeDataDir", []string{"string"}, nil},
 		{"SetContactsPersistenceEnabled", []string{"bool"}, nil},
 		{"Port", nil, []string{"int"}},
@@ -150,7 +208,10 @@ func TestBindingSignaturesAreGomobileCompatible(t *testing.T) {
 	for i := 0; i < appType.NumMethod(); i++ {
 		method := appType.Method(i)
 		if _, ok := expected[method.Name]; !ok {
-			t.Fatalf("unexpected exported App method %s; add it to the gomobile signature guard or unexport it", method.Name)
+			t.Fatalf(
+				"unexpected exported App method %s; add it to the gomobile signature guard or unexport it",
+				method.Name,
+			)
 		}
 	}
 	for _, s := range sigs {
@@ -293,7 +354,9 @@ func TestStartWithTimeoutWaitsForPriorCleanup(t *testing.T) {
 
 	select {
 	case <-secondStarted:
-		t.Fatal("retry started a new boot before the prior canceled boot's cleanup finished")
+		t.Fatal(
+			"retry started a new boot before the prior canceled boot's cleanup finished",
+		)
 	case <-time.After(200 * time.Millisecond):
 	}
 
@@ -314,7 +377,9 @@ func TestStartWithTimeoutWaitsForPriorCleanup(t *testing.T) {
 	}
 }
 
-func TestStopPublishesDrainBeforeCanceledStartObservesCancellation(t *testing.T) {
+func TestStopPublishesDrainBeforeCanceledStartObservesCancellation(
+	t *testing.T,
+) {
 	orig := bootWallet
 	defer func() { bootWallet = orig }()
 	oldProcs := runtime.GOMAXPROCS(1)
@@ -470,7 +535,8 @@ func TestStartPassesStoragePolicy(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("bootWallet was not called")
 	}
-	if cfg.DataDir != "/wallet" || cfg.NodeDataDir != "/node" || !cfg.ContactsPersistenceDisabled {
+	if cfg.DataDir != "/wallet" || cfg.NodeDataDir != "/node" ||
+		!cfg.ContactsPersistenceDisabled {
 		t.Fatalf(
 			"boot got DataDir=%q NodeDataDir=%q ContactsPersistenceDisabled=%t, want /wallet, /node, true",
 			cfg.DataDir,

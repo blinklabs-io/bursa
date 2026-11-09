@@ -172,7 +172,10 @@ func asKeyed(md metadatum) (map[uint64]metadatum, error) {
 	for _, pair := range m.Pairs {
 		i, ok := pair.Key.(lcommon.MetaInt)
 		if !ok || i.Value == nil {
-			return nil, invalidf("expected integer map key, got %s", typeName(pair.Key))
+			return nil, invalidf(
+				"expected integer map key, got %s",
+				typeName(pair.Key),
+			)
 		}
 		if !i.Value.IsUint64() {
 			continue
@@ -427,7 +430,11 @@ func decodeQuestion(md metadatum) (Question, error) {
 		KindNumericRange: 3, KindPointsAllocation: 4, KindRating: 5,
 	}[q.Kind]
 	if fixed == 0 || len(items) < fixed || len(items) > fixed+1 {
-		return Question{}, invalidf("question tag %d with %d elements", tag, len(items))
+		return Question{}, invalidf(
+			"question tag %d with %d elements",
+			tag,
+			len(items),
+		)
 	}
 	if q.Required, err = takeFlag(items, fixed); err != nil {
 		return Question{}, err
@@ -437,7 +444,11 @@ func decodeQuestion(md metadatum) (Question, error) {
 		q.Anchor, err = decodeAnchor(items[2])
 	case KindNumericRange:
 		q.Range, err = decodeRange(items[2])
-	case KindSingleChoice, KindMultiSelect, KindRanking, KindPointsAllocation, KindRating:
+	case KindSingleChoice,
+		KindMultiSelect,
+		KindRanking,
+		KindPointsAllocation,
+		KindRating:
 		q.Options, q.OptionCount, err = decodeOptions(items[2])
 	}
 	if err != nil {
@@ -495,8 +506,11 @@ func decodeResponse(md metadatum) (Response, error) {
 		}
 	}
 	if r.Answers == nil {
-		if r.Sealed, err = asChunkedBytes(m[4]); err != nil || len(r.Sealed) == 0 {
-			return Response{}, invalidf("response answers are neither answer items nor a ciphertext")
+		if r.Sealed, err = asChunkedBytes(m[4]); err != nil ||
+			len(r.Sealed) == 0 {
+			return Response{}, invalidf(
+				"response answers are neither answer items nor a ciphertext",
+			)
 		}
 	}
 	if a, ok := m[5]; ok {

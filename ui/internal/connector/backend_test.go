@@ -39,7 +39,10 @@ type fakeConnectorChain struct {
 	utxoErr      map[string]error
 }
 
-func (f *fakeConnectorChain) AccountAddresses(_ context.Context, _ string) ([]string, error) {
+func (f *fakeConnectorChain) AccountAddresses(
+	_ context.Context,
+	_ string,
+) ([]string, error) {
 	f.addressCalls++
 	if f.addressErr != nil {
 		return nil, f.addressErr
@@ -47,7 +50,10 @@ func (f *fakeConnectorChain) AccountAddresses(_ context.Context, _ string) ([]st
 	return f.addresses, nil
 }
 
-func (f *fakeConnectorChain) AddressUTxOs(_ context.Context, addr string) ([]chain.UTxO, error) {
+func (f *fakeConnectorChain) AddressUTxOs(
+	_ context.Context,
+	addr string,
+) ([]chain.UTxO, error) {
 	if err := f.utxoErr[addr]; err != nil {
 		return nil, err
 	}
@@ -78,38 +84,61 @@ type walletChainBridge struct {
 	acctInfo chain.AccountInfo // returned by Account when acctErr is nil
 }
 
-func (b *walletChainBridge) Account(_ context.Context, _ string) (chain.AccountInfo, error) {
+func (b *walletChainBridge) Account(
+	_ context.Context,
+	_ string,
+) (chain.AccountInfo, error) {
 	if b.acctErr != nil {
 		return chain.AccountInfo{}, b.acctErr
 	}
 	return b.acctInfo, nil
 }
 
-func (b *walletChainBridge) AccountAddresses(ctx context.Context, stakeAddr string) ([]string, error) {
+func (b *walletChainBridge) AccountAddresses(
+	ctx context.Context,
+	stakeAddr string,
+) ([]string, error) {
 	return b.f.AccountAddresses(ctx, stakeAddr)
 }
 
-func (b *walletChainBridge) AddressUTxOs(ctx context.Context, addr string) ([]chain.UTxO, error) {
+func (b *walletChainBridge) AddressUTxOs(
+	ctx context.Context,
+	addr string,
+) ([]chain.UTxO, error) {
 	return b.f.AddressUTxOs(ctx, addr)
 }
 
-func (b *walletChainBridge) LatestBlock(context.Context) (chain.BlockTip, error) {
+func (b *walletChainBridge) LatestBlock(
+	context.Context,
+) (chain.BlockTip, error) {
 	return chain.BlockTip{}, nil
 }
 
-func (b *walletChainBridge) Transaction(context.Context, string) (chain.TxInfo, error) {
+func (b *walletChainBridge) Transaction(
+	context.Context,
+	string,
+) (chain.TxInfo, error) {
 	return chain.TxInfo{}, chain.ErrNotFound
 }
 
-func (b *walletChainBridge) TransactionUTxOs(context.Context, string) (chain.TxUTxOs, error) {
+func (b *walletChainBridge) TransactionUTxOs(
+	context.Context,
+	string,
+) (chain.TxUTxOs, error) {
 	return chain.TxUTxOs{}, chain.ErrNotFound
 }
 
-func (b *walletChainBridge) AddressTransactions(_ context.Context, _ string) ([]chain.AddressTx, error) {
+func (b *walletChainBridge) AddressTransactions(
+	_ context.Context,
+	_ string,
+) ([]chain.AddressTx, error) {
 	return nil, nil
 }
 
-func (b *walletChainBridge) AccountRewards(_ context.Context, _ string) ([]chain.Reward, error) {
+func (b *walletChainBridge) AccountRewards(
+	_ context.Context,
+	_ string,
+) ([]chain.Reward, error) {
 	return nil, nil
 }
 
@@ -121,20 +150,27 @@ func twoKnownUTxOs(addr string) []chain.UTxO {
 			Address:     addr,
 			TxHash:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			OutputIndex: 0,
-			Amount:      []chain.Amount{{Unit: "lovelace", Quantity: "2000000"}},
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "2000000"},
+			},
 		},
 		{
 			Address:     addr,
 			TxHash:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			OutputIndex: 1,
-			Amount:      []chain.Amount{{Unit: "lovelace", Quantity: "3000000"}},
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "3000000"},
+			},
 		},
 	}
 }
 
 // decodeUTxOHex decodes a hex-encoded CIP-30 TransactionUnspentOutput back to
 // its ShelleyTransactionInput and the address + lovelace from the Babbage output.
-func decodeUTxOHex(t *testing.T, s string) (txHash string, idx uint32, addr string, lovelace uint64) {
+func decodeUTxOHex(
+	t *testing.T,
+	s string,
+) (txHash string, idx uint32, addr string, lovelace uint64) {
 	t.Helper()
 	raw, err := hex.DecodeString(s)
 	if err != nil {
@@ -249,7 +285,9 @@ func TestWalletBackendUtxosRoundTrip(t *testing.T) {
 	for i, h := range hexes {
 		txHash, idx, addr, lovelace := decodeUTxOHex(t, h)
 		wantHash := known[i].TxHash
-		wantIdx := uint32(known[i].OutputIndex) //nolint:gosec // test-only positive literals
+		wantIdx := uint32(
+			known[i].OutputIndex,
+		) //nolint:gosec // test-only positive literals
 		wantLov := func() uint64 {
 			v, _ := new(big.Int).SetString(known[i].Amount[0].Quantity, 10)
 			return v.Uint64()
@@ -334,7 +372,10 @@ func TestWalletBackendExcludesForeignPaymentCredential(t *testing.T) {
 		t.Fatalf("Utxos: %v", err)
 	}
 	if len(utxos) != 1 {
-		t.Fatalf("Utxos count = %d, want only the locally controlled UTxO", len(utxos))
+		t.Fatalf(
+			"Utxos count = %d, want only the locally controlled UTxO",
+			len(utxos),
+		)
 	}
 	_, _, gotAddr, _ := decodeUTxOHex(t, utxos[0])
 	if gotAddr != owned {
@@ -354,7 +395,10 @@ func TestWalletBackendExcludesForeignPaymentCredential(t *testing.T) {
 		t.Fatalf("decode balance: %v", err)
 	}
 	if value.Amount != 2_000_000 {
-		t.Fatalf("Balance lovelace = %d, want only locally controlled 2000000", value.Amount)
+		t.Fatalf(
+			"Balance lovelace = %d, want only locally controlled 2000000",
+			value.Amount,
+		)
 	}
 }
 
@@ -401,7 +445,10 @@ func TestWalletBackendAddressesHex(t *testing.T) {
 		t.Errorf("round-trip address = %q, want %q", parsed.String(), usedAddr)
 	}
 
-	usedPage, err := be.UsedAddresses(context.Background(), &Paginate{Page: 1, Limit: 1})
+	usedPage, err := be.UsedAddresses(
+		context.Background(),
+		&Paginate{Page: 1, Limit: 1},
+	)
 	if err != nil {
 		t.Fatalf("UsedAddresses page 1: %v", err)
 	}
@@ -415,7 +462,10 @@ func TestWalletBackendAddressesHex(t *testing.T) {
 		t.Fatalf("UnusedAddresses: %v", err)
 	}
 	if len(unusedHex) != 2 {
-		t.Fatalf("unused addresses count = %d, want 2 (receive[1] and receive[2])", len(unusedHex))
+		t.Fatalf(
+			"unused addresses count = %d, want 2 (receive[1] and receive[2])",
+			len(unusedHex),
+		)
 	}
 
 	// Change address: first unused.
@@ -473,15 +523,27 @@ func TestWalletBackendAddressUsageUnknownWhileSyncing(t *testing.T) {
 	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 3); err != nil {
 		t.Fatalf("SetWallet: %v", err)
 	}
-	be := NewWalletBackend(wl, nil, acct, "preview", fc, func() bool { return false })
+	be := NewWalletBackend(
+		wl,
+		nil,
+		acct,
+		"preview",
+		fc,
+		func() bool { return false },
+	)
 
 	assertAddressUsageUnknown(t, be)
 	if fc.addressCalls != 0 {
-		t.Fatalf("AccountAddresses calls = %d, want 0 while syncing", fc.addressCalls)
+		t.Fatalf(
+			"AccountAddresses calls = %d, want 0 while syncing",
+			fc.addressCalls,
+		)
 	}
 }
 
-func TestWalletBackendAddressUsageUnknownIfNodeLeavesReadyDuringQuery(t *testing.T) {
+func TestWalletBackendAddressUsageUnknownIfNodeLeavesReadyDuringQuery(
+	t *testing.T,
+) {
 	acct, _ := mustDeriveBackendAccount(t)
 	fc := &fakeConnectorChain{addresses: []string{acct.ReceiveAddresses[0]}}
 	wl := wallet.NewService(&walletChainBridge{f: fc})
@@ -496,7 +558,10 @@ func TestWalletBackendAddressUsageUnknownIfNodeLeavesReadyDuringQuery(t *testing
 
 	assertAddressUsageUnknown(t, be)
 	if fc.addressCalls != 1 {
-		t.Fatalf("AccountAddresses calls = %d, want only the in-flight query", fc.addressCalls)
+		t.Fatalf(
+			"AccountAddresses calls = %d, want only the in-flight query",
+			fc.addressCalls,
+		)
 	}
 }
 
@@ -508,14 +573,24 @@ func TestWalletBackendAddressUsageUnknownAcrossReadyGeneration(t *testing.T) {
 		t.Fatalf("SetWallet: %v", err)
 	}
 	checks := 0
-	be := NewWalletBackendWithReadiness(wl, nil, acct, "preview", fc, func() ReadinessSnapshot {
-		checks++
-		return ReadinessSnapshot{Ready: true, Generation: uint64(checks)}
-	})
+	be := NewWalletBackendWithReadiness(
+		wl,
+		nil,
+		acct,
+		"preview",
+		fc,
+		func() ReadinessSnapshot {
+			checks++
+			return ReadinessSnapshot{Ready: true, Generation: uint64(checks)}
+		},
+	)
 
 	assertAddressUsageUnknown(t, be)
 	if fc.addressCalls != 3 {
-		t.Fatalf("AccountAddresses calls = %d, want one per address method", fc.addressCalls)
+		t.Fatalf(
+			"AccountAddresses calls = %d, want one per address method",
+			fc.addressCalls,
+		)
 	}
 }
 
@@ -542,7 +617,10 @@ func TestWalletBackendAddressUsageUnknownForScriptAccount(t *testing.T) {
 
 	assertAddressUsageUnknown(t, be)
 	if fc.addressCalls != 0 {
-		t.Fatalf("AccountAddresses calls = %d, want 0 for script account", fc.addressCalls)
+		t.Fatalf(
+			"AccountAddresses calls = %d, want 0 for script account",
+			fc.addressCalls,
+		)
 	}
 }
 
@@ -567,7 +645,11 @@ func TestWalletBackendSuccessfulEmptyUsageRemainsAuthoritative(t *testing.T) {
 		t.Fatalf("UnusedAddresses: %v", err)
 	}
 	if len(unused) != len(acct.ReceiveAddresses) {
-		t.Fatalf("UnusedAddresses count = %d, want %d", len(unused), len(acct.ReceiveAddresses))
+		t.Fatalf(
+			"UnusedAddresses count = %d, want %d",
+			len(unused),
+			len(acct.ReceiveAddresses),
+		)
 	}
 	change, err := be.ChangeAddress(context.Background())
 	if err != nil {
@@ -578,7 +660,11 @@ func TestWalletBackendSuccessfulEmptyUsageRemainsAuthoritative(t *testing.T) {
 		t.Fatalf("addrStringToHex: %v", err)
 	}
 	if change != wantChange {
-		t.Fatalf("ChangeAddress = %q, want first derived address %q", change, wantChange)
+		t.Fatalf(
+			"ChangeAddress = %q, want first derived address %q",
+			change,
+			wantChange,
+		)
 	}
 }
 
@@ -604,7 +690,11 @@ func TestWalletBackendRewardAddresses(t *testing.T) {
 		t.Fatalf("parse reward address bytes: %v", err)
 	}
 	if parsed.String() != acct.StakeAddress {
-		t.Errorf("reward address = %q, want %q", parsed.String(), acct.StakeAddress)
+		t.Errorf(
+			"reward address = %q, want %q",
+			parsed.String(),
+			acct.StakeAddress,
+		)
 	}
 }
 
@@ -706,7 +796,11 @@ func TestWalletBackendUtxosCBORAmount(t *testing.T) {
 	}
 	txHash, _, _, _ := decodeUTxOHex(t, selected[0])
 	if txHash != known[1].TxHash {
-		t.Fatalf("Utxos(2.5 ADA) selected tx = %q, want %q", txHash, known[1].TxHash)
+		t.Fatalf(
+			"Utxos(2.5 ADA) selected tx = %q, want %q",
+			txHash,
+			known[1].TxHash,
+		)
 	}
 
 	amt4 := encodeValueHex(t, 4_000_000)
@@ -733,10 +827,22 @@ func TestWalletBackendCollateral(t *testing.T) {
 	targetAddr := acct.ReceiveAddresses[0]
 	// 2 ADA (too small) and 5 ADA (just enough).
 	utxos := []chain.UTxO{
-		{Address: targetAddr, TxHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			OutputIndex: 0, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "2000000"}}},
-		{Address: targetAddr, TxHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-			OutputIndex: 1, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}},
+		{
+			Address:     targetAddr,
+			TxHash:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			OutputIndex: 0,
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "2000000"},
+			},
+		},
+		{
+			Address:     targetAddr,
+			TxHash:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			OutputIndex: 1,
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "5000000"},
+			},
+		},
 	}
 	fc := &fakeConnectorChain{
 		addressErr: chain.ErrNotFound,
@@ -767,7 +873,10 @@ func TestWalletBackendCollateral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode CBOR 2ADA: %v", err)
 	}
-	coll2, err := be.Collateral(context.Background(), hex.EncodeToString(amtBytes))
+	coll2, err := be.Collateral(
+		context.Background(),
+		hex.EncodeToString(amtBytes),
+	)
 	if err != nil {
 		t.Fatalf("Collateral(2ADA): %v", err)
 	}
@@ -787,7 +896,10 @@ func TestWalletBackendCollateral(t *testing.T) {
 		t.Fatalf("Collateral(6ADA): %v", err)
 	}
 	if len(coll3) != 2 {
-		t.Fatalf("collateral(6ADA) count = %d, want 2 (accumulated set)", len(coll3))
+		t.Fatalf(
+			"collateral(6ADA) count = %d, want 2 (accumulated set)",
+			len(coll3),
+		)
 	}
 
 	// Threshold the wallet cannot cover (10 ADA > 7 ADA total): unsatisfiable,
@@ -801,7 +913,10 @@ func TestWalletBackendCollateral(t *testing.T) {
 		t.Fatalf("Collateral(10ADA): %v", err)
 	}
 	if len(coll4) != 0 {
-		t.Fatalf("collateral(10ADA) count = %d, want 0 (unsatisfiable)", len(coll4))
+		t.Fatalf(
+			"collateral(10ADA) count = %d, want 0 (unsatisfiable)",
+			len(coll4),
+		)
 	}
 }
 
@@ -826,6 +941,9 @@ func TestWalletBackendSigningMethodsErrorWithoutSpendService(t *testing.T) {
 	// they return a "signing service not configured" error rather than
 	// errNotImplemented.  Verify they at least return a non-nil error.
 	ctx := context.Background()
+	if _, err := be.InspectTx(ctx, ""); err == nil {
+		t.Error("InspectTx(nil sp): want error, got nil")
+	}
 	if _, err := be.SignTx(ctx, "", false, ""); err == nil {
 		t.Error("SignTx(nil sp): want error, got nil")
 	}
@@ -855,7 +973,10 @@ func multiAssetUTxO(addr, txHash string) chain.UTxO {
 
 // decodeUTxOMaryValue decodes a hex-CBOR CIP-30 TransactionUnspentOutput and
 // returns the full MaryTransactionOutputValue (with assets).
-func decodeUTxOMaryValue(t *testing.T, s string) mary.MaryTransactionOutputValue {
+func decodeUTxOMaryValue(
+	t *testing.T,
+	s string,
+) mary.MaryTransactionOutputValue {
 	t.Helper()
 	raw, err := hex.DecodeString(s)
 	if err != nil {
@@ -893,7 +1014,10 @@ func TestWalletBackendMultiAssetUTxORoundTrip(t *testing.T) {
 	const nameHex = "6d79746f6b656e" // "mytoken"
 	const wantQty = int64(42)
 
-	u := multiAssetUTxO(targetAddr, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+	u := multiAssetUTxO(
+		targetAddr,
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+	)
 	fc := &fakeConnectorChain{
 		addressErr: chain.ErrNotFound,
 		utxos:      map[string][]chain.UTxO{targetAddr: {u}},
@@ -935,7 +1059,11 @@ func TestWalletBackendMultiAssetUTxORoundTrip(t *testing.T) {
 	}
 	wantNameBytes, _ := hex.DecodeString(nameHex)
 	if hex.EncodeToString(assetNames[0]) != hex.EncodeToString(wantNameBytes) {
-		t.Errorf("asset name = %q, want %q", hex.EncodeToString(assetNames[0]), hex.EncodeToString(wantNameBytes))
+		t.Errorf(
+			"asset name = %q, want %q",
+			hex.EncodeToString(assetNames[0]),
+			hex.EncodeToString(wantNameBytes),
+		)
 	}
 
 	qty := mv.Assets.Asset(policies[0], assetNames[0])
@@ -956,7 +1084,10 @@ func TestWalletBackendMultiAssetBalanceRoundTrip(t *testing.T) {
 	const policyHex = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0"
 	const nameHex = "6d79746f6b656e"
 
-	u := multiAssetUTxO(targetAddr, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
+	u := multiAssetUTxO(
+		targetAddr,
+		"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+	)
 	fc := &fakeConnectorChain{
 		addressErr: chain.ErrNotFound,
 		utxos:      map[string][]chain.UTxO{targetAddr: {u}},
@@ -989,9 +1120,18 @@ func TestWalletBackendMultiAssetBalanceRoundTrip(t *testing.T) {
 		t.Fatalf("balance policies count = %d, want 1", len(policies))
 	}
 	wantPolicyBytes, _ := hex.DecodeString(policyHex)
-	if hex.EncodeToString(policies[0].Bytes()) != hex.EncodeToString(wantPolicyBytes) {
-		t.Errorf("balance policy ID = %q, want %q",
-			hex.EncodeToString(policies[0].Bytes()), hex.EncodeToString(wantPolicyBytes))
+	if hex.EncodeToString(
+		policies[0].Bytes(),
+	) != hex.EncodeToString(
+		wantPolicyBytes,
+	) {
+		t.Errorf(
+			"balance policy ID = %q, want %q",
+			hex.EncodeToString(
+				policies[0].Bytes(),
+			),
+			hex.EncodeToString(wantPolicyBytes),
+		)
 	}
 
 	assetNames := mv.Assets.Assets(policies[0])
@@ -1000,8 +1140,13 @@ func TestWalletBackendMultiAssetBalanceRoundTrip(t *testing.T) {
 	}
 	wantNameBytes, _ := hex.DecodeString(nameHex)
 	if hex.EncodeToString(assetNames[0]) != hex.EncodeToString(wantNameBytes) {
-		t.Errorf("balance asset name = %q, want %q",
-			hex.EncodeToString(assetNames[0]), hex.EncodeToString(wantNameBytes))
+		t.Errorf(
+			"balance asset name = %q, want %q",
+			hex.EncodeToString(
+				assetNames[0],
+			),
+			hex.EncodeToString(wantNameBytes),
+		)
 	}
 
 	qty := mv.Assets.Asset(policies[0], assetNames[0])
@@ -1018,10 +1163,22 @@ func TestWalletBackendCollateralCBORAmount(t *testing.T) {
 	acct, wl := mustDeriveBackendAccount(t)
 	targetAddr := acct.ReceiveAddresses[0]
 	utxos := []chain.UTxO{
-		{Address: targetAddr, TxHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			OutputIndex: 0, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "2000000"}}},
-		{Address: targetAddr, TxHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-			OutputIndex: 1, Amount: []chain.Amount{{Unit: "lovelace", Quantity: "5000000"}}},
+		{
+			Address:     targetAddr,
+			TxHash:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			OutputIndex: 0,
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "2000000"},
+			},
+		},
+		{
+			Address:     targetAddr,
+			TxHash:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			OutputIndex: 1,
+			Amount: []chain.Amount{
+				{Unit: "lovelace", Quantity: "5000000"},
+			},
+		},
 	}
 	fc := &fakeConnectorChain{
 		addressErr: chain.ErrNotFound,
@@ -1107,18 +1264,25 @@ func (k fakeTestKeystore) Unlock(_ string) ([]byte, error) {
 type fakeSpendChain struct {
 	submitHash lcommon.Blake2b256
 	submitErr  error
+	maxTxSize  int
+	utxoCalls  int
 }
 
 var _ apollobackend.ChainContext = (*fakeSpendChain)(nil)
 
 func (f *fakeSpendChain) ProtocolParams() (apollobackend.ProtocolParameters, error) {
+	maxTxSize := f.maxTxSize
+	if maxTxSize == 0 {
+		maxTxSize = 16384
+	}
 	return apollobackend.ProtocolParameters{
 		MinFeeConstant:    155381,
 		MinFeeCoefficient: 44,
-		MaxTxSize:         16384,
+		MaxTxSize:         maxTxSize,
 		CoinsPerUtxoByte:  "4310",
 	}, nil
 }
+
 func (f *fakeSpendChain) GenesisParams() (apollobackend.GenesisParameters, error) {
 	return apollobackend.GenesisParameters{
 		ActiveSlotsCoefficient: 0.05,
@@ -1140,10 +1304,19 @@ func (f *fakeSpendChain) Utxos(_ lcommon.Address) ([]lcommon.Utxo, error) {
 func (f *fakeSpendChain) SubmitTx(_ []byte) (lcommon.Blake2b256, error) {
 	return f.submitHash, f.submitErr
 }
-func (f *fakeSpendChain) EvaluateTx(_ []byte, _ []lcommon.Utxo) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
+
+func (f *fakeSpendChain) EvaluateTx(
+	_ []byte,
+	_ []lcommon.Utxo,
+) (map[lcommon.RedeemerKey]lcommon.ExUnits, error) {
 	return nil, nil
 }
-func (f *fakeSpendChain) UtxoByRef(_ lcommon.Blake2b256, _ uint32) (*lcommon.Utxo, error) {
+
+func (f *fakeSpendChain) UtxoByRef(
+	_ lcommon.Blake2b256,
+	_ uint32,
+) (*lcommon.Utxo, error) {
+	f.utxoCalls++
 	return nil, nil
 }
 func (f *fakeSpendChain) ScriptCbor(_ lcommon.Blake2b224) ([]byte, error) {
@@ -1265,10 +1438,17 @@ func TestWalletBackendSignData(t *testing.T) {
 	vkeyHex := hex.EncodeToString(wantVkey)
 	keyHex := hex.EncodeToString(keyBytes)
 	if len(keyHex) < len(vkeyHex) {
-		t.Errorf("COSE_Key (%d bytes) is too short to contain the 32-byte vkey", len(keyBytes))
+		t.Errorf(
+			"COSE_Key (%d bytes) is too short to contain the 32-byte vkey",
+			len(keyBytes),
+		)
 	}
 	if !bytes.Contains(keyBytes, wantVkey) {
-		t.Fatalf("COSE_Key %s does not contain expected vkey %s", keyHex, vkeyHex)
+		t.Fatalf(
+			"COSE_Key %s does not contain expected vkey %s",
+			keyHex,
+			vkeyHex,
+		)
 	}
 }
 
@@ -1296,13 +1476,23 @@ func TestWalletBackendSignTx(t *testing.T) {
 
 	// Build a minimal Conway transaction body with one required signer.
 	var dummyTxID lcommon.Blake2b256
-	copy(dummyTxID[:], bytes32("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"))
+	copy(
+		dummyTxID[:],
+		bytes32(
+			"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		),
+	)
 	inp := shelley.ShelleyTransactionInput{TxId: dummyTxID, OutputIndex: 0}
 
 	body := conway.ConwayTransactionBody{
-		TxInputs:          conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{inp}),
-		TxFee:             200000,
-		TxRequiredSigners: gocbor.NewSetType([]lcommon.Blake2b224{vkeyHash}, true),
+		TxInputs: conway.NewConwayTransactionInputSet(
+			[]shelley.ShelleyTransactionInput{inp},
+		),
+		TxFee: 200000,
+		TxRequiredSigners: gocbor.NewSetType(
+			[]lcommon.Blake2b224{vkeyHash},
+			true,
+		),
 	}
 
 	// Build the full transaction (body + empty witness set + isValid + null metadata).
@@ -1357,15 +1547,152 @@ func TestWalletBackendSignTx(t *testing.T) {
 		t.Errorf("witness vkey = %x, want %x", witnesses[0].Vkey, wantVkey)
 	}
 	if len(witnesses[0].Signature) != 64 {
-		t.Errorf("witness signature length = %d, want 64", len(witnesses[0].Signature))
+		t.Errorf(
+			"witness signature length = %d, want 64",
+			len(witnesses[0].Signature),
+		)
 	}
 
 	// CRITICAL: the signature MUST verify against blake2b-256 of the body bytes
 	// extracted from the ORIGINAL tx. This catches a wrong signing target (e.g. a
 	// re-encoded body that differs byte-for-byte from the original).
-	if !ed25519.Verify(ed25519.PublicKey(witnesses[0].Vkey), signingTarget.Bytes(), witnesses[0].Signature) {
-		t.Error("witness signature does not verify against blake2b-256 of the original tx body")
+	if !ed25519.Verify(
+		ed25519.PublicKey(witnesses[0].Vkey),
+		signingTarget.Bytes(),
+		witnesses[0].Signature,
+	) {
+		t.Error(
+			"witness signature does not verify against blake2b-256 of the original tx body",
+		)
 	}
+}
+
+func TestWalletBackendInspectTxRejectsOversizeBeforeInputResolution(
+	t *testing.T,
+) {
+	sc := &fakeSpendChain{maxTxSize: 1}
+	sp := spend.NewService(sc, nil, nil)
+	be := &WalletBackend{sp: sp}
+
+	var txID lcommon.Blake2b256
+	copy(
+		txID[:],
+		bytes32(
+			"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		),
+	)
+	tx := conway.ConwayTransaction{
+		Body: conway.ConwayTransactionBody{
+			TxInputs: conway.NewConwayTransactionInputSet(
+				[]shelley.ShelleyTransactionInput{{
+					TxId: txID, OutputIndex: 0,
+				}},
+			),
+			TxFee: 200000,
+		},
+		WitnessSet: conway.ConwayTransactionWitnessSet{},
+		TxIsValid:  true,
+	}
+	txBytes, err := gocbor.Encode(&tx)
+	if err != nil {
+		t.Fatalf("encode tx: %v", err)
+	}
+	if _, err := be.InspectTx(context.Background(), hex.EncodeToString(txBytes)); err == nil {
+		t.Fatal("InspectTx accepted transaction over live MaxTxSize")
+	}
+	if sc.utxoCalls != 0 {
+		t.Fatalf(
+			"UtxoByRef calls = %d, want 0 before size admission",
+			sc.utxoCalls,
+		)
+	}
+}
+
+func TestWalletBackendSignTxValidatesAuxiliaryData(t *testing.T) {
+	acct := mustDeriveBackendSigningAccount(t)
+	sp := spend.NewService(
+		&fakeSpendChain{},
+		fakeTestKeystore{mnemonic: backendTestMnemonic},
+		acct,
+	)
+	fc := &fakeConnectorChain{addressErr: chain.ErrNotFound}
+	wl := wallet.NewService(&walletChainBridge{f: fc})
+	if _, err := wl.SetWallet(backendTestMnemonic, "preview", 5); err != nil {
+		t.Fatalf("SetWallet: %v", err)
+	}
+	be := NewWalletBackend(wl, sp, acct, "preview", fc)
+
+	metadata, err := lcommon.DecodeMetadatumRaw([]byte{0xa1, 0x01, 0x61, 0x61})
+	if err != nil {
+		t.Fatalf("decode metadata fixture: %v", err)
+	}
+	wantHash := lcommon.Blake2b256Hash(metadata.Cbor())
+	wrongHash := lcommon.Blake2b256Hash([]byte("different auxiliary data"))
+	vkeyHash := lcommon.Blake2b224Hash(derivedPaymentVkey(t, 0))
+
+	encode := func(t *testing.T, hash *lcommon.Blake2b256) string {
+		t.Helper()
+		var txID lcommon.Blake2b256
+		txID[0] = 1
+		raw, err := gocbor.Encode(&conway.ConwayTransaction{
+			Body: conway.ConwayTransactionBody{
+				TxInputs: conway.NewConwayTransactionInputSet(
+					[]shelley.ShelleyTransactionInput{{
+						TxId: txID,
+					}},
+				),
+				TxFee: 200000,
+				TxRequiredSigners: gocbor.NewSetType(
+					[]lcommon.Blake2b224{vkeyHash},
+					true,
+				),
+				TxAuxDataHash: hash,
+			},
+			WitnessSet: conway.ConwayTransactionWitnessSet{},
+			TxIsValid:  true,
+			TxMetadata: metadata,
+		})
+		if err != nil {
+			t.Fatalf("encode transaction: %v", err)
+		}
+		return hex.EncodeToString(raw)
+	}
+
+	t.Run("matching hash", func(t *testing.T) {
+		if _, err := be.SignTx(context.Background(), encode(t, &wantHash), false, "anypassword"); err != nil {
+			t.Fatalf("SignTx: %v", err)
+		}
+	})
+	t.Run("missing hash", func(t *testing.T) {
+		_, err := be.SignTx(
+			context.Background(),
+			encode(t, nil),
+			false,
+			"anypassword",
+		)
+		var target lcommon.MissingTransactionAuxiliaryDataHashError
+		if !errors.As(err, &target) {
+			t.Fatalf(
+				"SignTx error = %v, want MissingTransactionAuxiliaryDataHashError",
+				err,
+			)
+		}
+	})
+	t.Run("conflicting hash", func(t *testing.T) {
+		_, err := be.SignTx(
+			context.Background(),
+			encode(t, &wrongHash),
+			false,
+			"anypassword",
+		)
+		var target lcommon.ConflictingMetadataHashError
+		if !errors.As(err, &target) {
+			t.Fatalf(
+				"SignTx error = %v, want ConflictingMetadataHashError",
+				err,
+			)
+		}
+	})
 }
 
 func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {
@@ -1397,10 +1724,14 @@ func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {
 	var txID lcommon.Blake2b256
 	copy(txID[:], txIDBytes)
 	body := conway.ConwayTransactionBody{
-		TxInputs: conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{{
-			TxId:        txID,
-			OutputIndex: uint32(utxo.OutputIndex), //nolint:gosec // test fixture
-		}}),
+		TxInputs: conway.NewConwayTransactionInputSet(
+			[]shelley.ShelleyTransactionInput{{
+				TxId: txID,
+				OutputIndex: uint32(
+					utxo.OutputIndex,
+				), //nolint:gosec // test fixture
+			}},
+		),
 		TxFee: 200000,
 	}
 	txCbor, err := gocbor.Encode(&conway.ConwayTransaction{
@@ -1411,7 +1742,12 @@ func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {
 		t.Fatalf("encode tx: %v", err)
 	}
 
-	wsHex, err := be.SignTx(context.Background(), hex.EncodeToString(txCbor), false, "anypassword")
+	wsHex, err := be.SignTx(
+		context.Background(),
+		hex.EncodeToString(txCbor),
+		false,
+		"anypassword",
+	)
 	if err != nil {
 		t.Fatalf("SignTx change input: %v", err)
 	}
@@ -1429,7 +1765,11 @@ func TestWalletBackendSignTxChangeAddressInput(t *testing.T) {
 	}
 	wantVkey := derivedChangeVkey(t, 2)
 	if !bytes.Equal(witnesses[0].Vkey, wantVkey) {
-		t.Fatalf("change witness vkey = %x, want %x", witnesses[0].Vkey, wantVkey)
+		t.Fatalf(
+			"change witness vkey = %x, want %x",
+			witnesses[0].Vkey,
+			wantVkey,
+		)
 	}
 }
 
@@ -1450,16 +1790,31 @@ func TestWalletBackendSignTxPartialSignFalseErrors(t *testing.T) {
 
 	// A required signer hash that does NOT match any of our derived keys.
 	var foreignKeyHash lcommon.Blake2b224
-	copy(foreignKeyHash[:], bytes32("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
+	copy(
+		foreignKeyHash[:],
+		bytes32(
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		),
+	)
 
 	var dummyTxID lcommon.Blake2b256
-	copy(dummyTxID[:], bytes32("1111111111111111111111111111111111111111111111111111111111111111"))
+	copy(
+		dummyTxID[:],
+		bytes32(
+			"1111111111111111111111111111111111111111111111111111111111111111",
+		),
+	)
 	inp := shelley.ShelleyTransactionInput{TxId: dummyTxID, OutputIndex: 0}
 
 	body := conway.ConwayTransactionBody{
-		TxInputs:          conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{inp}),
-		TxFee:             200000,
-		TxRequiredSigners: gocbor.NewSetType([]lcommon.Blake2b224{foreignKeyHash}, true),
+		TxInputs: conway.NewConwayTransactionInputSet(
+			[]shelley.ShelleyTransactionInput{inp},
+		),
+		TxFee: 200000,
+		TxRequiredSigners: gocbor.NewSetType(
+			[]lcommon.Blake2b224{foreignKeyHash},
+			true,
+		),
 	}
 	tx := conway.ConwayTransaction{
 		Body:      body,
@@ -1470,7 +1825,12 @@ func TestWalletBackendSignTxPartialSignFalseErrors(t *testing.T) {
 		t.Fatalf("encode tx: %v", err)
 	}
 
-	_, err = be.SignTx(context.Background(), hex.EncodeToString(txCbor), false, "anypassword")
+	_, err = be.SignTx(
+		context.Background(),
+		hex.EncodeToString(txCbor),
+		false,
+		"anypassword",
+	)
 	if err == nil {
 		t.Fatal("SignTx(partialSign=false, no match): want error, got nil")
 	}
@@ -1492,16 +1852,31 @@ func TestWalletBackendSignTxPartialSignTrue(t *testing.T) {
 	be := NewWalletBackend(wl, sp, acct, "preview", fc)
 
 	var foreignKeyHash lcommon.Blake2b224
-	copy(foreignKeyHash[:], bytes32("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
+	copy(
+		foreignKeyHash[:],
+		bytes32(
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		),
+	)
 
 	var dummyTxID lcommon.Blake2b256
-	copy(dummyTxID[:], bytes32("2222222222222222222222222222222222222222222222222222222222222222"))
+	copy(
+		dummyTxID[:],
+		bytes32(
+			"2222222222222222222222222222222222222222222222222222222222222222",
+		),
+	)
 	inp := shelley.ShelleyTransactionInput{TxId: dummyTxID, OutputIndex: 0}
 
 	body := conway.ConwayTransactionBody{
-		TxInputs:          conway.NewConwayTransactionInputSet([]shelley.ShelleyTransactionInput{inp}),
-		TxFee:             200000,
-		TxRequiredSigners: gocbor.NewSetType([]lcommon.Blake2b224{foreignKeyHash}, true),
+		TxInputs: conway.NewConwayTransactionInputSet(
+			[]shelley.ShelleyTransactionInput{inp},
+		),
+		TxFee: 200000,
+		TxRequiredSigners: gocbor.NewSetType(
+			[]lcommon.Blake2b224{foreignKeyHash},
+			true,
+		),
 	}
 	tx := conway.ConwayTransaction{
 		Body:      body,
@@ -1512,7 +1887,12 @@ func TestWalletBackendSignTxPartialSignTrue(t *testing.T) {
 		t.Fatalf("encode tx: %v", err)
 	}
 
-	wsHex, err := be.SignTx(context.Background(), hex.EncodeToString(txCbor), true, "anypassword")
+	wsHex, err := be.SignTx(
+		context.Background(),
+		hex.EncodeToString(txCbor),
+		true,
+		"anypassword",
+	)
 	if err != nil {
 		t.Fatalf("SignTx(partialSign=true): %v", err)
 	}
@@ -1526,7 +1906,10 @@ func TestWalletBackendSignTxPartialSignTrue(t *testing.T) {
 		t.Fatalf("decode partial witness set CBOR: %v", err)
 	}
 	if n := len(decodedWS.VkeyWitnesses.Items()); n != 0 {
-		t.Errorf("partial-sign with no matching key produced %d witnesses, want 0", n)
+		t.Errorf(
+			"partial-sign with no matching key produced %d witnesses, want 0",
+			n,
+		)
 	}
 }
 
@@ -1538,7 +1921,12 @@ func TestWalletBackendSubmitTx(t *testing.T) {
 
 	// Set a canned submit hash.
 	var wantHash lcommon.Blake2b256
-	copy(wantHash[:], bytes32("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
+	copy(
+		wantHash[:],
+		bytes32(
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		),
+	)
 	sc := &fakeSpendChain{submitHash: wantHash}
 	sp := spend.NewService(sc, ks, acct)
 
@@ -1617,7 +2005,9 @@ func derivedStakeVkey(t *testing.T) []byte {
 }
 
 // mustDeriveBackendCIP95Account derives a preview account for CIP-95 signing tests.
-func mustDeriveBackendCIP95Account(t *testing.T) (*wallet.Account, *spend.Service, *walletChainBridge) {
+func mustDeriveBackendCIP95Account(
+	t *testing.T,
+) (*wallet.Account, *spend.Service, *walletChainBridge) {
 	t.Helper()
 	acct, err := wallet.Derive(backendTestMnemonic, "preview", 5)
 	if err != nil {
@@ -1695,13 +2085,20 @@ func TestWalletBackendUnregisteredPubStakeKeys(t *testing.T) {
 		t.Fatalf("UnregisteredPubStakeKeys: %v", err)
 	}
 	if len(unregistered) != 1 {
-		t.Fatalf("UnregisteredPubStakeKeys count = %d, want 1", len(unregistered))
+		t.Fatalf(
+			"UnregisteredPubStakeKeys count = %d, want 1",
+			len(unregistered),
+		)
 	}
 
 	wantBytes := derivedStakeVkey(t)
 	want := hex.EncodeToString(wantBytes)
 	if unregistered[0] != want {
-		t.Errorf("UnregisteredPubStakeKeys[0] = %q, want %q", unregistered[0], want)
+		t.Errorf(
+			"UnregisteredPubStakeKeys[0] = %q, want %q",
+			unregistered[0],
+			want,
+		)
 	}
 	if len(unregistered[0]) != 64 {
 		t.Errorf("stake key hex length = %d, want 64", len(unregistered[0]))
@@ -1713,7 +2110,10 @@ func TestWalletBackendUnregisteredPubStakeKeys(t *testing.T) {
 		t.Fatalf("RegisteredPubStakeKeys: %v", err)
 	}
 	if len(registered) != 0 {
-		t.Errorf("RegisteredPubStakeKeys count = %d, want 0 (stake not active)", len(registered))
+		t.Errorf(
+			"RegisteredPubStakeKeys count = %d, want 0 (stake not active)",
+			len(registered),
+		)
 	}
 }
 
@@ -1750,6 +2150,9 @@ func TestWalletBackendRegisteredPubStakeKeys(t *testing.T) {
 		t.Fatalf("UnregisteredPubStakeKeys: %v", err)
 	}
 	if len(unregistered) != 0 {
-		t.Errorf("UnregisteredPubStakeKeys count = %d, want 0 (stake active)", len(unregistered))
+		t.Errorf(
+			"UnregisteredPubStakeKeys count = %d, want 0 (stake active)",
+			len(unregistered),
+		)
 	}
 }

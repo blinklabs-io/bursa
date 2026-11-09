@@ -111,7 +111,9 @@ type ProtocolParams struct {
 
 // ErrNoChange is returned when the request asks for the wallet's current state:
 // no certificates would be produced. The UI disables submit in this case.
-var ErrNoChange = errors.New("requested state matches current state; nothing to do")
+var ErrNoChange = errors.New(
+	"requested state matches current state; nothing to do",
+)
 
 // chainQuerier is the slice of the Blockfrost chain client the delegation flow
 // needs to verify pools/DReps and read account state + protocol params. It is an
@@ -158,7 +160,12 @@ func (s *Service) chainQuerierLocked() chainQuerier {
 //
 // withdrawable is the wallet's withdrawable rewards (decimal lovelace as the
 // node reports it); it is only consulted when req.Withdraw is set.
-func plan(current AccountState, req DelegationRequest, params ProtocolParams, withdrawable string) ([]Cert, error) {
+func plan(
+	current AccountState,
+	req DelegationRequest,
+	params ProtocolParams,
+	withdrawable string,
+) ([]Cert, error) {
 	var certs []Cert
 
 	wantPool := req.PoolID != ""
@@ -179,7 +186,8 @@ func plan(current AccountState, req DelegationRequest, params ProtocolParams, wi
 	// Stake delegation: only when a pool is requested AND it differs from the
 	// current delegation (idempotent — re-delegating to the same pool is a no-op).
 	if wantPool {
-		changed := current.CurrentPool == nil || *current.CurrentPool != req.PoolID
+		changed := current.CurrentPool == nil ||
+			*current.CurrentPool != req.PoolID
 		if changed {
 			certs = append(certs, Cert{
 				Kind:    CertStakeDelegation,
@@ -196,7 +204,8 @@ func plan(current AccountState, req DelegationRequest, params ProtocolParams, wi
 		if err != nil {
 			return nil, err
 		}
-		voteChanged := current.CurrentDRep == nil || !drepEqual(*current.CurrentDRep, requestedDRep)
+		voteChanged := current.CurrentDRep == nil ||
+			!drepEqual(*current.CurrentDRep, requestedDRep)
 		if registerSelf {
 			if err := validateAnchor(req.Vote.Anchor); err != nil {
 				return nil, err
@@ -231,7 +240,10 @@ func plan(current AccountState, req DelegationRequest, params ProtocolParams, wi
 	if req.Withdraw {
 		amt, err := parseAmount(withdrawable)
 		if err != nil || amt == 0 {
-			return nil, fmt.Errorf("%w: no withdrawable rewards", ErrInvalidRequest)
+			return nil, fmt.Errorf(
+				"%w: no withdrawable rewards",
+				ErrInvalidRequest,
+			)
 		}
 		certs = append(certs, Cert{
 			Kind:           CertWithdrawal,
@@ -256,15 +268,25 @@ func voteSummary(v Vote) (string, error) {
 		return "Delegate voting power to Always No Confidence", nil
 	case VoteDRep:
 		if v.DRepID == "" {
-			return "", fmt.Errorf("%w: drep_id required for a specific-DRep vote", ErrInvalidRequest)
+			return "", fmt.Errorf(
+				"%w: drep_id required for a specific-DRep vote",
+				ErrInvalidRequest,
+			)
 		}
 		return "Delegate voting power to " + v.DRepID, nil
 	case VoteRegisterSelf:
 		// voteSummary is only called for non-register-self targets; this path is
 		// unreachable in normal flow but must be handled for exhaustive coverage.
-		return "", fmt.Errorf("%w: use register_self path, not voteSummary", ErrInvalidRequest)
+		return "", fmt.Errorf(
+			"%w: use register_self path, not voteSummary",
+			ErrInvalidRequest,
+		)
 	default:
-		return "", fmt.Errorf("%w: unknown vote target %q", ErrInvalidRequest, v.Type)
+		return "", fmt.Errorf(
+			"%w: unknown vote target %q",
+			ErrInvalidRequest,
+			v.Type,
+		)
 	}
 }
 
@@ -276,16 +298,25 @@ func requestedVoteDrep(own *lcommon.Drep, v Vote) (lcommon.Drep, error) {
 		return lcommon.Drep{Type: lcommon.DrepTypeNoConfidence}, nil
 	case VoteDRep:
 		if v.DRepID == "" {
-			return lcommon.Drep{}, fmt.Errorf("%w: drep_id required for a specific-DRep vote", ErrInvalidRequest)
+			return lcommon.Drep{}, fmt.Errorf(
+				"%w: drep_id required for a specific-DRep vote",
+				ErrInvalidRequest,
+			)
 		}
 		return parseDRepTarget(v.DRepID)
 	case VoteRegisterSelf:
 		if own == nil {
-			return lcommon.Drep{}, errors.New("wallet has no DRep credential derived")
+			return lcommon.Drep{}, errors.New(
+				"wallet has no DRep credential derived",
+			)
 		}
 		return cloneDrep(*own), nil
 	default:
-		return lcommon.Drep{}, fmt.Errorf("%w: unknown vote target %q", ErrInvalidRequest, v.Type)
+		return lcommon.Drep{}, fmt.Errorf(
+			"%w: unknown vote target %q",
+			ErrInvalidRequest,
+			v.Type,
+		)
 	}
 }
 
@@ -308,23 +339,36 @@ func parseDRepTarget(id string) (lcommon.Drep, error) {
 	switch normalized {
 	case "drep_abstain", "drep_always_abstain", "drep-alwaysabstain":
 		return lcommon.Drep{Type: lcommon.DrepTypeAbstain}, nil
-	case "drep_no_confidence", "drep_always_no_confidence", "drep-alwaysnoconfidence":
+	case "drep_no_confidence",
+		"drep_always_no_confidence",
+		"drep-alwaysnoconfidence":
 		return lcommon.Drep{Type: lcommon.DrepTypeNoConfidence}, nil
 	}
-	if h, ok, err := prefixedDRepHash(trimmed, "drep-keyHash-"); ok || err != nil {
+	if h, ok, err := prefixedDRepHash(trimmed, "drep-keyHash-"); ok ||
+		err != nil {
 		if err != nil {
 			return lcommon.Drep{}, err
 		}
-		return lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: h}, nil
+		return lcommon.Drep{
+			Type:       lcommon.DrepTypeAddrKeyHash,
+			Credential: h,
+		}, nil
 	}
-	if h, ok, err := prefixedDRepHash(trimmed, "drep-scriptHash-"); ok || err != nil {
+	if h, ok, err := prefixedDRepHash(trimmed, "drep-scriptHash-"); ok ||
+		err != nil {
 		if err != nil {
 			return lcommon.Drep{}, err
 		}
-		return lcommon.Drep{Type: lcommon.DrepTypeScriptHash, Credential: h}, nil
+		return lcommon.Drep{
+			Type:       lcommon.DrepTypeScriptHash,
+			Credential: h,
+		}, nil
 	}
 	if raw, err := hex.DecodeString(trimmed); err == nil && len(raw) == 28 {
-		return lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: raw}, nil
+		return lcommon.Drep{
+			Type:       lcommon.DrepTypeAddrKeyHash,
+			Credential: raw,
+		}, nil
 	}
 	typ, hash, err := decodeDRepID(trimmed)
 	if err != nil {
@@ -339,10 +383,20 @@ func prefixedDRepHash(id, prefix string) ([]byte, bool, error) {
 	}
 	h, err := hex.DecodeString(id[len(prefix):])
 	if err != nil {
-		return nil, true, fmt.Errorf("%w: invalid drep hash %q: %w", ErrInvalidRequest, id, err)
+		return nil, true, fmt.Errorf(
+			"%w: invalid drep hash %q: %w",
+			ErrInvalidRequest,
+			id,
+			err,
+		)
 	}
 	if len(h) != 28 {
-		return nil, true, fmt.Errorf("%w: invalid drep hash %q: expected 28 bytes, got %d", ErrInvalidRequest, id, len(h))
+		return nil, true, fmt.Errorf(
+			"%w: invalid drep hash %q: expected 28 bytes, got %d",
+			ErrInvalidRequest,
+			id,
+			len(h),
+		)
 	}
 	return h, true, nil
 }
@@ -353,13 +407,18 @@ func prefixedDRepHash(id, prefix string) ([]byte, bool, error) {
 // (attaching certs + the withdrawal), stores it under a new pending id, and
 // returns an itemized DelegationPreview. Confirm signs + submits it through the
 // same path the Send flow uses.
-func (s *Service) BuildDelegation(ctx context.Context, req DelegationRequest) (DelegationPreview, error) {
+func (s *Service) BuildDelegation(
+	ctx context.Context,
+	req DelegationRequest,
+) (DelegationPreview, error) {
 	walletID, acct, gen := s.currentBinding()
 	if acct == nil {
 		return DelegationPreview{}, ErrNoWallet
 	}
 	if len(acct.ReceiveAddresses) == 0 {
-		return DelegationPreview{}, errors.New("account has no receive addresses")
+		return DelegationPreview{}, errors.New(
+			"account has no receive addresses",
+		)
 	}
 	q := s.chainQuerierLocked()
 	if q == nil {
@@ -397,18 +456,29 @@ func (s *Service) BuildDelegation(ctx context.Context, req DelegationRequest) (D
 	if req.PoolID != "" {
 		if _, err := q.Pool(ctx, req.PoolID); err != nil {
 			if errors.Is(err, chain.ErrNotFound) {
-				return DelegationPreview{}, fmt.Errorf("%w: pool %q not found by your node", ErrInvalidRequest, req.PoolID)
+				return DelegationPreview{}, fmt.Errorf(
+					"%w: pool %q not found by your node",
+					ErrInvalidRequest,
+					req.PoolID,
+				)
 			}
 			return DelegationPreview{}, fmt.Errorf("verify pool: %w", err)
 		}
 	}
 	if req.Vote != nil && req.Vote.Type == VoteDRep {
 		if req.Vote.DRepID == "" {
-			return DelegationPreview{}, fmt.Errorf("%w: drep_id required for a specific-DRep vote", ErrInvalidRequest)
+			return DelegationPreview{}, fmt.Errorf(
+				"%w: drep_id required for a specific-DRep vote",
+				ErrInvalidRequest,
+			)
 		}
 		if _, err := q.DRep(ctx, req.Vote.DRepID); err != nil {
 			if errors.Is(err, chain.ErrNotFound) {
-				return DelegationPreview{}, fmt.Errorf("%w: DRep %q not found by your node", ErrInvalidRequest, req.Vote.DRepID)
+				return DelegationPreview{}, fmt.Errorf(
+					"%w: DRep %q not found by your node",
+					ErrInvalidRequest,
+					req.Vote.DRepID,
+				)
 			}
 			return DelegationPreview{}, fmt.Errorf("verify drep: %w", err)
 		}
@@ -460,7 +530,11 @@ func certKindsFrom(certs []Cert) []CertKind {
 // accountState reads the wallet's stake registration + current pool, plus its
 // withdrawable rewards, from the node. A never-seen account (ErrNotFound) is an
 // unregistered wallet with no rewards.
-func (s *Service) accountState(ctx context.Context, q chainQuerier, stakeAddr string) (AccountState, string, error) {
+func (s *Service) accountState(
+	ctx context.Context,
+	q chainQuerier,
+	stakeAddr string,
+) (AccountState, string, error) {
 	info, err := q.Account(ctx, stakeAddr)
 	if errors.Is(err, chain.ErrNotFound) {
 		return AccountState{Registered: false}, "0", nil
@@ -472,7 +546,10 @@ func (s *Service) accountState(ctx context.Context, q chainQuerier, stakeAddr st
 	if withdrawable == "" {
 		withdrawable = "0"
 	}
-	state := AccountState{Registered: info.Registered || info.Active, CurrentPool: info.PoolID}
+	state := AccountState{
+		Registered:  info.Registered || info.Active,
+		CurrentPool: info.PoolID,
+	}
 	drepID := info.DRepID
 	if drepID == nil || *drepID == "" {
 		drepID, err = q.AccountDRepID(ctx, stakeAddr)
@@ -499,12 +576,19 @@ func drepFromHex(hashHex string) (*lcommon.Drep, error) {
 		return nil, fmt.Errorf("drep key hash: %w", err)
 	}
 	if len(b) != 28 {
-		return nil, fmt.Errorf("drep key hash: expected 28 bytes, got %d", len(b))
+		return nil, fmt.Errorf(
+			"drep key hash: expected 28 bytes, got %d",
+			len(b),
+		)
 	}
 	return &lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: b}, nil
 }
 
-func (s *Service) ownDRepRegistered(ctx context.Context, q chainQuerier, own lcommon.Drep) (bool, error) {
+func (s *Service) ownDRepRegistered(
+	ctx context.Context,
+	q chainQuerier,
+	own lcommon.Drep,
+) (bool, error) {
 	ids := []string{own.String()}
 	if len(own.Credential) == 28 {
 		ids = append(ids, hex.EncodeToString(own.Credential))
@@ -535,13 +619,21 @@ func (s *Service) ownDRepRegistered(ctx context.Context, q chainQuerier, own lco
 func toPlanParams(pp chain.ProtocolParams) (ProtocolParams, error) {
 	key, err := parseAmount(pp.KeyDeposit)
 	if err != nil {
-		return ProtocolParams{}, fmt.Errorf("%w: key_deposit %q", ErrInvalidRequest, pp.KeyDeposit)
+		return ProtocolParams{}, fmt.Errorf(
+			"%w: key_deposit %q",
+			ErrInvalidRequest,
+			pp.KeyDeposit,
+		)
 	}
 	var drep uint64
 	if pp.DRepDeposit != nil && *pp.DRepDeposit != "" {
 		drep, err = parseAmount(*pp.DRepDeposit)
 		if err != nil {
-			return ProtocolParams{}, fmt.Errorf("%w: drep_deposit %q", ErrInvalidRequest, *pp.DRepDeposit)
+			return ProtocolParams{}, fmt.Errorf(
+				"%w: drep_deposit %q",
+				ErrInvalidRequest,
+				*pp.DRepDeposit,
+			)
 		}
 	}
 	return ProtocolParams{KeyDeposit: key, DRepDeposit: drep}, nil
@@ -580,9 +672,21 @@ func (s *Service) buildDelegationTx(
 	if err != nil {
 		return nil, nil, err
 	}
-	return s.completeWithSigners(ctx, acct, certSigners, func(next *apollo.Apollo) (*apollo.Apollo, error) {
-		return s.applyDelegationTx(next, req, certs, params, stakeAddr, cred)
-	})
+	return s.completeWithSigners(
+		ctx,
+		acct,
+		certSigners,
+		func(next *apollo.Apollo) (*apollo.Apollo, error) {
+			return s.applyDelegationTx(
+				next,
+				req,
+				certs,
+				params,
+				stakeAddr,
+				cred,
+			)
+		},
+	)
 }
 
 // completeWithSigners builds and completes a payment-less transaction for the
@@ -650,7 +754,10 @@ func (s *Service) completeWithSigners(
 		if tx == nil {
 			return nil, nil, errors.New("completed tx is nil")
 		}
-		actualPaymentSigners, err := requiredPaymentKeyHashesForInputs(tx.Body.Inputs(), utxoAddr)
+		actualPaymentSigners, err := requiredPaymentKeyHashesForInputs(
+			tx.Body.Inputs(),
+			utxoAddr,
+		)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -699,7 +806,12 @@ func (s *Service) applyDelegationTx(
 			if err != nil {
 				return nil, err
 			}
-			a = a.RegisterDRep(drepCred, int64(params.DRepDeposit), anchor) //nolint:gosec // deposit from node params
+			deposit := int64(params.DRepDeposit) //nolint:gosec // deposit from node params
+			a = a.RegisterDRep(
+				drepCred,
+				deposit,
+				anchor,
+			)
 		case CertVoteDelegation:
 			drep, err := s.voteDrep(req)
 			if err != nil {
@@ -712,7 +824,10 @@ func (s *Service) applyDelegationTx(
 		case CertWithdrawal:
 			amt, err := parseAmount(c.AmountLovelace)
 			if err != nil {
-				return nil, fmt.Errorf("%w: withdrawal amount", ErrInvalidRequest)
+				return nil, fmt.Errorf(
+					"%w: withdrawal amount",
+					ErrInvalidRequest,
+				)
 			}
 			a = a.AddWithdrawal(stakeAddr, amt, nil, nil)
 		}
@@ -728,23 +843,35 @@ func delegationCertRequiredSigners(
 	var signers []lcommon.Blake2b224
 	for _, c := range certs {
 		switch c.Kind {
-		case CertStakeRegistration, CertStakeDelegation, CertVoteDelegation, CertWithdrawal:
+		case CertStakeRegistration,
+			CertStakeDelegation,
+			CertVoteDelegation,
+			CertWithdrawal:
 			if stakeKeyHash == (lcommon.Blake2b224{}) {
 				return nil, errors.New("stake credential is missing")
 			}
-			signers = appendKeyHashes(signers, []lcommon.Blake2b224{stakeKeyHash})
+			signers = appendKeyHashes(
+				signers,
+				[]lcommon.Blake2b224{stakeKeyHash},
+			)
 		case CertDRepRegistration:
 			drep, err := drepFromHex(acct.DRepKeyHash)
 			if err != nil {
 				return nil, err
 			}
-			signers = appendKeyHashes(signers, []lcommon.Blake2b224{lcommon.NewBlake2b224(drep.Credential)})
+			signers = appendKeyHashes(
+				signers,
+				[]lcommon.Blake2b224{lcommon.NewBlake2b224(drep.Credential)},
+			)
 		}
 	}
 	return signers, nil
 }
 
-func appendKeyHashes(dst []lcommon.Blake2b224, sets ...[]lcommon.Blake2b224) []lcommon.Blake2b224 {
+func appendKeyHashes(
+	dst []lcommon.Blake2b224,
+	sets ...[]lcommon.Blake2b224,
+) []lcommon.Blake2b224 {
 	seen := make(map[lcommon.Blake2b224]bool, len(dst))
 	for _, kh := range dst {
 		seen[kh] = true
@@ -766,7 +893,12 @@ func appendKeyHashes(dst []lcommon.Blake2b224, sets ...[]lcommon.Blake2b224) []l
 func poolKeyHash(poolID string) (lcommon.Blake2b224, error) {
 	pid, err := lcommon.NewPoolIdFromBech32(poolID)
 	if err != nil {
-		return lcommon.Blake2b224{}, fmt.Errorf("%w: invalid pool id %q: %w", ErrInvalidRequest, poolID, err)
+		return lcommon.Blake2b224{}, fmt.Errorf(
+			"%w: invalid pool id %q: %w",
+			ErrInvalidRequest,
+			poolID,
+			err,
+		)
 	}
 	return lcommon.Blake2b224(pid), nil
 }
@@ -777,7 +909,10 @@ func poolKeyHash(poolID string) (lcommon.Blake2b224, error) {
 // credential.
 func (s *Service) voteDrep(req DelegationRequest) (lcommon.Drep, error) {
 	if req.Vote == nil {
-		return lcommon.Drep{}, fmt.Errorf("%w: no vote target", ErrInvalidRequest)
+		return lcommon.Drep{}, fmt.Errorf(
+			"%w: no vote target",
+			ErrInvalidRequest,
+		)
 	}
 	switch req.Vote.Type {
 	case VoteAbstain:
@@ -795,15 +930,24 @@ func (s *Service) voteDrep(req DelegationRequest) (lcommon.Drep, error) {
 		if err != nil {
 			return lcommon.Drep{}, err
 		}
-		return lcommon.Drep{Type: lcommon.DrepTypeAddrKeyHash, Credential: hash}, nil
+		return lcommon.Drep{
+			Type:       lcommon.DrepTypeAddrKeyHash,
+			Credential: hash,
+		}, nil
 	default:
-		return lcommon.Drep{}, fmt.Errorf("%w: unknown vote target %q", ErrInvalidRequest, req.Vote.Type)
+		return lcommon.Drep{}, fmt.Errorf(
+			"%w: unknown vote target %q",
+			ErrInvalidRequest,
+			req.Vote.Type,
+		)
 	}
 }
 
 // selfDRepCredential returns the wallet's own DRep credential (key hash) and the
 // optional metadata anchor for a self-DRep registration.
-func (s *Service) selfDRepCredential(req DelegationRequest) (lcommon.Credential, *lcommon.GovAnchor, error) {
+func (s *Service) selfDRepCredential(
+	req DelegationRequest,
+) (lcommon.Credential, *lcommon.GovAnchor, error) {
 	hash, err := s.selfDRepKeyHash()
 	if err != nil {
 		return lcommon.Credential{}, nil, err
@@ -837,7 +981,10 @@ func validateAnchor(a *Anchor) error {
 		return nil
 	}
 	if (a.URL == "") != (a.Hash == "") {
-		return fmt.Errorf("%w: anchor url and hash must both be provided", ErrInvalidRequest)
+		return fmt.Errorf(
+			"%w: anchor url and hash must both be provided",
+			ErrInvalidRequest,
+		)
 	}
 	return nil
 }
@@ -864,11 +1011,19 @@ func (s *Service) selfDRepKeyHash() ([]byte, error) {
 func buildAnchor(a Anchor) (lcommon.GovAnchor, error) {
 	hashBytes, err := hexDecode32(a.Hash)
 	if err != nil {
-		return lcommon.GovAnchor{}, fmt.Errorf("%w: anchor hash: %w", ErrInvalidRequest, err)
+		return lcommon.GovAnchor{}, fmt.Errorf(
+			"%w: anchor hash: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	ga, err := lcommon.NewGovAnchor(a.URL, hashBytes)
 	if err != nil {
-		return lcommon.GovAnchor{}, fmt.Errorf("%w: anchor: %w", ErrInvalidRequest, err)
+		return lcommon.GovAnchor{}, fmt.Errorf(
+			"%w: anchor: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	return ga, nil
 }
@@ -877,7 +1032,11 @@ func buildAnchor(a Anchor) (lcommon.GovAnchor, error) {
 // the completed apollo tx (for the fee). Deposit is the sum of every cert's
 // refundable deposit; Withdrawal is the sum of withdrawal lines; Total is the
 // net cost to the wallet (fee + deposits − withdrawals).
-func toDelegationPreview(id string, a *apollo.Apollo, certs []Cert) DelegationPreview {
+func toDelegationPreview(
+	id string,
+	a *apollo.Apollo,
+	certs []Cert,
+) DelegationPreview {
 	var fee uint64
 	if tx := a.GetTx(); tx != nil {
 		fee = tx.Body.TxFee
@@ -937,14 +1096,29 @@ func hexDecode32(s string) ([]byte, error) {
 func decodeDRepID(drepID string) (typ int, hash []byte, err error) {
 	hrp, data5, derr := bech32.DecodeNoLimit(drepID)
 	if derr != nil {
-		return 0, nil, fmt.Errorf("%w: invalid drep id %q: %w", ErrInvalidRequest, drepID, derr)
+		return 0, nil, fmt.Errorf(
+			"%w: invalid drep id %q: %w",
+			ErrInvalidRequest,
+			drepID,
+			derr,
+		)
 	}
 	if hrp != "drep" {
-		return 0, nil, fmt.Errorf("%w: drep id %q has prefix %q, want drep", ErrInvalidRequest, drepID, hrp)
+		return 0, nil, fmt.Errorf(
+			"%w: drep id %q has prefix %q, want drep",
+			ErrInvalidRequest,
+			drepID,
+			hrp,
+		)
 	}
 	raw, derr := bech32.ConvertBits(data5, 5, 8, false)
 	if derr != nil {
-		return 0, nil, fmt.Errorf("%w: drep id %q: %w", ErrInvalidRequest, drepID, derr)
+		return 0, nil, fmt.Errorf(
+			"%w: drep id %q: %w",
+			ErrInvalidRequest,
+			drepID,
+			derr,
+		)
 	}
 	switch len(raw) {
 	case 28:
@@ -960,7 +1134,13 @@ func decodeDRepID(drepID string) (typ int, hash []byte, err error) {
 		// the identifier denotes. The node rejects such an id too ("invalid DRep
 		// voter type"), so this only moves the rejection client-side.
 		if raw[0]>>4 != 0x02 {
-			return 0, nil, fmt.Errorf("%w: drep id %q has voter type 0x%x, want 0x2 (header 0x%02x)", ErrInvalidRequest, drepID, raw[0]>>4, raw[0])
+			return 0, nil, fmt.Errorf(
+				"%w: drep id %q has voter type 0x%x, want 0x2 (header 0x%02x)",
+				ErrInvalidRequest,
+				drepID,
+				raw[0]>>4,
+				raw[0],
+			)
 		}
 		switch raw[0] & 0x0f {
 		case 0x02:
@@ -968,9 +1148,19 @@ func decodeDRepID(drepID string) (typ int, hash []byte, err error) {
 		case 0x03:
 			return lcommon.DrepTypeScriptHash, raw[1:], nil
 		default:
-			return 0, nil, fmt.Errorf("%w: drep id %q has unrecognized header 0x%02x", ErrInvalidRequest, drepID, raw[0])
+			return 0, nil, fmt.Errorf(
+				"%w: drep id %q has unrecognized header 0x%02x",
+				ErrInvalidRequest,
+				drepID,
+				raw[0],
+			)
 		}
 	default:
-		return 0, nil, fmt.Errorf("%w: drep id %q decodes to %d bytes, want 28 or 29", ErrInvalidRequest, drepID, len(raw))
+		return 0, nil, fmt.Errorf(
+			"%w: drep id %q decodes to %d bytes, want 28 or 29",
+			ErrInvalidRequest,
+			drepID,
+			len(raw),
+		)
 	}
 }

@@ -36,13 +36,22 @@ func TestIsLoopbackListenAddress(t *testing.T) {
 	}
 	for addr, want := range cases {
 		if got := IsLoopbackListenAddress(addr); got != want {
-			t.Errorf("IsLoopbackListenAddress(%q) = %v, want %v", addr, got, want)
+			t.Errorf(
+				"IsLoopbackListenAddress(%q) = %v, want %v",
+				addr,
+				got,
+				want,
+			)
 		}
 	}
 }
 
 func softwareBackend() config.SignerBackendConfig {
-	return config.SignerBackendConfig{Name: "local", Type: "software", Path: "/keys"}
+	return config.SignerBackendConfig{
+		Name: "local",
+		Type: "software",
+		Path: "/keys",
+	}
 }
 
 func vaultBackend() config.SignerBackendConfig {
@@ -56,7 +65,9 @@ func TestCheckFileBackendGuard_NonLoopbackNoOptIn_Errors(t *testing.T) {
 		false,
 	)
 	if err == nil {
-		t.Fatal("expected boot error for software backend on non-loopback address without opt-in")
+		t.Fatal(
+			"expected boot error for software backend on non-loopback address without opt-in",
+		)
 	}
 	if warn == "" {
 		t.Error("expected a non-empty warning alongside the error")
@@ -102,5 +113,31 @@ func TestCheckFileBackendGuard_NoFileBackend_Silent(t *testing.T) {
 	}
 	if warn != "" {
 		t.Errorf("expected no warning for a vault-only backend, got %q", warn)
+	}
+}
+
+func TestLoopbackBindAddress(t *testing.T) {
+	valid := map[string]string{
+		"127.0.0.1":   "127.0.0.1:8081",
+		" localhost ": "localhost:8081",
+		"::1":         "[::1]:8081",
+		"[::1]":       "[::1]:8081",
+	}
+	for host, want := range valid {
+		got, err := LoopbackBindAddress(host, 8081)
+		if err != nil {
+			t.Fatalf("LoopbackBindAddress(%q): %v", host, err)
+		}
+		if got != want {
+			t.Fatalf("LoopbackBindAddress(%q) = %q, want %q", host, got, want)
+		}
+	}
+	for _, host := range []string{
+		"", "0.0.0.0", "::", "192.0.2.1",
+		"127.0.0.1:9000", "[::1]:9000", "localhost:9000",
+	} {
+		if got, err := LoopbackBindAddress(host, 8081); err == nil {
+			t.Fatalf("LoopbackBindAddress(%q) = %q, want an error", host, got)
+		}
 	}
 }

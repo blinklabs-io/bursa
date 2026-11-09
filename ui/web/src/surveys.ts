@@ -31,9 +31,9 @@ export const KIND_LABELS: Record<SurveyKind, string> = {
   6: "Rating",
 };
 
-// The kinds a survey can be built with here. Custom questions need an off-chain
-// method schema, which the builder does not produce.
-export const BUILDABLE_KINDS: SurveyKind[] = [1, 2, 3, 4, 5, 6];
+// The kinds a survey can be built with here. A custom question commits to its
+// off-chain method schema by URI and hash.
+export const BUILDABLE_KINDS: SurveyKind[] = [0, 1, 2, 3, 4, 5, 6];
 
 // A grid wider than this is not offered as a dropdown.
 const MAX_GRID_CHOICES = 101;
@@ -131,6 +131,7 @@ export interface QuestionDraft {
   number: string;
   points: string[];
   ratings: string[];
+  customCbor: string;
 }
 
 // onScale reports whether v is a value the rating scale accepts.
@@ -149,13 +150,6 @@ export function onScale(scale: SurveyScale | undefined, value: string): boolean 
   return v >= 0n && v < levels;
 }
 
-// answerableHere reports whether this wallet can build a response: a required
-// question with a custom method cannot be answered, and leaving it out makes
-// every response invalid.
-export function answerableHere(def: SurveyDefinition): boolean {
-  return !def.questions.some((q) => q.kind === 0 && q.required === true);
-}
-
 export function emptyDraft(q: SurveyQuestion): QuestionDraft {
   const n = optionLabels(q).length;
   return {
@@ -166,6 +160,7 @@ export function emptyDraft(q: SurveyQuestion): QuestionDraft {
     number: "",
     points: Array.from({ length: n }, () => ""),
     ratings: Array.from({ length: n }, () => ""),
+    customCbor: "",
   };
 }
 
@@ -209,7 +204,10 @@ export function answerFor(
   const kind = q.kind;
   switch (kind) {
     case 0:
-      return { error: "Custom questions are answered with another tool." };
+      if (!/^(?:[0-9a-fA-F]{2})+$/.test(d.customCbor.trim())) {
+        return { error: "Enter the custom answer CBOR as hexadecimal bytes." };
+      }
+      return { answer: { kind, question: index, custom_cbor: d.customCbor.trim().toLowerCase() } };
     case 1: {
       const choice = parseInteger(d.choice);
       if (choice === null || choice < 0 || choice >= optionLabels(q).length) return { error: "Pick an option." };
@@ -313,6 +311,8 @@ export interface BuilderQuestion {
   scaleLabelsText: string;
   requireAll: boolean;
   required: boolean;
+  customUri: string;
+  customHash: string;
 }
 
 export interface BuilderDraft {
@@ -347,6 +347,8 @@ export function emptyBuilderQuestion(kind: SurveyKind = 1): BuilderQuestion {
     scaleLabelsText: "",
     requireAll: false,
     required: false,
+    customUri: "",
+    customHash: "",
   };
 }
 
@@ -409,13 +411,21 @@ function questionFrom(b: BuilderQuestion, n: number, errors: string[]): SurveyQu
   if (b.required) q.required = true;
 
   const e: string[] = [];
-  if (b.kind !== 4) {
+  if (b.kind !== 0 && b.kind !== 4) {
     const options = lines(b.optionsText);
     if (options.length < 2) fail("give at least two options, one per line.");
     if (options.some((o) => textBytes(o) > 64)) fail("each option must be 64 bytes or fewer.");
     q.options = options;
   }
   switch (b.kind) {
+    case 0:
+      if (b.customUri.trim() === "") fail("give the method schema URI.");
+      if (!/^[0-9a-fA-F]{64}$/.test(b.customHash.trim())) {
+        fail("give the method schema's 32-byte Blake2b-256 hash as 64 hexadecimal characters.");
+      } else {
+        q.anchor = { uri: b.customUri.trim(), hash: b.customHash.trim().toLowerCase() };
+      }
+      break;
     case 2:
       q.min = toInt("Minimum selections", b.min, e);
       q.max = toInt("Maximum selections", b.max, e);

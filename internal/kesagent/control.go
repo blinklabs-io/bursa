@@ -21,14 +21,16 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 )
 
 // Control command names.
 const (
-	CmdGenStagedKey = "gen-staged-key"
-	CmdInstallKey   = "install-key"
-	CmdDropKey      = "drop-key"
-	CmdInfo         = "info"
+	CmdGenStagedKey = wire.CmdGenStagedKey
+	CmdInstallKey   = wire.CmdInstallKey
+	CmdDropKey      = wire.CmdDropKey
+	CmdInfo         = wire.CmdInfo
 )
 
 // ServeControl accepts connections on ln and processes control commands until
@@ -129,6 +131,9 @@ func (a *Agent) dispatch(cmd Command) Reply {
 	case CmdInfo:
 		return Reply{Ok: true, Info: a.Info()}
 	default:
-		return Reply{Ok: false, Error: fmt.Sprintf("unknown command %q", cmd.Command)}
+		return Reply{
+			Ok:    false,
+			Error: fmt.Sprintf("unknown command %q", cmd.Command),
+		}
 	}
 }

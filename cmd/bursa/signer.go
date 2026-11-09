@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,11 +36,28 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 )
 
 const signerReadTimeout = 30 * time.Second
+
+func shutdownSignerServers(
+	ctx context.Context,
+	logger *slog.Logger,
+	signerServer, metricsServer *http.Server,
+) error {
+	if err := signerServer.Shutdown(ctx); err != nil {
+		return err
+	}
+	// Metrics are drained after the signer and never fail the shutdown: a
+	// stalled scrape must not cut off in-flight signing requests.
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(ctx); err != nil {
+			logger.Error("metrics shutdown failed", "error", err)
+		}
+	}
+	return nil
+}
 
 func newSignerHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
@@ -51,6 +69,13 @@ func newSignerHTTPServer(addr string, handler http.Handler) *http.Server {
 		// the headers have been received.
 		ReadTimeout: signerReadTimeout,
 	}
+}
+
+func newSignerMux(signerHandler, healthHandler http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", signerHandler)
+	mux.Handle("/", healthHandler)
+	return mux
 }
 
 // maxRequestSignSkewSeconds bounds signer.request_sign_skew_seconds. It also
@@ -72,8 +97,9 @@ resolve to a single caller identity fed to the signer.callers ACL):
 
   JWT bearer          at most one of signer.jwt_secret (HS256, dev/simple) or
                       signer.jwks_url (RS256/ES256/EdDSA via JWKS, production);
-                      optional signer.jwt_issuer / signer.jwt_audience are
-                      enforced when set. Caller is the token subject.
+                      signer.jwt_audience is required and enforced; optional
+                      signer.jwt_issuer is enforced when set. Caller is the
+                      token subject.
   mTLS client cert    signer.client_ca_cert (PEM) + signer.require_client_cert.
                       Caller is derived from the verified client certificate
                       (first URI SAN, else first DNS SAN, else CN). Requires
@@ -86,6 +112,9 @@ resolve to a single caller identity fed to the signer.callers ACL):
 
 Without a signer.callers ACL, any authenticated caller may use any configured
 key.`,
+		// A non-root command with subcommands accepts stray arguments by
+		// default, so a misspelled subcommand would start the service.
+		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			logging.ConfigureJSON()
 
@@ -108,10 +137,23 @@ key.`,
 			hasSecret := cfg.Signer.JWTSecret != ""
 			hasJWKS := cfg.Signer.JWKSURL != ""
 			if hasSecret && hasJWKS {
-				logger.Error("at most one of signer.jwt_secret and signer.jwks_url may be set")
+				logger.Error(
+					"at most one of signer.jwt_secret and signer.jwks_url may be set",
+				)
+				os.Exit(1)
+			}
+			metricsServer, err := newMetricsHTTPServer(cfg.Metrics)
+			if err != nil {
+				logger.Error("invalid metrics listener", "error", err)
 				os.Exit(1)
 			}
 			hasJWT := hasSecret || hasJWKS
+			if hasJWT && cfg.Signer.JWTAudience == "" {
+				logger.Error(
+					"signer.jwt_audience is required when signer.jwt_secret or signer.jwks_url is set",
+				)
+				os.Exit(1)
+			}
 			hasMTLS := cfg.Signer.ClientCACert != ""
 			hasReqSign := len(cfg.Signer.AuthorizedKeys) > 0
 			if hasReqSign {
@@ -122,23 +164,33 @@ key.`,
 				// security posture. Checked here, alongside the other cheap
 				// config checks, so it fails fast before backend/policy/JWKS
 				// initialization.
-				if cfg.Signer.RequestSignSkewSeconds < 0 || cfg.Signer.RequestSignSkewSeconds > maxRequestSignSkewSeconds {
+				if cfg.Signer.RequestSignSkewSeconds < 0 ||
+					cfg.Signer.RequestSignSkewSeconds > maxRequestSignSkewSeconds {
 					logger.Error(
-						"signer.request_sign_skew_seconds must be between 0 and "+strconv.Itoa(maxRequestSignSkewSeconds),
-						"value", cfg.Signer.RequestSignSkewSeconds,
+						"signer.request_sign_skew_seconds must be between 0 and "+strconv.Itoa(
+							maxRequestSignSkewSeconds,
+						),
+						"value",
+						cfg.Signer.RequestSignSkewSeconds,
 					)
 					os.Exit(1)
 				}
 			}
 			if !hasJWT && !hasMTLS && !hasReqSign {
-				logger.Error("at least one auth mode must be configured (signer.jwt_secret, signer.jwks_url, signer.client_ca_cert, or signer.authorized_keys)")
+				logger.Error(
+					"at least one auth mode must be configured (signer.jwt_secret, signer.jwks_url, signer.client_ca_cert, or signer.authorized_keys)",
+				)
 				os.Exit(1)
 			}
 			if cfg.Signer.RequireClientCert && !hasMTLS {
-				logger.Error("signer.require_client_cert requires signer.client_ca_cert")
+				logger.Error(
+					"signer.require_client_cert requires signer.client_ca_cert",
+				)
 				os.Exit(1)
 			}
-			authorizedKeys, err := signer.BuildAuthorizedKeys(cfg.Signer.AuthorizedKeys)
+			authorizedKeys, err := signer.BuildAuthorizedKeys(
+				cfg.Signer.AuthorizedKeys,
+			)
 			if err != nil {
 				logger.Error("invalid signer.authorized_keys", "error", err)
 				os.Exit(1)
@@ -148,7 +200,9 @@ key.`,
 				logger.Error("invalid signer.callers", "error", err)
 				os.Exit(1)
 			}
-			callerPolicies, err := signer.BuildCallerPolicies(cfg.Signer.CallerPolicies)
+			callerPolicies, err := signer.BuildCallerPolicies(
+				cfg.Signer.CallerPolicies,
+			)
 			if err != nil {
 				logger.Error("invalid signer.caller_policies", "error", err)
 				os.Exit(1)
@@ -160,7 +214,9 @@ key.`,
 			}
 			acl := api.NewCallerACL(aclMap)
 			if !acl.Restricted() {
-				logger.Warn("no signer.callers configured; any valid token may use any configured key")
+				logger.Warn(
+					"no signer.callers configured; any valid token may use any configured key",
+				)
 			}
 
 			// Insecure-file-backend guardrail: the software/file backend loads
@@ -177,9 +233,20 @@ key.`,
 			}
 
 			// Signal-cancellable root context for graceful shutdown.
-			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(
+				context.Background(),
+				syscall.SIGINT,
+				syscall.SIGTERM,
+			)
 			defer stop()
 
+			if err := signer.CheckBackendWatermark(
+				cfg.Signer.Backends,
+				cfg.Signer.Watermark,
+			); err != nil {
+				logger.Error("invalid watermark for backend", "error", err)
+				os.Exit(1)
+			}
 			backends, err := signer.BuildBackends(ctx, cfg.Signer.Backends)
 			if err != nil {
 				logger.Error("failed to build backends", "error", err)
@@ -191,9 +258,10 @@ key.`,
 			}
 			resolver := backend.NewResolver(backends...)
 
-			// Fix 5: ambiguous duplicate-hash check — same key hash in multiple
-			// backends is a config error; fail at boot rather than silently
-			// routing to whichever backend happens to be first.
+			// Fix 5: ambiguous duplicate-hash check — a key hash in several
+			// backends is a config error unless each holder has a distinct
+			// profile; fail at boot rather than silently routing to whichever
+			// backend happens to be first.
 			if err := resolver.CheckAmbiguous(ctx); err != nil {
 				logger.Error("ambiguous key configuration", "error", err)
 				os.Exit(1)
@@ -202,6 +270,10 @@ key.`,
 			pols, err := signer.BuildPolicies(cfg.Signer.Keys)
 			if err != nil {
 				logger.Error("failed to build policies", "error", err)
+				os.Exit(1)
+			}
+			if err := signer.CheckPolicyBackends(pols, backends); err != nil {
+				logger.Error("invalid policy backend", "error", err)
 				os.Exit(1)
 			}
 			eng, err := policy.NewEngine(pols)
@@ -233,9 +305,18 @@ key.`,
 			var validate api.Validator
 			switch {
 			case hasJWKS:
-				validate, err = api.JWKSValidator(ctx, cfg.Signer.JWKSURL, cfg.Signer.JWTIssuer, cfg.Signer.JWTAudience)
+				validate, err = api.JWKSValidator(
+					ctx,
+					cfg.Signer.JWKSURL,
+					cfg.Signer.JWTIssuer,
+					cfg.Signer.JWTAudience,
+				)
 				if err != nil {
-					logger.Error("failed to initialize JWKS validator", "error", err)
+					logger.Error(
+						"failed to initialize JWKS validator",
+						"error",
+						err,
+					)
 					os.Exit(1)
 				}
 			case hasSecret:
@@ -245,21 +326,33 @@ key.`,
 					logger.Error("signer.jwt_secret must be at least 32 bytes")
 					os.Exit(1)
 				}
-				validate = api.HS256Validator([]byte(cfg.Signer.JWTSecret), cfg.Signer.JWTIssuer, cfg.Signer.JWTAudience)
+				validate, err = api.HS256Validator(
+					[]byte(cfg.Signer.JWTSecret),
+					cfg.Signer.JWTIssuer,
+					cfg.Signer.JWTAudience,
+				)
+				if err != nil {
+					logger.Error(
+						"failed to initialize HS256 validator",
+						"error",
+						err,
+					)
+					os.Exit(1)
+				}
 			}
-			// Both JWT modes enforce jwt_issuer/jwt_audience when set; warn when
-			// either is unset so operators know any-issuer / any-audience tokens
-			// are accepted.
 			if hasJWT && cfg.Signer.JWTIssuer == "" {
-				logger.Warn("signer.jwt_issuer is not set; tokens from any issuer signed by a trusted key will be accepted")
-			}
-			if hasJWT && cfg.Signer.JWTAudience == "" {
-				logger.Warn("signer.jwt_audience is not set; tokens for any audience signed by a trusted key will be accepted")
+				logger.Warn(
+					"signer.jwt_issuer is not set; tokens from any issuer signed by a trusted key will be accepted",
+				)
 			}
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
 			if hasReqSign {
-				skew := time.Duration(cfg.Signer.RequestSignSkewSeconds) * time.Second
-				srv.SetRequestSigningAuthenticator(api.NewRequestSigningAuthenticator(authorizedKeys, skew))
+				skew := time.Duration(
+					cfg.Signer.RequestSignSkewSeconds,
+				) * time.Second
+				srv.SetRequestSigningAuthenticator(
+					api.NewRequestSigningAuthenticator(authorizedKeys, skew),
+				)
 			}
 
 			// Readiness probe: verify the process's runtime dependencies are
@@ -274,27 +367,37 @@ key.`,
 				return nil
 			}
 
-			mux := http.NewServeMux()
-			mux.Handle("/v1/", srv.Handler())
-			mux.Handle("/", api.HealthHandler(readyCheck))
-			mux.Handle("/metrics", promhttp.Handler())
+			mux := newSignerMux(srv.Handler(), api.HealthHandler(readyCheck))
 
-			addr := fmt.Sprintf("%s:%d", cfg.Signer.ListenAddress, cfg.Signer.ListenPort)
-			tlsConfigured := cfg.Signer.TLSCertFile != "" || cfg.Signer.TLSKeyFile != ""
+			addr := fmt.Sprintf(
+				"%s:%d",
+				cfg.Signer.ListenAddress,
+				cfg.Signer.ListenPort,
+			)
+			tlsConfigured := cfg.Signer.TLSCertFile != "" ||
+				cfg.Signer.TLSKeyFile != ""
 			if (cfg.Signer.TLSCertFile == "") != (cfg.Signer.TLSKeyFile == "") {
-				logger.Error("signer TLS requires both tls_cert_file and tls_key_file")
+				logger.Error(
+					"signer TLS requires both tls_cert_file and tls_key_file",
+				)
 				os.Exit(1)
 			}
 			// mTLS verifies client certs during the TLS handshake, so it needs
 			// server TLS enabled.
 			if hasMTLS && !tlsConfigured {
-				logger.Error("signer.client_ca_cert requires server TLS (signer.tls_cert_file and signer.tls_key_file)")
+				logger.Error(
+					"signer.client_ca_cert requires server TLS (signer.tls_cert_file and signer.tls_key_file)",
+				)
 				os.Exit(1)
 			}
-			if !tlsConfigured && !signer.IsLoopbackListenAddress(cfg.Signer.ListenAddress) {
-				logger.Error("refusing plaintext signer listener on non-loopback address",
-					"listen_address", cfg.Signer.ListenAddress,
-					"hint", "configure signer.tls_cert_file and signer.tls_key_file or bind signer.listen_address to localhost/127.0.0.1",
+			if !tlsConfigured &&
+				!signer.IsLoopbackListenAddress(cfg.Signer.ListenAddress) {
+				logger.Error(
+					"refusing plaintext signer listener on non-loopback address",
+					"listen_address",
+					cfg.Signer.ListenAddress,
+					"hint",
+					"configure signer.tls_cert_file and signer.tls_key_file or bind signer.listen_address to localhost/127.0.0.1",
 				)
 				os.Exit(1)
 			}
@@ -304,7 +407,11 @@ key.`,
 				if hasMTLS {
 					pool, err := api.LoadClientCAPool(cfg.Signer.ClientCACert)
 					if err != nil {
-						logger.Error("failed to load signer.client_ca_cert", "error", err)
+						logger.Error(
+							"failed to load signer.client_ca_cert",
+							"error",
+							err,
+						)
 						os.Exit(1)
 					}
 					tlsCfg.ClientCAs = pool
@@ -317,10 +424,16 @@ key.`,
 				}
 				httpServer.TLSConfig = tlsCfg
 			}
-			logger.Info("starting bursa signer", "address", addr, "tls", tlsConfigured)
+			logger.Info(
+				"starting bursa signer",
+				"address",
+				addr,
+				"tls",
+				tlsConfigured,
+			)
 
 			// Serve in a goroutine so we can listen for shutdown signals.
-			serveErr := make(chan error, 1)
+			serveErr := make(chan error, 2)
 			go func() {
 				if tlsConfigured {
 					serveErr <- httpServer.ListenAndServeTLS(cfg.Signer.TLSCertFile, cfg.Signer.TLSKeyFile)
@@ -328,6 +441,16 @@ key.`,
 				}
 				serveErr <- httpServer.ListenAndServe()
 			}()
+			if metricsServer != nil {
+				logger.Info(
+					"starting metrics listener",
+					"address",
+					metricsServer.Addr,
+				)
+				go func() {
+					serveErr <- metricsServer.ListenAndServe()
+				}()
+			}
 
 			select {
 			case err := <-serveErr:
@@ -337,9 +460,12 @@ key.`,
 				}
 			case <-ctx.Done():
 				logger.Info("shutdown signal received; draining connections")
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				shutdownCtx, cancel := context.WithTimeout(
+					context.Background(),
+					10*time.Second,
+				)
 				defer cancel()
-				if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				if err := shutdownSignerServers(shutdownCtx, logger, httpServer, metricsServer); err != nil {
 					logger.Error("graceful shutdown failed", "error", err)
 					os.Exit(1)
 				}
@@ -351,5 +477,6 @@ key.`,
 		&configFile, "config", "",
 		"path to YAML config file (env: BURSA_CONFIG)",
 	)
+	cmd.AddCommand(signerCounterResetCommand())
 	return cmd
 }

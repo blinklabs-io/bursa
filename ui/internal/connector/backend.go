@@ -46,10 +46,10 @@ type txUnspentOutput struct {
 }
 
 // WalletBackend implements the connector.Backend interface over the wallet and
-// chain services. It holds no private keys; signing methods are stubs.
+// chain services.
 type WalletBackend struct {
 	wl      *wallet.Service
-	sp      *spend.Service // reserved for Tasks 12-13
+	sp      *spend.Service
 	chain   chainFetcher
 	network string
 	// usageAuthoritative reports whether the node has a complete chain view.
@@ -75,7 +75,8 @@ type ReadinessSnapshot struct {
 }
 
 // NewWalletBackend constructs a WalletBackend.
-// wl provides address views; sp is reserved for Tasks 12-13 (may be nil for read-only use).
+// wl provides address views; sp provides transaction inspection and signing
+// (it may be nil for read-only use).
 // acct is the active derived account; network is "mainnet", "preview", or "preprod".
 // cf is the chain querier (typically *chain.Client).
 func NewWalletBackend(
@@ -90,9 +91,16 @@ func NewWalletBackend(
 	if len(usageAuthoritative) > 0 && usageAuthoritative[0] != nil {
 		usageReady = usageAuthoritative[0]
 	}
-	return newWalletBackend(wl, sp, acct, network, cf, func() ReadinessSnapshot {
-		return ReadinessSnapshot{Ready: usageReady()}
-	})
+	return newWalletBackend(
+		wl,
+		sp,
+		acct,
+		network,
+		cf,
+		func() ReadinessSnapshot {
+			return ReadinessSnapshot{Ready: usageReady()}
+		},
+	)
 }
 
 // NewWalletBackendWithReadiness constructs a backend using a stable readiness
@@ -174,7 +182,9 @@ func (b *WalletBackend) NetworkID() int {
 // classification is authoritative. The explicit unavailable error is shared by
 // every CIP-30 address method so an empty Used slice is never mistaken for a
 // definitive answer.
-func (b *WalletBackend) knownAddressView(ctx context.Context) (wallet.AddressView, error) {
+func (b *WalletBackend) knownAddressView(
+	ctx context.Context,
+) (wallet.AddressView, error) {
 	var (
 		av  wallet.AddressView
 		err error
@@ -183,7 +193,8 @@ func (b *WalletBackend) knownAddressView(ctx context.Context) (wallet.AddressVie
 	if before.Ready {
 		av, err = b.wl.Addresses(ctx)
 		after := b.usageReadiness()
-		if err == nil && (!after.Ready || after.Generation != before.Generation) {
+		if err == nil &&
+			(!after.Ready || after.Generation != before.Generation) {
 			return wallet.AddressView{}, ErrAddressUsageUnknown
 		}
 	} else {
@@ -199,7 +210,10 @@ func (b *WalletBackend) knownAddressView(ctx context.Context) (wallet.AddressVie
 }
 
 // UsedAddresses returns hex-encoded raw address bytes for each chain-seen address.
-func (b *WalletBackend) UsedAddresses(ctx context.Context, paginate *Paginate) ([]string, error) {
+func (b *WalletBackend) UsedAddresses(
+	ctx context.Context,
+	paginate *Paginate,
+) ([]string, error) {
 	av, err := b.knownAddressView(ctx)
 	if err != nil {
 		return nil, err
@@ -289,7 +303,11 @@ func (b *WalletBackend) Balance(ctx context.Context) (string, error) {
 // When amount is non-empty it is a hex-CBOR CIP-30 Value; the returned UTxOs
 // cover that requested value, or nil when the wallet cannot cover it. Pagination
 // applies after amount selection.
-func (b *WalletBackend) Utxos(ctx context.Context, amount string, paginate *Paginate) ([]string, error) {
+func (b *WalletBackend) Utxos(
+	ctx context.Context,
+	amount string,
+	paginate *Paginate,
+) ([]string, error) {
 	utxos, err := b.allUTxOs(ctx)
 	if err != nil {
 		return nil, err
@@ -321,16 +339,27 @@ func (b *WalletBackend) Utxos(ctx context.Context, amount string, paginate *Pagi
 // Collateral returns hex CBOR of pure-ADA UTxOs whose lovelace is at least the
 // requested amount. The amount param is hex-CBOR of a Coin (uint) per CIP-30;
 // defaults to 5 ADA when empty.
-func (b *WalletBackend) Collateral(ctx context.Context, amount string) ([]string, error) {
+func (b *WalletBackend) Collateral(
+	ctx context.Context,
+	amount string,
+) ([]string, error) {
 	minLovelace := uint64(defaultCollateralLovelace)
 	if amount != "" {
 		amtBytes, err := hex.DecodeString(amount)
 		if err != nil {
-			return nil, fmt.Errorf("collateral amount %q is not valid hex: %w", amount, err)
+			return nil, fmt.Errorf(
+				"collateral amount %q is not valid hex: %w",
+				amount,
+				err,
+			)
 		}
 		var coin uint64
 		if _, err := gocbor.Decode(amtBytes, &coin); err != nil {
-			return nil, fmt.Errorf("collateral amount %q is not valid CBOR Coin: %w", amount, err)
+			return nil, fmt.Errorf(
+				"collateral amount %q is not valid CBOR Coin: %w",
+				amount,
+				err,
+			)
 		}
 		minLovelace = coin
 	}
@@ -375,8 +404,24 @@ func (b *WalletBackend) Collateral(ctx context.Context, amount string) ([]string
 }
 
 // ---------------------------------------------------------------------------
-// Signing and submission methods — Task 12
+// Signing and submission methods
 // ---------------------------------------------------------------------------
+
+// InspectTx returns the shared transaction summary used by wallet approval
+// flows. It first accepts only the exact hex representation SignTx accepts, so
+// inspection cannot succeed for bytes the signing path would parse differently.
+func (b *WalletBackend) InspectTx(
+	ctx context.Context,
+	txHex string,
+) (spend.TxSummary, error) {
+	if b.sp == nil {
+		return spend.TxSummary{}, errors.New("signing service not configured")
+	}
+	if _, err := hex.DecodeString(txHex); err != nil {
+		return spend.TxSummary{}, fmt.Errorf("decode tx hex: %w", err)
+	}
+	return b.sp.InspectTx(ctx, txHex)
+}
 
 // SignTx implements CIP-30 signTx. It decodes the externally-constructed tx CBOR,
 // identifies which of the wallet's keys are needed (matching required-signers and
@@ -385,7 +430,12 @@ func (b *WalletBackend) Collateral(ctx context.Context, amount string) ([]string
 //
 // If partialSign is false and the wallet owns no key required by the transaction,
 // an error is returned.
-func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bool, password string) (string, error) {
+func (b *WalletBackend) SignTx(
+	ctx context.Context,
+	txHex string,
+	partialSign bool,
+	password string,
+) (string, error) {
 	if b.sp == nil {
 		return "", errors.New("signing service not configured")
 	}
@@ -408,7 +458,12 @@ func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bo
 	if _, err := gocbor.Decode(txBytes, &tx); err != nil {
 		return "", fmt.Errorf("decode tx CBOR: %w", err)
 	}
-
+	// CIP-30 supplies the complete transaction, and the approval dialog shows
+	// those exact bytes. Validate that any included auxiliary data is the value
+	// committed to by the body before deriving a witness for that body.
+	if err := shelley.UtxoValidateMetadata(&tx, 0, nil, nil); err != nil {
+		return "", fmt.Errorf("validate transaction auxiliary data: %w", err)
+	}
 	// Extract the body CBOR by slicing the OUTER transaction CBOR array, taking
 	// element [0] (the body) byte-for-byte. The transaction id (and therefore the
 	// signing target) is blake2b-256 of these exact body bytes; re-encoding the
@@ -429,7 +484,14 @@ func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bo
 	inputAddrs := b.resolveInputAddresses(ctx, tx.Body.TxInputs.Items())
 
 	// Delegate to the spend service to derive keys and build the witness set.
-	wsCbor, err := b.sp.WitnessTx(walletID, bodyCbor, requiredSigners, inputAddrs, password, partialSign)
+	wsCbor, err := b.sp.WitnessTx(
+		walletID,
+		bodyCbor,
+		requiredSigners,
+		inputAddrs,
+		password,
+		partialSign,
+	)
 	if err != nil {
 		return "", err
 	}
@@ -441,7 +503,10 @@ func (b *WalletBackend) SignTx(ctx context.Context, txHex string, partialSign bo
 // by SignTx to identify which role/index payment keys are needed for signing.
 // Per-address chain lookup failures are best-effort and skipped, so this never
 // returns an error.
-func (b *WalletBackend) resolveInputAddresses(ctx context.Context, inputs []shelley.ShelleyTransactionInput) []string {
+func (b *WalletBackend) resolveInputAddresses(
+	ctx context.Context,
+	inputs []shelley.ShelleyTransactionInput,
+) []string {
 	acct := b.account()
 	if acct == nil || len(inputs) == 0 {
 		return nil
@@ -450,14 +515,22 @@ func (b *WalletBackend) resolveInputAddresses(ctx context.Context, inputs []shel
 	// Build a set of input references: "txhash#index".
 	inputSet := make(map[string]bool, len(inputs))
 	for _, inp := range inputs {
-		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.Itoa(int(inp.OutputIndex))
+		ref := hex.EncodeToString(
+			inp.TxId.Bytes(),
+		) + "#" + strconv.Itoa(
+			int(inp.OutputIndex),
+		)
 		inputSet[ref] = true
 	}
 
 	// Query UTxOs at each derived receive/change address; check if any UTxO is in
 	// inputSet.
 	var owned []string
-	addresses := make([]string, 0, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+	addresses := make(
+		[]string,
+		0,
+		len(acct.ReceiveAddresses)+len(acct.ChangeAddresses),
+	)
 	addresses = append(addresses, acct.ReceiveAddresses...)
 	addresses = append(addresses, acct.ChangeAddresses...)
 	for _, addrStr := range addresses {
@@ -480,7 +553,9 @@ func (b *WalletBackend) resolveInputAddresses(ctx context.Context, inputs []shel
 // bytes (as returned by CIP-30's getUsedAddresses / getChangeAddress); payloadHex
 // is the hex-encoded message. Returns (signatureHex, keyHex) where both values
 // are hex-encoded CBOR per the CIP-8 / CIP-30 signData spec.
-func (b *WalletBackend) SignData(addrHex, payloadHex, password string) (sig, key string, err error) {
+func (b *WalletBackend) SignData(
+	addrHex, payloadHex, password string,
+) (sig, key string, err error) {
 	if b.sp == nil {
 		return "", "", errors.New("signing service not configured")
 	}
@@ -508,7 +583,10 @@ func (b *WalletBackend) SignData(addrHex, payloadHex, password string) (sig, key
 // SubmitTx submits a fully signed transaction to the chain and returns the
 // transaction hash as a hex string.  txHex is the hex-encoded CBOR of the
 // complete (body + witnesses) Conway transaction.
-func (b *WalletBackend) SubmitTx(ctx context.Context, txHex string) (string, error) {
+func (b *WalletBackend) SubmitTx(
+	ctx context.Context,
+	txHex string,
+) (string, error) {
 	if b.sp == nil {
 		return "", errors.New("signing service not configured")
 	}
@@ -537,7 +615,9 @@ func (b *WalletBackend) PubDRepKey(password string) (string, error) {
 // It derives the account's stake public key (role 2) and returns its hex in
 // this slice when the stake key is registered (active) on chain, or an empty
 // slice when it is not. The unregistered bucket receives the complement.
-func (b *WalletBackend) RegisteredPubStakeKeys(password string) ([]string, error) {
+func (b *WalletBackend) RegisteredPubStakeKeys(
+	password string,
+) ([]string, error) {
 	registered, _, err := b.pubStakeKeyBuckets(password)
 	return registered, err
 }
@@ -546,7 +626,9 @@ func (b *WalletBackend) RegisteredPubStakeKeys(password string) ([]string, error
 // It derives the account's stake public key (role 2) and returns its hex in
 // this slice when the stake key is NOT registered (active) on chain, or an
 // empty slice when it is registered.
-func (b *WalletBackend) UnregisteredPubStakeKeys(password string) ([]string, error) {
+func (b *WalletBackend) UnregisteredPubStakeKeys(
+	password string,
+) ([]string, error) {
 	_, unregistered, err := b.pubStakeKeyBuckets(password)
 	return unregistered, err
 }
@@ -556,7 +638,9 @@ func (b *WalletBackend) UnregisteredPubStakeKeys(password string) ([]string, err
 // Registration is determined by wallet.Service.Delegation (info.Active); when
 // the chain query fails (e.g. no node configured) the key is placed in the
 // unregistered bucket and the error is silently suppressed.
-func (b *WalletBackend) pubStakeKeyBuckets(password string) (registered, unregistered []string, err error) {
+func (b *WalletBackend) pubStakeKeyBuckets(
+	password string,
+) (registered, unregistered []string, err error) {
 	if b.sp == nil {
 		return nil, nil, errors.New("signing service not configured")
 	}
@@ -623,7 +707,12 @@ func encodeUTxOs(utxos []chain.UTxO) ([]string, error) {
 	for _, u := range utxos {
 		s, err := encodeUTxO(u)
 		if err != nil {
-			return nil, fmt.Errorf("encode utxo %s#%d: %w", u.TxHash, u.OutputIndex, err)
+			return nil, fmt.Errorf(
+				"encode utxo %s#%d: %w",
+				u.TxHash,
+				u.OutputIndex,
+				err,
+			)
 		}
 		result = append(result, s)
 	}
@@ -658,7 +747,11 @@ func encodeUTxO(u chain.UTxO) (string, error) {
 func buildInput(u chain.UTxO) (shelley.ShelleyTransactionInput, error) {
 	hashBytes, err := hex.DecodeString(u.TxHash)
 	if err != nil {
-		return shelley.ShelleyTransactionInput{}, fmt.Errorf("decode tx hash %q: %w", u.TxHash, err)
+		return shelley.ShelleyTransactionInput{}, fmt.Errorf(
+			"decode tx hash %q: %w",
+			u.TxHash,
+			err,
+		)
 	}
 	if len(hashBytes) != lcommon.Blake2b256Size {
 		return shelley.ShelleyTransactionInput{}, fmt.Errorf(
@@ -669,11 +762,16 @@ func buildInput(u chain.UTxO) (shelley.ShelleyTransactionInput, error) {
 	var txID lcommon.Blake2b256
 	copy(txID[:], hashBytes)
 	if u.OutputIndex < 0 {
-		return shelley.ShelleyTransactionInput{}, fmt.Errorf("negative output index %d", u.OutputIndex)
+		return shelley.ShelleyTransactionInput{}, fmt.Errorf(
+			"negative output index %d",
+			u.OutputIndex,
+		)
 	}
 	return shelley.ShelleyTransactionInput{
-		TxId:        txID,
-		OutputIndex: uint32(u.OutputIndex), //nolint:gosec // validated non-negative above
+		TxId: txID,
+		OutputIndex: uint32( //nolint:gosec // validated non-negative above
+			u.OutputIndex,
+		),
 	}, nil
 }
 
@@ -691,7 +789,10 @@ func buildOutput(u chain.UTxO) (*babbage.BabbageTransactionOutput, error) {
 		if amt.Unit == "lovelace" {
 			v, ok := new(big.Int).SetString(amt.Quantity, 10)
 			if !ok || v.Sign() < 0 {
-				return nil, fmt.Errorf("invalid lovelace quantity %q", amt.Quantity)
+				return nil, fmt.Errorf(
+					"invalid lovelace quantity %q",
+					amt.Quantity,
+				)
 			}
 			lovelace = v.Uint64()
 		} else if len(amt.Unit) >= 56 {
@@ -735,7 +836,9 @@ func buildOutput(u chain.UTxO) (*babbage.BabbageTransactionOutput, error) {
 
 // balanceToMaryValue converts a wallet.Balance to a mary.MaryTransactionOutputValue
 // for CBOR serialisation.
-func balanceToMaryValue(bal wallet.Balance) (*mary.MaryTransactionOutputValue, error) {
+func balanceToMaryValue(
+	bal wallet.Balance,
+) (*mary.MaryTransactionOutputValue, error) {
 	lovelace, ok := new(big.Int).SetString(bal.Lovelace, 10)
 	if !ok {
 		return nil, fmt.Errorf("invalid lovelace string %q", bal.Lovelace)
@@ -749,7 +852,11 @@ func balanceToMaryValue(bal wallet.Balance) (*mary.MaryTransactionOutputValue, e
 			}
 			qty, ok := new(big.Int).SetString(a.Quantity, 10)
 			if !ok {
-				return nil, fmt.Errorf("invalid asset quantity %q for unit %s", a.Quantity, a.Unit)
+				return nil, fmt.Errorf(
+					"invalid asset quantity %q for unit %s",
+					a.Quantity,
+					a.Unit,
+				)
 			}
 			policyHex := a.Unit[:56]
 			nameHex := a.Unit[56:]
@@ -865,11 +972,19 @@ func newCIP30Value() cip30Value {
 func decodeRequestedValue(amount string) (cip30Value, error) {
 	raw, err := hex.DecodeString(amount)
 	if err != nil {
-		return cip30Value{}, fmt.Errorf("utxo amount %q is not valid hex: %w", amount, err)
+		return cip30Value{}, fmt.Errorf(
+			"utxo amount %q is not valid hex: %w",
+			amount,
+			err,
+		)
 	}
 	var mv mary.MaryTransactionOutputValue
 	if _, err := gocbor.Decode(raw, &mv); err != nil {
-		return cip30Value{}, fmt.Errorf("utxo amount %q is not valid CBOR Value: %w", amount, err)
+		return cip30Value{}, fmt.Errorf(
+			"utxo amount %q is not valid CBOR Value: %w",
+			amount,
+			err,
+		)
 	}
 	v := newCIP30Value()
 	v.lovelace.SetUint64(mv.Amount)
@@ -881,7 +996,10 @@ func decodeRequestedValue(amount string) (cip30Value, error) {
 					continue
 				}
 				if qty.Sign() < 0 {
-					return cip30Value{}, fmt.Errorf("utxo amount has negative asset quantity for %s", assetUnit(policy, name))
+					return cip30Value{}, fmt.Errorf(
+						"utxo amount has negative asset quantity for %s",
+						assetUnit(policy, name),
+					)
 				}
 				if qty.Sign() == 0 {
 					continue
@@ -898,7 +1016,11 @@ func utxoToValue(u chain.UTxO) (cip30Value, error) {
 	for _, amt := range u.Amount {
 		qty, ok := new(big.Int).SetString(amt.Quantity, 10)
 		if !ok || qty.Sign() < 0 {
-			return cip30Value{}, fmt.Errorf("invalid quantity %q for unit %s", amt.Quantity, amt.Unit)
+			return cip30Value{}, fmt.Errorf(
+				"invalid quantity %q for unit %s",
+				amt.Quantity,
+				amt.Unit,
+			)
 		}
 		if amt.Unit == "lovelace" {
 			v.lovelace.Add(v.lovelace, qty)
@@ -989,7 +1111,10 @@ func addMin(dst, a, b *big.Int) {
 	dst.Add(dst, b)
 }
 
-func selectUTxOsForValue(utxos []chain.UTxO, target cip30Value) ([]chain.UTxO, bool, error) {
+func selectUTxOsForValue(
+	utxos []chain.UTxO,
+	target cip30Value,
+) ([]chain.UTxO, bool, error) {
 	if target.isZero() {
 		return []chain.UTxO{}, true, nil
 	}
@@ -1018,7 +1143,8 @@ func selectUTxOsForValue(utxos []chain.UTxO, target cip30Value) ([]chain.UTxO, b
 			score:  score,
 			excess: excessScore(v, target),
 		}
-		if v.covers(target) && (bestSingle == nil || c.excess.Cmp(bestSingle.excess) < 0) {
+		if v.covers(target) &&
+			(bestSingle == nil || c.excess.Cmp(bestSingle.excess) < 0) {
 			tmp := c
 			bestSingle = &tmp
 		}
@@ -1034,7 +1160,11 @@ func selectUTxOsForValue(utxos []chain.UTxO, target cip30Value) ([]chain.UTxO, b
 		if cmp := candidates[i].score.Cmp(candidates[j].score); cmp != 0 {
 			return cmp > 0
 		}
-		return utxoLovelace(candidates[i].utxo) > utxoLovelace(candidates[j].utxo)
+		return utxoLovelace(
+			candidates[i].utxo,
+		) > utxoLovelace(
+			candidates[j].utxo,
+		)
 	})
 	selected := make([]chain.UTxO, 0, len(candidates))
 	sum := newCIP30Value()

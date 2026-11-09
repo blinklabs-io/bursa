@@ -32,7 +32,9 @@ func (d Definition) CheckResponse(r Response) error {
 			return invalidf("sealed survey needs a ciphertext response")
 		}
 		if len(r.Answers) > 0 {
-			return invalidf("sealed survey responses must not carry plaintext answers")
+			return invalidf(
+				"sealed survey responses must not carry plaintext answers",
+			)
 		}
 		return nil
 	}
@@ -49,7 +51,11 @@ func (d Definition) CheckAnswers(answers []Answer) error {
 	answered := make(map[uint64]bool, len(answers))
 	for _, a := range answers {
 		if a.Question >= uint64(len(d.Questions)) {
-			return invalidf("answer for question %d, survey has %d", a.Question, len(d.Questions))
+			return invalidf(
+				"answer for question %d, survey has %d",
+				a.Question,
+				len(d.Questions),
+			)
 		}
 		if answered[a.Question] {
 			return invalidf("question %d answered twice", a.Question)
@@ -57,7 +63,12 @@ func (d Definition) CheckAnswers(answers []Answer) error {
 		answered[a.Question] = true
 		q := d.Questions[a.Question]
 		if a.Kind != q.Kind {
-			return invalidf("question %d: answer kind %d for a kind %d question", a.Question, a.Kind, q.Kind)
+			return invalidf(
+				"question %d: answer kind %d for a kind %d question",
+				a.Question,
+				a.Kind,
+				q.Kind,
+			)
 		}
 		if err := q.checkAnswer(a); err != nil {
 			return invalidf("question %d: %v", a.Question, err)
@@ -80,7 +91,12 @@ func (q Question) checkAnswer(a Answer) error {
 		}
 	case KindMultiSelect, KindRanking:
 		if uint64(len(a.Indices)) < q.Min || uint64(len(a.Indices)) > q.Max {
-			return invalidf("%d selections outside %d..%d", len(a.Indices), q.Min, q.Max)
+			return invalidf(
+				"%d selections outside %d..%d",
+				len(a.Indices),
+				q.Min,
+				q.Max,
+			)
 		}
 		return checkDistinctOptions(a.Indices, n)
 	case KindNumericRange:
@@ -127,6 +143,9 @@ func (q Question) checkAnswer(a Answer) error {
 		}
 	case KindCustom:
 		// Interpreted by the schema at the question's anchor, which is off-chain.
+		if a.Custom == nil {
+			return invalidf("custom answer has no value")
+		}
 	}
 	return nil
 }

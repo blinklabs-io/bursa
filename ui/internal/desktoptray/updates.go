@@ -45,7 +45,11 @@ type UpdateChecker struct {
 
 // NewUpdateChecker returns an UpdateChecker for the build's embedded version
 // that stops acting once done is closed.
-func NewUpdateChecker(currentVersion string, done <-chan struct{}, logger *slog.Logger) *UpdateChecker {
+func NewUpdateChecker(
+	currentVersion string,
+	done <-chan struct{},
+	logger *slog.Logger,
+) *UpdateChecker {
 	return &UpdateChecker{
 		check: func(ctx context.Context) (updatecheck.Release, bool, error) {
 			release, update, err := updatecheck.Check(ctx, nil, currentVersion)
@@ -114,7 +118,10 @@ func (u *UpdateChecker) run(finished func()) {
 	case err != nil:
 		u.notify("Bursa Wallet", "Could not check for updates")
 	case update:
-		u.notify("Bursa Wallet update available", "Bursa "+release.TagName+" is available")
+		u.notify(
+			"Bursa Wallet update available",
+			"Bursa "+release.TagName+" is available",
+		)
 		if u.stopped || channelClosed(u.done) {
 			return
 		}

@@ -75,8 +75,14 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 	require.NoError(t, err)
 	metricsBase, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	apiListener := &notifyingListener{Listener: apiBase, started: make(chan struct{})}
-	metricsListener := &notifyingListener{Listener: metricsBase, started: make(chan struct{})}
+	apiListener := &notifyingListener{
+		Listener: apiBase,
+		started:  make(chan struct{}),
+	}
+	metricsListener := &notifyingListener{
+		Listener: metricsBase,
+		started:  make(chan struct{}),
+	}
 	cfg := &config.Config{
 		Network: "mainnet",
 		Storage: config.StorageConfig{Backend: "file", Dir: storageDir},
@@ -85,6 +91,7 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 			ListenAddress:    "127.0.0.1",
 			ListenPort:       uint(apiBase.Addr().(*net.TCPAddr).Port),
 			JWTSecret:        secret,
+			JWTAudience:      testAPIAudience,
 			JWTAdminSubjects: []string{"wallet-admin"},
 		},
 		Metrics: config.MetricsConfig{
@@ -125,14 +132,27 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-admin",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	require.NoError(t, err)
-	client := &http.Client{Timeout: 5 * time.Second}
+	// The client may dial a spare connection it never sends a request on.
+	// The server counts a connection that has not yet sent a request as busy
+	// for five seconds, and Start would not return until then. A dedicated
+	// connection per request leaves nothing for the client to dial speculatively.
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	baseURL := "http://" + apiListener.Addr().String()
 	request := func(method, path, body string) *http.Response {
 		t.Helper()
-		req, reqErr := http.NewRequest(method, baseURL+path, strings.NewReader(body))
+		req, reqErr := http.NewRequest(
+			method,
+			baseURL+path,
+			strings.NewReader(body),
+		)
 		require.NoError(t, reqErr)
 		req.Header.Set("Authorization", "Bearer "+token)
 		response, reqErr := client.Do(req)
@@ -153,22 +173,36 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 	listResponse.Body.Close()
 	require.Equal(t, http.StatusOK, listResponse.StatusCode)
 	require.Len(t, names, 1)
-	storedFile, err := os.ReadFile(filepath.Join(storageDir, "wallet-"+names[0], "wallet.json"))
+	storedFile, err := os.ReadFile(
+		filepath.Join(storageDir, "wallet-"+names[0], "wallet.json"),
+	)
 	require.NoError(t, err)
 	require.NotContains(t, string(storedFile), created.Mnemonic)
 	require.NotContains(t, string(storedFile), created.PaymentSKey.CborHex)
 
-	getResponse := request(http.MethodPost, "/api/wallet/get", `{"name":"`+names[0]+`"}`)
+	getResponse := request(
+		http.MethodPost,
+		"/api/wallet/get",
+		`{"name":"`+names[0]+`"}`,
+	)
 	var loaded bursa.Wallet
 	require.NoError(t, json.NewDecoder(getResponse.Body).Decode(&loaded))
 	getResponse.Body.Close()
 	require.Equal(t, http.StatusOK, getResponse.StatusCode)
 	require.Equal(t, created.Mnemonic, loaded.Mnemonic)
 
-	updateResponse := request(http.MethodPost, "/api/wallet/update", `{"name":"`+names[0]+`","description":"updated"}`)
+	updateResponse := request(
+		http.MethodPost,
+		"/api/wallet/update",
+		`{"name":"`+names[0]+`","description":"updated"}`,
+	)
 	updateResponse.Body.Close()
 	require.Equal(t, http.StatusOK, updateResponse.StatusCode)
-	deleteResponse := request(http.MethodPost, "/api/wallet/delete", `{"name":"`+names[0]+`"}`)
+	deleteResponse := request(
+		http.MethodPost,
+		"/api/wallet/delete",
+		`{"name":"`+names[0]+`"}`,
+	)
 	deleteResponse.Body.Close()
 	require.Equal(t, http.StatusOK, deleteResponse.StatusCode)
 
@@ -180,9 +214,18 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 		{path: "/api/wallet/update", body: `{"name":"` + names[0] + `","description":"updated again"}`},
 		{path: "/api/wallet/delete", body: `{"name":"` + names[0] + `"}`},
 	} {
-		missingResponse := request(http.MethodPost, missingRequest.path, missingRequest.body)
+		missingResponse := request(
+			http.MethodPost,
+			missingRequest.path,
+			missingRequest.body,
+		)
 		missingResponse.Body.Close()
-		require.Equal(t, http.StatusNotFound, missingResponse.StatusCode, missingRequest.path)
+		require.Equal(
+			t,
+			http.StatusNotFound,
+			missingResponse.StatusCode,
+			missingRequest.path,
+		)
 	}
 
 	cancel()
@@ -206,10 +249,14 @@ func TestStartRejectsUnencryptedWalletStorage(t *testing.T) {
 		{
 			name: "file without SOPS key",
 			cfg: config.Config{
-				Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+				Storage: config.StorageConfig{
+					Backend: "file",
+					Dir:     t.TempDir(),
+				},
 				Api: config.ApiConfig{
 					ListenAddress:    "127.0.0.1",
 					JWTSecret:        "01234567890123456789012345678901",
+					JWTAudience:      testAPIAudience,
 					JWTAdminSubjects: []string{"wallet-admin"},
 				},
 				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
@@ -218,11 +265,17 @@ func TestStartRejectsUnencryptedWalletStorage(t *testing.T) {
 		{
 			name: "sqlite despite configured SOPS key",
 			cfg: config.Config{
-				Storage: config.StorageConfig{Backend: "sqlite", DSN: ":memory:"},
-				Age:     config.AgeConfig{Recipients: identity.Recipient().String()},
+				Storage: config.StorageConfig{
+					Backend: "sqlite",
+					DSN:     ":memory:",
+				},
+				Age: config.AgeConfig{
+					Recipients: identity.Recipient().String(),
+				},
 				Api: config.ApiConfig{
 					ListenAddress:    "127.0.0.1",
 					JWTSecret:        "01234567890123456789012345678901",
+					JWTAudience:      testAPIAudience,
 					JWTAdminSubjects: []string{"wallet-admin"},
 				},
 				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
@@ -251,8 +304,14 @@ func TestStartStopsServersOnContextCancellation(t *testing.T) {
 		t.Fatalf("failed to create metrics listener: %v", err)
 	}
 
-	apiListener := &notifyingListener{Listener: apiBase, started: make(chan struct{})}
-	metricsListener := &notifyingListener{Listener: metricsBase, started: make(chan struct{})}
+	apiListener := &notifyingListener{
+		Listener: apiBase,
+		started:  make(chan struct{}),
+	}
+	metricsListener := &notifyingListener{
+		Listener: metricsBase,
+		started:  make(chan struct{}),
+	}
 	cfg := &config.Config{
 		Network: "testnet",
 		Api: config.ApiConfig{
@@ -341,11 +400,30 @@ func mockWalletResponseJSON(t *testing.T) []byte {
 }
 
 type fakeLegacyWalletStore struct {
-	listErr       error
-	wallets       map[string]*bursa.Wallet
-	descriptions  map[string]string
-	updatedWallet string
-	deletedWallet string
+	listErr        error
+	wallets        map[string]*bursa.Wallet
+	descriptions   map[string]string
+	createdWallets int
+	updatedWallet  string
+	deletedWallet  string
+}
+
+func (f *fakeLegacyWalletStore) Create(
+	_ context.Context,
+	name string,
+	wallet *bursa.Wallet,
+	description string,
+) error {
+	if f.wallets == nil {
+		f.wallets = make(map[string]*bursa.Wallet)
+	}
+	if f.descriptions == nil {
+		f.descriptions = make(map[string]string)
+	}
+	f.wallets[name] = wallet
+	f.descriptions[name] = description
+	f.createdWallets++
+	return nil
 }
 
 func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
@@ -359,7 +437,10 @@ func (f *fakeLegacyWalletStore) List(context.Context) ([]string, error) {
 	return names, nil
 }
 
-func (f *fakeLegacyWalletStore) Get(_ context.Context, name string) (*bursa.Wallet, error) {
+func (f *fakeLegacyWalletStore) Get(
+	_ context.Context,
+	name string,
+) (*bursa.Wallet, error) {
 	wallet, ok := f.wallets[name]
 	if !ok {
 		return nil, fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
@@ -373,7 +454,11 @@ func (f *fakeLegacyWalletStore) Update(
 	description string,
 ) (bool, error) {
 	if _, ok := f.wallets[name]; !ok {
-		return false, fmt.Errorf("wallet %q: %w", name, storage.ErrWalletNotFound)
+		return false, fmt.Errorf(
+			"wallet %q: %w",
+			name,
+			storage.ErrWalletNotFound,
+		)
 	}
 	if f.descriptions[name] == description {
 		return false, nil
@@ -395,7 +480,11 @@ func TestWriteErrorSanitizesServerErrors(t *testing.T) {
 	t.Run("server error", func(t *testing.T) {
 		w := httptest.NewRecorder()
 
-		writeError(w, http.StatusInternalServerError, fmt.Errorf("database secret"))
+		writeError(
+			w,
+			http.StatusInternalServerError,
+			fmt.Errorf("database secret"),
+		)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 		assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
@@ -404,10 +493,18 @@ func TestWriteErrorSanitizesServerErrors(t *testing.T) {
 	t.Run("client error", func(t *testing.T) {
 		w := httptest.NewRecorder()
 
-		writeError(w, http.StatusBadRequest, fmt.Errorf("client validation detail"))
+		writeError(
+			w,
+			http.StatusBadRequest,
+			fmt.Errorf("client validation detail"),
+		)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.JSONEq(t, `{"error":"client validation detail"}`, w.Body.String())
+		assert.JSONEq(
+			t,
+			`{"error":"client validation detail"}`,
+			w.Body.String(),
+		)
 	})
 }
 
@@ -444,7 +541,11 @@ func TestDecodeAndValidateConsumesFullRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			r := httptest.NewRequest(
+				http.MethodPost,
+				"/",
+				strings.NewReader(tt.body),
+			)
 			var req request
 
 			gotOK := decodeAndValidate(w, r, &req)
@@ -455,7 +556,11 @@ func TestDecodeAndValidateConsumesFullRequest(t *testing.T) {
 				return
 			}
 			assert.Equal(t, tt.wantStatus, w.Code)
-			assert.JSONEq(t, `{"error":"invalid JSON request"}`, w.Body.String())
+			assert.JSONEq(
+				t,
+				`{"error":"invalid JSON request"}`,
+				w.Body.String(),
+			)
 		})
 	}
 }
@@ -476,6 +581,15 @@ func TestDecodeAndValidateCapsRequestBody(t *testing.T) {
 	assert.JSONEq(t, `{"error":"request body too large"}`, w.Body.String())
 }
 
+const testAPIAudience = "bursa-api"
+
+func mustAPIHS256(t testing.TB, secret []byte) signerapi.Validator {
+	t.Helper()
+	v, err := signerapi.HS256Validator(secret, "", testAPIAudience)
+	require.NoError(t, err)
+	return v
+}
+
 func TestBuildAPIAuthValidatesTrustSource(t *testing.T) {
 	ctx := context.Background()
 
@@ -484,21 +598,54 @@ func TestBuildAPIAuthValidatesTrustSource(t *testing.T) {
 	assert.Nil(t, auth)
 
 	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
-		JWTSecret: "too-short",
+		JWTSecret:   "too-short",
+		JWTAudience: testAPIAudience,
 	}})
 	assert.ErrorContains(t, err, "at least 32 bytes")
 
 	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
-		JWTSecret: strings.Repeat("s", 32),
-		JWKSURL:   "https://issuer.example/jwks.json",
+		JWTSecret:   strings.Repeat("s", 32),
+		JWTAudience: testAPIAudience,
+		JWKSURL:     "https://issuer.example/jwks.json",
 	}})
 	assert.ErrorContains(t, err, "mutually exclusive")
 
-	auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
 		JWTSecret: strings.Repeat("s", 32),
 	}})
-	assert.NoError(t, err)
-	assert.NotNil(t, auth)
+	assert.ErrorContains(t, err, "api.jwt_audience")
+
+	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+		JWKSURL: "https://127.0.0.1:1/jwks.json",
+	}})
+	assert.ErrorContains(t, err, "api.jwt_audience")
+
+	secret := strings.Repeat("s", 32)
+	for _, audience := range []string{"bursa-api", "wallet-service"} {
+		auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+			JWTSecret:   secret,
+			JWTAudience: audience,
+		}})
+		require.NoError(t, err)
+		require.NotNil(t, auth)
+		for _, tokenAudience := range []string{"bursa-api", "wallet-service"} {
+			token, err := jwt.NewWithClaims(
+				jwt.SigningMethodHS256,
+				jwt.RegisteredClaims{
+					Subject:   "caller",
+					Audience:  jwt.ClaimStrings{tokenAudience},
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+				},
+			).SignedString([]byte(secret))
+			require.NoError(t, err)
+			_, err = auth(token)
+			if tokenAudience == audience {
+				assert.NoError(t, err, "audience %q", audience)
+			} else {
+				assert.Error(t, err, "configured %q accepted %q", audience, tokenAudience)
+			}
+		}
+	}
 }
 
 func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
@@ -510,16 +657,12 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 	assert.NoError(t, validateAPIExposure(&config.Config{Api: config.ApiConfig{
 		ListenAddress: "127.0.0.1",
 	}}, nil))
-	err = validateAPIExposure(cfg, signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	))
+	err = validateAPIExposure(cfg, mustAPIHS256(t, []byte("01234567890123456789012345678901")))
 	assert.ErrorContains(t, err, "TLS")
 
 	cfg.Api.TLSCertFile = "/run/secrets/api-cert.pem"
 	cfg.Api.TLSKeyFile = "/run/secrets/api-key.pem"
-	assert.NoError(t, validateAPIExposure(cfg, signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)))
+	assert.NoError(t, validateAPIExposure(cfg, mustAPIHS256(t, []byte("01234567890123456789012345678901"))))
 
 	assert.ErrorContains(t, validateAPIExposure(&config.Config{
 		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
@@ -528,9 +671,7 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 			TLSCertFile:   "cert.pem",
 			TLSKeyFile:    "key.pem",
 		},
-	}, signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)), "jwt_admin_subjects")
+	}, mustAPIHS256(t, []byte("01234567890123456789012345678901"))), "jwt_admin_subjects")
 }
 
 func TestValidateAPIExposureRequiresAWSWalletAdministrator(t *testing.T) {
@@ -538,20 +679,24 @@ func TestValidateAPIExposureRequiresAWSWalletAdministrator(t *testing.T) {
 		Storage: config.StorageConfig{Backend: "aws"},
 		Api:     config.ApiConfig{ListenAddress: "127.0.0.1"},
 	}
-	assert.ErrorContains(t, validateAPIExposure(cfg, nil), "authentication is required")
-
-	auth := signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, nil),
+		"authentication is required",
 	)
-	assert.ErrorContains(t, validateAPIExposure(cfg, auth), "jwt_admin_subjects")
+
+	auth := mustAPIHS256(t, []byte("01234567890123456789012345678901"))
+	assert.ErrorContains(
+		t,
+		validateAPIExposure(cfg, auth),
+		"jwt_admin_subjects",
+	)
 	cfg.Api.JWTAdminSubjects = []string{"wallet-admin"}
 	assert.NoError(t, validateAPIExposure(cfg, auth))
 }
 
 func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
-	auth := signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)
+	auth := mustAPIHS256(t, []byte("01234567890123456789012345678901"))
 
 	for _, cfg := range []*config.Config{
 		{Api: config.ApiConfig{ListenAddress: "127.0.0.1", TLSCertFile: "cert.pem"}},
@@ -573,9 +718,7 @@ func TestValidateAPIExposureRequiresGCPWalletAuthentication(t *testing.T) {
 		"authentication is required",
 	)
 
-	auth := signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)
+	auth := mustAPIHS256(t, []byte("01234567890123456789012345678901"))
 	assert.ErrorContains(
 		t,
 		validateAPIExposure(cfg, auth),
@@ -646,6 +789,7 @@ func TestStartServesTLSForAuthenticatedNonLoopbackAPI(t *testing.T) {
 		Api: config.ApiConfig{
 			ListenAddress: "0.0.0.0",
 			JWTSecret:     "01234567890123456789012345678901",
+			JWTAudience:   testAPIAudience,
 			TLSCertFile:   certFile,
 			TLSKeyFile:    keyFile,
 		},
@@ -663,7 +807,9 @@ func TestStartServesTLSForAuthenticatedNonLoopbackAPI(t *testing.T) {
 		}
 	})
 
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLS}}
+	client := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: clientTLS},
+	}
 	baseURL := "https://" + apiListener.Addr().String()
 	resp, err := client.Get(baseURL + "/api/wallet/create")
 	assert.NoError(t, err)
@@ -688,19 +834,27 @@ func TestStartServesTLSForAuthenticatedNonLoopbackAPI(t *testing.T) {
 
 func TestProtectedAPIHandlerRequiresBearerToken(t *testing.T) {
 	const secret = "01234567890123456789012345678901"
-	auth := signerapi.HS256Validator([]byte(secret), "", "")
-	handler := protectAPIHandler(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	auth := mustAPIHS256(t, []byte(secret))
+	handler := protectAPIHandler(
+		auth,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	)
 
 	unauthenticated := httptest.NewRecorder()
-	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodPost, "/sensitive", nil))
+	handler.ServeHTTP(
+		unauthenticated,
+		httptest.NewRequest(http.MethodPost, "/sensitive", nil),
+	)
 	assert.Equal(t, http.StatusUnauthorized, unauthenticated.Code)
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "test-caller",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	assert.NoError(t, err)
 	authorized := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/sensitive", nil)
@@ -715,7 +869,11 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
 	}
 	mux := http.NewServeMux()
-	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""))
+	registerAPIHandlers(
+		mux,
+		cfg,
+		mustAPIHS256(t, []byte(secret)),
+	)
 
 	sensitiveRoutes := []struct {
 		method string
@@ -743,18 +901,100 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "test-caller",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	mux.ServeHTTP(w, req)
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	public := httptest.NewRecorder()
-	mux.ServeHTTP(public, httptest.NewRequest(http.MethodGet, "/healthcheck", nil))
+	mux.ServeHTTP(
+		public,
+		httptest.NewRequest(http.MethodGet, "/healthcheck", nil),
+	)
 	assert.Equal(t, http.StatusOK, public.Code)
+}
+
+func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	mnemonic, err := bursa.GenerateMnemonic()
+	require.NoError(t, err)
+	restoreBody, err := json.Marshal(WalletRestoreRequest{Mnemonic: mnemonic})
+	require.NoError(t, err)
+	cfg := config.GetConfig()
+	original := *cfg
+	t.Cleanup(func() { *cfg = original })
+	*cfg = config.Config{
+		Network: "preprod",
+		Storage: config.StorageConfig{Backend: "aws"},
+		Api:     config.ApiConfig{JWTAdminSubjects: []string{"wallet-admin"}},
+	}
+	store := &fakeLegacyWalletStore{}
+	mux := http.NewServeMux()
+	registerAPIHandlers(
+		mux,
+		cfg,
+		mustAPIHS256(t, []byte(secret)),
+		store,
+	)
+	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-user",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).
+		SignedString([]byte(secret))
+	require.NoError(t, err)
+
+	for _, request := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "create", path: "/api/wallet/create"},
+		{name: "restore", path: "/api/wallet/restore", body: string(restoreBody)},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				request.path,
+				strings.NewReader(request.body),
+			)
+			req.Header.Set("Authorization", "Bearer "+nonAdminToken)
+			mux.ServeHTTP(recorder, req)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+		})
+	}
+	assert.Zero(t, store.createdWallets)
+}
+
+func TestRegisterAPIHandlersKeepsEphemeralWalletRestoreAvailable(t *testing.T) {
+	const secret = "01234567890123456789012345678901"
+	mux := http.NewServeMux()
+	registerAPIHandlers(
+		mux,
+		&config.Config{},
+		mustAPIHS256(t, []byte(secret)),
+	)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "wallet-user",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).
+		SignedString([]byte(secret))
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wallet/restore", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	mux.ServeHTTP(recorder, req)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
 func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
@@ -764,7 +1004,11 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 		Api:    config.ApiConfig{JWTAdminSubjects: []string{"test-caller"}},
 	}
 	mux := http.NewServeMux()
-	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""))
+	registerAPIHandlers(
+		mux,
+		cfg,
+		mustAPIHS256(t, []byte(secret)),
+	)
 
 	routes := []struct {
 		method string
@@ -781,7 +1025,11 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 		for _, route := range routes {
 			t.Run(route.path, func(t *testing.T) {
 				w := httptest.NewRecorder()
-				r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+				r := httptest.NewRequest(
+					route.method,
+					route.path,
+					strings.NewReader(route.body),
+				)
 				mux.ServeHTTP(w, r)
 
 				assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -792,15 +1040,21 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "test-caller",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	require.NoError(t, err)
 
 	t.Run("authorized requests reach the wallet handlers", func(t *testing.T) {
 		for _, route := range routes[1:] {
 			t.Run(route.path, func(t *testing.T) {
 				w := httptest.NewRecorder()
-				r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+				r := httptest.NewRequest(
+					route.method,
+					route.path,
+					strings.NewReader(route.body),
+				)
 				r.Header.Set("Authorization", "Bearer "+token)
 				mux.ServeHTTP(w, r)
 
@@ -814,11 +1068,16 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 
 type apiTestStorageStore struct{}
 
-func (apiTestStorageStore) GetWallet(context.Context, string) (storage.Wallet, error) {
+func (apiTestStorageStore) GetWallet(
+	context.Context,
+	string,
+) (storage.Wallet, error) {
 	return nil, errors.New("not found")
 }
 
-func (apiTestStorageStore) ListWallets(context.Context) ([]storage.Wallet, error) {
+func (apiTestStorageStore) ListWallets(
+	context.Context,
+) ([]storage.Wallet, error) {
 	return nil, errors.New("wallet contents should not be loaded for names")
 }
 
@@ -844,20 +1103,30 @@ func TestConfiguredAWSStoreIsWiredToProtectedWalletRoutes(t *testing.T) {
 		},
 	}
 	factoryCalled := false
-	store, err := configuredWalletStoreWithFactory(cfg, func(got *config.Config) (storage.Store, error) {
-		factoryCalled = true
-		assert.Equal(t, "aws", got.Storage.Backend)
-		return apiTestStorageStore{}, nil
-	})
+	store, err := configuredWalletStoreWithFactory(
+		cfg,
+		func(got *config.Config) (storage.Store, error) {
+			factoryCalled = true
+			assert.Equal(t, "aws", got.Storage.Backend)
+			return apiTestStorageStore{}, nil
+		},
+	)
 	require.NoError(t, err)
 	require.True(t, factoryCalled, "configured backend factory must be called")
 
 	mux := http.NewServeMux()
-	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""), store)
+	registerAPIHandlers(
+		mux,
+		cfg,
+		mustAPIHS256(t, []byte(secret)),
+		store,
+	)
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-admin",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodGet, "/api/wallet/list", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -874,7 +1143,10 @@ func TestWalletCreateFailsClosedWhenConfiguredStoreCannotPersist(t *testing.T) {
 	defer func() { *cfg = original }()
 
 	response := httptest.NewRecorder()
-	handleWalletCreate(response, httptest.NewRequest(http.MethodPost, "/api/wallet/create", nil))
+	handleWalletCreate(
+		response,
+		httptest.NewRequest(http.MethodPost, "/api/wallet/create", nil),
+	)
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.NotContains(t, response.Body.String(), "secret")
 }
@@ -884,7 +1156,10 @@ func TestWalletListDoesNotExposeStorageErrors(t *testing.T) {
 	store := &fakeLegacyWalletStore{listErr: errors.New(backendError)}
 	handler := withLegacyStore(store, http.HandlerFunc(handleWalletList))
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/wallet/list", nil))
+	handler.ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/api/wallet/list", nil),
+	)
 
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.NotContains(t, response.Body.String(), backendError)
@@ -931,11 +1206,18 @@ func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
 		Api:    config.ApiConfig{JWTAdminSubjects: []string{"wallet-admin"}},
 	}
 	mux := http.NewServeMux()
-	registerAPIHandlers(mux, cfg, signerapi.HS256Validator([]byte(secret), "", ""), store)
+	registerAPIHandlers(
+		mux,
+		cfg,
+		mustAPIHS256(t, []byte(secret)),
+		store,
+	)
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-admin",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	require.NoError(t, err)
 
 	request := func(method, path, body string) *httptest.ResponseRecorder {
@@ -956,11 +1238,17 @@ func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
 
 	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-reader",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).SignedString([]byte(secret))
+	}).
+		SignedString([]byte(secret))
 	require.NoError(t, err)
 	nonAdmin := httptest.NewRecorder()
-	nonAdminRequest := httptest.NewRequest(http.MethodPost, "/api/wallet/get", strings.NewReader(`{"name":"wallet-1"}`))
+	nonAdminRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/wallet/get",
+		strings.NewReader(`{"name":"wallet-1"}`),
+	)
 	nonAdminRequest.Header.Set("Authorization", "Bearer "+nonAdminToken)
 	mux.ServeHTTP(nonAdmin, nonAdminRequest)
 	assert.Equal(t, http.StatusForbidden, nonAdmin.Code)
@@ -974,13 +1262,21 @@ func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
 	assert.Equal(t, http.StatusOK, unchanged.Code)
 	assert.Equal(t, updatesBefore, testutil.ToFloat64(walletsUpdatedCounter))
 
-	update := request(http.MethodPost, "/api/wallet/update", `{"name":"wallet-1","description":"updated"}`)
+	update := request(
+		http.MethodPost,
+		"/api/wallet/update",
+		`{"name":"wallet-1","description":"updated"}`,
+	)
 	assert.Equal(t, http.StatusOK, update.Code)
 	assert.Equal(t, walletName, store.updatedWallet)
 	assert.Equal(t, "updated", store.descriptions[walletName])
 	assert.Equal(t, updatesBefore+1, testutil.ToFloat64(walletsUpdatedCounter))
 
-	deleted := request(http.MethodPost, "/api/wallet/delete", `{"name":"wallet-1"}`)
+	deleted := request(
+		http.MethodPost,
+		"/api/wallet/delete",
+		`{"name":"wallet-1"}`,
+	)
 	assert.Equal(t, http.StatusOK, deleted.Code)
 	assert.Equal(t, walletName, store.deletedWallet)
 }
@@ -1085,7 +1381,7 @@ func waitForServer(apiBaseURL string) {
 
 func TestMetricsEndpoint(t *testing.T) {
 	// Start the API
-	_, metricsBaseURL, cleanup := startAPI(t)
+	apiBaseURL, metricsBaseURL, cleanup := startAPI(t)
 	defer cleanup()
 
 	// Test the /metrics endpoint
@@ -1093,6 +1389,84 @@ func TestMetricsEndpoint(t *testing.T) {
 	assert.NotEqual(t, resp, nil)
 	assert.NoError(t, err, "failed to call metrics endpoint")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	apiResp, err := http.Get(fmt.Sprintf("%s/metrics", apiBaseURL))
+	require.NoError(t, err, "failed to call API listener")
+	defer apiResp.Body.Close()
+	require.Equal(t, http.StatusNotFound, apiResp.StatusCode)
+}
+
+func TestRegisterAPIHandlersDoesNotExposeMetrics(t *testing.T) {
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, &config.Config{}, nil)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	require.Equal(t, http.StatusNotFound, response.Code)
+}
+
+func TestValidateMetricsExposureRejectsNonLoopback(t *testing.T) {
+	for _, address := range []string{"", "0.0.0.0", "::", "192.0.2.1"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{
+				Metrics: config.MetricsConfig{
+					ListenAddress: address,
+					ListenPort:    8081,
+				},
+			}
+			require.Error(t, validateMetricsExposure(cfg, nil))
+		})
+	}
+}
+
+func TestValidateMetricsExposureRejectsAddressWithPort(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:9000", "[::1]:9000", "localhost:9000"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{
+				Metrics: config.MetricsConfig{
+					ListenAddress: address,
+					ListenPort:    8081,
+				},
+			}
+			require.Error(t, validateMetricsExposure(cfg, nil))
+		})
+	}
+}
+
+type addrOnlyListener struct {
+	net.Listener
+	addr net.Addr
+}
+
+func (l addrOnlyListener) Addr() net.Addr { return l.addr }
+
+func TestValidateMetricsExposureChecksSuppliedListener(t *testing.T) {
+	cfg := &config.Config{
+		Metrics: config.MetricsConfig{
+			ListenAddress: "127.0.0.1",
+			ListenPort:    8081,
+		},
+	}
+	listener := addrOnlyListener{
+		addr: &net.TCPAddr{IP: net.IPv4zero, Port: 8081},
+	}
+	require.Error(t, validateMetricsExposure(cfg, listener))
+}
+
+func TestMetricsListenAddressFormatsIPv6(t *testing.T) {
+	for _, address := range []string{"::1", "[::1]"} {
+		t.Run(address, func(t *testing.T) {
+			cfg := &config.Config{
+				Metrics: config.MetricsConfig{
+					ListenAddress: address,
+					ListenPort:    8081,
+				},
+			}
+			require.NoError(t, validateMetricsExposure(cfg, nil))
+			require.Equal(t, "[::1]:8081", metricsListenAddress(cfg))
+		})
+	}
 }
 
 func TestMetricsRegistered(t *testing.T) {
@@ -1298,7 +1672,11 @@ func TestCreateWalletReturnsMnemonic(t *testing.T) {
 	apiBaseURL, _, cleanup := startAPI(t)
 	defer cleanup()
 
-	resp, err := http.Post(fmt.Sprintf("%s/api/wallet/create", apiBaseURL), "application/json", nil)
+	resp, err := http.Post(
+		fmt.Sprintf("%s/api/wallet/create", apiBaseURL),
+		"application/json",
+		nil,
+	)
 	assert.NotEqual(t, resp, nil)
 	assert.NoError(t, err, "failed to call wallet create endpoint")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -1788,15 +2166,24 @@ func TestBoundedScriptValidationRejectsAdmissionOverflow(t *testing.T) {
 	release := make(chan struct{})
 	firstDone := make(chan struct{}, maxConcurrentScriptValidations)
 
-	handler := boundedScriptValidation(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		started <- struct{}{}
-		<-release
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	handler := boundedScriptValidation(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			started <- struct{}{}
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	)
 
 	for range maxConcurrentScriptValidations {
 		go func() {
-			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/script/validate", nil))
+			handler.ServeHTTP(
+				httptest.NewRecorder(),
+				httptest.NewRequest(
+					http.MethodPost,
+					"/api/script/validate",
+					nil,
+				),
+			)
 			firstDone <- struct{}{}
 		}()
 	}
@@ -1805,7 +2192,10 @@ func TestBoundedScriptValidationRejectsAdmissionOverflow(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/script/validate", nil))
+	handler.ServeHTTP(
+		w,
+		httptest.NewRequest(http.MethodPost, "/api/script/validate", nil),
+	)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.JSONEq(t, `{"error":"Internal server error"}`, w.Body.String())
 
@@ -2367,7 +2757,9 @@ func TestHandleWalletCreate_Success(t *testing.T) {
 }
 
 func TestHandleWalletCreateCapsRequestBody(t *testing.T) {
-	body := strings.NewReader(`{"request":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}`)
+	body := strings.NewReader(
+		`{"request":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}`,
+	)
 	req := httptest.NewRequest(http.MethodPost, "/api/wallet/create", body)
 	w := httptest.NewRecorder()
 	handleWalletCreate(w, req)
@@ -3401,7 +3793,9 @@ func TestHandleScriptValidate_WithSlot(t *testing.T) {
 // the legacy "signatures" field without a matching "public_keys" array is
 // not rejected by the public_keys/signatures pairing check: that pairing is
 // only meaningful when cryptographic verification is requested.
-func TestHandleScriptValidate_StructuralOnlyIgnoresLegacySignatures(t *testing.T) {
+func TestHandleScriptValidate_StructuralOnlyIgnoresLegacySignatures(
+	t *testing.T,
+) {
 	reqBody := `{
 		"script": {"type": "sig", "keyHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c"},
 		"signatures": ["` + strings.Repeat("00", 64) + `"],
@@ -3547,7 +3941,13 @@ func TestHandleTxDecode(t *testing.T) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+	assert.Equal(
+		t,
+		http.StatusOK,
+		resp.StatusCode,
+		"expected 200, body: %s",
+		string(body),
+	)
 
 	var insp bursa.TxInspection
 	err = json.Unmarshal(body, &insp)
@@ -3584,7 +3984,13 @@ func TestHandleTxID(t *testing.T) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+	assert.Equal(
+		t,
+		http.StatusOK,
+		resp.StatusCode,
+		"expected 200, body: %s",
+		string(body),
+	)
 
 	var txResp TxIDResponse
 	err = json.Unmarshal(body, &txResp)
@@ -3621,7 +4027,13 @@ func TestTxIDRouteRegistered(t *testing.T) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+	assert.Equal(
+		t,
+		http.StatusOK,
+		resp.StatusCode,
+		"expected 200, body: %s",
+		string(body),
+	)
 
 	var txResp TxIDResponse
 	err = json.Unmarshal(body, &txResp)
@@ -3668,7 +4080,13 @@ func TestHandleTxSign(t *testing.T) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+	assert.Equal(
+		t,
+		http.StatusOK,
+		resp.StatusCode,
+		"expected 200, body: %s",
+		string(body),
+	)
 
 	var txResp TxCborResponse
 	err = json.Unmarshal(body, &txResp)
@@ -3795,7 +4213,13 @@ func TestHandleSignData(t *testing.T) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+	assert.Equal(
+		t,
+		http.StatusOK,
+		resp.StatusCode,
+		"expected 200, body: %s",
+		string(body),
+	)
 
 	var signResp SignDataResponse
 	err = json.Unmarshal(body, &signResp)
@@ -3898,7 +4322,13 @@ func TestHandleAddressEnumerate(t *testing.T) {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "expected 200, body: %s", string(body))
+	assert.Equal(
+		t,
+		http.StatusOK,
+		resp.StatusCode,
+		"expected 200, body: %s",
+		string(body),
+	)
 
 	var addrs []bursa.EnumeratedAddress
 	err = json.Unmarshal(body, &addrs)
@@ -3916,16 +4346,22 @@ func TestHandleAddressEnumerate(t *testing.T) {
 func TestScriptValidationSlotIsNotHeldWhileReadingTheBody(t *testing.T) {
 	inHandler := make(chan struct{}, maxConcurrentScriptValidations+1)
 	release := make(chan struct{})
-	handler := boundedScriptValidation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		inHandler <- struct{}{}
-		<-release
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := boundedScriptValidation(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			inHandler <- struct{}{}
+			<-release
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
 
 	// Occupy every slot with requests that have arrived in full.
 	for range maxConcurrentScriptValidations {
 		go func() {
-			req := httptest.NewRequest(http.MethodPost, "/api/script/validate", strings.NewReader("{}"))
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/script/validate",
+				strings.NewReader("{}"),
+			)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 		}()
 	}
@@ -3940,7 +4376,10 @@ func TestScriptValidationSlotIsNotHeldWhileReadingTheBody(t *testing.T) {
 
 	// A client that stops mid-body must be refused by the read, not by the
 	// slot limiter, and must not have consumed one.
-	stalled := &stallingBody{started: make(chan struct{}), release: make(chan struct{})}
+	stalled := &stallingBody{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/script/validate", stalled)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
@@ -3969,15 +4408,21 @@ func TestScriptValidationSlotIsNotHeldWhileReadingTheBody(t *testing.T) {
 		t.Fatal("the stalled request never completed")
 	}
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d for a body that did not arrive", rec.Code, http.StatusBadRequest)
+		t.Fatalf(
+			"status = %d, want %d for a body that did not arrive",
+			rec.Code,
+			http.StatusBadRequest,
+		)
 	}
 	close(release)
 }
 
 func TestScriptValidationBodyReadsAreAdmissionLimited(t *testing.T) {
-	handler := boundedScriptValidation(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	handler := boundedScriptValidation(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	)
 	done := make(chan int, maxConcurrentScriptValidations+1)
 	bodies := make([]*retainingBody, 0, maxConcurrentScriptValidations)
 
@@ -3986,7 +4431,14 @@ func TestScriptValidationBodyReadsAreAdmissionLimited(t *testing.T) {
 		bodies = append(bodies, body)
 		go func() {
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/script/validate", body))
+			handler.ServeHTTP(
+				rec,
+				httptest.NewRequest(
+					http.MethodPost,
+					"/api/script/validate",
+					body,
+				),
+			)
 			done <- rec.Code
 		}()
 		select {
@@ -3999,7 +4451,10 @@ func TestScriptValidationBodyReadsAreAdmissionLimited(t *testing.T) {
 	extra := newRetainingBody()
 	go func() {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/script/validate", extra))
+		handler.ServeHTTP(
+			rec,
+			httptest.NewRequest(http.MethodPost, "/api/script/validate", extra),
+		)
 		done <- rec.Code
 	}()
 
@@ -4011,7 +4466,11 @@ func TestScriptValidationBodyReadsAreAdmissionLimited(t *testing.T) {
 		remaining++
 	case status := <-done:
 		if status != http.StatusServiceUnavailable {
-			t.Fatalf("overflow status = %d, want %d", status, http.StatusServiceUnavailable)
+			t.Fatalf(
+				"overflow status = %d, want %d",
+				status,
+				http.StatusServiceUnavailable,
+			)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("overflow request neither started reading nor returned")
@@ -4031,7 +4490,9 @@ func TestScriptValidationBodyReadsAreAdmissionLimited(t *testing.T) {
 		}
 	}
 	if extraRead {
-		t.Fatal("a request body was read after all body admission slots were occupied")
+		t.Fatal(
+			"a request body was read after all body admission slots were occupied",
+		)
 	}
 }
 

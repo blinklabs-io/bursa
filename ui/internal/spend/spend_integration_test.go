@@ -38,9 +38,16 @@ func TestSpendBuildLivePreview(t *testing.T) {
 			t.Fatal(err)
 		}
 		lastErr = err
-		t.Logf("utxorpc port raced on attempt %d; retrying with a new port: %v", attempt, err)
+		t.Logf(
+			"utxorpc port raced on attempt %d; retrying with a new port: %v",
+			attempt,
+			err,
+		)
 	}
-	t.Fatalf("preview node utxorpc port still unavailable after retries: %v", lastErr)
+	t.Fatalf(
+		"preview node utxorpc port still unavailable after retries: %v",
+		lastErr,
+	)
 }
 
 func runSpendBuildLivePreview(t *testing.T, dir string, attempt int) error {
@@ -50,9 +57,12 @@ func runSpendBuildLivePreview(t *testing.T, dir string, attempt int) error {
 		return err
 	}
 	sup := supervisor.New(supervisor.Config{
-		Network:        "preview",
-		DataDir:        filepath.Join(dir, fmt.Sprintf("db-%d", attempt)),
-		SocketPath:     filepath.Join(dir, fmt.Sprintf("node-%d.socket", attempt)),
+		Network: "preview",
+		DataDir: filepath.Join(dir, fmt.Sprintf("db-%d", attempt)),
+		SocketPath: filepath.Join(
+			dir,
+			fmt.Sprintf("node-%d.socket", attempt),
+		),
 		UtxorpcPort:    rpcPort,
 		BlockfrostPort: 0,
 	})
@@ -66,21 +76,31 @@ func runSpendBuildLivePreview(t *testing.T, dir string, attempt int) error {
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		st := sup.Status()
-		if st.State == supervisor.StateSyncing || st.State == supervisor.StateReady {
+		if st.State == supervisor.StateSyncing ||
+			st.State == supervisor.StateReady {
 			break
 		}
 		if st.State == supervisor.StateError {
 			return fmt.Errorf("node errored: %s", st.Err)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("node not syncing within 90s; last state: %s", st.State)
+			return fmt.Errorf(
+				"node not syncing within 90s; last state: %s",
+				st.State,
+			)
 		}
 		time.Sleep(2 * time.Second)
 	}
 
 	// preview is a testnet → network id 0.
-	cc := utxorpc.NewUtxoRpcChainContext(fmt.Sprintf("http://127.0.0.1:%d", rpcPort), 0, nil)
-	ks := keystore.New(filepath.Join(dir, fmt.Sprintf("keystore-%d.json", attempt)))
+	cc := utxorpc.NewUtxoRpcChainContext(
+		fmt.Sprintf("http://127.0.0.1:%d", rpcPort),
+		0,
+		nil,
+	)
+	ks := keystore.New(
+		filepath.Join(dir, fmt.Sprintf("keystore-%d.json", attempt)),
+	)
 	svc := spend.NewService(cc, ks, nil)
 	if _, err := svc.SetWallet(previewTestMnemonic, "preview", "integration-pw"); err != nil {
 		return fmt.Errorf("SetWallet: %w", err)
@@ -90,12 +110,16 @@ func runSpendBuildLivePreview(t *testing.T, dir string, attempt int) error {
 	if err != nil {
 		return fmt.Errorf("Derive: %w", err)
 	}
-	pv, err := svc.Build(ctx, spend.SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"})
+	pv, err := svc.Build(
+		ctx,
+		spend.SendRequest{To: acct.ReceiveAddresses[1], Lovelace: "1000000"},
+	)
 	if err != nil {
 		// Unfunded wallet (or partial UTxO view while syncing) → insufficient
 		// funds. That is the expected outcome here, not a failure.
 		low := strings.ToLower(err.Error())
-		if strings.Contains(low, "insufficient") || strings.Contains(low, "utxo") {
+		if strings.Contains(low, "insufficient") ||
+			strings.Contains(low, "utxo") {
 			t.Logf("Build reported expected insufficient funds: %v", err)
 			return nil
 		}

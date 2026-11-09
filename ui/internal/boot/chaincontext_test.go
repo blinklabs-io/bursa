@@ -20,13 +20,15 @@ func TestBoundedChainContextStalledNode(t *testing.T) {
 	t.Parallel()
 	accepted := make(chan struct{}, 8)
 	release := make(chan struct{})
-	node := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accepted <- struct{}{}
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
+	node := httptest.NewUnstartedServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			accepted <- struct{}{}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}),
+	)
 	node.Config.Protocols = new(http.Protocols)
 	node.Config.Protocols.SetUnencryptedHTTP2(true)
 	node.Start()
@@ -34,7 +36,10 @@ func TestBoundedChainContextStalledNode(t *testing.T) {
 	defer close(release)
 
 	const bound = 200 * time.Millisecond
-	cc := newBoundedChainContext(utxorpc.NewUtxoRpcChainContext(node.URL, 0, nil), bound)
+	cc := newBoundedChainContext(
+		utxorpc.NewUtxoRpcChainContext(node.URL, 0, nil),
+		bound,
+	)
 
 	calls := map[string]func() error{
 		"ProtocolParamsContext": func() error {
@@ -52,7 +57,11 @@ func TestBoundedChainContextStalledNode(t *testing.T) {
 		select {
 		case err := <-done:
 			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Errorf("%s error = %v, want context.DeadlineExceeded", name, err)
+				t.Errorf(
+					"%s error = %v, want context.DeadlineExceeded",
+					name,
+					err,
+				)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%s still blocked on a stalled node after 5s", name)
@@ -60,7 +69,10 @@ func TestBoundedChainContextStalledNode(t *testing.T) {
 		select {
 		case <-accepted:
 		default:
-			t.Fatalf("%s never reached the node; the stall was not exercised", name)
+			t.Fatalf(
+				"%s never reached the node; the stall was not exercised",
+				name,
+			)
 		}
 	}
 }

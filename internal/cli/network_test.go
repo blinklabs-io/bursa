@@ -56,13 +56,22 @@ func TestCLICommandsAcceptCommonNetworks(t *testing.T) {
 		t.Run(tt.network, func(t *testing.T) {
 			var buildErr error
 			buildOutput := captureStdout(t, func() {
-				buildErr = RunAddressBuild(paymentVKey, "", tt.network, "enterprise")
+				buildErr = RunAddressBuild(
+					paymentVKey,
+					"",
+					tt.network,
+					"enterprise",
+				)
 			})
 			require.NoError(t, buildErr)
 
 			var enterpriseErr error
 			enterpriseOutput := captureStdout(t, func() {
-				enterpriseErr = RunAddressEnterprise(paymentVKey, "", tt.network)
+				enterpriseErr = RunAddressEnterprise(
+					paymentVKey,
+					"",
+					tt.network,
+				)
 			})
 			require.NoError(t, enterpriseErr)
 			require.Equal(t, buildOutput, enterpriseOutput)

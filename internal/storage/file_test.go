@@ -16,12 +16,14 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/stretchr/testify/assert"
@@ -191,7 +193,11 @@ func TestFileStoreListWalletsReleasesStoreLockBeforeLoading(t *testing.T) {
 	// writer must be able to acquire the store lock at this handoff.
 	writeLockAcquired := <-writeLockAvailable
 	close(continueLoading)
-	require.True(t, writeLockAcquired, "ListWallets retained the store read lock")
+	require.True(
+		t,
+		writeLockAcquired,
+		"ListWallets retained the store read lock",
+	)
 
 	select {
 	case err := <-listDone:
@@ -310,7 +316,10 @@ func TestFileStoreGetWalletRejectsSymlinkedWalletFile(t *testing.T) {
 		[]byte(`{"items":{"secret":"value"}}`),
 		0o600,
 	))
-	require.NoError(t, os.Symlink(target, filepath.Join(walletDir, "wallet.json")))
+	require.NoError(
+		t,
+		os.Symlink(target, filepath.Join(walletDir, "wallet.json")),
+	)
 
 	_, err := store.GetWallet(context.Background(), "linked-file")
 	require.Error(t, err)
@@ -474,4 +483,153 @@ func TestFileStoreEncryptsAtRestWithAgeRecipient(t *testing.T) {
 	item, err := got.GetItem("mnemonic")
 	require.NoError(t, err)
 	assert.Equal(t, "secret seed phrase", item)
+}
+
+// walletDir returns the directory path for a wallet
+func (s *FileStore) walletDir(name string) string {
+	if err := validateWalletName(name); err != nil {
+		// This should never happen if validation is done at public API boundaries
+		panic(fmt.Sprintf("invalid wallet name in walletDir: %v", err))
+	}
+	return filepath.Join(s.baseDir, "wallet-"+name)
+}
+
+// walletPath returns the file path for a wallet
+func (s *FileStore) walletPath(name string) string {
+	if err := validateWalletName(name); err != nil {
+		// This should never happen if validation is done at public API boundaries
+		panic(fmt.Sprintf("invalid wallet name in walletPath: %v", err))
+	}
+	return filepath.Join(s.walletDir(name), "wallet.json")
+}
+
+func TestFileStoreListWalletsSkipsUnloadableWallets(t *testing.T) {
+	store := NewFileStore(t.TempDir())
+	good, err := store.CreateWallet("good")
+	require.NoError(t, err)
+	require.NoError(t, good.Save(context.Background()))
+
+	malformed := store.walletDir("malformed")
+	require.NoError(t, os.Mkdir(malformed, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(malformed, "wallet.json"),
+		[]byte("{"),
+		0o600,
+	))
+	// A wallet directory without its file is what a concurrent delete leaves
+	// behind between the directory scan and the load.
+	require.NoError(t, os.Mkdir(store.walletDir("missing"), 0o700))
+
+	wallets, err := store.ListWallets(context.Background())
+	require.NoError(t, err)
+	require.Len(t, wallets, 1)
+	assert.Equal(t, "good", wallets[0].Name())
+}
+
+// clearProcessSOPSKeys empties the process configuration's master keys so a
+// test can tell them apart from the configuration passed to NewStore.
+func clearProcessSOPSKeys(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := config.GetConfig()
+	previousGoogle := cfg.Google.ResourceId
+	previousAws := cfg.Aws.KMSKeyARN
+	previousAge := cfg.Age.Recipients
+	cfg.Google.ResourceId = ""
+	cfg.Aws.KMSKeyARN = ""
+	cfg.Age.Recipients = ""
+	t.Cleanup(func() {
+		cfg.Google.ResourceId = previousGoogle
+		cfg.Aws.KMSKeyARN = previousAws
+		cfg.Age.Recipients = previousAge
+	})
+	return cfg
+}
+
+func TestNewStoreFileEncryptsWithConfiguredKeyOnly(t *testing.T) {
+	// Not t.Parallel: mutates the process configuration.
+	clearProcessSOPSKeys(t)
+	id, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	t.Setenv("SOPS_AGE_KEY", id.String())
+
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+		Age:     config.AgeConfig{Recipients: id.Recipient().String()},
+	})
+	require.NoError(t, err)
+	fileStore, ok := store.(*FileStore)
+	require.True(t, ok)
+
+	ctx := context.Background()
+	w, err := store.CreateWallet("cfg-age-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(ctx))
+
+	onDisk, err := os.ReadFile(fileStore.walletPath("cfg-age-wallet"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(onDisk), "secret seed phrase")
+
+	got, err := store.GetWallet(ctx, "cfg-age-wallet")
+	require.NoError(t, err)
+	item, err := got.GetItem("mnemonic")
+	require.NoError(t, err)
+	assert.Equal(t, "secret seed phrase", item)
+}
+
+func TestNewStoreFileIgnoresProcessKeyWhenConfigHasNone(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{
+			Backend:                       "file",
+			Dir:                           t.TempDir(),
+			AllowUnencryptedWalletStorage: true,
+		},
+	})
+	require.NoError(t, err)
+	fileStore, ok := store.(*FileStore)
+	require.True(t, ok)
+
+	w, err := store.CreateWallet("plain-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(context.Background()))
+
+	onDisk, err := os.ReadFile(fileStore.walletPath("plain-wallet"))
+	require.NoError(t, err)
+	assert.Contains(t, string(onDisk), "secret seed phrase")
+	assert.NotContains(t, string(onDisk), `"sops"`)
+}
+
+func TestNewStoreFileRejectsWhenOnlyProcessHasKey(t *testing.T) {
+	// Not t.Parallel: see useAgeRecipient.
+	useAgeRecipient(t)
+
+	store, err := NewStore(&config.Config{
+		Storage: config.StorageConfig{Backend: "file", Dir: t.TempDir()},
+	})
+	require.Error(t, err)
+	assert.Nil(t, store)
+	assert.Contains(t, err.Error(), "requires a SOPS master key")
+}
+
+func TestFileStoreKeySelectionIsFixedAtConstruction(t *testing.T) {
+	// Not t.Parallel: mutates the process configuration.
+	cfg := clearProcessSOPSKeys(t)
+	store := NewFileStore(t.TempDir())
+
+	id, err := age.GenerateX25519Identity()
+	require.NoError(t, err)
+	cfg.Age.Recipients = id.Recipient().String()
+
+	w, err := store.CreateWallet("snapshot-wallet")
+	require.NoError(t, err)
+	w.PutItem("mnemonic", "secret seed phrase")
+	require.NoError(t, w.Save(context.Background()))
+
+	onDisk, err := os.ReadFile(store.walletPath("snapshot-wallet"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(onDisk), `"sops"`)
 }

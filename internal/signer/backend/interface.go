@@ -25,9 +25,21 @@ import (
 // ErrKeyNotFound is returned when a backend has no key matching a hash.
 var ErrKeyNotFound = errors.New("key not found")
 
+// ErrProfileRequired is returned when several backends hold a key hash and the
+// request names no profile to choose between them.
+var ErrProfileRequired = errors.New("several backends hold this key: the request must name a profile")
+
+// Profiled is implemented by backends and keys bound to one workload profile.
+// Anything that does not implement it, or reports "", has no profile.
+type Profiled interface {
+	Profile() string
+}
+
 // ErrUnsupportedExtended is returned when an extended BIP32-Ed25519 key is
 // routed to a backend that only supports standard Ed25519 (e.g. Vault, PKCS#11).
-var ErrUnsupportedExtended = errors.New("extended (BIP32-Ed25519) keys are not supported by this backend")
+var ErrUnsupportedExtended = errors.New(
+	"extended (BIP32-Ed25519) keys are not supported by this backend",
+)
 
 // Backend is a key-custody provider.
 type Backend interface {

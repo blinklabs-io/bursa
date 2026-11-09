@@ -9,29 +9,56 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
 // fakeBackend implements Backend with canned values.
 type fakeBackend struct {
-	networkID int
-	balance   string
-	utxos     []string
-	signedTx  string
-	submitID  string
-	signSig   string
-	signKey   string
-	usedAddrs []string
+	networkID      int
+	balance        string
+	utxos          []string
+	signedTx       string
+	submitID       string
+	signSig        string
+	signKey        string
+	usedAddrs      []string
+	inspectSummary spend.TxSummary
+	inspectErr     error
 
 	// recorded call args
 	signTxCalled    bool
 	signTxPassword  string
 	signTxTx        string
 	signTxPartial   bool
+	inspectTx       string
 	usedPaginate    *Paginate
 	signDataCalled  bool
 	signDataAddr    string
 	signDataPayload string
+}
+
+type blockingInspectBackend struct {
+	*fakeBackend
+	started chan string
+	release <-chan struct{}
+}
+
+func (b *blockingInspectBackend) InspectTx(
+	ctx context.Context,
+	txHex string,
+) (spend.TxSummary, error) {
+	select {
+	case b.started <- txHex:
+	case <-ctx.Done():
+		return spend.TxSummary{}, ctx.Err()
+	}
+	select {
+	case <-b.release:
+		return b.inspectSummary, nil
+	case <-ctx.Done():
+		return spend.TxSummary{}, ctx.Err()
+	}
 }
 
 type blockingBalanceBackend struct {
@@ -47,7 +74,10 @@ type blockingBalanceBackend struct {
 	reboundOnce      sync.Once
 }
 
-func (b *blockingBalanceBackend) SetAccount(walletID string, acct *wallet.Account) {
+func (b *blockingBalanceBackend) SetAccount(
+	walletID string,
+	acct *wallet.Account,
+) {
 	b.mu.Lock()
 	b.walletID = walletID
 	b.accountIndex = 0
@@ -70,26 +100,67 @@ func (b *blockingBalanceBackend) Balance(_ context.Context) (string, error) {
 
 func (b *fakeBackend) NetworkID() int { return b.networkID }
 
-func (b *fakeBackend) Utxos(_ context.Context, _ string, _ *Paginate) ([]string, error) {
+func (b *fakeBackend) Utxos(
+	_ context.Context,
+	_ string,
+	_ *Paginate,
+) ([]string, error) {
 	return b.utxos, nil
 }
 
-func (b *fakeBackend) Balance(_ context.Context) (string, error) { return b.balance, nil }
+func (b *fakeBackend) Balance(
+	_ context.Context,
+) (string, error) {
+	return b.balance, nil
+}
 
-func (b *fakeBackend) UsedAddresses(_ context.Context, paginate *Paginate) ([]string, error) {
+func (b *fakeBackend) UsedAddresses(
+	_ context.Context,
+	paginate *Paginate,
+) ([]string, error) {
 	b.usedPaginate = paginate
 	return b.usedAddrs, nil
 }
 
-func (b *fakeBackend) UnusedAddresses(_ context.Context) ([]string, error) { return nil, nil }
+func (b *fakeBackend) UnusedAddresses(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
 
-func (b *fakeBackend) ChangeAddress(_ context.Context) (string, error) { return "addr1change", nil }
+func (b *fakeBackend) ChangeAddress(
+	_ context.Context,
+) (string, error) {
+	return "addr1change", nil
+}
 
-func (b *fakeBackend) RewardAddresses(_ context.Context) ([]string, error) { return nil, nil }
+func (b *fakeBackend) RewardAddresses(
+	_ context.Context,
+) ([]string, error) {
+	return nil, nil
+}
 
-func (b *fakeBackend) Collateral(_ context.Context, _ string) ([]string, error) { return nil, nil }
+func (b *fakeBackend) Collateral(
+	_ context.Context,
+	_ string,
+) ([]string, error) {
+	return nil, nil
+}
 
-func (b *fakeBackend) SignTx(_ context.Context, txHex string, partialSign bool, password string) (string, error) {
+func (b *fakeBackend) InspectTx(
+	_ context.Context,
+	txHex string,
+) (spend.TxSummary, error) {
+	b.inspectTx = txHex
+	return b.inspectSummary, b.inspectErr
+}
+
+func (b *fakeBackend) SignTx(
+	_ context.Context,
+	txHex string,
+	partialSign bool,
+	password string,
+) (string, error) {
 	b.signTxCalled = true
 	b.signTxTx = txHex
 	b.signTxPartial = partialSign
@@ -97,7 +168,9 @@ func (b *fakeBackend) SignTx(_ context.Context, txHex string, partialSign bool, 
 	return b.signedTx, nil
 }
 
-func (b *fakeBackend) SignData(addr, payload, _ string) (string, string, error) {
+func (b *fakeBackend) SignData(
+	addr, payload, _ string,
+) (string, string, error) {
 	b.signDataCalled = true
 	b.signDataAddr = addr
 	b.signDataPayload = payload
@@ -108,8 +181,17 @@ func (b *fakeBackend) SubmitTx(_ context.Context, _ string) (string, error) {
 	return b.submitID, nil
 }
 
-func (b *fakeBackend) PubDRepKey(_ string) (string, error)               { return "drepkey", nil }
-func (b *fakeBackend) RegisteredPubStakeKeys(_ string) ([]string, error) { return nil, nil }
+func (b *fakeBackend) PubDRepKey(
+	_ string,
+) (string, error) {
+	return "drepkey", nil
+}
+
+func (b *fakeBackend) RegisteredPubStakeKeys(
+	_ string,
+) ([]string, error) {
+	return nil, nil
+}
 func (b *fakeBackend) UnregisteredPubStakeKeys(_ string) ([]string, error) {
 	return []string{"stakekey1"}, nil
 }
@@ -125,7 +207,10 @@ func ctx(t *testing.T) context.Context {
 
 func bindTestIdentity(s *Service) accountIdentity {
 	identity := accountIdentity{WalletID: "test-wallet", AccountIndex: 0}
-	s.SetActiveAccount(identity.WalletID, &wallet.Account{AccountIndex: identity.AccountIndex})
+	s.SetActiveAccount(
+		identity.WalletID,
+		&wallet.Account{AccountIndex: identity.AccountIndex},
+	)
 	return identity
 }
 
@@ -192,7 +277,21 @@ func TestServiceEnableThenRead(t *testing.T) {
 
 // TestServiceSignTxApprove verifies signTx calls Backend.SignTx with the approved password.
 func TestServiceSignTxApprove(t *testing.T) {
-	be := &fakeBackend{signedTx: "deadbeef"}
+	totalCollateral := "1000000"
+	be := &fakeBackend{
+		signedTx: "deadbeef",
+		inspectSummary: spend.TxSummary{
+			Outputs: []spend.TxSummaryOutput{
+				{Address: "addr_test1approval", Lovelace: "2000000"},
+			},
+			Fee: "170000",
+			CollateralInputs: []spend.TxSummaryInput{{
+				TxHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				Index:  1, Resolved: true, Address: "addr_test1collateral", Lovelace: "3000000",
+			}},
+			TotalCollateral: &totalCollateral,
+		},
+	}
 	s := NewService(t.TempDir(), be, func() {})
 	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
@@ -205,24 +304,253 @@ func TestServiceSignTxApprove(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"tx":          "cafebabe",
-		"partialSign": false,
+		"partialSign": true,
 	})
-	go decideWhenPending(s, Decision{Approved: true, Password: "secret"})
-	out, err := s.Handle(ctx(t), "https://b.io", "signTx", params)
+	type handleResult struct {
+		out json.RawMessage
+		err error
+	}
+	result := make(chan handleResult, 1)
+	handleCtx := ctx(t)
+	go func() {
+		out, err := s.Handle(handleCtx, "https://b.io", "signTx", params)
+		result <- handleResult{out: out, err: err}
+	}()
+
+	var pending Request
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		requests := s.Pending()
+		if len(requests) > 0 {
+			pending = requests[0]
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if pending.ID == "" {
+		t.Fatal("signTx request did not reach the approval queue")
+	}
+	if pending.Effects == nil || pending.Effects.Fee != "170000" ||
+		len(
+			pending.Effects.Outputs,
+		) != 1 || pending.Effects.Outputs[0].Address != "addr_test1approval" ||
+		len(
+			pending.Effects.CollateralInputs,
+		) != 1 || pending.Effects.CollateralInputs[0].Address != "addr_test1collateral" ||
+		pending.Effects.TotalCollateral == nil || *pending.Effects.TotalCollateral != totalCollateral {
+		t.Fatalf(
+			"queued effects = %+v, want inspector summary",
+			pending.Effects,
+		)
+	}
+	wire, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatalf("marshal pending request: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatalf("unmarshal pending request: %v", err)
+	}
+	if _, ok := fields["effects"]; !ok {
+		t.Fatalf("pending request JSON has no effects field: %s", wire)
+	}
+	if err := s.Decide(pending.ID, Decision{Approved: true, Password: "secret"}); err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	got := <-result
+	out, err := got.out, got.err
 	if err != nil {
 		t.Fatalf("signTx approved: %v", err)
 	}
 	if string(out) != `"deadbeef"` {
 		t.Fatalf("signTx result: %s", out)
 	}
-	if !be.signTxCalled || be.signTxPassword != "secret" || be.signTxTx != "cafebabe" {
-		t.Fatalf("signTx backend call wrong: called=%v pw=%q tx=%q", be.signTxCalled, be.signTxPassword, be.signTxTx)
+	if !be.signTxCalled || be.signTxPassword != "secret" ||
+		be.signTxTx != "cafebabe" {
+		t.Fatalf(
+			"signTx backend call wrong: called=%v pw=%q tx=%q",
+			be.signTxCalled,
+			be.signTxPassword,
+			be.signTxTx,
+		)
+	}
+	if be.inspectTx != "cafebabe" || be.signTxTx != be.inspectTx ||
+		!be.signTxPartial {
+		t.Fatalf(
+			"inspect/sign binding wrong: inspected=%q signed=%q partial=%v",
+			be.inspectTx,
+			be.signTxTx,
+			be.signTxPartial,
+		)
+	}
+}
+
+func TestServiceSignTxInspectionFailureDoesNotPromptOrSign(t *testing.T) {
+	be := &fakeBackend{inspectErr: errors.New("decode failed")}
+	prompts := 0
+	s := NewService(t.TempDir(), be, func() { prompts++ })
+	bindTestIdentity(s)
+	_, _ = s.ConfirmPairForTest("ext")
+
+	go decideWhenPending(s, Decision{Approved: true})
+	if _, err := s.Handle(ctx(t), "https://decode.example", "enable", nil); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	prompts = 0
+
+	params := json.RawMessage(`{"tx":"cafebabe","partialSign":false}`)
+	if _, err := s.Handle(ctx(t), "https://decode.example", "signTx", params); !errors.Is(
+		err,
+		ErrInvalidParams,
+	) {
+		t.Fatalf("signTx inspection error = %v, want ErrInvalidParams", err)
+	}
+	if prompts != 0 {
+		t.Fatalf("inspection failure prompted %d times, want 0", prompts)
+	}
+	if len(s.Pending()) != 0 {
+		t.Fatalf("inspection failure queued request: %+v", s.Pending())
+	}
+	if be.signTxCalled {
+		t.Fatal("inspection failure reached SignTx")
+	}
+}
+
+func TestServiceUnpairDuringInspectionReturnsRefused(t *testing.T) {
+	origin := "https://inspection.example"
+	release := make(chan struct{})
+	be := &blockingInspectBackend{
+		fakeBackend: &fakeBackend{
+			inspectSummary: spend.TxSummary{Fee: "170000"},
+		},
+		started: make(chan string, 1),
+		release: release,
+	}
+	s := NewService(t.TempDir(), be, nil)
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"ext",
+			token,
+			origin,
+			"signTx",
+			json.RawMessage(`{"tx":"cafebabe","partialSign":false}`),
+		)
+		result <- err
+	}()
+	select {
+	case <-be.started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not reach inspection")
+	}
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, ErrRefused) {
+		t.Fatalf("signTx error = %v, want ErrRefused", err)
+	}
+	if be.signTxCalled {
+		t.Fatal("revoked request reached SignTx")
+	}
+}
+
+func TestServiceSignTxInspectionUsesQueueAdmission(t *testing.T) {
+	origin := "https://bounded.example"
+	release := make(chan struct{})
+	be := &blockingInspectBackend{
+		fakeBackend: &fakeBackend{
+			inspectSummary: spend.TxSummary{Fee: "170000"},
+		},
+		started: make(chan string, maxPendingRequestsPerOrigin),
+		release: release,
+	}
+	s := NewService(t.TempDir(), be, func() {})
+	identity := bindTestIdentity(s)
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	results := make(chan error, maxPendingRequestsPerOrigin)
+	for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+		params := json.RawMessage(
+			fmt.Sprintf(`{"tx":"%02x","partialSign":false}`, i),
+		)
+		handleCtx := ctx(t)
+		go func(handleCtx context.Context, params json.RawMessage) {
+			_, err := s.Handle(handleCtx, origin, "signTx", params)
+			results <- err
+		}(handleCtx, params)
+	}
+	for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+		select {
+		case <-be.started:
+		case <-time.After(time.Second):
+			t.Fatalf("only %d inspections reached the backend", i)
+		}
+	}
+	if got := s.Pending(); len(got) != 0 {
+		t.Fatalf("requests visible while inspection is blocked: %+v", got)
+	}
+
+	overflow := json.RawMessage(`{"tx":"ff","partialSign":false}`)
+	if _, err := s.Handle(ctx(t), origin, "signTx", overflow); !errors.Is(
+		err,
+		ErrQueueFull,
+	) {
+		t.Fatalf("overflow signTx error = %v, want ErrQueueFull", err)
+	}
+	if got := len(be.started); got != 0 {
+		t.Fatalf(
+			"overflow request reached inspector; started channel has %d unexpected entries",
+			got,
+		)
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for len(s.Pending()) != maxPendingRequestsPerOrigin && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	pending := s.Pending()
+	if len(pending) != maxPendingRequestsPerOrigin {
+		t.Fatalf(
+			"published requests = %d, want %d",
+			len(pending),
+			maxPendingRequestsPerOrigin,
+		)
+	}
+	for _, req := range pending {
+		if req.Effects == nil {
+			t.Fatalf("published request %s has no verified effects", req.ID)
+		}
+		if err := s.Decide(req.ID, Decision{Approved: false}); err != nil {
+			t.Fatalf("reject %s: %v", req.ID, err)
+		}
+	}
+	for i := 0; i < maxPendingRequestsPerOrigin; i++ {
+		if err := <-results; !errors.Is(err, ErrUserDeclined) {
+			t.Fatalf("signTx result %d = %v, want ErrUserDeclined", i, err)
+		}
 	}
 }
 
 // TestServiceSignTxReject verifies signTx returns ErrUserDeclined on reject.
 func TestServiceSignTxReject(t *testing.T) {
-	be := &fakeBackend{signedTx: "deadbeef"}
+	be := &fakeBackend{
+		signedTx:       "deadbeef",
+		inspectSummary: spend.TxSummary{Fee: "1"},
+	}
 	s := NewService(t.TempDir(), be, func() {})
 	bindTestIdentity(s)
 	_, _ = s.ConfirmPairForTest("ext")
@@ -233,7 +561,9 @@ func TestServiceSignTxReject(t *testing.T) {
 		t.Fatalf("enable: %v", err)
 	}
 
-	params, _ := json.Marshal(map[string]interface{}{"tx": "aabbcc", "partialSign": false})
+	params, _ := json.Marshal(
+		map[string]interface{}{"tx": "aabbcc", "partialSign": false},
+	)
 	go decideWhenPending(s, Decision{Approved: false})
 	_, err := s.Handle(ctx(t), "https://c.io", "signTx", params)
 	if err != ErrUserDeclined {
@@ -295,7 +625,11 @@ func TestServiceBeginPairRejectsInvalidExtensionID(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
 	for _, bad := range []string{"", "chrome-extension://", "chrome-extension://has/slash"} {
 		if _, err := s.BeginPair(bad); !errors.Is(err, ErrInvalidExtensionID) {
-			t.Errorf("BeginPair(%q): want ErrInvalidExtensionID, got %v", bad, err)
+			t.Errorf(
+				"BeginPair(%q): want ErrInvalidExtensionID, got %v",
+				bad,
+				err,
+			)
 		}
 	}
 	if got := len(s.PendingPairings()); got != 0 {
@@ -317,7 +651,10 @@ func TestServicePairCodeExpires(t *testing.T) {
 
 	// Advance past the TTL.
 	now = now.Add(pairCodeTTL + time.Second)
-	if _, err := s.ConfirmPair("ext-expire", code); !errors.Is(err, ErrPairCodeMismatch) {
+	if _, err := s.ConfirmPair("ext-expire", code); !errors.Is(
+		err,
+		ErrPairCodeMismatch,
+	) {
 		t.Fatalf("expired code: want ErrPairCodeMismatch, got %v", err)
 	}
 	if got := len(s.PendingPairings()); got != 0 {
@@ -339,12 +676,18 @@ func TestServicePairCodeAttemptCap(t *testing.T) {
 		wrong = "000000000001"
 	}
 	for i := 0; i < pairCodeMaxAttempts; i++ {
-		if _, err := s.ConfirmPair("ext-cap", wrong); !errors.Is(err, ErrPairCodeMismatch) {
+		if _, err := s.ConfirmPair("ext-cap", wrong); !errors.Is(
+			err,
+			ErrPairCodeMismatch,
+		) {
 			t.Fatalf("attempt %d: want ErrPairCodeMismatch, got %v", i, err)
 		}
 	}
 	// The correct code must now be rejected too: the entry was discarded.
-	if _, err := s.ConfirmPair("ext-cap", code); !errors.Is(err, ErrPairCodeMismatch) {
+	if _, err := s.ConfirmPair("ext-cap", code); !errors.Is(
+		err,
+		ErrPairCodeMismatch,
+	) {
 		t.Fatalf("after attempt cap, correct code should fail: got %v", err)
 	}
 }
@@ -363,7 +706,10 @@ func TestServiceBeginPairBounded(t *testing.T) {
 			originalCode = code
 		}
 	}
-	if _, err := s.BeginPair("chrome-extension://one-too-many"); !errors.Is(err, ErrTooManyPairings) {
+	if _, err := s.BeginPair("chrome-extension://one-too-many"); !errors.Is(
+		err,
+		ErrTooManyPairings,
+	) {
 		t.Fatalf("want ErrTooManyPairings past cap, got %v", err)
 	}
 	// Re-initiating an existing extension ID must preserve the claimant's code
@@ -374,17 +720,29 @@ func TestServiceBeginPairBounded(t *testing.T) {
 	}
 	pending := s.PendingPairings()
 	if len(pending) != maxPendingPairCodes {
-		t.Fatalf("re-pair changed pending count: got %d, want %d", len(pending), maxPendingPairCodes)
+		t.Fatalf(
+			"re-pair changed pending count: got %d, want %d",
+			len(pending),
+			maxPendingPairCodes,
+		)
 	}
 	if code != originalCode {
-		t.Fatalf("re-pair replaced the existing code: original %q, returned %q", originalCode, code)
+		t.Fatalf(
+			"re-pair replaced the existing code: original %q, returned %q",
+			originalCode,
+			code,
+		)
 	}
 	var found bool
 	for _, pairing := range pending {
 		if pairing.ExtensionID == "chrome-extension://ext-0" {
 			found = true
 			if pairing.Code != code {
-				t.Fatalf("re-pair returned code %q, pending code is %q", code, pairing.Code)
+				t.Fatalf(
+					"re-pair returned code %q, pending code is %q",
+					code,
+					pairing.Code,
+				)
 			}
 			break
 		}
@@ -435,8 +793,14 @@ func TestServiceGrantDoesNotFollowActiveAccount(t *testing.T) {
 	}
 
 	s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 1})
-	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); !errors.Is(err, ErrNotGranted) {
-		t.Fatalf("getBalance after account switch error = %v, want ErrNotGranted", err)
+	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); !errors.Is(
+		err,
+		ErrNotGranted,
+	) {
+		t.Fatalf(
+			"getBalance after account switch error = %v, want ErrNotGranted",
+			err,
+		)
 	}
 	out, err := s.Handle(ctx(t), origin, "isEnabled", nil)
 	if err != nil {
@@ -447,8 +811,14 @@ func TestServiceGrantDoesNotFollowActiveAccount(t *testing.T) {
 	}
 
 	s.SetActiveAccount("wallet-b", &wallet.Account{AccountIndex: 0})
-	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); !errors.Is(err, ErrNotGranted) {
-		t.Fatalf("getBalance after wallet switch error = %v, want ErrNotGranted", err)
+	if _, err := s.Handle(ctx(t), origin, "getBalance", nil); !errors.Is(
+		err,
+		ErrNotGranted,
+	) {
+		t.Fatalf(
+			"getBalance after wallet switch error = %v, want ErrNotGranted",
+			err,
+		)
 	}
 
 	s.SetActiveAccount("wallet-a", &wallet.Account{AccountIndex: 0})
@@ -465,7 +835,10 @@ func TestServiceProtectedReadSerializesAccountRebinding(t *testing.T) {
 	}
 	s := NewService(t.TempDir(), be, nil)
 	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
-	s.SetActiveAccount(identity.WalletID, &wallet.Account{AccountIndex: identity.AccountIndex})
+	s.SetActiveAccount(
+		identity.WalletID,
+		&wallet.Account{AccountIndex: identity.AccountIndex},
+	)
 	const origin = "https://race.example"
 	if err := s.grants.Grant(origin, identity); err != nil {
 		t.Fatalf("Grant: %v", err)
@@ -512,6 +885,61 @@ func TestServiceProtectedReadSerializesAccountRebinding(t *testing.T) {
 	}
 }
 
+func TestServiceAuthorizedReadSerializesUnpair(t *testing.T) {
+	be := &blockingBalanceBackend{
+		balanceStarted: make(chan struct{}),
+		releaseBalance: make(chan struct{}),
+		rebound:        make(chan struct{}),
+	}
+	s := NewService(t.TempDir(), be, nil)
+	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
+	s.SetActiveAccount(
+		identity.WalletID,
+		&wallet.Account{AccountIndex: identity.AccountIndex},
+	)
+	const origin = "https://race.example"
+	if err := s.grants.Grant(origin, identity); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			context.Background(),
+			"ext",
+			token,
+			origin,
+			"getBalance",
+			nil,
+		)
+		readDone <- err
+	}()
+	<-be.balanceStarted
+	if s.pairingMu.TryLock() {
+		s.pairingMu.Unlock()
+		t.Fatal("authorized read did not hold the pairing read lock")
+	}
+
+	unpairDone := make(chan error, 1)
+	go func() { unpairDone <- s.Unpair() }()
+	select {
+	case err := <-unpairDone:
+		t.Fatalf("Unpair returned during authorized read: %v", err)
+	default:
+	}
+	close(be.releaseBalance)
+	if err := <-readDone; err != nil {
+		t.Fatalf("getBalance: %v", err)
+	}
+	if err := <-unpairDone; err != nil {
+		t.Fatalf("Unpair: %v", err)
+	}
+}
+
 func TestServicePendingApprovalRejectsIdentitySwitch(t *testing.T) {
 	t.Run("enable", func(t *testing.T) {
 		s := NewService(t.TempDir(), &fakeBackend{}, nil)
@@ -530,7 +958,10 @@ func TestServicePendingApprovalRejectsIdentitySwitch(t *testing.T) {
 			t.Fatalf("decide enable: %v", err)
 		}
 		if err := <-done; !errors.Is(err, ErrNotGranted) {
-			t.Fatalf("enable after wallet switch error = %v, want ErrNotGranted", err)
+			t.Fatalf(
+				"enable after wallet switch error = %v, want ErrNotGranted",
+				err,
+			)
 		}
 		if grants := s.Grants(); len(grants) != 0 {
 			t.Fatalf("switched wallet received grants: %v", grants)
@@ -541,7 +972,10 @@ func TestServicePendingApprovalRejectsIdentitySwitch(t *testing.T) {
 		be := &fakeBackend{signedTx: "deadbeef"}
 		s := NewService(t.TempDir(), be, nil)
 		identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
-		s.SetActiveAccount(identity.WalletID, &wallet.Account{AccountIndex: identity.AccountIndex})
+		s.SetActiveAccount(
+			identity.WalletID,
+			&wallet.Account{AccountIndex: identity.AccountIndex},
+		)
 		const origin = "https://sign.example"
 		if err := s.grants.Grant(origin, identity); err != nil {
 			t.Fatalf("Grant: %v", err)
@@ -562,7 +996,10 @@ func TestServicePendingApprovalRejectsIdentitySwitch(t *testing.T) {
 			t.Fatalf("decide signTx: %v", err)
 		}
 		if err := <-done; !errors.Is(err, ErrNotGranted) {
-			t.Fatalf("signTx after account switch error = %v, want ErrNotGranted", err)
+			t.Fatalf(
+				"signTx after account switch error = %v, want ErrNotGranted",
+				err,
+			)
 		}
 		if be.signTxCalled {
 			t.Fatal("backend SignTx called after the approved identity changed")
@@ -617,6 +1054,164 @@ func TestServiceUnpair(t *testing.T) {
 	}
 	if s.VerifyToken("anything", "ext") {
 		t.Fatal("token should be invalid after unpair")
+	}
+}
+
+func TestServiceUnpairRefusesPendingAuthorizedRequest(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	bindTestIdentity(s)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"ext",
+			token,
+			"https://pending.example",
+			"enable",
+			nil,
+		)
+		done <- err
+	}()
+	pendingID := waitForPendingID(t, s)
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+	if _, err := s.ConfirmPairForTest("ext"); err != nil {
+		t.Fatalf("re-pair: %v", err)
+	}
+	if err := <-done; !errors.Is(err, ErrRefused) {
+		t.Fatalf("pending request error = %v, want ErrRefused", err)
+	}
+	if pending := s.Pending(); len(pending) != 0 {
+		t.Fatalf("pending requests after unpair = %v, want none", pending)
+	}
+	if err := s.Decide(pendingID, Decision{Approved: true}); !errors.Is(
+		err,
+		ErrUnknownRequest,
+	) && !errors.Is(err, ErrAlreadyDecided) {
+		t.Fatalf("revoked request remained decidable: %v", err)
+	}
+	if s.grants.IsGranted(
+		"https://pending.example",
+		accountIdentity{WalletID: "test-wallet", AccountIndex: 0},
+	) {
+		t.Fatal("revoked pending request created a grant")
+	}
+}
+
+func TestServiceUnpairWaitsForAuthorizedExecution(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	requestCtx := context.WithValue(
+		context.Background(),
+		pairingAuthorityContextKey{},
+		pairingAuthority{
+			extensionID: "chrome-extension://ext",
+			token:       token,
+		},
+	)
+	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	executing := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		_, err := s.promptAndAwait(
+			requestCtx,
+			req,
+			func(Decision) (json.RawMessage, error) {
+				return s.withPairingAuthority(
+					requestCtx,
+					func() (json.RawMessage, error) {
+						close(executing)
+						<-release
+						return json.RawMessage(`true`), nil
+					},
+				)
+			},
+		)
+		result <- err
+	}()
+	if err := s.Decide(req.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	<-executing
+
+	unpairDone := make(chan error, 1)
+	go func() { unpairDone <- s.Unpair() }()
+	if s.pairingMu.TryLock() {
+		s.pairingMu.Unlock()
+		t.Fatal("authorized execution did not hold the pairing read lock")
+	}
+	select {
+	case err := <-unpairDone:
+		t.Fatalf("Unpair returned during authorized execution: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatalf("authorized execution: %v", err)
+	}
+	if err := <-unpairDone; err != nil {
+		t.Fatalf("Unpair: %v", err)
+	}
+}
+
+func TestServiceApprovedRequestRefusedAfterUnpair(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	token, err := s.ConfirmPairForTest("ext")
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	requestCtx := context.WithValue(
+		context.Background(),
+		pairingAuthorityContextKey{},
+		pairingAuthority{
+			extensionID: "chrome-extension://ext",
+			token:       token,
+		},
+	)
+	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := s.Decide(req.ID, Decision{Approved: true}); err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if err := s.Unpair(); err != nil {
+		t.Fatalf("unpair: %v", err)
+	}
+
+	executed := false
+	_, err = s.promptAndAwait(
+		requestCtx,
+		req,
+		func(Decision) (json.RawMessage, error) {
+			return s.withPairingAuthority(
+				requestCtx,
+				func() (json.RawMessage, error) {
+					executed = true
+					return json.RawMessage(`true`), nil
+				},
+			)
+		},
+	)
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("approved request error = %v, want ErrRefused", err)
+	}
+	if executed {
+		t.Fatal("revoked approved request executed")
 	}
 }
 
@@ -679,7 +1274,8 @@ func TestServiceGetUsedAddressesPassesPagination(t *testing.T) {
 	if string(out) != `["addr1","addr2"]` {
 		t.Fatalf("getUsedAddresses result = %s", out)
 	}
-	if be.usedPaginate == nil || be.usedPaginate.Page != 1 || be.usedPaginate.Limit != 1 {
+	if be.usedPaginate == nil || be.usedPaginate.Page != 1 ||
+		be.usedPaginate.Limit != 1 {
 		t.Fatalf("backend paginate = %+v, want page=1 limit=1", be.usedPaginate)
 	}
 }
@@ -715,7 +1311,10 @@ func TestServiceCIP95PrefixedMethods(t *testing.T) {
 			_, err := s.Handle(ctx(t), "https://dapp.example", method, nil)
 			// Must NOT return ErrRefused (the default case) — reaching the Backend is the contract.
 			if err == ErrRefused {
-				t.Fatalf("method %q fell through to default (ErrRefused): cross-layer contract broken", method)
+				t.Fatalf(
+					"method %q fell through to default (ErrRefused): cross-layer contract broken",
+					method,
+				)
 			}
 			// ErrUserDeclined or nil are both acceptable here (decision-dependent).
 		})
@@ -744,7 +1343,11 @@ func TestServicePendingPairings(t *testing.T) {
 		t.Fatalf("want 1 pending pairing, got %d", len(pairings))
 	}
 	if pairings[0].ExtensionID != extID {
-		t.Errorf("extension_id: want %q, got %q", extID, pairings[0].ExtensionID)
+		t.Errorf(
+			"extension_id: want %q, got %q",
+			extID,
+			pairings[0].ExtensionID,
+		)
 	}
 	if pairings[0].Code != code {
 		t.Errorf("code: want %q, got %q", code, pairings[0].Code)
@@ -769,15 +1372,23 @@ func TestServiceNormalizesRawExtensionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
 	}
-	if !s.VerifyToken(token, "chrome-extension://abcdefghijklmnopabcdefghijklmnop") {
-		t.Fatal("token minted with raw extension id should verify against chrome-extension:// origin")
+	if !s.VerifyToken(
+		token,
+		"chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+	) {
+		t.Fatal(
+			"token minted with raw extension id should verify against chrome-extension:// origin",
+		)
 	}
 	extID, paired := s.PairedExtensionID()
 	if !paired {
 		t.Fatal("want paired")
 	}
 	if extID != "chrome-extension://abcdefghijklmnopabcdefghijklmnop" {
-		t.Fatalf("paired extension id = %q, want chrome-extension:// form", extID)
+		t.Fatalf(
+			"paired extension id = %q, want chrome-extension:// form",
+			extID,
+		)
 	}
 }
 
@@ -802,7 +1413,10 @@ func TestServiceRejectsMalformedSigningParamsBeforePrompt(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.method+"/"+string(tc.params), func(t *testing.T) {
-			if _, err := s.Handle(ctx(t), origin, tc.method, tc.params); !errors.Is(err, ErrInvalidParams) {
+			if _, err := s.Handle(ctx(t), origin, tc.method, tc.params); !errors.Is(
+				err,
+				ErrInvalidParams,
+			) {
 				t.Fatalf("Handle error = %v, want ErrInvalidParams", err)
 			}
 		})
@@ -842,7 +1456,11 @@ func TestServiceSignDataAcceptsEmptyPayload(t *testing.T) {
 		t.Fatal("backend SignData was not called for an empty payload")
 	}
 	if be.signDataAddr != "aa" || be.signDataPayload != "" {
-		t.Fatalf("backend received addr=%q payload=%q, want addr=%q payload=\"\"",
-			be.signDataAddr, be.signDataPayload, "aa")
+		t.Fatalf(
+			"backend received addr=%q payload=%q, want addr=%q payload=\"\"",
+			be.signDataAddr,
+			be.signDataPayload,
+			"aa",
+		)
 	}
 }

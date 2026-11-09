@@ -401,7 +401,14 @@ func (v *Vault) Create(vaultPassword string) error {
 	defer keystore.Zero(vek)
 	idx := &index{Wallets: []WalletMeta{}}
 	v.activeAccounts = map[string]uint32{}
-	err = v.persistLocked(idx, map[string]keystore.Container{}, vek, vaultPassword, nil, v.activeAccounts)
+	err = v.persistLocked(
+		idx,
+		map[string]keystore.Container{},
+		vek,
+		vaultPassword,
+		nil,
+		v.activeAccounts,
+	)
 	if err != nil && !isCommittedWriteError(err) {
 		return err
 	}
@@ -485,7 +492,8 @@ func (v *Vault) TPMStatus() TPMStatusInfo {
 	} else {
 		info.Reason = "tpm: not supported on this platform"
 	}
-	if env, err := v.readEnvelope(); err == nil && env.Key != nil && env.Key.Tpm != nil {
+	if env, err := v.readEnvelope(); err == nil && env.Key != nil &&
+		env.Key.Tpm != nil {
 		info.Enabled = true
 		info.PCRBound = env.Key.Tpm.PCRBound
 	}
@@ -504,7 +512,10 @@ func (v *Vault) EnableTPM(vaultPassword string, pcrBound bool) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.tpmProt == nil {
-		return fmt.Errorf("%w: TPM not supported on this platform", ErrTPMUnavailable)
+		return fmt.Errorf(
+			"%w: TPM not supported on this platform",
+			ErrTPMUnavailable,
+		)
 	}
 	if ok, reason := v.tpmProt.Available(); !ok {
 		return fmt.Errorf("%w: %s", ErrTPMUnavailable, reason)
@@ -521,7 +532,14 @@ func (v *Vault) EnableTPM(vaultPassword string, pcrBound bool) error {
 	// Re-persist with the SAME VEK + the existing seeds, adding the TPM section
 	// and keeping the password protector. O(1): only the small key section is
 	// re-wrapped; index/seed blobs are untouched.
-	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, &sec, v.activeAccounts)
+	return v.persistLocked(
+		idx,
+		env.Seeds,
+		vek,
+		vaultPassword,
+		&sec,
+		env.ActiveAccounts,
+	)
 }
 
 // DisableTPM drops the TPM protector and re-persists with the password protector
@@ -539,7 +557,14 @@ func (v *Vault) DisableTPM(vaultPassword string) error {
 	if env.Key == nil || env.Key.Tpm == nil {
 		return nil // already password-only
 	}
-	return v.persistLocked(idx, env.Seeds, vek, vaultPassword, nil, v.activeAccounts)
+	return v.persistLocked(
+		idx,
+		env.Seeds,
+		vek,
+		vaultPassword,
+		nil,
+		env.ActiveAccounts,
+	)
 }
 
 // Wallets returns the wallet list (read-only metadata). The vault must be
@@ -561,7 +586,10 @@ func (v *Vault) Wallets() ([]WalletMeta, error) {
 //
 // account window N receive addresses are derived (matching the read-only
 // wallet's default), so read-only views work straight away without the seed.
-func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
+func (v *Vault) AddWallet(
+	name, mnemonic, network, vaultPassword, spendPassword string,
+	windowN int,
+) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
@@ -574,7 +602,13 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	defer keystore.Zero(vek)
 
-	meta, seed, err := v.prepareWallet(name, mnemonic, network, spendPassword, windowN)
+	meta, seed, err := v.prepareWallet(
+		name,
+		mnemonic,
+		network,
+		spendPassword,
+		windowN,
+	)
 	if err != nil {
 		return WalletMeta{}, err
 	}
@@ -582,8 +616,13 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	// Reject a duplicate seed: two wallets sharing a stake address are the same
 	// wallet, and would collide in read-only views.
 	for _, w := range idx.Wallets {
-		if w.Account != nil && meta.Account != nil && w.Account.StakeAddress == meta.Account.StakeAddress {
-			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
+		if w.Account != nil && meta.Account != nil &&
+			w.Account.StakeAddress == meta.Account.StakeAddress {
+			return WalletMeta{}, fmt.Errorf(
+				"%w: %q",
+				ErrDuplicateWallet,
+				w.Name,
+			)
 		}
 	}
 
@@ -595,7 +634,14 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
 	seeds[meta.ID] = seed
-	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	err = v.persistLocked(
+		newIdx,
+		seeds,
+		vek,
+		vaultPassword,
+		tpmOf(env),
+		v.activeAccounts,
+	)
 	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
@@ -612,7 +658,11 @@ func (v *Vault) AddWallet(name, mnemonic, network, vaultPassword, spendPassword 
 // The vault must be unlocked. A wallet whose xpub derives the same stake
 // address as an existing one is rejected (ErrDuplicateWallet). The added
 // wallet becomes active.
-func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (WalletMeta, error) {
+func (v *Vault) AddHardwareWallet(
+	name, accountXpubBech32, network, vaultPassword string,
+	accountIndex uint32,
+	windowN int,
+) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
@@ -625,7 +675,12 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 	}
 	defer keystore.Zero(vek)
 
-	acct, err := wallet.DeriveFromAccountXpub(accountXpubBech32, network, accountIndex, windowN)
+	acct, err := wallet.DeriveFromAccountXpub(
+		accountXpubBech32,
+		network,
+		accountIndex,
+		windowN,
+	)
 	if err != nil {
 		return WalletMeta{}, fmt.Errorf("derive account from xpub: %w", err)
 	}
@@ -642,8 +697,13 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 
 	// Reject duplicate: same stake address means the same wallet.
 	for _, w := range idx.Wallets {
-		if w.Account != nil && meta.Account != nil && w.Account.StakeAddress == meta.Account.StakeAddress {
-			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
+		if w.Account != nil && meta.Account != nil &&
+			w.Account.StakeAddress == meta.Account.StakeAddress {
+			return WalletMeta{}, fmt.Errorf(
+				"%w: %q",
+				ErrDuplicateWallet,
+				w.Name,
+			)
 		}
 	}
 
@@ -668,7 +728,14 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 		}
 		nextActive[meta.ID] = accountIndex
 	}
-	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive)
+	err = v.persistLocked(
+		newIdx,
+		seeds,
+		vek,
+		vaultPassword,
+		tpmOf(env),
+		nextActive,
+	)
 	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
@@ -684,26 +751,59 @@ func (v *Vault) AddHardwareWallet(name, accountXpubBech32, network, vaultPasswor
 // ImportWallet creates a new vault containing a single wallet. It is used for
 // legacy keystore migration so the final vault is written in one atomic persist:
 // failure leaves no empty vault behind to block a retry.
-func (v *Vault) ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
+func (v *Vault) ImportWallet(
+	name, mnemonic, network, vaultPassword, spendPassword string,
+	windowN int,
+) (WalletMeta, error) {
 	mnemonicBytes := []byte(mnemonic)
 	defer keystore.Zero(mnemonicBytes)
-	return v.importWallet(name, mnemonicBytes, network, vaultPassword, spendPassword, windowN)
+	return v.importWallet(
+		name,
+		mnemonicBytes,
+		network,
+		vaultPassword,
+		spendPassword,
+		windowN,
+	)
 }
 
 // ImportWalletMnemonicBytes is the zeroable-byte variant used when the
 // plaintext mnemonic came from a decryptable buffer. The caller keeps ownership
 // of mnemonic and should zero it after this method returns.
-func (v *Vault) ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
-	return v.importWallet(name, mnemonic, network, vaultPassword, spendPassword, windowN)
+func (v *Vault) ImportWalletMnemonicBytes(
+	name string,
+	mnemonic []byte,
+	network, vaultPassword, spendPassword string,
+	windowN int,
+) (WalletMeta, error) {
+	return v.importWallet(
+		name,
+		mnemonic,
+		network,
+		vaultPassword,
+		spendPassword,
+		windowN,
+	)
 }
 
-func (v *Vault) importWallet(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (WalletMeta, error) {
+func (v *Vault) importWallet(
+	name string,
+	mnemonic []byte,
+	network, vaultPassword, spendPassword string,
+	windowN int,
+) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.Exists() {
 		return WalletMeta{}, ErrVaultExists
 	}
-	meta, seed, err := v.prepareWalletBytes(name, mnemonic, network, spendPassword, windowN)
+	meta, seed, err := v.prepareWalletBytes(
+		name,
+		mnemonic,
+		network,
+		spendPassword,
+		windowN,
+	)
 	if err != nil {
 		return WalletMeta{}, err
 	}
@@ -758,7 +858,14 @@ func (v *Vault) RemoveWallet(id, vaultPassword string) error {
 	// diverged from what is durably on disk.
 	nextActive := cloneActiveAccounts(v.activeAccounts)
 	delete(nextActive, id)
-	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), nextActive)
+	err = v.persistLocked(
+		newIdx,
+		seeds,
+		vek,
+		vaultPassword,
+		tpmOf(env),
+		nextActive,
+	)
 	if err != nil && !isCommittedWriteError(err) {
 		return err
 	}
@@ -841,7 +948,11 @@ func (v *Vault) ActiveAccountIndexFor(id string) uint32 {
 // existing id so links and requests that already reference it keep resolving —
 // a migration that silently renames what it moves is a migration that breaks
 // every reference to it.
-func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vaultPassword string) (WalletMeta, error) {
+func (v *Vault) AddScriptWallet(
+	id, name, network string,
+	script ScriptMeta,
+	vaultPassword string,
+) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
@@ -859,7 +970,11 @@ func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vau
 
 	for _, w := range idx.Wallets {
 		if w.Script != nil && w.Script.ScriptAddress == script.ScriptAddress {
-			return WalletMeta{}, fmt.Errorf("%w: %q", ErrDuplicateWallet, w.Name)
+			return WalletMeta{}, fmt.Errorf(
+				"%w: %q",
+				ErrDuplicateWallet,
+				w.Name,
+			)
 		}
 	}
 
@@ -891,7 +1006,14 @@ func (v *Vault) AddScriptWallet(id, name, network string, script ScriptMeta, vau
 		seeds = map[string]keystore.Container{}
 	}
 	newIdx := &index{Wallets: append(cloneWallets(idx.Wallets), meta)}
-	err = v.persistLocked(newIdx, seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	err = v.persistLocked(
+		newIdx,
+		seeds,
+		vek,
+		vaultPassword,
+		tpmOf(env),
+		v.activeAccounts,
+	)
 	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
@@ -949,7 +1071,11 @@ func (v *Vault) ScriptAddresses() ([]string, error) {
 // seedless wallets are rejected (ErrNoSeed); an already-derived index is
 // rejected (ErrDuplicateAccount). The returned meta carries the wallet's current
 // active account index (unchanged — selection is a separate step).
-func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex uint32, windowN int) (WalletMeta, error) {
+func (v *Vault) AddAccount(
+	id, vaultPassword, spendPassword string,
+	accountIndex uint32,
+	windowN int,
+) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
@@ -971,7 +1097,11 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		return WalletMeta{}, fmt.Errorf("%w: %q", ErrNoSeed, target.Name)
 	}
 	if target.AccountByIndex(accountIndex) != nil {
-		return WalletMeta{}, fmt.Errorf("%w: index %d", ErrDuplicateAccount, accountIndex)
+		return WalletMeta{}, fmt.Errorf(
+			"%w: index %d",
+			ErrDuplicateAccount,
+			accountIndex,
+		)
 	}
 
 	env, vek, idx, err := v.authenticatedEnvelopeLocked(vaultPassword)
@@ -987,9 +1117,18 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 	}
 	defer keystore.Zero(mnemonic)
 
-	acct, err := wallet.DeriveAccountFromMnemonicBytes(mnemonic, target.Network, accountIndex, windowN)
+	acct, err := wallet.DeriveAccountFromMnemonicBytes(
+		mnemonic,
+		target.Network,
+		accountIndex,
+		windowN,
+	)
 	if err != nil {
-		return WalletMeta{}, fmt.Errorf("derive account %d: %w", accountIndex, err)
+		return WalletMeta{}, fmt.Errorf(
+			"derive account %d: %w",
+			accountIndex,
+			err,
+		)
 	}
 
 	// Merge the new account into a fresh index (defensive copy of the wallet list).
@@ -1001,7 +1140,14 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 		}
 	}
 	newIdx := &index{Wallets: newWallets}
-	err = v.persistLocked(newIdx, env.Seeds, vek, vaultPassword, tpmOf(env), v.activeAccounts)
+	err = v.persistLocked(
+		newIdx,
+		env.Seeds,
+		vek,
+		vaultPassword,
+		tpmOf(env),
+		v.activeAccounts,
+	)
 	if err != nil && !isCommittedWriteError(err) {
 		return WalletMeta{}, err
 	}
@@ -1021,7 +1167,10 @@ func (v *Vault) AddAccount(id, vaultPassword, spendPassword string, accountIndex
 // envelope.ActiveAccounts map, so it persists WITHOUT the vault password (no
 // index re-seal). The account must already be derived (AddAccount first). The
 // vault must be unlocked. The returned meta carries the new active index.
-func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error) {
+func (v *Vault) SelectAccount(
+	id string,
+	accountIndex uint32,
+) (WalletMeta, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.idx == nil {
@@ -1038,7 +1187,11 @@ func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error
 		return WalletMeta{}, fmt.Errorf("%w: %q", ErrUnknownWallet, id)
 	}
 	if v.idx.Wallets[pos].AccountByIndex(accountIndex) == nil {
-		return WalletMeta{}, fmt.Errorf("%w: index %d", ErrUnknownAccount, accountIndex)
+		return WalletMeta{}, fmt.Errorf(
+			"%w: index %d",
+			ErrUnknownAccount,
+			accountIndex,
+		)
 	}
 
 	// Persist the selection by rewriting the envelope's cleartext map only; the
@@ -1079,7 +1232,10 @@ func (v *Vault) SelectAccount(id string, accountIndex uint32) (WalletMeta, error
 
 // decodeSeedLocked decrypts the seed for wallet id from env under spendPassword.
 // The caller MUST zero the returned bytes. Callers hold v.mu.
-func (v *Vault) decodeSeedLocked(env envelope, id, spendPassword string) ([]byte, error) {
+func (v *Vault) decodeSeedLocked(
+	env envelope,
+	id, spendPassword string,
+) ([]byte, error) {
 	seed, ok := env.Seeds[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrNoSeed, id)
@@ -1164,7 +1320,10 @@ func (v *Vault) readEnvelope() (envelope, error) {
 		return envelope{}, err
 	}
 	if len(blob) > maxVaultLen {
-		return envelope{}, fmt.Errorf("vault file exceeds %d bytes", maxVaultLen)
+		return envelope{}, fmt.Errorf(
+			"vault file exceeds %d bytes",
+			maxVaultLen,
+		)
 	}
 	var env envelope
 	if err := json.Unmarshal(blob, &env); err != nil {
@@ -1177,7 +1336,10 @@ func (v *Vault) readEnvelope() (envelope, error) {
 		return envelope{}, fmt.Errorf("unsupported vault format %d", env.Format)
 	}
 	if env.Format >= formatVersion && env.Key == nil {
-		return envelope{}, fmt.Errorf("corrupt vault: format %d missing key section", env.Format)
+		return envelope{}, fmt.Errorf(
+			"corrupt vault: format %d missing key section",
+			env.Format,
+		)
 	}
 	if env.Seeds == nil {
 		env.Seeds = map[string]keystore.Container{}
@@ -1190,7 +1352,9 @@ func (v *Vault) readEnvelope() (envelope, error) {
 // the recovered VEK/index so the caller can re-persist under the same VEK
 // without a second derivation or index decrypt. The caller MUST zero the returned
 // VEK. Callers hold v.mu.
-func (v *Vault) authenticatedEnvelopeLocked(vaultPassword string) (envelope, []byte, *index, error) {
+func (v *Vault) authenticatedEnvelopeLocked(
+	vaultPassword string,
+) (envelope, []byte, *index, error) {
 	env, err := v.readEnvelope()
 	if err != nil {
 		return envelope{}, nil, nil, err
@@ -1208,7 +1372,10 @@ func (v *Vault) authenticatedEnvelopeLocked(vaultPassword string) (envelope, []b
 // under the password, so the password itself acts as the VEK material. Either
 // way it returns the VEK to use for re-persisting and the decoded index. A wrong
 // password maps to ErrWrongPassword. The caller MUST zero the returned VEK.
-func (v *Vault) recoverVEKAndIndexLocked(env envelope, vaultPassword string) ([]byte, *index, error) {
+func (v *Vault) recoverVEKAndIndexLocked(
+	env envelope,
+	vaultPassword string,
+) ([]byte, *index, error) {
 	if env.Format == legacyFormatVersion {
 		// Legacy: index sealed directly under scrypt(password). Decode it with
 		// the password, then mint a fresh VEK for the upgrade to format 2.
@@ -1242,7 +1409,10 @@ func (v *Vault) recoverVEKAndIndexLocked(env envelope, vaultPassword string) ([]
 // present and usable and falling back to the password protector on TPM failure.
 // The password protector remains authoritative for recovery; a wrong password
 // fails there too. The caller MUST zero the returned VEK. Callers hold v.mu.
-func (v *Vault) recoverVEKLocked(env envelope, vaultPassword string) ([]byte, error) {
+func (v *Vault) recoverVEKLocked(
+	env envelope,
+	vaultPassword string,
+) ([]byte, error) {
 	if env.Key.Tpm != nil && v.tpmProt != nil {
 		if ok, _ := v.tpmProt.Available(); ok {
 			vek, err := v.tpmProt.UnwrapTPM(*env.Key.Tpm, vaultPassword)
@@ -1269,7 +1439,14 @@ func (v *Vault) recoverVEKLocked(env envelope, vaultPassword string) ([]byte, er
 // imported index), in which case they must pass a candidate map and only
 // assign it to v.activeAccounts AFTER this call succeeds — so a failed persist
 // never leaves the in-memory selection diverged from what is durably on disk.
-func (v *Vault) persistLocked(idx *index, seeds map[string]keystore.Container, vek []byte, vaultPassword string, tpm *tpmSection, activeAccounts map[string]uint32) error {
+func (v *Vault) persistLocked(
+	idx *index,
+	seeds map[string]keystore.Container,
+	vek []byte,
+	vaultPassword string,
+	tpm *tpmSection,
+	activeAccounts map[string]uint32,
+) error {
 	idxContainer, err := v.sealIndex(idx, vek)
 	if err != nil {
 		return err
@@ -1354,7 +1531,10 @@ func (v *Vault) sealIndex(idx *index, vek []byte) (keystore.Container, error) {
 // decodeIndexWith opens the encrypted index Container with key (the VEK for
 // format 2, or the vault password for legacy format 1) and parses the plaintext
 // index. A wrong key maps to ErrWrongPassword.
-func (v *Vault) decodeIndexWith(c keystore.Container, key string) (*index, error) {
+func (v *Vault) decodeIndexWith(
+	c keystore.Container,
+	key string,
+) (*index, error) {
 	blob, err := json.Marshal(c)
 	if err != nil {
 		return nil, err
@@ -1405,15 +1585,32 @@ func newVEK() ([]byte, error) {
 	return vek, nil
 }
 
-func (v *Vault) prepareWallet(name, mnemonic, network, spendPassword string, windowN int) (WalletMeta, keystore.Container, error) {
+func (v *Vault) prepareWallet(
+	name, mnemonic, network, spendPassword string,
+	windowN int,
+) (WalletMeta, keystore.Container, error) {
 	mnemonicBytes := []byte(mnemonic)
 	defer keystore.Zero(mnemonicBytes)
-	return v.prepareWalletBytes(name, mnemonicBytes, network, spendPassword, windowN)
+	return v.prepareWalletBytes(
+		name,
+		mnemonicBytes,
+		network,
+		spendPassword,
+		windowN,
+	)
 }
 
-func (v *Vault) prepareWalletBytes(name string, mnemonic []byte, network, spendPassword string, windowN int) (WalletMeta, keystore.Container, error) {
+func (v *Vault) prepareWalletBytes(
+	name string,
+	mnemonic []byte,
+	network, spendPassword string,
+	windowN int,
+) (WalletMeta, keystore.Container, error) {
 	if utf8.RuneCountInString(spendPassword) < keystore.MinPasswordLen {
-		return WalletMeta{}, keystore.Container{}, fmt.Errorf("password must be at least %d characters", keystore.MinPasswordLen)
+		return WalletMeta{}, keystore.Container{}, fmt.Errorf(
+			"password must be at least %d characters",
+			keystore.MinPasswordLen,
+		)
 	}
 	acct, err := wallet.DeriveFromMnemonicBytes(mnemonic, network, windowN)
 	if err != nil {

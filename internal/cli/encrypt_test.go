@@ -28,7 +28,9 @@ import (
 func TestRunKeyEncryptInPlaceTightensPermissions(t *testing.T) {
 	dir := t.TempDir()
 	keyFile := filepath.Join(dir, "payment.skey")
-	plaintext := []byte(`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`)
+	plaintext := []byte(
+		`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`,
+	)
 	if err := os.WriteFile(keyFile, plaintext, 0o600); err != nil {
 		t.Fatalf("write key file: %v", err)
 	}
@@ -80,7 +82,9 @@ func TestRunKeyDecryptTightensOutputPermissions(t *testing.T) {
 	dir := t.TempDir()
 	encryptedFile := filepath.Join(dir, "payment.skey.enc")
 	outFile := filepath.Join(dir, "payment.skey")
-	plaintext := []byte(`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`)
+	plaintext := []byte(
+		`{"type":"PaymentSigningKeyShelley_ed25519","cborHex":"5820deadbeef"}`,
+	)
 
 	encrypted, err := sops.EncryptWithPassphrase(plaintext, "right")
 	if err != nil {

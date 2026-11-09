@@ -65,6 +65,29 @@ func BuildPolicies(keys []config.SignerKeyConfig) ([]policy.KeyPolicy, error) {
 	return out, nil
 }
 
+// CheckPolicyBackends rejects a key policy whose backend pin matches no
+// configured backend name, which would deny every request for the key, or
+// matches several, which would accept the key from any of them.
+func CheckPolicyBackends(pols []policy.KeyPolicy, backends []backend.Backend) error {
+	names := make(map[string]int, len(backends))
+	for _, b := range backends {
+		names[b.Name()]++
+	}
+	for _, p := range pols {
+		if p.Backend == "" {
+			continue
+		}
+		switch n := names[p.Backend]; n {
+		case 1:
+		case 0:
+			return fmt.Errorf("key %s: policy backend %q is not a configured backend", p.Hash, p.Backend)
+		default:
+			return fmt.Errorf("key %s: policy backend %q names %d configured backends", p.Hash, p.Backend, n)
+		}
+	}
+	return nil
+}
+
 // remap converts a decoded map into a typed struct via a JSON round-trip.
 // The policy structs carry both yaml and json tags (same names), so map keys
 // from YAML decode bind correctly through JSON.
@@ -94,11 +117,22 @@ var sopsDecrypt = sops.Decrypt
 // are wired here; the pkcs11 driver is CGO-only and requires the pkcs11 build
 // tag (the default build wires a stub that returns a clear not-compiled-in
 // error).
-func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]backend.Backend, error) {
+func BuildBackends(
+	ctx context.Context,
+	cfgs []config.SignerBackendConfig,
+) ([]backend.Backend, error) {
 	// Non-nil slice so callers (and nilaway) can rely on a non-nil result on the
 	// success path; an empty config yields an empty, not nil, slice.
 	backends := make([]backend.Backend, 0, len(cfgs))
 	for _, c := range cfgs {
+		// protocol selects the armory sign protocol; no other backend has one
+		if c.Protocol != "" && c.Type != "armory" {
+			return nil, fmt.Errorf(
+				"%s backend %q: protocol applies only to armory backends",
+				c.Type,
+				c.Name,
+			)
+		}
 		switch c.Type {
 		case "software":
 			b := backend.NewSoftwareBackend(c.Name)
@@ -132,7 +166,11 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 					}
 					data, err = sops.DecryptWithPassphrase(data, passphrase)
 					if err != nil {
-						return nil, fmt.Errorf("decrypt key %q: %w", e.Name(), err)
+						return nil, fmt.Errorf(
+							"decrypt key %q: %w",
+							e.Name(),
+							err,
+						)
 					}
 				}
 				lk, err := bursa.LoadKeyFromBytes(data)
@@ -153,13 +191,32 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 			b := backend.NewSopsBackend(c.Name, src, sopsDecrypt)
 			names, err := src.List(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("sops backend %q: list secrets: %w", c.Name, err)
+				return nil, fmt.Errorf(
+					"sops backend %q: list secrets: %w",
+					c.Name,
+					err,
+				)
 			}
 			if len(names) == 0 {
-				return nil, fmt.Errorf("sops backend %q: no secrets found with prefix %q", c.Name, c.SecretPrefix)
+				if c.Path != "" {
+					return nil, fmt.Errorf(
+						"sops backend %q: no *%s secrets found in %q",
+						c.Name,
+						dirSecretExt,
+						c.Path,
+					)
+				}
+				return nil, fmt.Errorf(
+					"sops backend %q: no secrets found with prefix %q",
+					c.Name,
+					c.SecretPrefix,
+				)
 			}
 			for _, n := range names {
-				b.Register(n, "") // key type derived from the decrypted envelope
+				b.Register(
+					n,
+					"",
+				) // key type derived from the decrypted envelope
 			}
 			if err := b.Load(ctx); err != nil {
 				return nil, fmt.Errorf("sops backend %q: %w", c.Name, err)
@@ -187,6 +244,12 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 				return nil, fmt.Errorf("%s backend %q: %w", c.Type, c.Name, err)
 			}
 			backends = append(backends, b)
+		case "armory":
+			b, err := buildArmoryBackend(ctx, c)
+			if err != nil {
+				return nil, fmt.Errorf("armory backend %q: %w", c.Name, err)
+			}
+			backends = append(backends, b)
 		default:
 			return nil, fmt.Errorf("unknown backend type %q", c.Type)
 		}
@@ -196,7 +259,9 @@ func BuildBackends(ctx context.Context, cfgs []config.SignerBackendConfig) ([]ba
 
 // BuildCallerACL parses the configured caller list into subject → key hashes.
 // Returns nil when no callers are configured (unrestricted).
-func BuildCallerACL(callers []config.SignerCallerConfig) (map[string][]backend.KeyHash, error) {
+func BuildCallerACL(
+	callers []config.SignerCallerConfig,
+) (map[string][]backend.KeyHash, error) {
 	if len(callers) == 0 {
 		return nil, nil
 	}
@@ -206,13 +271,21 @@ func BuildCallerACL(callers []config.SignerCallerConfig) (map[string][]backend.K
 			return nil, errors.New("signer.callers entry missing subject")
 		}
 		if _, dup := out[c.Subject]; dup {
-			return nil, fmt.Errorf("duplicate signer.callers subject %q", c.Subject)
+			return nil, fmt.Errorf(
+				"duplicate signer.callers subject %q",
+				c.Subject,
+			)
 		}
 		hashes := make([]backend.KeyHash, 0, len(c.Keys))
 		for _, k := range c.Keys {
 			h, err := backend.ParseKeyHash(k)
 			if err != nil {
-				return nil, fmt.Errorf("caller %q key %q: %w", c.Subject, k, err)
+				return nil, fmt.Errorf(
+					"caller %q key %q: %w",
+					c.Subject,
+					k,
+					err,
+				)
 			}
 			hashes = append(hashes, h)
 		}
@@ -225,24 +298,40 @@ func BuildCallerACL(callers []config.SignerCallerConfig) (map[string][]backend.K
 // registrations into caller -> Ed25519 public key. Returns nil when none are
 // configured. Each entry must have a non-empty caller (unique) and a hex
 // 32-byte Ed25519 public key.
-func BuildAuthorizedKeys(keys []config.SignerAuthorizedKeyConfig) (map[string]ed25519.PublicKey, error) {
+func BuildAuthorizedKeys(
+	keys []config.SignerAuthorizedKeyConfig,
+) (map[string]ed25519.PublicKey, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
 	out := make(map[string]ed25519.PublicKey, len(keys))
 	for _, k := range keys {
 		if k.Caller == "" {
-			return nil, errors.New("signer.authorized_keys entry missing caller")
+			return nil, errors.New(
+				"signer.authorized_keys entry missing caller",
+			)
 		}
 		if _, dup := out[k.Caller]; dup {
-			return nil, fmt.Errorf("duplicate signer.authorized_keys caller %q", k.Caller)
+			return nil, fmt.Errorf(
+				"duplicate signer.authorized_keys caller %q",
+				k.Caller,
+			)
 		}
 		raw, err := hex.DecodeString(k.Ed25519PubkeyHex)
 		if err != nil {
-			return nil, fmt.Errorf("authorized key %q: invalid ed25519_pubkey_hex: %w", k.Caller, err)
+			return nil, fmt.Errorf(
+				"authorized key %q: invalid ed25519_pubkey_hex: %w",
+				k.Caller,
+				err,
+			)
 		}
 		if len(raw) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("authorized key %q: ed25519_pubkey_hex must be %d bytes, got %d", k.Caller, ed25519.PublicKeySize, len(raw))
+			return nil, fmt.Errorf(
+				"authorized key %q: ed25519_pubkey_hex must be %d bytes, got %d",
+				k.Caller,
+				ed25519.PublicKeySize,
+				len(raw),
+			)
 		}
 		out[k.Caller] = ed25519.PublicKey(raw)
 	}
@@ -253,14 +342,21 @@ func BuildAuthorizedKeys(keys []config.SignerAuthorizedKeyConfig) (map[string]ed
 // hex -> raw tx-override map) into typed per-caller overrides for the policy
 // engine. Returns nil when none are configured. Each override is validated by a
 // JSON round-trip (unknown keys rejected) so a typo fails at boot.
-func BuildCallerPolicies(cfg map[string]map[string]map[string]any) (map[string]map[backend.KeyHash]*policy.CallerTxOverride, error) {
+func BuildCallerPolicies(
+	cfg map[string]map[string]map[string]any,
+) (map[string]map[backend.KeyHash]*policy.CallerTxOverride, error) {
 	if len(cfg) == 0 {
 		return nil, nil
 	}
-	out := make(map[string]map[backend.KeyHash]*policy.CallerTxOverride, len(cfg))
+	out := make(
+		map[string]map[backend.KeyHash]*policy.CallerTxOverride,
+		len(cfg),
+	)
 	for caller, byKey := range cfg {
 		if caller == "" {
-			return nil, errors.New("signer.caller_policies entry has empty caller subject")
+			return nil, errors.New(
+				"signer.caller_policies entry has empty caller subject",
+			)
 		}
 		if len(byKey) == 0 {
 			continue
@@ -269,11 +365,21 @@ func BuildCallerPolicies(cfg map[string]map[string]map[string]any) (map[string]m
 		for hashHex, raw := range byKey {
 			h, err := backend.ParseKeyHash(hashHex)
 			if err != nil {
-				return nil, fmt.Errorf("caller %q key %q: %w", caller, hashHex, err)
+				return nil, fmt.Errorf(
+					"caller %q key %q: %w",
+					caller,
+					hashHex,
+					err,
+				)
 			}
 			var ov policy.CallerTxOverride
 			if err := remap(raw, &ov); err != nil {
-				return nil, fmt.Errorf("caller %q key %q override: %w", caller, hashHex, err)
+				return nil, fmt.Errorf(
+					"caller %q key %q override: %w",
+					caller,
+					hashHex,
+					err,
+				)
 			}
 			m[h] = &ov
 		}
@@ -296,12 +402,18 @@ func BuildPolicyHook(cfg config.SignerConfig) (PolicyHook, error) {
 	if timeoutMs > maxTimeoutMs {
 		timeoutMs = maxTimeoutMs
 	}
-	return NewHTTPPolicyHook(cfg.PolicyHookURL, time.Duration(timeoutMs)*time.Millisecond)
+	return NewHTTPPolicyHook(
+		cfg.PolicyHookURL,
+		time.Duration(timeoutMs)*time.Millisecond,
+	)
 }
 
 // BuildWatermark constructs the configured watermark store and mode. The
 // in-memory store is refused in enforce mode because it is not durable.
-func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (watermark.Watermark, watermark.Mode, error) {
+func BuildWatermark(
+	ctx context.Context,
+	c config.SignerWatermarkConfig,
+) (watermark.Watermark, watermark.Mode, error) {
 	mode := watermark.Mode(c.Mode)
 	if mode == "" {
 		mode = watermark.ModeEnforce
@@ -324,7 +436,10 @@ func BuildWatermark(ctx context.Context, c config.SignerWatermarkConfig) (waterm
 		return watermark.NewMemWatermark(), mode, nil
 	case "file":
 		if c.Path == "" {
-			return nil, mode, fmt.Errorf("watermark type %q requires a non-empty path", c.Type)
+			return nil, mode, fmt.Errorf(
+				"watermark type %q requires a non-empty path",
+				c.Type,
+			)
 		}
 		wm, err := watermark.NewSqliteWatermark(c.Path)
 		return wm, mode, err
@@ -348,7 +463,10 @@ func watermarkPostgresDSN(c config.SignerWatermarkConfig) (string, error) {
 	if c.DSNEnv != "" {
 		dsn := os.Getenv(c.DSNEnv)
 		if dsn == "" {
-			return "", fmt.Errorf("watermark dsn_env %q is set but the environment variable is empty", c.DSNEnv)
+			return "", fmt.Errorf(
+				"watermark dsn_env %q is set but the environment variable is empty",
+				c.DSNEnv,
+			)
 		}
 		return dsn, nil
 	}
@@ -356,4 +474,55 @@ func watermarkPostgresDSN(c config.SignerWatermarkConfig) (string, error) {
 		return c.DSN, nil
 	}
 	return "", errors.New("watermark type \"postgres\" requires dsn or dsn_env")
+}
+
+// CheckBackendWatermark refuses a nitro backend unless the watermark enforces
+// on durable storage. The enclave seals its issue counter into host storage,
+// but the host can roll that state back and replicas can share one secret, so
+// the signer's watermark is what stops a reused issue counter.
+func CheckBackendWatermark(
+	backends []config.SignerBackendConfig,
+	c config.SignerWatermarkConfig,
+) error {
+	for _, b := range backends {
+		if b.Type != "nitro" {
+			continue
+		}
+		// New coerces any mode other than warn or off to enforce
+		mode := watermark.Mode(c.Mode)
+		enforcing := mode != watermark.ModeWarn && mode != watermark.ModeOff
+		durable := c.Type == "file" || c.Type == "postgres"
+		if !enforcing || !durable {
+			return fmt.Errorf(
+				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store (type \"file\" or \"postgres\"): the host holds the enclave's sealed counter state and it can be rolled back",
+				b.Name,
+			)
+		}
+		// fail before BuildBackends contacts the enclave, not after
+		var err error
+		if c.Type == "file" && c.Path == "" {
+			err = errors.New(
+				"watermark type \"file\" requires a non-empty path",
+			)
+		} else if c.Type == "file" {
+			var fileBacked bool
+			fileBacked, err = watermark.SqliteFileBacked(c.Path)
+			if err == nil && !fileBacked {
+				err = fmt.Errorf(
+					"watermark path %q opens an in-memory database",
+					c.Path,
+				)
+			}
+		} else if c.Type == "postgres" {
+			_, err = watermarkPostgresDSN(c)
+		}
+		if err != nil {
+			return fmt.Errorf(
+				"the nitro backend %q requires signer.watermark.mode \"enforce\" with a durable store: %w",
+				b.Name,
+				err,
+			)
+		}
+	}
+	return nil
 }

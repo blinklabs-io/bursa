@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/logging"
@@ -39,6 +40,9 @@ type SignRequest struct {
 	Payload string   `json:"payload"` // cip8: hex
 	Address string   `json:"address"` // cip8: bech32
 	Key     string   `json:"key"`     // cip8 + opcert: cold/signing key hash
+	// Profile selects among backends holding the same key hash. It routes the
+	// request; it never authorizes it.
+	Profile string `json:"profile,omitempty"`
 
 	// opcert: cold-sign an operational certificate. The cold key (identified by
 	// Key) signs the canonical OCertSignable bytes; the cold key itself never
@@ -46,6 +50,10 @@ type SignRequest struct {
 	KesVkey      string `json:"kes_vkey"`      // opcert: hex-encoded 32-byte KES verification key
 	IssueCounter uint64 `json:"issue_counter"` // opcert: operational certificate issue counter
 	KesPeriod    uint64 `json:"kes_period"`    // opcert: KES period
+	// ChainCounter, when set, is the pool's on-chain opcert counter. The signer
+	// then chooses the issue counter (ChainCounter + 1) and IssueCounter is
+	// ignored.
+	ChainCounter *uint64 `json:"chain_counter,omitempty"`
 }
 
 // SignTxResponse is returned for type=tx.
@@ -74,6 +82,8 @@ type SignOpCertResponse struct {
 	Signature string `json:"signature"`
 	ColdVkey  string `json:"cold_vkey"`
 	Key       string `json:"key"`
+	// IssueCounter is the issue counter the signature covers.
+	IssueCounter uint64 `json:"issue_counter"`
 }
 
 // KeyPolicySummary is the effective policy returned on the key-detail
@@ -109,7 +119,13 @@ type Server struct {
 // be nil when only mTLS and/or request-signing auth are configured. mTLS and
 // request-signing authenticators are attached via SetMTLSAuthenticator /
 // SetRequestSigningAuthenticator. The logger defaults to logging.GetLogger().
-func NewServer(coord *signer.Coordinator, resolver *backend.Resolver, policies *policy.Engine, acl *CallerACL, validate Validator) *Server {
+func NewServer(
+	coord *signer.Coordinator,
+	resolver *backend.Resolver,
+	policies *policy.Engine,
+	acl *CallerACL,
+	validate Validator,
+) *Server {
 	return &Server{
 		coord:    coord,
 		resolver: resolver,
@@ -126,7 +142,11 @@ func (s *Server) SetMTLSAuthenticator(a Authenticator) { s.mtlsAuth = a }
 
 // SetRequestSigningAuthenticator enables authorized-keys request-signing
 // authentication. It is tried after mTLS and before JWT.
-func (s *Server) SetRequestSigningAuthenticator(a Authenticator) { s.reqSign = a }
+func (s *Server) SetRequestSigningAuthenticator(
+	a Authenticator,
+) {
+	s.reqSign = a
+}
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -178,20 +198,55 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			s.audit(r, caller, "", "request_entity_too_large", "audit_id", auditID, "error", err.Error())
-			writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+			s.audit(
+				r,
+				caller,
+				"",
+				"request_entity_too_large",
+				"audit_id",
+				auditID,
+				"error",
+				err.Error(),
+			)
+			writeErr(
+				w,
+				http.StatusRequestEntityTooLarge,
+				"request body too large",
+			)
 			return
 		}
-		s.audit(r, caller, "", "bad_request", "audit_id", auditID, "error", err.Error())
+		s.audit(
+			r,
+			caller,
+			"",
+			"bad_request",
+			"audit_id",
+			auditID,
+			"error",
+			err.Error(),
+		)
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+
+	ctx := signer.WithProfile(r.Context(), req.Profile)
 
 	switch req.Type {
 	case "tx":
 		resolvedSigners, err := signer.ValidateSignerList(req.Signers)
 		if err != nil {
-			s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signer_count", len(req.Signers), "error", err.Error())
+			s.audit(
+				r,
+				caller,
+				"tx",
+				"bad_request",
+				"audit_id",
+				auditID,
+				"signer_count",
+				len(req.Signers),
+				"error",
+				err.Error(),
+			)
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -211,17 +266,48 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				signers = append(signers, sg)
 			}
 			if len(signers) == 0 && len(aclDenied) > 0 {
-				s.audit(r, caller, "tx", "denied", "audit_id", auditID, "signer_count", len(req.Signers), "reason", "caller ACL")
-				writeJSON(w, http.StatusForbidden, SignTxResponse{AuditID: auditID, Errors: aclDenied})
+				s.audit(
+					r,
+					caller,
+					"tx",
+					"denied",
+					"audit_id",
+					auditID,
+					"signer_count",
+					len(req.Signers),
+					"reason",
+					"caller ACL",
+				)
+				writeJSON(
+					w,
+					http.StatusForbidden,
+					SignTxResponse{AuditID: auditID, Errors: aclDenied},
+				)
 				return
 			}
 		}
 		// Thread the authenticated caller so the coordinator can apply any
 		// per-caller policy override.
-		res, perr, err := s.coord.SignTx(signer.WithCaller(r.Context(), caller), []byte(req.Cbor), req.Era, signers)
+		res, perr, err := s.coord.SignTx(
+			signer.WithCaller(ctx, caller),
+			[]byte(req.Cbor),
+			req.Era,
+			signers,
+		)
 		if err != nil {
 			if signer.IsBadRequest(err) {
-				s.audit(r, caller, "tx", "bad_request", "audit_id", auditID, "signer_count", len(req.Signers), "error", err.Error())
+				s.audit(
+					r,
+					caller,
+					"tx",
+					"bad_request",
+					"audit_id",
+					auditID,
+					"signer_count",
+					len(req.Signers),
+					"error",
+					err.Error(),
+				)
 				writeErr(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -231,7 +317,16 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				"audit_id", auditID,
 				"error", err,
 			)
-			s.audit(r, caller, "tx", "error", "audit_id", auditID, "signer_count", len(req.Signers))
+			s.audit(
+				r,
+				caller,
+				"tx",
+				"error",
+				"audit_id",
+				auditID,
+				"signer_count",
+				len(req.Signers),
+			)
 			writeErr(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
@@ -258,13 +353,42 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				"tx_id", res.TxID,
 				"errors", allErrs,
 			)
-			s.audit(r, caller, "tx", string(primary.Code), "audit_id", auditID, "tx_id", res.TxID, "signer_count", len(req.Signers), "signer_errors", len(allErrs))
-			writeJSON(w, st, SignTxResponse{AuditID: auditID, TxID: res.TxID, Errors: masked})
+			s.audit(
+				r,
+				caller,
+				"tx",
+				string(primary.Code),
+				"audit_id",
+				auditID,
+				"tx_id",
+				res.TxID,
+				"signer_count",
+				len(req.Signers),
+				"signer_errors",
+				len(allErrs),
+			)
+			writeJSON(
+				w,
+				st,
+				SignTxResponse{
+					AuditID: auditID,
+					TxID:    res.TxID,
+					Errors:  masked,
+				},
+			)
 			return
 		}
 		masked := maskSignerErrors(allErrs)
 		if len(allErrs) > 0 {
-			s.logger.Warn("SignTx partial failure", "audit_id", auditID, "errors", allErrs, "caller", caller)
+			s.logger.Warn(
+				"SignTx partial failure",
+				"audit_id",
+				auditID,
+				"errors",
+				allErrs,
+				"caller",
+				caller,
+			)
 		}
 		resp := SignTxResponse{AuditID: auditID, TxID: res.TxID, Errors: masked}
 		for _, wit := range res.Witnesses {
@@ -273,18 +397,37 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		if len(res.SignedTx) > 0 {
 			resp.SignedTx = hex.EncodeToString(res.SignedTx)
 		}
-		s.audit(r, caller, "tx", "signed",
+		auditArgs := []any{
 			"audit_id", auditID,
 			"tx_id", res.TxID,
 			"witnesses", len(resp.Witnesses),
 			"signer_errors", len(perr),
 			"signers", req.Signers,
-		)
+		}
+		if len(res.Summaries) > 0 {
+			auditArgs = append(
+				auditArgs,
+				"summary",
+				strings.Join(res.Summaries, "; "),
+			)
+		}
+		s.audit(r, caller, "tx", "signed", auditArgs...)
 		writeJSON(w, http.StatusOK, resp)
 	case "cip8":
 		payload, err := hex.DecodeString(req.Payload)
 		if err != nil {
-			s.audit(r, caller, "cip8", "bad_request", "audit_id", auditID, "key", req.Key, "address", req.Address)
+			s.audit(
+				r,
+				caller,
+				"cip8",
+				"bad_request",
+				"audit_id",
+				auditID,
+				"key",
+				req.Key,
+				"address",
+				req.Address,
+			)
 			writeErr(w, http.StatusBadRequest, "invalid payload hex")
 			return
 		}
@@ -292,12 +435,32 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			h, err := backend.ParseKeyHash(req.Key)
 			if err == nil && !s.acl.Allows(caller, h) {
 				s.coord.Metrics().ObserveDeny("acl")
-				s.audit(r, caller, "cip8", "denied", "audit_id", auditID, "key", req.Key, "reason", "caller ACL")
-				writeErr(w, http.StatusForbidden, "caller is not authorized for this key")
+				s.audit(
+					r,
+					caller,
+					"cip8",
+					"denied",
+					"audit_id",
+					auditID,
+					"key",
+					req.Key,
+					"reason",
+					"caller ACL",
+				)
+				writeErr(
+					w,
+					http.StatusForbidden,
+					"caller is not authorized for this key",
+				)
 				return
 			}
 		}
-		res, code, err := s.coord.SignCIP8(r.Context(), payload, req.Address, req.Key)
+		res, code, err := s.coord.SignCIP8(
+			ctx,
+			payload,
+			req.Address,
+			req.Key,
+		)
 		if err != nil {
 			st := codeToStatus(code)
 			if st >= 500 {
@@ -308,7 +471,18 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 					"code", code,
 					"error", err,
 				)
-				s.audit(r, caller, "cip8", "error", "audit_id", auditID, "key", req.Key, "address", req.Address)
+				s.audit(
+					r,
+					caller,
+					"cip8",
+					"error",
+					"audit_id",
+					auditID,
+					"key",
+					req.Key,
+					"address",
+					req.Address,
+				)
 				if st == http.StatusBadGateway {
 					writeErr(w, st, "backend error")
 				} else {
@@ -316,16 +490,57 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			s.audit(r, caller, "cip8", string(code), "audit_id", auditID, "key", req.Key, "address", req.Address, "error", err.Error())
+			s.audit(
+				r,
+				caller,
+				"cip8",
+				string(code),
+				"audit_id",
+				auditID,
+				"key",
+				req.Key,
+				"address",
+				req.Address,
+				"error",
+				err.Error(),
+			)
 			writeErr(w, st, err.Error())
 			return
 		}
-		s.audit(r, caller, "cip8", "signed", "audit_id", auditID, "key", req.Key, "address", req.Address)
-		writeJSON(w, http.StatusOK, SignCIP8Response{AuditID: auditID, Signature: res.SignatureHex, Key: res.KeyHex})
+		s.audit(
+			r,
+			caller,
+			"cip8",
+			"signed",
+			"audit_id",
+			auditID,
+			"key",
+			req.Key,
+			"address",
+			req.Address,
+		)
+		writeJSON(
+			w,
+			http.StatusOK,
+			SignCIP8Response{
+				AuditID:   auditID,
+				Signature: res.SignatureHex,
+				Key:       res.KeyHex,
+			},
+		)
 	case "opcert":
 		kesVkey, err := hex.DecodeString(req.KesVkey)
 		if err != nil {
-			s.audit(r, caller, "opcert", "bad_request", "audit_id", auditID, "key", req.Key)
+			s.audit(
+				r,
+				caller,
+				"opcert",
+				"bad_request",
+				"audit_id",
+				auditID,
+				"key",
+				req.Key,
+			)
 			writeErr(w, http.StatusBadRequest, "invalid kes_vkey hex")
 			return
 		}
@@ -334,12 +549,41 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			h, err := backend.ParseKeyHash(req.Key)
 			if err == nil && !s.acl.Allows(caller, h) {
 				s.coord.Metrics().ObserveDeny("acl")
-				s.audit(r, caller, "opcert", "denied", "audit_id", auditID, "key", req.Key, "reason", "caller ACL")
-				writeErr(w, http.StatusForbidden, "caller is not authorized for this key")
+				s.audit(
+					r,
+					caller,
+					"opcert",
+					"denied",
+					"audit_id",
+					auditID,
+					"key",
+					req.Key,
+					"reason",
+					"caller ACL",
+				)
+				writeErr(
+					w,
+					http.StatusForbidden,
+					"caller is not authorized for this key",
+				)
 				return
 			}
 		}
-		res, code, err := s.coord.SignOpCert(r.Context(), kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
+		var (
+			res  *signer.OpCertResult
+			code signer.ErrorCode
+		)
+		if req.ChainCounter != nil {
+			res, code, err = s.coord.SignOpCertFromChain(
+				ctx,
+				kesVkey,
+				*req.ChainCounter,
+				req.KesPeriod,
+				req.Key,
+			)
+		} else {
+			res, code, err = s.coord.SignOpCert(ctx, kesVkey, req.IssueCounter, req.KesPeriod, req.Key)
+		}
 		if err != nil {
 			st := codeToStatus(code)
 			if st >= 500 {
@@ -349,7 +593,16 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 					"code", code,
 					"error", err,
 				)
-				s.audit(r, caller, "opcert", "error", "audit_id", auditID, "key", req.Key)
+				s.audit(
+					r,
+					caller,
+					"opcert",
+					"error",
+					"audit_id",
+					auditID,
+					"key",
+					req.Key,
+				)
 				if st == http.StatusBadGateway {
 					writeErr(w, st, "backend error")
 				} else {
@@ -357,12 +610,42 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			s.audit(r, caller, "opcert", string(code), "audit_id", auditID, "key", req.Key, "error", err.Error())
+			s.audit(
+				r,
+				caller,
+				"opcert",
+				string(code),
+				"audit_id",
+				auditID,
+				"key",
+				req.Key,
+				"error",
+				err.Error(),
+			)
 			writeErr(w, st, err.Error())
 			return
 		}
-		s.audit(r, caller, "opcert", "signed", "audit_id", auditID, "key", req.Key)
-		writeJSON(w, http.StatusOK, SignOpCertResponse{AuditID: auditID, Signature: res.SignatureHex, ColdVkey: res.ColdVKeyHex, Key: res.KeyHex})
+		s.audit(
+			r,
+			caller,
+			"opcert",
+			"signed",
+			"audit_id",
+			auditID,
+			"key",
+			req.Key,
+		)
+		writeJSON(
+			w,
+			http.StatusOK,
+			SignOpCertResponse{
+				AuditID:      auditID,
+				Signature:    res.SignatureHex,
+				ColdVkey:     res.ColdVKeyHex,
+				Key:          res.KeyHex,
+				IssueCounter: res.IssueCounter,
+			},
+		)
 	default:
 		s.audit(r, caller, req.Type, "bad_request", "audit_id", auditID)
 		writeErr(w, http.StatusBadRequest, "unknown request type")
@@ -372,7 +655,11 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 // audit emits a structured sign-request audit log line. Every outcome on every
 // code path must call this exactly once. attrs must be key-value pairs (slog style).
 // No secrets or raw CBOR are included.
-func (s *Server) audit(r *http.Request, caller, reqType, outcome string, attrs ...any) {
+func (s *Server) audit(
+	r *http.Request,
+	caller, reqType, outcome string,
+	attrs ...any,
+) {
 	args := make([]any, 0, 8+len(attrs))
 	args = append(args,
 		"caller", caller,
@@ -412,7 +699,15 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 		if !s.acl.Allows(caller, k.Hash()) {
 			continue
 		}
-		out = append(out, KeyInfo{Hash: k.Hash().String(), Type: string(k.Type()), Extended: k.Extended(), Backend: k.Backend()})
+		out = append(
+			out,
+			KeyInfo{
+				Hash:     k.Hash().String(),
+				Type:     string(k.Type()),
+				Extended: k.Extended(),
+				Backend:  k.Backend(),
+			},
+		)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -429,7 +724,11 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "key not found")
 		return
 	}
-	ref, err := s.resolver.Resolve(r.Context(), h)
+	ref, err := s.resolver.Resolve(r.Context(), h, r.URL.Query().Get("profile"))
+	if errors.Is(err, backend.ErrProfileRequired) {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if errors.Is(err, backend.ErrKeyNotFound) {
 		writeErr(w, http.StatusNotFound, "key not found")
 		return
@@ -440,7 +739,12 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
-	info := KeyInfo{Hash: ref.Hash().String(), Type: string(ref.Type()), Extended: ref.Extended(), Backend: ref.Backend()}
+	info := KeyInfo{
+		Hash:     ref.Hash().String(),
+		Type:     string(ref.Type()),
+		Extended: ref.Extended(),
+		Backend:  ref.Backend(),
+	}
 	if s.policies != nil {
 		if p, ok := s.policies.PolicyFor(h); ok {
 			// Normalize to a non-nil slice so the wire format is always an
@@ -508,7 +812,10 @@ const readinessTimeout = 3 * time.Second
 // dependency to check and /readyz always returns 200.
 func HealthHandler(ready func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc(
+		"/healthz",
+		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+	)
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if ready == nil {
 			w.WriteHeader(http.StatusOK)

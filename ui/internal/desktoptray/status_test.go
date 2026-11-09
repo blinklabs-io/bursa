@@ -38,14 +38,16 @@ func TestSplitLaunchURL(t *testing.T) {
 func TestFetchNodeStatusAuthenticatesAgainstFragmentFreeBase(t *testing.T) {
 	const token = "tray-token"
 	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		if r.URL.Path != "/status" || r.Header.Get(sessionHeader) != token {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		_, _ = w.Write([]byte(`{"state":"syncing","caughtUp":false}`))
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			if r.URL.Path != "/status" || r.Header.Get(sessionHeader) != token {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"state":"syncing","caughtUp":false}`))
+		}),
+	)
 	defer srv.Close()
 
 	base, tok := SplitLaunchURL(srv.URL + "#session=" + token)
@@ -76,10 +78,12 @@ func TestFetchNodeStatusTrailingSlashBaseRequestsStatusDirectly(t *testing.T) {
 		_, _ = w.Write([]byte(`{"state":"ready","caughtUp":true}`))
 	})
 	var paths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		mux.ServeHTTP(w, r)
-	}))
+	srv := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
+			mux.ServeHTTP(w, r)
+		}),
+	)
 	defer srv.Close()
 
 	base, tok := SplitLaunchURL(srv.URL + "/#session=" + token)

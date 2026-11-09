@@ -162,7 +162,11 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 		// second toggle. A start failure is non-fatal — the setting stays on and
 		// fetches retry to start lazily.
 		if err := s.startClient(); err != nil {
-			s.logger.Warn("nft: failed to start IPFS client at boot", "err", err)
+			s.logger.Warn(
+				"nft: failed to start IPFS client at boot",
+				"err",
+				err,
+			)
 		}
 	}
 	return s, nil
@@ -313,7 +317,13 @@ func (s *Service) List(ctx context.Context) ([]NFT, error) {
 				out = append(out, NFT{Unit: unit})
 				continue
 			}
-			s.logger.Warn("nft: skipping asset metadata lookup failure", "unit", unit, "err", err)
+			s.logger.Warn(
+				"nft: skipping asset metadata lookup failure",
+				"unit",
+				unit,
+				"err",
+				err,
+			)
 			continue
 		}
 		md := parseMetadata(info.OnchainMetadata)
@@ -334,7 +344,10 @@ func (s *Service) List(ctx context.Context) ([]NFT, error) {
 // imageForUnit resolves the image CID for an already-authorized asset unit by
 // querying the node's asset metadata. Returns "" (no error) when the asset has
 // no IPFS image. Image performs the live ownership check before calling this.
-func (s *Service) imageForUnit(ctx context.Context, unit string) (string, error) {
+func (s *Service) imageForUnit(
+	ctx context.Context,
+	unit string,
+) (string, error) {
 	info, err := s.chain.Asset(ctx, unit)
 	if err != nil {
 		if errors.Is(err, chain.ErrNotFound) {
@@ -450,7 +463,11 @@ func (s *Service) Image(ctx context.Context, unit string) ([]byte, error) {
 
 // ServeImage writes the image for unit as an HTTP response, mapping the service
 // errors to status codes. It is a convenience for the API layer.
-func (s *Service) ServeImage(ctx context.Context, w http.ResponseWriter, unit string) {
+func (s *Service) ServeImage(
+	ctx context.Context,
+	w http.ResponseWriter,
+	unit string,
+) {
 	data, err := s.Image(ctx, unit)
 	switch {
 	case errors.Is(err, ErrMediaDisabled):
@@ -460,10 +477,18 @@ func (s *Service) ServeImage(ctx context.Context, w http.ResponseWriter, unit st
 		http.Error(w, "asset not held by active wallet", http.StatusNotFound)
 		return
 	case errors.Is(err, ErrUnsafeImage):
-		http.Error(w, "unsupported or unsafe NFT media", http.StatusUnsupportedMediaType)
+		http.Error(
+			w,
+			"unsupported or unsafe NFT media",
+			http.StatusUnsupportedMediaType,
+		)
 		return
 	case err != nil:
-		http.Error(w, err.Error(), http.StatusBadGateway) // upstream IPFS fetch failed
+		http.Error(
+			w,
+			err.Error(),
+			http.StatusBadGateway,
+		) // upstream IPFS fetch failed
 		return
 	case data == nil:
 		http.Error(w, "no image for asset", http.StatusNotFound)
@@ -472,18 +497,29 @@ func (s *Service) ServeImage(ctx context.Context, w http.ResponseWriter, unit st
 	// Defense in depth at the trust boundary: never hand unvalidated bytes to
 	// the browser even if a future Image implementation bypasses the cache.
 	if err := validateImage(data); err != nil {
-		http.Error(w, "unsupported or unsafe NFT media", http.StatusUnsupportedMediaType)
+		http.Error(
+			w,
+			"unsupported or unsafe NFT media",
+			http.StatusUnsupportedMediaType,
+		)
 		return
 	}
 	contentType := http.DetectContentType(data)
 	if !allowedImageContentType(contentType) {
-		http.Error(w, "unsupported NFT media type", http.StatusUnsupportedMediaType)
+		http.Error(
+			w,
+			"unsupported NFT media type",
+			http.StatusUnsupportedMediaType,
+		)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// Content-addressed: immutable, cache aggressively in the browser too.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// Content-addressed, but whether it is served depends on the active
+	// wallet's holdings and media consent. A stored copy would be replayed
+	// from the browser cache to any same-site page without reaching those
+	// checks; the server-side cache keeps repeat loads cheap.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

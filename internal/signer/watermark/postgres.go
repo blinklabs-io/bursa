@@ -16,6 +16,7 @@ package watermark
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,12 +49,24 @@ type PostgresWatermark struct {
 // NewPostgresWatermark connects to Postgres at dsn (a libpq/pgx connection
 // string or URL), creates the watermark tables if they do not exist, and
 // returns a ready store. The dsn must be sourced from the environment by the
-// caller; it commonly contains credentials and is never logged.
-func NewPostgresWatermark(ctx context.Context, dsn string) (*PostgresWatermark, error) {
+// caller; it commonly contains credentials and is never logged. Remote targets
+// require hostname-verified TLS; Unix sockets, localhost, and loopback addresses
+// are allowed without TLS.
+func NewPostgresWatermark(
+	ctx context.Context,
+	dsn string,
+) (*PostgresWatermark, error) {
 	if dsn == "" {
 		return nil, errors.New("postgres watermark: empty dsn")
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres watermark dsn: %w", err)
+	}
+	if err := validatePostgresWatermarkConfig(poolConfig.ConnConfig); err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres watermark pool: %w", err)
 	}
@@ -64,15 +78,46 @@ func NewPostgresWatermark(ctx context.Context, dsn string) (*PostgresWatermark, 
 	return s, nil
 }
 
-// NewPostgresWatermarkFromPool wraps an existing pool. It is used by tests that
-// need two independent pools (simulating separate replicas) against the same
-// database. The schema is initialized on the provided pool.
-func NewPostgresWatermarkFromPool(ctx context.Context, pool *pgxpool.Pool) (*PostgresWatermark, error) {
-	s := &PostgresWatermark{pool: pool}
-	if err := s.initSchema(ctx); err != nil {
-		return nil, err
+func validatePostgresWatermarkConfig(config *pgx.ConnConfig) error {
+	if config == nil {
+		return errors.New("postgres watermark: nil connection config")
 	}
-	return s, nil
+	if err := validatePostgresWatermarkTarget(config.Host, config.Port, config.TLSConfig); err != nil {
+		return err
+	}
+	for _, fallback := range config.Fallbacks {
+		if fallback == nil {
+			return errors.New(
+				"postgres watermark: nil fallback connection config",
+			)
+		}
+		if err := validatePostgresWatermarkTarget(fallback.Host, fallback.Port, fallback.TLSConfig); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePostgresWatermarkTarget(
+	host string,
+	port uint16,
+	tlsConfig *tls.Config,
+) error {
+	network, _ := pgconn.NetworkAddress(host, port)
+	if network == "unix" {
+		return nil
+	}
+	if backend.IsLoopbackHost(host) {
+		return nil
+	}
+	if tlsConfig == nil || tlsConfig.InsecureSkipVerify ||
+		tlsConfig.ServerName == "" {
+		return fmt.Errorf(
+			"postgres watermark: remote host %q requires hostname-verified TLS (sslmode=verify-full)",
+			host,
+		)
+	}
+	return nil
 }
 
 func (s *PostgresWatermark) initSchema(ctx context.Context) error {
@@ -145,7 +190,12 @@ func (s *PostgresWatermark) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *PostgresWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (s *PostgresWatermark) Check(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	d := digest(payload)
 	want := hex.EncodeToString(d[:])
 	var have string
@@ -164,7 +214,12 @@ func (s *PostgresWatermark) Check(ctx context.Context, key backend.KeyHash, scop
 	return nil
 }
 
-func (s *PostgresWatermark) CheckAndCommit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (s *PostgresWatermark) CheckAndCommit(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	// Single atomic upsert mirroring the sqlite store: insert when absent, else
 	// keep the existing row only when the payload matches. A divergent payload
 	// makes the guarded DO UPDATE a no-op so RETURNING yields no row -> conflict.
@@ -189,7 +244,12 @@ func (s *PostgresWatermark) CheckAndCommit(ctx context.Context, key backend.KeyH
 	return nil
 }
 
-func (s *PostgresWatermark) Commit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (s *PostgresWatermark) Commit(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	d := digest(payload)
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO signer_watermark (record_key, payload_hash) VALUES ($1, $2)
@@ -201,7 +261,11 @@ func (s *PostgresWatermark) Commit(ctx context.Context, key backend.KeyHash, sco
 	return nil
 }
 
-func (s *PostgresWatermark) CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+func (s *PostgresWatermark) CounterFor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+) (uint64, bool, error) {
 	var have string
 	err := s.pool.QueryRow(ctx,
 		`SELECT counter FROM signer_counter_watermark WHERE record_key = $1`,
@@ -214,12 +278,20 @@ func (s *PostgresWatermark) CounterFor(ctx context.Context, key backend.KeyHash,
 	}
 	v, err := counterDecode(have)
 	if err != nil {
-		return 0, false, fmt.Errorf("counter watermark: corrupt stored counter %q", have)
+		return 0, false, fmt.Errorf(
+			"counter watermark: corrupt stored counter %q",
+			have,
+		)
 	}
 	return v, true, nil
 }
 
-func (s *PostgresWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
+func (s *PostgresWatermark) CheckAndCommitCounter(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	counter uint64,
+) error {
 	// Atomic advance-if-greater in a SINGLE statement — the core of HA safety.
 	// The row is inserted when absent, else updated only when the new counter is
 	// strictly greater. When the guard fails the DO UPDATE is a no-op and
@@ -234,12 +306,15 @@ func (s *PostgresWatermark) CheckAndCommitCounter(ctx context.Context, key backe
 	// (or column) using a non-"C" default collation could order the hex
 	// strings by locale rules instead of byte value, letting a lower counter
 	// advance or rejecting a valid higher one.
-	err := s.pool.QueryRow(ctx,
+	err := s.pool.QueryRow(
+		ctx,
 		`INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
 		 ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
 		 WHERE (EXCLUDED.counter COLLATE "C") > (signer_counter_watermark.counter COLLATE "C")
 		 RETURNING counter`,
-		recordKey(key, scope), want).Scan(&have)
+		recordKey(key, scope),
+		want,
+	).Scan(&have)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrCounterRegression
 	}
@@ -248,6 +323,144 @@ func (s *PostgresWatermark) CheckAndCommitCounter(ctx context.Context, key backe
 	}
 	if have != want {
 		return ErrCounterRegression
+	}
+	return nil
+}
+
+func (s *PostgresWatermark) CheckAndRaiseFloor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	value uint64,
+) error {
+	// The same single-statement upsert and "C" collation as
+	// CheckAndCommitCounter, with the guard relaxed to >= so an unchanged
+	// floor is accepted.
+	want := counterEncode(value)
+	var have string
+	err := s.pool.QueryRow(
+		ctx,
+		`INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
+		 ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
+		 WHERE (EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")
+		 RETURNING counter`,
+		recordKey(key, scope),
+		want,
+	).Scan(&have)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrCounterRegression
+	}
+	if err != nil {
+		return fmt.Errorf("counter watermark raise floor: %w", err)
+	}
+	if have != want {
+		return ErrCounterRegression
+	}
+	return nil
+}
+
+// postgresCounterUpsert returns the guarded upsert for op and its extra
+// arguments. The guards and "C" collation match the single-scope methods.
+func postgresCounterUpsert(op CounterOp) (string, []any) {
+	var guard string
+	var extra []any
+	switch op.Kind {
+	case CounterFloor:
+		guard = `(EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")`
+	case CounterFloorFrom:
+		guard = `(EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")
+		   AND (signer_counter_watermark.counter COLLATE "C") >= ($3 COLLATE "C")`
+		extra = []any{counterEncode(op.Min)}
+	case CounterStrict:
+		guard = `(EXCLUDED.counter COLLATE "C") > (signer_counter_watermark.counter COLLATE "C")`
+	case CounterEqual:
+		// checked by its own read, never upserted
+		guard = `false`
+	default:
+		guard = `false`
+	}
+	return `INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
+		 ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
+		 WHERE ` + guard + `
+		 RETURNING counter`, extra
+}
+
+// CheckAndCommitCounters applies every op's guarded upsert in one
+// transaction and rolls back on the first refusal. Each upsert locks its row
+// until commit, and ops run in argument order, so concurrent callers serialize
+// per row.
+func (s *PostgresWatermark) CheckAndCommitCounters(
+	ctx context.Context,
+	key backend.KeyHash,
+	ops ...CounterOp,
+) error {
+	if err := validateCounterOps(ops); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("counter watermark begin: %w", err)
+	}
+	committed := false
+	defer func(base context.Context) {
+		if committed {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(base, time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}(context.WithoutCancel(ctx))
+	for _, op := range ops {
+		if op.Kind == CounterEqual {
+			if err := postgresRequireCounter(ctx, tx, key, op); err != nil {
+				return err
+			}
+			continue
+		}
+		q, extra := postgresCounterUpsert(op)
+		want := counterEncode(op.Value)
+		var have string
+		err := tx.QueryRow(ctx, q, append([]any{recordKey(key, op.Scope), want}, extra...)...).
+			Scan(&have)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && have != want) {
+			return &CounterRegressionError{Scope: op.Scope}
+		}
+		if err != nil {
+			return fmt.Errorf("counter watermark check and commit: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("counter watermark commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// postgresRequireCounter checks a CounterEqual op inside tx. A missing record
+// is created at 0 first, so there is always a row to lock, and the read takes
+// FOR SHARE: concurrent commits do not block one another, while the reset's
+// FOR UPDATE on the same row waits for them and they wait for it.
+func postgresRequireCounter(
+	ctx context.Context,
+	tx pgx.Tx,
+	key backend.KeyHash,
+	op CounterOp,
+) error {
+	rk := recordKey(key, op.Scope)
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
+		 ON CONFLICT (record_key) DO NOTHING`,
+		rk, counterEncode(0)); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	var have string
+	if err := tx.QueryRow(ctx,
+		`SELECT counter FROM signer_counter_watermark WHERE record_key = $1 FOR SHARE`,
+		rk).Scan(&have); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	if have != counterEncode(op.Value) {
+		return &CounterRegressionError{Scope: op.Scope}
 	}
 	return nil
 }

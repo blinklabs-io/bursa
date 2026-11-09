@@ -1,0 +1,454 @@
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package signlog
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"sync"
+)
+
+// Writer appends entries to a medium that matched the head store at Open.
+type Writer struct {
+	mu     sync.Mutex
+	medium Medium
+	heads  HeadStore
+	id     Identity
+	hdr    Header
+	head   Head
+	// last is the latest entry, when there is one
+	last *Entry
+	// pending is a head that reached the medium but not yet the head store
+	pending *Head
+	// opcerts is the latest opcert-next entry on the medium for each profile
+	// and cold key
+	opcerts map[opCertKey]opCertMark
+}
+
+// opCertKey names a profile and the cold key its opcerts were issued under.
+// An entry without a cold key hash (a version 1 medium) has an empty cold.
+type opCertKey struct {
+	profile, cold string
+}
+
+// opCertMark is the issue counter and KES period of an opcert-next entry, and
+// the entry's sequence number.
+type opCertMark struct {
+	issue, period, seq uint64
+}
+
+// noteOpCert records e as the latest opcert of its profile and cold key when
+// it is one.
+func (w *Writer) noteOpCert(e Entry) {
+	if e.Purpose != PurposeOpCertNext {
+		return
+	}
+
+	if w.opcerts == nil {
+		w.opcerts = make(map[opCertKey]opCertMark)
+	}
+
+	w.opcerts[opCertKey{e.Profile, string(e.ColdKeyHash)}] = opCertMark{
+		issue: e.IssueCounter, period: e.KESPeriod, seq: e.Seq,
+	}
+}
+
+// LastOpCert returns the issue counter and KES period of the latest
+// opcert-next entry on the medium for profile and the cold key with hash
+// cold, false when it has none. Entries of a version 1 medium carry no cold
+// key hash and count for every cold key of their profile, so a profile
+// reprovisioned there keeps its mark. An entry whose head update is still
+// pending counts: it reached the medium.
+func (w *Writer) LastOpCert(
+	profile string,
+	cold []byte,
+) (issue, period uint64, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	m, ok := w.opcerts[opCertKey{profile, string(cold)}]
+
+	if legacy, found := w.opcerts[opCertKey{profile, ""}]; found &&
+		(!ok || legacy.seq > m.seq) {
+		m, ok = legacy, true
+	}
+
+	return m.issue, m.period, ok
+}
+
+// Open checks the medium against the head store and returns a writer.
+//
+// A blank medium is formatted with a header for id when the head store is
+// uninitialised (the zero Head), and refused otherwise; its record slots
+// must be all zero too (ErrNotBlank). Otherwise the
+// header must name id, and the latest entry on the medium is compared with
+// the head: equal is accepted; a medium behind the head (an older copy, a
+// truncated or torn latest record) is ErrRollback; a differing hash with the
+// same number is ErrHashMismatch; a medium exactly one entry ahead is the
+// remnant of a crash between medium write and head update and is accepted
+// when that entry chains from the head, after which the head is repaired;
+// any other medium ahead of the head is ErrAhead. An uninitialised head
+// accepts only a medium without entries. Data after the entries, beyond one
+// torn record directly after them, is ErrTrailing. Open checks the chain and
+// the last entry's signature; Verify checks every signature.
+func Open(m Medium, hs HeadStore, id Identity) (*Writer, error) {
+	head, err := hs.Load()
+	if err != nil {
+		return nil, fmt.Errorf("signlog: load head: %w", err)
+	}
+
+	w := &Writer{medium: m, heads: hs, id: id}
+
+	if isBlankHeader(m) {
+		return w.format(head)
+	}
+
+	hdr, err := readHeader(m, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if string(hdr.Identity) != string(id.Public()) {
+		return nil, ErrWrongDevice
+	}
+
+	entries, torn, err := scan(m, hdr, false, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// as Verify requires, only zeros follow the entries and a torn record
+	// directly after them
+	from := uint64(len(entries)) + 1
+	if torn {
+		from++
+	}
+
+	if from <= hdr.Entries {
+		if err = checkBlank(m, slotLBA(from), slotLBA(hdr.Entries)+RecordBlocks, ErrTrailing); err != nil {
+			return nil, err
+		}
+	}
+
+	w.hdr = hdr
+	last := headOf(hdr, entries)
+
+	for _, e := range entries {
+		w.noteOpCert(e)
+	}
+
+	if n := len(entries); n > 0 {
+		e := cloneEntry(entries[n-1])
+		w.last = &e
+	}
+
+	switch {
+	case head == (Head{}):
+		if last.Seq != 0 {
+			return nil, fmt.Errorf(
+				"%w: head store is uninitialised but the medium holds %d entries",
+				ErrAhead,
+				last.Seq,
+			)
+		}
+
+		return w, w.repair(last)
+	case last.Seq < head.Seq:
+		return nil, fmt.Errorf(
+			"%w: medium at entry %d, head at %d",
+			ErrRollback,
+			last.Seq,
+			head.Seq,
+		)
+	case last.Seq == head.Seq:
+		if last.Hash != head.Hash {
+			return nil, ErrHashMismatch
+		}
+
+		w.head = head
+
+		return w, nil
+	case last.Seq == head.Seq+1 && entries[len(entries)-1].Prev == head.Hash:
+		return w, w.repair(last)
+	}
+
+	return nil, fmt.Errorf(
+		"%w: medium at entry %d, head at %d",
+		ErrAhead,
+		last.Seq,
+		head.Seq,
+	)
+}
+
+// isBlankHeader reports whether block 0 is all zero.
+func isBlankHeader(m Medium) bool {
+	block := make([]byte, BlockSize)
+
+	return m.NumBlocks() >= 1 && m.ReadBlocks(0, block) == nil && isZero(block)
+}
+
+// repair stores head and adopts it.
+func (w *Writer) repair(head Head) error {
+	if err := w.heads.Store(head); err != nil {
+		return fmt.Errorf("signlog: store head: %w", err)
+	}
+
+	w.head = head
+
+	return nil
+}
+
+// format writes a header for a blank medium.
+func (w *Writer) format(head Head) (*Writer, error) {
+	if head != (Head{}) {
+		return nil, ErrBlank
+	}
+
+	slots := min((w.medium.NumBlocks()-1)/RecordBlocks, DefaultMaxEntries)
+	if w.medium.NumBlocks() < 1 || slots == 0 {
+		return nil, fmt.Errorf(
+			"%w: %d blocks hold no entry",
+			ErrMedium,
+			w.medium.NumBlocks(),
+		)
+	}
+
+	if err := checkBlank(w.medium, 0, 1+slots*RecordBlocks, ErrNotBlank); err != nil {
+		return nil, err
+	}
+
+	block, err := formatHeader(w.id, slots, FormatVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = w.medium.WriteBlocks(0, block); err != nil {
+		return nil, fmt.Errorf("signlog: write header: %w", err)
+	}
+
+	if err = w.medium.Sync(); err != nil {
+		return nil, fmt.Errorf("signlog: sync header: %w", err)
+	}
+
+	if w.hdr, err = parseHeader(block, w.id.Public()); err != nil {
+		return nil, err
+	}
+
+	return w, w.repair(Head{Hash: sha256.Sum256(block)})
+}
+
+// blankChunk is the number of blocks checkBlank reads at once.
+const blankChunk = 256
+
+// checkBlank confirms blocks from up to end of m are all zero, so nothing but
+// zeros follows the entries the writer will add, as Verify requires; data
+// is reported as notBlank.
+func checkBlank(m Medium, from, end uint64, notBlank error) error {
+	buf := make([]byte, blankChunk*BlockSize)
+
+	for lba := from; lba < end; lba += blankChunk {
+		p := buf[:min(blankChunk, end-lba)*BlockSize]
+		if err := m.ReadBlocks(lba, p); err != nil {
+			return fmt.Errorf("%w: read block %d: %w", ErrMedium, lba, err)
+		}
+
+		if !isZero(p) {
+			return fmt.Errorf(
+				"%w: data in blocks %d+%d",
+				notBlank,
+				lba,
+				len(p)/BlockSize,
+			)
+		}
+	}
+
+	return nil
+}
+
+// Head returns the latest entry the writer has logged.
+func (w *Writer) Head() Head {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.head
+}
+
+// Last returns the latest entry the writer has logged, or false when the log
+// holds none or the head store does not yet hold the latest entry, which an
+// Append that returned an error leaves unconfirmed.
+func (w *Writer) Last() (Entry, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.last == nil || w.pending != nil {
+		return Entry{}, false
+	}
+
+	return cloneEntry(*w.last), true
+}
+
+// cloneEntry copies e so the copy shares no byte slice with it.
+func cloneEntry(e Entry) Entry {
+	e.BodyHash = bytes.Clone(e.BodyHash)
+	e.KESKeyHash = bytes.Clone(e.KESKeyHash)
+	e.ColdKeyHash = bytes.Clone(e.ColdKeyHash)
+	e.Signature = bytes.Clone(e.Signature)
+
+	return e
+}
+
+// Check confirms, without writing, that the head store holds the writer's
+// head and the medium's latest entry matches it: the checks Append makes
+// before a write. A head not yet stored fails with ErrHeadStore.
+func (w *Writer) Check() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.pending != nil {
+		return ErrHeadStore
+	}
+
+	return w.recheck()
+}
+
+// Append logs rec and returns the entry. The entry is on the medium, synced,
+// and the head store updated before it returns; only then may the caller
+// release the signature. On any error nothing may be released. A medium
+// write failure leaves the head store untouched; a failed head update is
+// retried before the next entry is written, so the medium is never more than
+// one entry ahead of the head store.
+func (w *Writer) Append(rec Record) (Entry, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// the header's version governs the record encoding, so a version 1 medium
+	// keeps taking version 1 records, which have no cold key hash
+	if w.hdr.Version == formatV1 {
+		rec.ColdKeyHash = nil
+	}
+
+	rec, err := normalize(rec, w.hdr.Version)
+	if err != nil {
+		return Entry{}, err
+	}
+
+	if w.pending != nil {
+		if err = w.heads.Store(*w.pending); err != nil {
+			return Entry{}, fmt.Errorf("signlog: store head: %w", err)
+		}
+
+		w.pending = nil
+	}
+
+	if w.head.Seq >= w.hdr.Entries {
+		return Entry{}, ErrFull
+	}
+
+	if err = w.recheck(); err != nil {
+		return Entry{}, err
+	}
+
+	raw, err := frameEntry(
+		Entry{
+			Record: rec,
+			Seq:    w.head.Seq + 1,
+			Prev:   w.head.Hash,
+			ver:    w.hdr.Version,
+		},
+		w.id,
+	)
+	if err != nil {
+		return Entry{}, err
+	}
+
+	e, err := decodeRecord(raw, w.hdr.Version)
+	if err != nil {
+		return Entry{}, fmt.Errorf("signlog: framed entry unreadable: %w", err)
+	}
+
+	if err = verifyEntry(e, w.hdr.Identity); err != nil {
+		return Entry{}, err
+	}
+
+	if err = w.medium.WriteBlocks(slotLBA(e.Seq), raw); err != nil {
+		return Entry{}, fmt.Errorf("signlog: write entry %d: %w", e.Seq, err)
+	}
+
+	if err = w.medium.Sync(); err != nil {
+		return Entry{}, fmt.Errorf("signlog: sync entry %d: %w", e.Seq, err)
+	}
+
+	next := Head{Seq: e.Seq, Hash: e.Hash}
+	last := cloneEntry(e)
+	w.head, w.pending, w.last = next, &next, &last
+	w.noteOpCert(e)
+
+	if err = w.heads.Store(next); err != nil {
+		return Entry{}, fmt.Errorf("signlog: store head: %w", err)
+	}
+
+	w.pending = nil
+
+	return e, nil
+}
+
+// recheck confirms the head store and the medium's latest entry still match
+// the writer's head, so a card swapped while running is caught before a
+// write.
+func (w *Writer) recheck() error {
+	stored, err := w.heads.Load()
+	if err != nil {
+		return fmt.Errorf("signlog: load head: %w", err)
+	}
+
+	if stored != w.head {
+		return ErrHeadStore
+	}
+
+	if w.head.Seq == 0 {
+		block := make([]byte, BlockSize)
+		if err = w.medium.ReadBlocks(0, block); err != nil {
+			return fmt.Errorf("%w: read header: %w", ErrMedium, err)
+		}
+
+		if sha256.Sum256(block) != w.head.Hash {
+			return ErrHashMismatch
+		}
+
+		return nil
+	}
+
+	buf := make([]byte, RecordSize)
+	if err = w.medium.ReadBlocks(slotLBA(w.head.Seq), buf); err != nil {
+		return fmt.Errorf("%w: read entry %d: %w", ErrMedium, w.head.Seq, err)
+	}
+
+	e, err := decodeRecord(buf, w.hdr.Version)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: entry %d unreadable: %w",
+			ErrRollback,
+			w.head.Seq,
+			err,
+		)
+	}
+
+	if e.Seq != w.head.Seq || e.Hash != w.head.Hash {
+		return ErrHashMismatch
+	}
+
+	return nil
+}

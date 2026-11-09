@@ -35,8 +35,13 @@ func TestSPAFallbackServesIndex(t *testing.T) {
 	rec := httptest.NewRecorder()
 	// An unknown, file-less path (a client route) must fall back to index.html, not 404.
 	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/portfolio", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Bursa Wallet") {
-		t.Fatalf("SPA fallback failed: code=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "Bursa Wallet") {
+		t.Fatalf(
+			"SPA fallback failed: code=%d body=%s",
+			rec.Code,
+			rec.Body.String(),
+		)
 	}
 }
 
@@ -59,7 +64,11 @@ func TestFrameProtectionHeaders(t *testing.T) {
 		{name: "direct index", method: http.MethodGet, path: "/index.html"},
 		{name: "SPA fallback", method: http.MethodGet, path: "/portfolio"},
 		{name: "head", method: http.MethodHead, path: "/"},
-		{name: "method error", method: http.MethodPost, path: "/wallet/anything"},
+		{
+			name:   "method error",
+			method: http.MethodPost,
+			path:   "/wallet/anything",
+		},
 	}
 
 	for _, test := range tests {
@@ -79,4 +88,18 @@ func TestServesEmbeddedFileDirectly(t *testing.T) {
 		t.Fatalf("GET /index.html = %d, want 200", rec.Code)
 	}
 	requireFrameProtection(t, rec.Header())
+}
+
+// Bursa releases before NFT images were marked no-store served them as
+// immutable for a year; every SPA entry response clears that cache.
+func TestIndexClearsBrowserCache(t *testing.T) {
+	for _, path := range []string{"/", "/index.html", "/portfolio"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if got := rec.Header().Get("Clear-Site-Data"); got != `"cache"` {
+				t.Fatalf("Clear-Site-Data = %q, want %q", got, `"cache"`)
+			}
+		})
+	}
 }

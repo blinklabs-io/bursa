@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 )
 
 var (
@@ -21,11 +23,12 @@ const (
 )
 
 type Request struct {
-	ID      string          `json:"id"`
-	Origin  string          `json:"origin"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Created time.Time       `json:"created"`
+	ID      string           `json:"id"`
+	Origin  string           `json:"origin"`
+	Method  string           `json:"method"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Effects *spend.TxSummary `json:"effects,omitempty"`
+	Created time.Time        `json:"created"`
 }
 
 type Decision struct {
@@ -34,9 +37,17 @@ type Decision struct {
 }
 
 type waiter struct {
-	req     Request
-	done    chan Decision
-	decided bool
+	req         Request
+	done        chan queueResult
+	authority   *pairingAuthority
+	terminalErr error
+	ready       bool
+	decided     bool
+}
+
+type queueResult struct {
+	decision Decision
+	err      error
 }
 
 type Queue struct {
@@ -50,34 +61,122 @@ type Queue struct {
 	nextSub int
 }
 
-func NewQueue(now func() time.Time, mkID func() (string, error), timeout time.Duration) *Queue {
+func NewQueue(
+	now func() time.Time,
+	mkID func() (string, error),
+	timeout time.Duration,
+) *Queue {
 	return &Queue{
 		now: now, mkID: mkID, timeout: timeout,
 		waiters: map[string]*waiter{}, subs: map[int]chan struct{}{},
 	}
 }
 
-func (q *Queue) Submit(origin, method string, params json.RawMessage) (*Request, error) {
+func (q *Queue) Submit(
+	origin, method string,
+	params json.RawMessage,
+) (*Request, error) {
+	req, err := q.reserve(origin, method, params)
+	if err != nil {
+		return nil, err
+	}
+	return q.publish(req.ID, nil)
+}
+
+func (q *Queue) submitAuthorized(
+	origin, method string,
+	params json.RawMessage,
+	authority pairingAuthority,
+) (*Request, error) {
+	req, err := q.reserveAuthorized(origin, method, params, authority)
+	if err != nil {
+		return nil, err
+	}
+	return q.publish(req.ID, nil)
+}
+
+// reserve claims queue capacity without exposing a request to approval clients.
+// Callers must publish the complete request or cancel the reservation.
+func (q *Queue) reserve(
+	origin, method string,
+	params json.RawMessage,
+) (*Request, error) {
+	return q.reserveWithAuthority(origin, method, params, nil)
+}
+
+func (q *Queue) reserveAuthorized(
+	origin, method string,
+	params json.RawMessage,
+	authority pairingAuthority,
+) (*Request, error) {
+	return q.reserveWithAuthority(origin, method, params, &authority)
+}
+
+func (q *Queue) reserveWithAuthority(
+	origin, method string,
+	params json.RawMessage,
+	authority *pairingAuthority,
+) (*Request, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.pendingCountLocked() >= maxPendingRequests || q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
+	if q.pendingCountLocked() >= maxPendingRequests ||
+		q.pendingForOriginLocked(origin) >= maxPendingRequestsPerOrigin {
 		return nil, ErrQueueFull
 	}
 	id, err := q.mkID()
 	if err != nil {
 		return nil, err
 	}
-	r := Request{ID: id, Origin: origin, Method: method, Params: params, Created: q.now()}
-	q.waiters[r.ID] = &waiter{req: r, done: make(chan Decision, 1)}
-	q.notifyLocked()
+	params = append(json.RawMessage(nil), params...)
+	r := Request{
+		ID:      id,
+		Origin:  origin,
+		Method:  method,
+		Params:  params,
+		Created: q.now(),
+	}
+	q.waiters[r.ID] = &waiter{
+		req:       r,
+		done:      make(chan queueResult, 1),
+		authority: authority,
+	}
 	return &r, nil
+}
+
+func (q *Queue) publish(id string, effects *spend.TxSummary) (*Request, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	w, ok := q.waiters[id]
+	if !ok || w.ready {
+		return nil, ErrUnknownRequest
+	}
+	if w.decided {
+		if w.terminalErr != nil {
+			return nil, w.terminalErr
+		}
+		return nil, ErrAlreadyDecided
+	}
+	w.req.Effects = effects
+	w.ready = true
+	q.notifyLocked()
+	r := w.req
+	return &r, nil
+}
+
+func (q *Queue) cancelReservation(id string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	w, ok := q.waiters[id]
+	if ok && !w.ready {
+		delete(q.waiters, id)
+	}
 }
 
 func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {
 	q.mu.Lock()
 	w, ok := q.waiters[id]
 	q.mu.Unlock()
-	if !ok {
+	if !ok || !w.ready {
 		return Decision{}, ErrUnknownRequest
 	}
 	defer q.remove(id)
@@ -87,33 +186,33 @@ func (q *Queue) Await(ctx context.Context, id string) (Decision, error) {
 	t := time.NewTimer(q.timeout)
 	defer t.Stop()
 	select {
-	case d := <-w.done:
-		return d, nil
+	case result := <-w.done:
+		return result.decision, result.err
 	case <-t.C:
 		// A Decide may have fired at the very instant the timer expired: it sets
 		// decided=true and sends on the buffered done channel while this select
 		// simultaneously chose the timeout branch. Prefer a delivered decision so
 		// the SPA/dApp (which saw Decide succeed) and the signing path agree on
 		// the outcome instead of the caller reporting a spurious timeout.
-		return drainDecision(w.done)
+		return drainQueueResult(w.done)
 	case <-ctx.Done():
 		// Same tie-break as the timeout branch: honour a decision that landed
 		// concurrently with cancellation.
 		select {
-		case d := <-w.done:
-			return d, nil
+		case result := <-w.done:
+			return result.decision, result.err
 		default:
 			return Decision{}, ctx.Err()
 		}
 	}
 }
 
-// drainDecision returns a decision already buffered on done, or ErrTimeout if
+// drainQueueResult returns a result already buffered on done, or ErrTimeout if
 // none is present. It never blocks.
-func drainDecision(done <-chan Decision) (Decision, error) {
+func drainQueueResult(done <-chan queueResult) (Decision, error) {
 	select {
-	case d := <-done:
-		return d, nil
+	case result := <-done:
+		return result.decision, result.err
 	default:
 		return Decision{}, ErrTimeout
 	}
@@ -122,7 +221,7 @@ func drainDecision(done <-chan Decision) (Decision, error) {
 func (q *Queue) Decide(id string, d Decision) error {
 	q.mu.Lock()
 	w, ok := q.waiters[id]
-	if !ok {
+	if !ok || !w.ready {
 		q.mu.Unlock()
 		return ErrUnknownRequest
 	}
@@ -134,8 +233,26 @@ func (q *Queue) Decide(id string, d Decision) error {
 	q.notifyLocked()
 	q.mu.Unlock()
 
-	w.done <- d
+	w.done <- queueResult{decision: d}
 	return nil
+}
+
+func (q *Queue) cancelAuthority(authority pairingAuthority) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	cancelled := false
+	for _, w := range q.waiters {
+		if w.decided || w.authority == nil || *w.authority != authority {
+			continue
+		}
+		w.decided = true
+		w.terminalErr = ErrRefused
+		w.done <- queueResult{err: ErrRefused}
+		cancelled = true
+	}
+	if cancelled {
+		q.notifyLocked()
+	}
 }
 
 func (q *Queue) Pending() []Request {
@@ -143,7 +260,7 @@ func (q *Queue) Pending() []Request {
 	defer q.mu.Unlock()
 	out := make([]Request, 0, len(q.waiters))
 	for _, w := range q.waiters {
-		if w.decided {
+		if w.decided || !w.ready {
 			continue
 		}
 		out = append(out, w.req)
@@ -182,11 +299,9 @@ func (q *Queue) remove(id string) {
 	}
 }
 
-// pendingCountLocked returns the number of undecided waiters. Decided waiters
-// linger in the map until their Await goroutine runs cleanup (see remove); the
-// global bound must ignore them so Submit does not return ErrQueueFull while
-// fewer than maxPendingRequests requests are actually awaiting a decision. This
-// matches pendingForOriginLocked and Pending semantics.
+// pendingCountLocked returns the number of undecided waiters, including hidden
+// reservations. Decided waiters linger until Await runs cleanup, but no longer
+// consume admission capacity.
 func (q *Queue) pendingCountLocked() int {
 	n := 0
 	for _, w := range q.waiters {

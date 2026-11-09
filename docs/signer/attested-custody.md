@@ -5,12 +5,13 @@ An attested backend holds private keys inside a trusted execution environment
 signer process never holds key material; it trusts a key only after verifying
 platform attestation evidence, and it verifies every signature before use.
 
-Two platform verifiers ship in the signer:
+Three verifiers ship in the signer:
 
 | Backend `type` | Platform | Evidence | Verified against |
 |----------------|----------|----------|------------------|
 | `nitro` | AWS Nitro Enclaves | COSE_Sign1 attestation document | pinned AWS Nitro root certificate, expected PCR values |
 | `confidential-space` | GCP Confidential Space | Google Cloud Attestation OIDC token | Google's published token signing keys, audience, container image digest |
+| `armory` | USB armory Mk II with an SE050 | Ed25519 signature by the device identity key | pinned identity public key |
 
 ## Trust boundaries
 
@@ -18,12 +19,12 @@ Two platform verifiers ship in the signer:
 |-----------|-------------|-----------------|
 | Enclave workload (measured image) | holding keys, enforcing its own signing policy | nothing beyond its measurement |
 | Cloud attestation service / KMS | issuing evidence; releasing wrapped key material only to the measured workload | - |
-| Host or VM that runs the signer and the proxy | - | confidentiality of keys (it never sees them), request integrity, availability |
-| Host proxy (vsock or socket forwarder) | - | everything: it can drop, delay, replay, or rewrite messages |
+| Host OS and Nitro proxy client identity | restricting enclave lifecycle, inventory and challenge RPC access to the dedicated proxy process | confidentiality of custody keys, availability |
+| Host proxy (vsock or socket forwarder) | presenting the authorized RPC client identity | custody-key confidentiality; it can drop, delay, replay, or rewrite messages |
 | Signer process | caller authentication, per-key policy, Cardano operation validation, watermarks, signature verification | key custody |
 
-Because the proxy is untrusted, correctness rests on three checks the signer
-performs itself:
+Because the proxy remains untrusted for response integrity, correctness rests
+on four checks the signer performs itself:
 
 1. The key inventory is accepted only when its attestation evidence verifies and
    commits to the signer's fresh nonce and to the exact key list
@@ -34,31 +35,58 @@ performs itself:
 3. Every signature is verified against the attested public key before it is
    returned or used (`SignTx`, `SignOpCert` and `SignCIP8` all verify). A
    signature from any other key is discarded.
+4. A backend configured with a profile requires a second signature over the
+   complete request and Cardano signature. This prevents a proxy from selecting
+   a different profile while replaying a valid signature from the same key.
 
-### Authorization when the host proxy is untrusted
+### Authorization boundary
 
-The signer authenticates callers and applies per-key policy, but that happens on
-the host. A host that is compromised can bypass the signer and talk to the
-enclave directly, so the signer's policy is not an authorization boundary for
-the enclave. The enclave must enforce, inside the measured image and independent
-of the signer:
+The Nitro host/enclave gRPC channel requires mutual TLS. The enclave trusts only
+client certificates issued by its dedicated proxy CA, and the proxy client key
+must be owner-only. A signing RPC also needs a fresh one-time enclave challenge and a request
+signed by the separate signer authority key. The signer process holds that private key; the
+proxy can only forward signed requests. A root compromise can reach both
+identities, while disclosure of the proxy client key alone cannot request a
+cold-key signature. Enclave/KMS custody still prevents extraction of the private
+cold key.
+
+The enclave also enforces, inside the measured image:
 
 - the purpose, role and payload-shape rules below;
-- a durable, monotonic operational-certificate issue counter per cold key (the
-  signer's watermark protects only requests that pass through the signer);
+- a monotonic operational-certificate issue counter for the lifetime of each
+  loaded cold key;
 - any transaction policy the operator relies on when the host is not trusted;
 - refusal of a repeated request nonce.
 
-Anything the enclave does not enforce is only as strong as the host.
+Reloading the same key preserves the in-memory nonce and counter guards. A new
+key or enclave restart resets them, so the signer's durable watermark remains
+required. The Nitro backend additionally seals its counter into host storage
+and restores it on reload (see [Nitro custody](nitro-custody.md)); the
+watermark remains required there too, since the host can roll that state back.
+The Nitro enclave signs an identical payload again at the stored counter, so a
+retry succeeds when the response was lost before the signer committed the
+issue counter. The enclave refuses a different payload at that counter, and
+the signer's watermark refuses a retry after the signer committed it.
+
+The Confidential Space workload also requires TLS 1.3 mutual authentication
+for both protocol endpoints. This prevents network clients without the
+signer's certificate from requesting inventory or signatures. The client
+private key resides on the signer host, so compromise of that host also
+compromises this caller credential. The workload's payload and durable counter
+checks remain the limits on what that credential can request.
+
+Anything else the enclave does not enforce is only as strong as the host
+authorization boundary.
 
 ## Protocol
 
 The protocol version is `bursa-attested-signer/1`. The inventory response and
 both sign messages carry it, and a peer answering with another version is
-refused; the inventory request carries only the nonce. Messages are JSON; `[]byte` fields
-are base64.
+refused. The inventory request carries the nonce and optional profile. Messages
+are JSON; `[]byte` fields are base64.
 
-`POST /v1/inventory` takes `{"nonce": <32 bytes>}` and returns:
+`POST /v1/inventory` takes `{"nonce": <32 bytes>, "profile": <optional string>}`
+and returns:
 
 ```json
 {"version": "bursa-attested-signer/1",
@@ -79,16 +107,49 @@ a failed load leaves the backend serving no keys.
 
 ```json
 {"version": "bursa-attested-signer/1", "purpose": "opcert",
- "key_hash": "<56 hex>", "role": "pool", "nonce": "<32 bytes>", "payload": "<bytes>"}
+ "key_hash": "<56 hex>", "role": "pool", "nonce": "<32 bytes>",
+ "payload": "<bytes>", "profile": "<optional string>", "era": "<optional uint>"}
 ```
 
-and returns `{"version", "nonce", "signature"}` or `{"version", "nonce", "error"}`.
+and returns `{"version", "nonce", "signature", "binding_signature", "issue_counter"}` or
+`{"version", "nonce", "error"}`. `binding_signature` is required when the
+backend has a profile and omitted for compatibility when it does not.
 
-| Purpose | Payload | Key role |
-|---------|---------|----------|
-| `tx-hash` | 32-byte transaction body hash | any |
-| `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | `pool` only |
-| `cip8` | COSE Sig_structure for CIP-8 data signing | any |
+| Purpose | Payload | Additional field | Key role |
+|---------|---------|------------------|----------|
+| `tx-body` | Exact encoded transaction body | Resolved `era` | any |
+| `tx-hash` | 32-byte transaction body hash (legacy) | - | any |
+| `opcert` | 48-byte OCertSignable: KES vkey, issue counter, KES period | - | `pool` only |
+| `opcert-next` | 48-byte payload: KES vkey, on-chain opcert counter, KES period | - | `pool` only |
+| `cip8` | COSE Sig_structure for CIP-8 data signing | - | any |
+
+For `tx-body`, the workload evaluates the body, computes its Blake2b-256 hash,
+and signs that hash. Bursa independently extracts the original body bytes from
+the transaction, verifies the returned signature against their hash, and
+refuses a response for a body substituted by the proxy. It does not re-encode
+the body before sending or hashing it.
+
+For `opcert-next`, the payload carries the counter currently on chain, not the
+number to issue. The enclave keeps its own floor on the chain counter and
+issues the chain counter plus one, or refuses a chain counter below its floor;
+a higher number would leave a gap nodes reject. It returns that
+number as the JSON number `issue_counter` and signs `kes_vkey || issue || period`
+(issue and period as 8-byte big-endian). The binding signature covers the
+request as sent, so its payload still holds the chain counter. Bursa never
+picks the issue number. It refuses the response unless `issue_counter` is
+present and greater than the chain counter, and the signature verifies under
+the pool key over the reconstructed bytes. The coordinator's
+`SignOpCertFromChain` uses this purpose for attested pool keys and also
+refuses any `issue_counter` other than the chain counter plus one. The method is
+`SignOpCertNext(ctx, kesVKey, chainCounter, kesPeriod)` on attested pool keys
+(`OpCertNextSigner`); the plain `SignPurpose` path refuses this purpose because
+it cannot return the issue number. The signer's `opcert` request, where the
+caller supplies the counter, is unchanged.
+
+The binding signature is Ed25519 over the SHA-256 digest of the request fields
+and Cardano signature. Each field is framed as its decimal byte length, `:`,
+then its bytes, in this order: version, purpose, key hash, role, nonce, payload,
+profile, decimal era, signature. Bursa verifies it with the requested key.
 
 The signer refuses a request whose payload shape or key role does not fit its
 purpose before contacting the enclave. KES header signing is not carried here:
@@ -100,10 +161,13 @@ Cardano operation validation, watermarks, role guard for operational
 certificates, and signature verification all run in the signer before and after
 the enclave call. A plain `Sign` on an attested key is refused.
 
-The signer can reach the enclave at an `http://`, `https://` or `unix:///path`
-address. Forwarding that address onto the platform's vsock (Nitro) or onto the
-workload's port (Confidential Space) is the deployment's job; the channel needs
-no confidentiality or integrity guarantee from the signer's point of view.
+The Nitro signer can reach its enclave through an `http://`, `https://` or
+`unix:///path` address because attestation and response verification protect
+that protocol across the host proxy; the proxy-to-enclave gRPC hop uses mutual
+TLS for proxy authorization. Confidential Space requires an `https://`
+address, a pinned server CA, and a signer client certificate. Forwarding the
+address onto the platform's vsock or workload port remains the deployment's
+job.
 
 ## AWS Nitro Enclaves
 
@@ -112,6 +176,7 @@ backends:
   - name: "nitro"
     type: "nitro"
     address: "unix:///run/bursa/enclave.sock"   # host proxy to the enclave vsock
+    host_key_file: "/etc/bursa/signer/nitro-host.skey"
     root_ca_file: "/etc/bursa/signer/aws-nitro-root.pem"
     pcrs:
       0: "<96 hex: image measurement from the built EIF>"
@@ -142,6 +207,11 @@ the enclave image, outside the signer:
   the build output. Rotating the image changes PCR0: add the new value to the
   KMS policy and to `pcrs`, roll the signer, then remove the old value.
 
+The production workload, host proxy, provisioning/reload flow, KMS policy, and
+PCR build and rotation procedure are documented in
+[`nitro-custody.md`](nitro-custody.md). That enclave signs only `opcert`
+requests with an explicit issue counter and implements no profile.
+
 ## GCP Confidential Space
 
 ```yaml
@@ -149,8 +219,12 @@ backends:
   - name: "gcp-cs"
     type: "confidential-space"
     address: "https://workload.example.internal:8443"
+    profile: "pool@mainnet"                     # optional; must match a `--profile` of `bursa confidential-space-workload`, unset without any
     audience: "https://signer.example.internal"
     image_digest: "sha256:<64 hex>"
+    tls_ca_file: "/etc/bursa/confidential-space-ca.pem"
+    tls_client_cert_file: "/etc/bursa/confidential-space-client.pem"
+    tls_client_key_file: "/etc/bursa/confidential-space-client-key.pem"
     # jwks_url: defaults to Google's published token signing keys
 ```
 
@@ -158,19 +232,650 @@ The signer accepts a token only when all of these hold:
 
 - it is RS256-signed by a key in the JWKS (HTTPS, or loopback HTTP, only);
 - issuer is `https://confidentialcomputing.googleapis.com`, audience equals
-  `audience`, and `exp` is present and in the future;
+  `audience`, and `iat`, `nbf`, and `exp` are present and valid;
 - `dbgstat` is `disabled-since-boot`, `swname` is `CONFIDENTIAL_SPACE`, and
-  `secboot` is true;
+  `secboot` is true, `hwmodel` is `GCP_AMD_SEV`, `GCP_AMD_SEV_ES`, or
+  `GCP_INTEL_TDX`, and the image carries the `STABLE` support attribute;
 - `submods.container.image_digest` equals `image_digest`;
 - `eat_nonce` contains the inventory binding.
 
-The workload obtains the token with the signer's audience and `hex(binding)` as
-the nonce. Enclave-side controls live in Google Cloud: a Workload Identity
-Federation provider whose attribute condition requires the same image digest,
-`dbgstat`, `swname` and audience; IAM that lets only that federated principal
-call Cloud KMS `decrypt` on the key wrapping the key material; and a workload
-image published by digest. Cloud KMS then refuses an unapproved digest, a debug
-image, a wrong audience, an expired token, or missing attestation.
+The Workload Identity Pool provider that authorizes access to Cloud KMS and
+Cloud Storage must enforce the same hardware boundary in its
+[attestation policy](https://cloud.google.com/confidential-computing/confidential-space/docs/create-grant-access-confidential-resources#create-an-attestation-policy).
+Use `assertion.hwmodel == "GCP_AMD_SEV"` for AMD or
+`assertion.hwmodel == "INTEL_TDX"` for Intel, matching Google's documented
+[Workload Identity attestation assertion values](https://cloud.google.com/confidential-computing/confidential-space/docs/reference/attestation-assertions#vm-assertions),
+and combine that condition with the software name, `STABLE` support attribute,
+and container image digest conditions. The custom OIDC token verified by Bursa
+uses `GCP_INTEL_TDX` for Intel. Neither policy admits `GCP_SHIELDED_VM`.
+
+### Pool cold-key workload
+
+The `bursa confidential-space-workload` command is the enclave side of the
+protocol for one pool cold key. It runs from the signer container image, obtains
+custom tokens from the Confidential Space launcher socket, and exposes only
+`/v1/inventory` and `/v1/sign` over TLS 1.3. Both endpoints require a client
+certificate signed by `--client-ca-file`. The sign endpoint accepts only a
+`pool` key with the `opcert` or `opcert-next` purpose and the 48-byte
+operational-certificate payload. It rejects reused request nonces and verifies
+each signature before returning it.
+
+The workload serves both opcert forms, and keeps all counter state in the
+Cloud Storage counter object:
+
+- `issue_counter` requests (`opcert`) must carry the next number in the
+  object's sequence. The workload records that number and the certificate's
+  KES period.
+- `chain_counter` requests (`opcert-next`) follow the armory device's rules.
+  The workload issues the chain counter plus one and returns it as
+  `issue_counter`. It records the highest chain counter reported, the last
+  number issued and that certificate's KES period. It refuses a chain counter
+  below the recorded one ("chain counter below the recorded on-chain counter")
+  or above the last issued number ("chain counter above the last counter the
+  device issued"); the signer maps both to HTTP 409. It also refuses
+  reissuing the last number at a lower KES period ("KES period below the
+  logged opcert at this counter"), and with the same text a chain counter
+  that would issue a number below the last issued one, whose KES period is
+  not recorded, so the last issued number never decreases. Repeating the
+  recorded request signs again without a write.
+
+The counter object keeps its version. It gains `opcert_floor`, `last_issued`
+and `last_issued_period`, omitted while zero, so an object written earlier
+loads unchanged. For such an object the last issued number is taken to be the
+one before `next_issue_number`, and the unknown KES period is 0 and refuses
+nothing. Both request forms write the new fields, and an earlier workload
+release cannot read an object that has them; roll the workload forward, not
+back, once this release has signed a certificate.
+
+#### Profiles
+
+Without `--profile` the workload serves unprofiled requests only, and refuses
+any request or inventory that names a profile. With `--profile NAME`
+(repeatable) it holds the same cold key under each named profile, so one
+workload can serve a pool on several networks to signer backends that each set
+`profile`:
+
+- Requests and inventories must name a configured profile; an unprofiled
+  request or an unknown profile is refused, and the refusal consumes no nonce
+  and no counter. A profile name is 1 to 32 characters from letters, digits
+  and `._@-`, as on the armory device.
+- Each profile has its own counter object,
+  `<counter-object>/profiles/<profile>`, for both `opcert` and `opcert-next`,
+  so profiles never share an issue counter, chain-counter floor or KES-period
+  record. The object records its `profile`, and the workload refuses an object
+  that names another profile or none. The unprofiled object at
+  `--counter-object` is neither read nor written, and is unchanged; a profile
+  does not adopt it, so a profile's counter starts empty. Use `opcert-next`,
+  which takes the on-chain counter, to continue a pool whose certificates were
+  issued earlier.
+- Every profiled response carries `binding_signature`, the pool key's
+  signature over `AttestedResponseBinding` (the request including its profile,
+  and the Cardano signature). The signer rejects a response whose binding does
+  not match the profile it asked for, so an untrusted proxy cannot move a
+  request to another profile.
+- The attestation token is bound to the nonce and key list, not the profile,
+  and the key is the same under every profile; profiles are separated by the
+  signing request binding and the counters.
+- First boot, and a restart that finishes a pending bootstrap, create every
+  profile's counter object, as they create the unprofiled one. With an active
+  envelope a missing profile counter stops startup, so a deleted object is not
+  silently reset. To add a profile, grant its object (see the permissions
+  below) and start the workload once with `--create-profile-counter NAME`
+  (repeatable) naming only the profiles being added, then remove the flag.
+  The flag creates the missing counter of the named profiles only; a missing
+  counter of any other profile still stops startup, and a named profile's
+  object deleted while the flag is set would be recreated empty. A counter
+  object that carries a `profile` cannot be read by an earlier workload
+  release.
+
+The first boot generates the Ed25519 pool key and an AES-256-GCM data-encryption
+key inside the workload. Cloud KMS wraps the data-encryption key. The workload
+persists only authenticated ciphertext, the wrapped data-encryption key, and
+public metadata in the file named by `--wrapped-key-file`. It first publishes a
+`counter-pending` envelope with mode `0600`, creates the matching counter
+object, and atomically replaces the envelope with an authenticated `active`
+form before serving. A restart can finish an interrupted pending bootstrap with
+the same pool identity. An active envelope never recreates a missing
+unprofiled counter, and creates a missing profile counter only under
+`--create-profile-counter` naming that profile.
+Cloud KMS must unwrap the same data-encryption key before the public key is
+served. A denial, corrupt envelope, mismatched KMS resource, or changed public
+metadata stops startup.
+
+The command requires the following; the `--profile` lines are optional (see
+Profiles above):
+
+```text
+bursa confidential-space-workload \
+  --listen :8080 \
+  --audience https://signer.example.internal \
+  --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
+  --wrapped-key-file /var/lib/bursa/pool-cold.wrapped \
+  --counter-bucket POOL_COUNTER_BUCKET \
+  --counter-object pool-cold/counter.json \
+  --profile pool@mainnet --profile pool@preview \
+  --wif-credentials /etc/bursa/confidential-space-wif.json \
+  --tls-cert-file /etc/bursa/confidential-space-server.pem \
+  --tls-key-file /etc/bursa/confidential-space-server-key.pem \
+  --client-ca-file /etc/bursa/confidential-space-client-ca.pem
+```
+
+Configure `tls_ca_file` on the signer with the CA that issued the workload
+server certificate. Configure `tls_client_cert_file` and
+`tls_client_key_file` with a client identity issued by the CA passed to
+`--client-ca-file`. The workload has no plaintext or optional-client-certificate
+mode.
+
+The credential file must be a Google external-account configuration that uses
+`https://sts.googleapis.com/v1/token`, does not impersonate a service account,
+and reads its text subject token only from
+`/run/container_launcher/attestation_verifier_claims_token`. This is the
+launcher's automatically refreshed default token for the Workload Identity
+Federation provider. The custom token returned to the signer is separate: the
+workload requests it for the configured signer audience with
+`hex(InventoryBinding)` as its nonce on every inventory request.
+
+Use direct resource access for the Cloud KMS key and counter object. Before a
+signature is made, the workload commits the operational-certificate issue
+counter to the configured Cloud Storage object with a generation precondition.
+For `issue_counter` requests the first counter must be `0`, and every later
+counter must be exactly one greater than the committed value. A
+`chain_counter` request instead issues the chain counter plus one, which can
+skip numbers or repeat the last one, and a repeat of the recorded request
+signs without a write. The maximum `uint64` value is refused. This keeps the
+counter consistent across restarts and concurrent workload replicas without
+allowing one request to exhaust the counter range. Give the workload
+identity only `storage.objects.get`,
+`storage.objects.create`, and `storage.objects.delete` on the configured object
+name. With `--profile`, grant them instead on each profile's object name,
+`<counter-object>/profiles/<profile>`, and not on `--counter-object`, which is
+then neither read nor written; grant a new profile's object before the start
+that adds it. Cloud Storage requires delete permission when a new generation
+replaces an existing object. Enable Object Versioning for recovery evidence,
+and do not expose the workload's attestation credential outside the measured
+image.
+Counter objects written with `bursa-confidential-space-counter/1` migrate once
+with a generation precondition: `next_issue_number` becomes the stored
+`issue_number` plus one. A legacy maximum value, malformed state, or a key-hash
+mismatch stops startup.
+
+The Workload Identity Federation provider must map the container image digest
+and require
+`CONFIDENTIAL_SPACE`, `disabled-since-boot`, secure boot, the approved digest,
+and the production support attribute. Grant encrypt and decrypt on only the
+wrapping key, and the three object permissions above on only the counter
+object or profile counter objects, to that digest-bound federated principal.
+The same condition makes Cloud KMS and Cloud Storage refuse an unapproved
+digest, a debug image, an expired default token, or a request without
+attestation. The signer
+independently verifies those properties on the custom inventory token before
+it accepts the public key.
+
+Persist the wrapped-key file and counter object, or each profile's counter
+object, across workload restarts.
+Losing the wrapped-key file creates a new pool identity on the next boot;
+copying or rolling it back restores the same pool identity because the private
+key never leaves its envelope. Back up the wrapped file together with the Cloud
+KMS key's retention policy. The counter object is created with a new wrapped
+identity; startup fails if that identity later has no matching counter object.
+Never restore or remove a counter object for an existing pool key.
+
+## USB armory
+
+```yaml
+backends:
+  - name: "armory"
+    type: "armory"
+    address: "http://10.0.0.1"                  # the device on its USB network link
+    profile: "pool@preview"                     # required: the device profile holding the keys
+    identity_public_key: "<64 hex>"             # the device identity key, pinned
+    host_key_file: "/etc/bursa/armory-host.skey" # optional: authenticates signing requests
+    protocol: "negotiate"                       # optional: "1" (default), "negotiate", or "2"
+```
+
+The USB armory Mk II holds the pool cold key and the owner stake key in its
+SE050 secure element, one profile per pool and network. Its signing firmware
+serves this protocol at `/v1/inventory` and `/v1/sign`.
+
+Several armory backends, each with its own profile, may hold one cold key (the
+same key in profiles on different networks). Requests then name the profile; see
+the runbook's profile routing section. Each backend keeps its own opcert
+counter records.
+
+For `opcert-next`, the profile record also holds the last counter the device
+issued, and a chain counter above it is refused: the ledger only holds
+counters the device issued. A reissue of that counter, as for a pool that has
+not forged since, may not take a KES period below the one the signing log
+holds for it for the same profile and cold key, so it cannot extend an older
+KES key's window. A profile name reprovisioned with a different cold key does
+not inherit the old key's period; the log records the cold key hash with each
+`opcert-next` entry. `bursa signer`
+answers a request the device refuses for its floor, its last issued counter
+or a backdated reissue with HTTP 409, whatever its watermark mode: the device
+signs nothing. A record written before this counter existed has
+none until its next `opcert-next`. `POST /provision/floor` on the provisioning
+firmware sets the floor to the operator's chain counter and clears the last
+issued counter. Firmware without this counter refuses a record that carries
+it, so a profile that has issued an opcert is unreadable to such firmware
+until a floor reset clears the counter.
+
+The evidence is the device identity key's Ed25519 signature over the inventory
+binding. The signer accepts the inventory only when that signature verifies
+under `identity_public_key`. This proves the inventory came from a device
+holding the identity key. It is not a measurement of the firmware: the board
+boots unsigned images, so anyone holding the device can run other firmware.
+Record the identity key when the device is provisioned; the device's legacy
+`/pubkey` endpoint returns a different key.
+
+Profiled responses carry the second signature described above, so the signer
+also refuses a response produced for another profile.
+
+The firmware also answers sign requests at version `bursa-attested-signer/2`,
+which `armory-pool witness` sends for `tx-body`. The reply echoes that version
+and adds `summary`, the signing policy's description of the body (for a pool
+registration: pledge, cost, margin, relays, the first four bytes of the VRF
+key hash as `vrf=`, and up to the first four bytes of the metadata hash as
+`meta=`, a shorter hash whole and `meta=none` without metadata). Its binding
+appends the summary as one more length-prefixed field after the signature,
+present even when empty. A
+version-1 request gets the version-1 reply and binding, without `summary`.
+Inventory and challenge replies stay at version 1.
+
+### Pool registration pins
+
+Without pins the policy checks a registration's operator, owner and reward
+account only. A host that can request signatures could then register another
+VRF key, other relays or another metadata URL, or set pledge, cost and margin
+freely. `POST /provision/pins`, served only by the provisioning firmware and
+host-key authenticated like `/provision/reward`, pins a profile's
+registrations:
+
+- `vrf_key_hash` (32 bytes, hex) must match exactly.
+- `metadata_hash` (32 bytes, hex) must match exactly. With `relays_digest`
+  set, an empty `metadata_hash` pins the absence of metadata: a registration
+  that carries any is refused.
+- `relays_digest` (20 bytes, hex) must match the registration's relays, in
+  order, and its metadata URL: blake2b-160 of the CBOR array `[relays, url]`,
+  each relay in its ledger encoding and `url` null without metadata
+  (`policy.RelaysDigest`). Adding, removing, reordering or changing a relay, or
+  changing the URL, is refused. An empty `relays_digest` leaves the relays,
+  the metadata URL and the metadata hash unpinned, so registrations may change
+  them without new pins, for example when a relay moves; `metadata_hash` must
+  then be empty too. A host that can request signatures can then point the
+  registration at other relays or other metadata, but not change the VRF key,
+  pledge, cost or margin.
+- `pledge_min` / `pledge_max` (inclusive), `cost_max` (inclusive) and
+  `margin_max_num` / `margin_max_den` (margin at most the fraction, at most 1).
+
+The pins are a separate 128-byte binary object per profile, `0x20e50500` plus
+the profile slot, with its own versioned layout (`profile.EncodePins`); the
+profile record is unchanged. A second request replaces the pins. A profile
+without a pins object keeps the unpinned checks, so existing devices keep
+working. The pins apply to pool registrations only. An unreadable pins object
+refuses `tx-body` signing for the profile until the pins are provisioned
+again. `/wipe/profile` and `/wipe/device` delete the pins object.
+
+The startup report lists `registration pins set`, `set, relays and metadata
+not pinned`, `none` or `unreadable` for each profile. Inventory replies are unchanged, so the signer's strict decoding
+still accepts them. `armory-pool pins-request` prints the request body; it
+takes each relay as `-relay`, in registration order (`HOST:PORT`,
+`IPV4:PORT`, `[IPV6]:PORT`, `IPV4,[IPV6]:PORT` or `srv:NAME`), and the
+metadata URL as `-metadata-url`, and computes `relays_digest` from them.
+`-unpinned-relays` leaves the relays and metadata unpinned instead and is
+refused with `-relay` or `-metadata-*`. Send the body with
+`armory-pool -host-key host.skey provision pins`.
+
+The signer sends version 1 unless the backend sets `protocol`:
+
+- `"1"` or unset: version 1 only. The reply carries no summary.
+- `"negotiate"`: `tx-body` requests go out at version 2 and the signer verifies
+  the summary under the key's binding signature. If the device answers
+  `unsupported protocol version` (version 1 firmware), the signer repeats the
+  request at version 1 with a new nonce (and, with `host_key_file`, a new
+  challenge), and keeps sending version 1 until it restarts or a request fails
+  to reach the device.
+- `"2"`: as `negotiate`, but a device that does not support version 2 is an
+  error.
+
+A reply at any version other than the one requested is refused. The
+unsupported-version answer is not signed, so a party on the path to the device
+can forge it and keep a `negotiate` signer on version 1; that loses the summary
+and no signature check. Use `"2"` where the summary is required. The signer
+writes the summary in the `summary` field of the `sign request` audit line for
+a signed transaction; it is not part of the API response.
+
+`host_key_file` holds a host signing key written by `armory-pool host-key`
+and registered on the device. With it set, the signer fetches a one-time
+challenge from `/v1/challenge` before each signature and adds `challenge`,
+`host_key` and `host_signature` to the request: an Ed25519 signature over
+`AttestedRequestBinding`, the domain `bursa-armory-request/1` followed by the
+request fields and the challenge, length-prefixed as in the response binding.
+A device with a registered host key refuses requests without it. The file
+must not be readable by group or others, and an unreadable or malformed file
+fails startup. A multi image (below) authenticates inventory requests as well:
+a host-key enclave whose unauthenticated `/v1/inventory` request is refused
+asks again with `challenge`, `host_key` and `host_signature`, signed over
+`AttestedInventoryRequestBinding` (the domain `bursa-armory-inventory-request/1`,
+the nonce, the profile and the challenge, length-prefixed). The inventory
+attestation itself encodes no network or chain, so the pinned identity key
+verifies a multi image as any other. Point `host_key_file` at the key of the
+profile's scope.
+
+### Cold key provisioning
+
+The provisioning firmware's `POST /provision/cold` imports a cold key into a
+free cold key object (`0x20e50010`-`0x20e5001f` or `0x20e50600`-`0x20e5060f`):
+`{"cold_key_id": N, "signing_key": "<cborHex>"}`, the cardano-cli `cborHex`
+(`5820` and the 32-byte seed). An existing object is never replaced; repeating
+the request with the same key confirms the earlier import.
+
+The device never generates a cold key. A key made inside the SE050 cannot be
+exported or backed up, so a lost or broken device would lose the pool for
+good. A cold key is always created off the device, kept in a backup, and
+imported, so the pool can move to a replacement device.
+
+Before `armory-pool` reads a cold or owner signing key from standard input, it
+requires `-identity`, obtains a one-time challenge, and sends its ephemeral
+X25519 public key to `/v1/identity`. The device signs the route, challenge, both
+ephemeral encryption keys, and its public identity under the pinned identity
+key. The tool verifies that proof before reading the request, then encrypts the
+complete request to the authenticated device key. A forwarding or substituted
+HTTP endpoint sees only ciphertext. This holds only when the pinned identity
+came from a trusted source: `armory/e2e/sim-signer-opcert.sh` pins the identity
+it read over the same link, which protects against a later substitution but
+not against an endpoint present from the start.
+
+The identity proof rate limit is device-wide, so a peer on the USB link can
+exhaust it and keep the operator from provisioning until the window passes.
+
+The device zeroes its decrypted request buffer and decoded key after the
+request. `armory-pool` clears the explicit plaintext request buffer after
+encryption; host JSON processing and transport layers can retain copies outside
+the device's zeroization boundary.
+
+The provisioning firmware accepts private keys only through the encrypted
+`/provision/cold` and `/provision/profile` requests. It does not serve the
+legacy plaintext `/provision` import.
+
+### Provisioning and wipe authentication
+
+The provisioning and wipe images authenticate requests with the host keys the
+signing routes use. A host key is registered for the network and chain of the
+image that registers it, and an image trusts only keys of its own network and
+chain. The exception is a key registered by an image that did not scope host
+keys: it carries no network or chain, and every image but a mainnet one
+trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
+
+- While no host key of any network or chain is registered, the provisioning
+  routes take unsigned requests, so a fresh device can be set up. This is the
+  only time `POST /provision/host-key` adds a key unsigned.
+- Once any host key is registered, `/provision/profile`, `/provision/floor`,
+  `/provision/reward`, `/provision/pins`, `/provision/cold`,
+  `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
+  `/wipe/profile`, `/wipe/cold` and
+  `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
+  from a host key of the image's network and chain. A key of another network
+  or chain does not qualify, and does not let the image's first key in
+  unsigned. Private-key requests also use the identity-authenticated encrypted
+  channel described above.
+- The signature is an Ed25519 signature over `AdminBinding`: the domain
+  `bursa-armory-admin/1`, the route, the request as the device's Go types
+  encode it with the three fields empty and each private key (`signing_key`
+  of `/provision/cold`, `owner_signing_key` of `/provision/profile`) replaced
+  by the hex SHA-256 of its decoded bytes, and the challenge, each
+  length-prefixed as in the request binding. The signature thus binds the
+  exact key while the key never passes through the JSON encoder used for the
+  binding. The challenge is one-time.
+- The device's last host key cannot be revoked: an empty list is the
+  bootstrap state, which accepts provisioning without a host signature and
+  permits the first host-key enrollment.
+  Add the replacement key first, then revoke the old one; only a device wipe
+  returns to the bootstrap state.
+- The canonical host key list is SE050 object `0x20e50021`. Replacements are
+  first written and verified in persistent staging object `0x20e50024`; while
+  it contains a valid list, it is authoritative. The canonical copy is then
+  replaced and verified before the staging copy is deleted. After staging
+  verifies, an interruption leaves at least one valid list, and recovery uses
+  the valid stage or the canonical copy. A stage that is present but
+  unreadable or malformed is not replaced by the older canonical copy: the
+  device refuses every authenticated route until a restart reads a valid list
+  or a device wipe resets it. An interrupted write therefore fails closed
+  instead of returning a provisioned device to the unsigned bootstrap state.
+- A host key list the device cannot read refuses every authenticated route,
+  because no key is left to check a signature against.
+- `POST /wipe/device` stays confirmed by the identity public key alone and
+  unsigned. It is the recovery path when every host key is lost or the host key
+  list is unreadable, and the only one: it destroys everything the armory
+  holds (keys, profiles, host keys, the signing log head and the identity
+  key), after which the device is in the bootstrap state again. Anyone who can
+  boot the wipe image and knows the identity public key can do this.
+  `POST /wipe/objects` only lists object IDs.
+
+#### Multi image
+
+`make imx NETWORK=multi` builds one image that serves a set of scopes: every
+testnet (network id 0), `cardano-mainnet` and `prime-mainnet` (network id 1,
+profile names ending `@cardano-mainnet` or `@prime-mainnet`, because chains
+sharing network id 1 cannot be told apart otherwise). The single-scope images
+are unchanged. `TESTNET=1` is refused with it.
+
+- Scope binding. Every request that targets a profile needs a host key whose
+  scope equals the profile's: signing, inventory, `/provision/profile`,
+  `/provision/floor`, `/provision/reward`, `/provision/pins` and
+  `/wipe/profile`. A testnet key never signs or provisions for a mainnet
+  profile, and a cardano-mainnet key never for a prime-mainnet one. A key
+  registered by an image that did not scope host keys is a testnet key. A
+  new testnet profile may not take a name ending `@cardano-mainnet` or
+  `@prime-mainnet`. Every profile request and every device-wide request
+  needs a host key, testnet profiles included. The exceptions are the
+  device's first host key, `/v1/challenge`, and the wipe image's
+  `/wipe/device` and `/wipe/objects`.
+- First keys. Only the provisioning image (`PROVISION=1`) accepts an
+  unsigned `POST /provision/host-key`, and only while the device holds no
+  host key at all, for a `scope` (`testnet`, `cardano-mainnet` or
+  `prime-mainnet`) of the image; the answer lists only that scope's keys.
+  The first key of every other scope is a signed add by a key of a mainnet
+  scope, so an unsigned key never gains device-wide power over scopes
+  already on the device. The signing and wipe images never accept an
+  unsigned request. A signed add names the `scope`, which is part of the
+  signed request; the key that signs it is of that scope, or, while the
+  scope has no key, of a mainnet scope. The list keeps its four slots and its stored format; a
+  scoped entry already holds the network id and a tag of the chain label.
+  This image registers a key for one scope only and refuses a key another
+  scope already holds. A key that an older image registered for several
+  scopes keeps every one of them and acts under each.
+- Device-wide requests. `/provision/identity`, `/wipe/signlog`, the signing
+  log read and listing the keys of other scopes need a key of a mainnet scope
+  while the image serves one. A key revokes keys of its own scope; revoking
+  another scope's key is device-wide too, and never removes that scope's
+  last key. A scope may revoke its own last key while another scope holds
+  one, and gets its next first key from a mainnet key; the device's last key
+  of all stays.
+- One key, one scope. A cold key import or an imported owner key whose public
+  key already belongs to a profile of another scope is refused, as is a cold
+  key slot a profile of another scope names. Two slots of one scope may hold
+  the same key.
+- Cold key ownership. There are 32 cold key objects, `0x20e50010`-`0x20e5001f`
+  and `0x20e50600`-`0x20e5060f`. Any scope imports into any free one, and the
+  import first records the scope as its owner in one fixed-size object
+  (`0x20e50023`: a version byte, then per cold key object a claimed flag, the
+  network id and the chain tag). A cold key object holding a key is used only
+  by its owner: `/provision/cold` and `/provision/profile` refuse another
+  scope's, so a cold key imported by one scope cannot be taken by a profile of
+  another, across restarts too. An empty object is free whatever a stale claim
+  says. Single-scope images keep the record with their own scope. A corrupt
+  record is refused with an error until the device is wiped. Signing refuses
+  a cold key the record gives to another scope than the profile's; a record
+  that cannot be read, or no claim, does not stop signing. A profile stored
+  by an older image is still served.
+- Legacy and unowned keys. A cold key an older image stored has no claim; it
+  belongs to the scope of the profiles that name it, and to none when
+  profiles of two scopes name it. A key with no claim and no
+  profile belongs to no scope and every scope is refused; a mainnet key
+  removes it with the wipe image's `/wipe/cold`. A multi image refuses it,
+  and a single-scope image keeps serving it as before.
+- Removing cold keys and profiles. `POST /wipe/cold` on the wipe image, with
+  `identity_public_key` and `cold_key_id` and signed by a host key, deletes a
+  cold key no profile names and its claim. The owner's key may; a key of a
+  mainnet scope may delete a testnet key or one with no owner, never the
+  other mainnet scope's. A key a profile names goes with `/wipe/profile`,
+  which a mainnet key also sends for a testnet profile.
+- Not changed: `/wipe/device`, which stays confirmed by the identity public
+  key alone as the recovery path when every host key is lost, and
+  `/wipe/objects`, which only lists object IDs and needs no confirmation.
+- Encrypted private keys. Cold and owner private keys use the same encrypted
+  provisioning routes in single-scope and multi images.
+- No downgrade. An image older than this one does not know the persistent
+  host-key staging object, the second cold key block
+  (`0x20e50600`-`0x20e5060f`) or the
+  ownership record: its
+  `/wipe/device` leaves them on the chip, and it imports into an object
+  another scope owns. Wipe with this version's wipe image before flashing an
+  older one.
+- Moving a testnet device. Flashing the multi image over a device that ran a
+  testnet image keeps its profiles and host keys: the stored list is not
+  rewritten. A testnet key does not act device-wide on the multi image and
+  the device's last key cannot be revoked, so adding mainnet scopes takes a
+  device wipe. `/wipe/device` deletes every armory object: the cold keys and
+  their ownership record, the profiles with their owner keys and pins, the
+  host keys, the signing log head and the identity key. Then, on the multi
+  provisioning image, register a mainnet key unsigned and add the testnet key
+  with it; send `/provision/identity`, which generates a new identity key, and
+  pin its public key as `identity_public_key` in place of the old one; import
+  the backed-up testnet cold keys with a signed `/provision/cold`; provision
+  each testnet profile again with `chain_counter` at the pool's on-chain
+  counter, and send its `/provision/pins` again.
+  An owner key the device generated is gone, so the profile gets a new one
+  unless its owner key is imported again. The signing log starts again on a
+  zeroed card, as for any device wipe.
+
+`armory-pool` signs these requests with its host key. The request JSON is read
+from standard input and the device's answer is printed. `armory-pool host-key
+-out host.skey` writes a new host key and prints the `/provision/host-key`
+request for its public key:
+
+```sh
+armory-pool host-key -out host.skey > host-key.pub
+armory-pool -host-key host.skey provision host-key < host-key.pub
+armory-pool -identity "$IDENTITY" -host-key host.skey provision cold < cold-request.json
+armory-pool -identity "$IDENTITY" -host-key host.skey provision profile < profile-request.json
+armory-pool -host-key host.skey wipe signlog < wipe-request.json
+armory-pool wipe device < wipe-request.json
+```
+
+For a multi image, `armory-pool host-key -scope prime-mainnet -out prime.key`
+prints a request that names the scope, and `-host-key-dir DIR` picks
+`DIR/<scope>.key` by the profile a request or `-profile` names (a name ending
+`@cardano-mainnet` or `@prime-mainnet` is that scope, any other is testnet;
+a network-0 profile an older image stored under such a name takes
+`-scope testnet`).
+The device's first key is added unsigned, so send that request without
+`-host-key` or `-host-key-dir`; register a mainnet scope's key first. Add
+every other scope's first key with that key, e.g. `-host-key-dir DIR -scope
+cardano-mainnet provision host-key < testnet.pub`. Requests that
+name no profile, such as `provision cold`, `provision identity`, `wipe
+signlog` and `signlog`, need `-scope`. `opcert-check -host-key` takes the key
+of the profile's scope. `signlog-verify` and `opcert-check` read no network or
+chain: a log with entries of several scopes verifies as one chain.
+
+`provision` takes `profile`, `floor`, `reward`, `pins`, `cold`, `identity`,
+`host-key` or `host-key/revoke`; `wipe` takes `objects`, `device`, `profile`,
+`cold` or `signlog`. Without `-host-key` a request is sent unsigned, which the device
+accepts only in the bootstrap state, and always for `wipe device` and `wipe
+objects`. `provision cold` and `provision profile` require the pinned
+`-identity`. Register the first host key and provision the identity before
+importing private keys.
+
+### Signing log
+
+The signing firmware records every signature and opcert it issues in a log on
+a microSD card in the device, and refuses to sign when it cannot. An entry
+holds the profile, role and purpose, the body hash (or the issue counter, KES
+period and KES key hash for an opcert) and the parameter summary the device
+computed, cut to 1024 bytes with a flag when it was cut. Entries are chained
+by hash and each is signed by the device identity key. The SE050 keeps the
+number and hash of the latest entry (object `0x20e50022`), and the device
+checks the card against it at boot and before every write, so an older copy of
+the card, a blank card or a truncated log is refused. The entry is written and
+the card read back before the signature leaves the device.
+
+A card formatted by this firmware uses log format version 2, whose
+`opcert-next` entries also carry the cold key hash (blake2b-224 of the cold
+verification key, the pool ID). A card formatted by earlier firmware (format
+version 1) is still read, verified and appended to in its own format: its
+entries carry no cold key hash, and an entry without one limits every cold key
+of its profile. `signlog-verify` reads both versions.
+
+One request is not recorded again: an `opcert-next` whose profile, issue
+counter, KES key hash, cold key hash and KES period match the latest entry is signed again
+without a new entry, since that entry already records it. The device checks
+the card against the head before signing such a repeat, as it does before a
+write.
+
+With no card, an unreadable card, a card that does not match the head, a full
+card or a failed write, the device refuses to sign and says why in the
+response and in the startup report; inventory and health are still served. A
+full card still serves a repeat of its latest entry, which writes nothing. A
+card that is full stays full: the device never overwrites an entry. The log is
+opened once at startup, so a card inserted later takes effect after a restart.
+
+The signing and provisioning firmware never reset the head object, so a lost,
+failed or full card, or an unreadable head object, leaves the device refusing
+to sign. A device wipe deletes the head object with the identity key; after a
+new identity is provisioned, the signing firmware formats a zeroed card and
+starts a new log. To start a new log under the same identity, the wipe
+firmware's `POST /wipe/signlog`, confirmed with the device identity public key
+as `identity_public_key`, deletes only the head object. Only the wipe image
+serves it, so the wipe image must be loaded onto the board. The identity
+public key is public, so once a host key is registered the request must also
+be signed by one, as described under Provisioning and wipe authentication. The old card
+is refused once the head is gone, so image it if its entries are wanted, then
+zero it or insert a zeroed card; the signing firmware formats it
+at its next start, with entries numbered from 1 again. The old card's entries
+stay verifiable from its image with `signlog-verify -identity HEX -image FILE`.
+
+The first start with an all-zero card and an unset head object formats the
+card for the device identity key; it holds up to 32768 entries. A new card
+usually carries a partition table, which is refused, so write zeros over the
+whole card first, for example with
+`dd if=/dev/zero of=/dev/sdX bs=4M conv=fsync`, where `/dev/sdX` is the
+card's whole device (check it with `lsblk`; `dd` overwrites whatever it is
+given). Erasing it is not enough, since some cards read erased blocks as
+`0xff`. A card formatted for another identity is refused. A card with data
+after the last entry, beyond one incomplete final record, is refused at
+startup as it is by `signlog-verify`.
+
+Read the log from the device with `armory-pool -identity HEX signlog`, which
+verifies every signature and the chain under the pinned identity key and
+prints one line per entry. The host sends a fresh nonce and refuses the read
+unless the pinned device identity attests the current head and card size for
+that nonce. The signed head anchors the subsequently verified log blocks, so a
+party on the HTTP path cannot substitute an older valid prefix. `-head-seq N
+-head-hash HEX` additionally pins the latest entry the operator expects. The
+endpoint, `POST /v1/signlog`, needs the same host key authentication as a
+signing request, and serves only the header, the entries and the slot after the
+latest one. A card removed from the device is checked with `signlog-verify
+-identity HEX -image FILE`.
+
+### Bluetooth module
+
+The board carries a u-blox ANNA-B112 Bluetooth LE module. Left alone it runs
+its factory software and advertises as `ANNA-B1-<id>`. Every firmware image
+(signing, provisioning, wipe and the testnet build) drives the module's
+active-low reset line (BT_RESET, GPIO1_IO09) low as its first step, before
+bring-up and the network, and holds it there for as long as the firmware runs.
+The firmware then reads the pad back; the startup report shows
+`bluetooth: module held in reset` when it reads low. If it reads high, the
+report says so and the result is `RESULT: FAIL`; the firmware keeps running.
+
+The limits:
+
+- The module can advertise from power-on until the firmware reaches that step,
+  and whenever the board runs other firmware or a bootloader.
+- The hold depends on the firmware. Other firmware on the board can release the
+  module, and the board boots unsigned images.
+- Holding the module in reset is not removal. For a mainnet device, physically
+  removing the module is the stronger control.
 
 ## KES agent in a protected workload
 
@@ -184,6 +889,14 @@ cloud boundary:
 | Unix socket permissions (or an authenticated forwarder to it) | who may submit header bodies |
 | Cold-key custody (separate backend) | the pool cold key; the agent holds only the cold verification key |
 
+For a remote Dingo producer, `bursa-attested-kes/1` applies two independent
+checks: TLS client certificates authenticate Dingo to the workload, and fresh
+nonce-bound platform evidence authenticates the measured workload and its
+active public KES state to Dingo. The AWS adapter places the protocol binding
+in Nitro `user_data`. The GCP adapter places its hex encoding in Confidential
+Space `eat_nonce`. Dingo applies the same pinned PCR, image digest, debug-state,
+issuer, audience, expiry, and secure-boot rules used by the attested signer.
+
 - Sign mode accepts only a Praos header body whose slot lies in the requested
   period and whose issuer key, KES key, issue counter, certificate period and
   cold-key signature match the installed operational certificate.
@@ -196,6 +909,8 @@ cloud boundary:
   mount that same guard state, or be given a freshly staged key and a new
   operational certificate; never start a second agent with a copy of an older
   guard file.
-- A restarted enclave has no key until one is staged and installed again (key
-  material is wrapped by the cloud KMS and unwrapped only for the measured
-  workload).
+- A restarted workload has no key until one is staged and installed again. The
+  guard survives on workload-private durable storage; wrapped recovery material
+  may be released only to the approved measurement. If the provider adapter,
+  attestation service, KMS release, durable guard, or operational-certificate
+  check fails, the workload exposes no signing service.

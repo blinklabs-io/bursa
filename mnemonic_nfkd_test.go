@@ -220,13 +220,19 @@ func TestMnemonicNormalizationRejectsInvalid(t *testing.T) {
 	if broken == mnemonic {
 		t.Fatalf("swapped mnemonic is unchanged, vector proves nothing")
 	}
-	if _, err := entropyFromMnemonicBytes([]byte(broken)); !errors.Is(err, ErrInvalidMnemonic) {
+	if _, err := entropyFromMnemonicBytes([]byte(broken)); !errors.Is(
+		err,
+		ErrInvalidMnemonic,
+	) {
 		t.Fatalf("err = %v, want ErrInvalidMnemonic", err)
 	}
 	if _, err := NewWallet(broken); !errors.Is(err, ErrInvalidMnemonic) {
 		t.Fatalf("NewWallet err = %v, want ErrInvalidMnemonic", err)
 	}
-	if _, err := entropyFromMnemonicBytes([]byte("\xff\xfe not utf8 at all")); !errors.Is(err, ErrInvalidMnemonic) {
+	if _, err := entropyFromMnemonicBytes([]byte("\xff\xfe not utf8 at all")); !errors.Is(
+		err,
+		ErrInvalidMnemonic,
+	) {
 		t.Fatalf("invalid UTF-8 err = %v, want ErrInvalidMnemonic", err)
 	}
 }

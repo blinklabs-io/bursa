@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"sync"
 	"time"
@@ -34,8 +35,12 @@ import (
 
 // Config configures the embedded node. All network endpoints bind to loopback.
 type Config struct {
-	Network        string // "preview" | "preprod" | "mainnet"
-	DataDir        string
+	Network string // "preview" | "preprod" | "mainnet"
+	DataDir string
+	// WalletDataDir contains the vault, keys, wallet settings, contacts, logs,
+	// and caches. Recovery refuses to remove DataDir when it could contain this
+	// directory.
+	WalletDataDir  string
 	SocketPath     string // N2C unix socket (for adder/oracle in later phases)
 	UtxorpcPort    uint
 	BlockfrostPort uint
@@ -78,14 +83,22 @@ type NodeFactory interface {
 // dingoNodeFactory is the production NodeFactory backed by dingo.New.
 type dingoNodeFactory struct{}
 
-func (dingoNodeFactory) New(cfg dingo.Config) (NodeRunner, error) { return dingo.New(cfg) }
+func (dingoNodeFactory) New(
+	cfg dingo.Config,
+) (NodeRunner, error) {
+	return dingo.New(cfg)
+}
 
 // Supervisor owns the embedded Dingo node's lifecycle and exposes its status.
 type Supervisor struct {
 	cfg     Config
 	cancel  context.CancelFunc
 	runDone chan struct{}
-	runID   uint64
+	// failedRunDone retains the completion signal after a run publishes an
+	// error. Recovery must wait for every writer from that run to exit before it
+	// removes the node database.
+	failedRunDone chan struct{}
+	runID         uint64
 
 	lifecycleMu sync.Mutex
 	mu          sync.RWMutex
@@ -111,6 +124,7 @@ type Supervisor struct {
 	now          func() time.Time // injectable clock for tests
 	bootstrapper Bootstrapper     // injectable for tests
 	nodeFactory  NodeFactory      // injectable for tests
+	removeAll    func(string) error
 }
 
 func New(cfg Config) *Supervisor {
@@ -126,6 +140,7 @@ func New(cfg Config) *Supervisor {
 		now:          time.Now,
 		bootstrapper: mithrilBootstrapper{logger: cfg.Logger},
 		nodeFactory:  dingoNodeFactory{},
+		removeAll:    os.RemoveAll,
 	}
 }
 
@@ -157,12 +172,18 @@ func nodeConfigOptions(
 		dingo.WithPrometheusRegistry(promRegistry),
 		dingo.WithDatabasePath(cfg.DataDir),
 		dingo.WithStorageMode(dingo.StorageModeAPI),
-		dingo.WithPluginSelection(plugin.CapabilityStorageBlob, plugin.Selection{
-			Provider: "badger",
-		}),
-		dingo.WithPluginSelection(plugin.CapabilityStorageMetadata, plugin.Selection{
-			Provider: "sqlite",
-		}),
+		dingo.WithPluginSelection(
+			plugin.CapabilityStorageBlob,
+			plugin.Selection{
+				Provider: "badger",
+			},
+		),
+		dingo.WithPluginSelection(
+			plugin.CapabilityStorageMetadata,
+			plugin.Selection{
+				Provider: "sqlite",
+			},
+		),
 		// Match Dingo's own Praos default mempool capacity (1 MiB) — ample for a
 		// single-user wallet submitting its own txs. In dingo v0.68 the mempool,
 		// blockfrost, and utxorpc APIs are configured as plugin selections rather
@@ -181,10 +202,13 @@ func nodeConfigOptions(
 			Provider: "builtin",
 			Config:   map[string]any{"port": cfg.UtxorpcPort},
 		}),
-		dingo.WithPluginSelection(plugin.CapabilityAPIBlockfrost, plugin.Selection{
-			Provider: "builtin",
-			Config:   map[string]any{"port": cfg.BlockfrostPort},
-		}),
+		dingo.WithPluginSelection(
+			plugin.CapabilityAPIBlockfrost,
+			plugin.Selection{
+				Provider: "builtin",
+				Config:   map[string]any{"port": cfg.BlockfrostPort},
+			},
+		),
 		dingo.WithListeners(connmanager.ListenerConfig{
 			ListenNetwork: "unix",
 			ListenAddress: cfg.SocketPath,
@@ -236,6 +260,12 @@ func (s *Supervisor) Start(ctx context.Context) error {
 }
 
 func (s *Supervisor) start(ctx context.Context) error {
+	s.mu.Lock()
+	failedRunDone := s.failedRunDone
+	s.failedRunDone = nil
+	s.mu.Unlock()
+	s.waitForRunExit(failedRunDone)
+
 	// Guard against double-start: reserve s.cancel atomically so a second Start
 	// can't overwrite (and orphan) the first node and poll loop.
 	s.mu.Lock()
@@ -255,6 +285,8 @@ func (s *Supervisor) start(ctx context.Context) error {
 	runID := s.runID
 	s.cancel = cancel
 	s.runDone = runDone
+	s.failedRunDone = nil
+	s.status.Err = ""
 	s.mu.Unlock()
 
 	// fail releases the reservation so Start can be retried if we error out
@@ -312,7 +344,14 @@ func (s *Supervisor) start(ctx context.Context) error {
 		// new node, and reusing one registry would panic on duplicate metric
 		// registration. Diagnostics reads whichever registry is current.
 		reg := prometheus.NewRegistry()
-		nodeCfg := dingo.NewConfig(nodeConfigOptions(s.cfg, historyExpiry, cardanoCfg, topologyCfg, reg)...)
+		nodeCfg := dingo.NewConfig(
+			nodeConfigOptions(
+				s.cfg,
+				historyExpiry,
+				cardanoCfg,
+				topologyCfg,
+				reg,
+			)...)
 		node, err := s.nodeFactory.New(nodeCfg)
 		if err != nil {
 			return err
@@ -335,8 +374,11 @@ func (s *Supervisor) start(ctx context.Context) error {
 
 	mithrilEnabled := s.cfg.MithrilEnabled
 	if mithrilEnabled && !mithrilSupported(s.cfg.Network) {
-		s.cfg.Logger.Info("no Mithril aggregator for network; syncing from genesis",
-			"network", s.cfg.Network)
+		s.cfg.Logger.Info(
+			"no Mithril aggregator for network; syncing from genesis",
+			"network",
+			s.cfg.Network,
+		)
 		mithrilEnabled = false
 	}
 	if !shouldBootstrap(mithrilEnabled, s.cfg.DataDir) {
@@ -356,7 +398,12 @@ func (s *Supervisor) start(ctx context.Context) error {
 
 // bootstrapThenLaunch runs the Mithril bootstrap and, on success, records the
 // completion marker and launches the node. Any failure → StateError (no fallback).
-func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, launch func() error, completeRun func()) {
+func (s *Supervisor) bootstrapThenLaunch(
+	ctx context.Context,
+	runID uint64,
+	launch func() error,
+	completeRun func(),
+) {
 	launched := false
 	defer func() {
 		if !launched {
@@ -389,7 +436,10 @@ func (s *Supervisor) bootstrapThenLaunch(ctx context.Context, runID uint64, laun
 	// snapshot over an already-complete DB.
 	if err := markBootstrapDone(s.cfg.DataDir); err != nil {
 		if ctx.Err() == nil {
-			s.setErrorForRun(runID, fmt.Errorf("record bootstrap completion: %w", err))
+			s.setErrorForRun(
+				runID,
+				fmt.Errorf("record bootstrap completion: %w", err),
+			)
 		}
 		return
 	}
@@ -517,11 +567,15 @@ func (s *Supervisor) stop() <-chan struct{} {
 	s.mu.Lock()
 	cancel := s.cancel
 	runDone := s.runDone
+	if runDone == nil {
+		runDone = s.failedRunDone
+	}
 	// Clear the start guard so the supervisor can be started again after being
 	// stopped, and record the terminal state under the same lock so a late poll
 	// can't race between the unlock and the state write.
 	s.cancel = nil
 	s.runDone = nil
+	s.failedRunDone = nil
 	s.setStateLocked(StateStopped)
 	s.status.Bootstrap = nil // a clean shutdown is not a diagnostic failure
 	s.status.BootstrapPhases = nil
@@ -586,6 +640,7 @@ func (s *Supervisor) setErrorForRun(runID uint64, err error) {
 		return
 	}
 	cancel := s.cancel
+	s.failedRunDone = s.runDone
 	s.cancel = nil
 	s.runDone = nil
 	s.setStateLocked(StateError)
@@ -615,7 +670,10 @@ func (s *Supervisor) activeRunLocked(runID uint64) bool {
 func (s *Supervisor) pollLoop(ctx context.Context, runID uint64) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/v0/blocks/latest", s.cfg.BlockfrostPort)
+	url := fmt.Sprintf(
+		"http://127.0.0.1:%d/api/v0/blocks/latest",
+		s.cfg.BlockfrostPort,
+	)
 	client := &http.Client{Timeout: 3 * time.Second}
 	for {
 		select {
@@ -627,7 +685,8 @@ func (s *Supervisor) pollLoop(ctx context.Context, runID uint64) {
 			s.mu.Lock()
 			// Don't move off a terminal/stopped state; once Stop sets
 			// StateStopped, a late poll must not revert it to syncing/ready.
-			if s.activeRunLocked(runID) && s.status.State != StateError && s.status.State != StateStopped {
+			if s.activeRunLocked(runID) && s.status.State != StateError &&
+				s.status.State != StateStopped {
 				s.setStateLocked(deriveState(ok, isCaughtUp))
 				// CaughtUp must reflect every poll, not just successful ones: a
 				// failed poll yields isCaughtUp=false, so updating it here keeps
@@ -647,7 +706,11 @@ func (s *Supervisor) pollLoop(ctx context.Context, runID uint64) {
 }
 
 // fetchLatestBlock queries Blockfrost /blocks/latest; ok=false until a block exists.
-func fetchLatestBlock(ctx context.Context, c *http.Client, url string) (slot uint64, t time.Time, ok bool) {
+func fetchLatestBlock(
+	ctx context.Context,
+	c *http.Client,
+	url string,
+) (slot uint64, t time.Time, ok bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, time.Time{}, false

@@ -153,7 +153,8 @@ func (c *cache) makeSpace(target string, incoming int64) error {
 	var total int64
 	oldest := make([]cacheEntry, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Name() == target || strings.HasPrefix(entry.Name(), ".tmp-") || entry.Type()&os.ModeType != 0 {
+		if entry.Name() == target || strings.HasPrefix(entry.Name(), ".tmp-") ||
+			entry.Type()&os.ModeType != 0 {
 			continue
 		}
 		info, err := entry.Info()
@@ -162,21 +163,32 @@ func (c *cache) makeSpace(target string, incoming int64) error {
 		}
 		total += info.Size()
 		oldest = append(oldest, cacheEntry{
-			path: filepath.Join(c.dir, entry.Name()), size: info.Size(), modTime: info.ModTime(),
+			path: filepath.Join(
+				c.dir,
+				entry.Name(),
+			), size: info.Size(), modTime: info.ModTime(),
 		})
 	}
-	sort.Slice(oldest, func(i, j int) bool { return oldest[i].modTime.Before(oldest[j].modTime) })
+	sort.Slice(
+		oldest,
+		func(i, j int) bool { return oldest[i].modTime.Before(oldest[j].modTime) },
+	)
 	for _, entry := range oldest {
 		if total+incoming <= c.maxBytes {
 			break
 		}
-		if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(entry.path); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("nft: evict cache entry: %w", err)
 		}
 		total -= entry.size
 	}
 	if total+incoming > c.maxBytes {
-		return fmt.Errorf("nft: image %d bytes exceeds cache quota %d", incoming, c.maxBytes)
+		return fmt.Errorf(
+			"nft: image %d bytes exceeds cache quota %d",
+			incoming,
+			c.maxBytes,
+		)
 	}
 	return nil
 }

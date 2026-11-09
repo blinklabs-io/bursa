@@ -1,0 +1,187 @@
+// Copyright 2026 Blink Labs Software
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Command firmware is the armory-signer bring-up firmware for the USB armory
+// Mk II γ. It exercises the SE050 and serves the results over Ethernet over
+// USB at http://10.0.0.1/.
+package main
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/usbarmory/tamago/soc/nxp/imx6ul"
+
+	gnet "github.com/usbarmory/go-net"
+	usbnet "github.com/usbarmory/go-net/imx-usb"
+
+	"github.com/blinklabs-io/bursa/armory/device"
+)
+
+const (
+	deviceIP  = device.Address + "/24"
+	hostIP    = "10.0.0.2"
+	deviceMAC = "1a:55:89:a2:69:41"
+	hostMAC   = "1a:55:89:a2:69:42"
+
+	// maxConns caps open HTTP connections; a host client keeps one or two
+	// alive between requests
+	maxConns = 8
+	// maxHeaderBytes caps request headers; the default is 1 MiB
+	maxHeaderBytes = 8 << 10
+)
+
+func startNetwork() (err error) {
+	iface := &gnet.Interface{
+		Stack: gnet.NewGVisorStack(1),
+	}
+
+	if err = iface.Init(deviceIP, deviceMAC, hostIP); err != nil {
+		return fmt.Errorf("stack, %w", err)
+	}
+
+	iface.Stack.EnableICMP()
+	net.SocketFunc = iface.Stack.Socket
+
+	ecm := &usbnet.ECM{
+		Stack: iface.Stack,
+	}
+
+	ecm.HostMAC, _ = net.ParseMAC(hostMAC)
+	ecm.DeviceMAC, _ = net.ParseMAC(deviceMAC)
+
+	if err = ecm.Init(); err != nil {
+		return fmt.Errorf("ECM, %w", err)
+	}
+
+	port := imx6ul.USB1
+	port.Init()
+	port.DeviceMode()
+
+	// poll endpoints rather than servicing interrupts
+	go port.Start(ecm.Device)
+
+	return
+}
+
+// logLink reports how hosts reach the device: the transport, the request
+// guard and the routes served without host authentication by design. The
+// host authentication mode of the other routes is reported by the device
+// service once it reads the host keys.
+func logLink(r *Report, bleHeld bool) {
+	bt := "BLE held in reset"
+	if !bleHeld {
+		bt = "BLE not held in reset (see the bluetooth line)"
+	}
+
+	r.Logf(
+		"transport: plain HTTP on %s:80 over USB CDC-ECM, host %s; no TLS, no peer filter; %s",
+		device.Address,
+		hostIP,
+		bt,
+	)
+	r.Logf(
+		"guard: requests must name Host %s (port 80 optional) and POST bodies must be application/json",
+		device.Address,
+	)
+	r.Logf(
+		"routes served without host auth by design: %s",
+		strings.Join(openRoutes(), " "),
+	)
+}
+
+// openRoutes lists the routes this image serves without host
+// authentication, whatever host keys the device holds.
+func openRoutes() []string {
+	routes := append([]string{"/"}, imageOpenRoutes...)
+
+	// only a multi image authenticates inventory requests
+	if servesInventory && !multiScope {
+		routes = append(routes, "/v1/inventory")
+	}
+
+	return append(routes, testnetRoutes...)
+}
+
+func main() {
+	log.SetFlags(0)
+
+	report := &Report{}
+
+	// first, before bring-up and the network: the module advertises until
+	// held in reset
+	bleHeld := holdBluetooth(report)
+
+	// before the network and USB stack start: read the boot ROM's HAB status
+	reportHAB(report)
+
+	if err := startNetwork(); err != nil {
+		log.Fatalf("network: %v", err)
+	}
+
+	// one lock for the SE050 session, shared by every endpoint
+	mu := &sync.Mutex{}
+	s := &firmwareSigner
+	s.Mutex = mu
+	svc := device.New(mu, report.Logf)
+	s.record = svc.RecordRaw
+	configureScope(svc, report)
+	requireSigningLog(svc)
+	report.Logf("%s", buildMode)
+
+	if testnetSign != "" {
+		report.Logf("%s", testnetSign)
+	}
+
+	logLink(report, bleHeld)
+
+	go runBringup(report, s, svc)
+
+	http.HandleFunc("/{$}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, report.String())
+	})
+
+	routes(svc, s, mu)
+
+	l, err := net.Listen("tcp4", ":80")
+
+	if err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+
+	// A peer that opens connections and never finishes a request must not
+	// hold them. WriteTimeout covers the slowest legitimate request, a
+	// signature plus the signing-log write, with wide margin. The endpoints
+	// take small JSON bodies, so headers are capped well below the default.
+	srv := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    maxHeaderBytes,
+		// non-JSON firmware routes share the same origin guard
+		Handler: device.Guard(device.Address, http.DefaultServeMux),
+	}
+
+	// open connections are capped too: past the cap, Accept waits for one
+	// to close (each is bounded by the timeouts above), so many sockets
+	// cannot exhaust the device
+	log.Fatal(srv.Serve(device.ConnLimitListener(l, maxConns)))
+}

@@ -55,9 +55,22 @@ func appendKeyPair(
 ) {
 	t.Helper()
 	want := append([]byte(nil), key.Public().PublicKey()...)
-	*vectors = append(*vectors,
-		authoritativeEnvelopeVector{name + " verification", vkey, want, false, false},
-		authoritativeEnvelopeVector{name + " extended signing", skey, want, true, true},
+	*vectors = append(
+		*vectors,
+		authoritativeEnvelopeVector{
+			name + " verification",
+			vkey,
+			want,
+			false,
+			false,
+		},
+		authoritativeEnvelopeVector{
+			name + " extended signing",
+			skey,
+			want,
+			true,
+			true,
+		},
 	)
 }
 
@@ -188,10 +201,29 @@ func authoritativeEnvelopeVectors(t *testing.T) []authoritativeEnvelopeVector {
 	poolExtSKey, err := GetPoolColdExtendedSKey(pool)
 	require.NoError(t, err)
 	poolWant := decodeCborBytes(t, poolVKey.CborHex)
-	vectors = append(vectors,
-		authoritativeEnvelopeVector{"pool cold verification", poolVKey, poolWant, false, false},
-		authoritativeEnvelopeVector{"pool cold signing", poolSKey, poolWant, false, true},
-		authoritativeEnvelopeVector{"pool cold extended signing", poolExtSKey, poolWant, true, true},
+	vectors = append(
+		vectors,
+		authoritativeEnvelopeVector{
+			"pool cold verification",
+			poolVKey,
+			poolWant,
+			false,
+			false,
+		},
+		authoritativeEnvelopeVector{
+			"pool cold signing",
+			poolSKey,
+			poolWant,
+			false,
+			true,
+		},
+		authoritativeEnvelopeVector{
+			"pool cold extended signing",
+			poolExtSKey,
+			poolWant,
+			true,
+			true,
+		},
 	)
 
 	policyVKey, err := GetPolicyVKey(policy)
@@ -207,13 +239,27 @@ func authoritativeEnvelopeVectors(t *testing.T) []authoritativeEnvelopeVector {
 	require.NoError(t, err)
 	msPaymentSKey, err := GetMultiSigPaymentSKey(msPayment)
 	require.NoError(t, err)
-	appendKeyPair(t, &vectors, "multi-sig payment", msPayment, msPaymentVKey, msPaymentSKey)
+	appendKeyPair(
+		t,
+		&vectors,
+		"multi-sig payment",
+		msPayment,
+		msPaymentVKey,
+		msPaymentSKey,
+	)
 
 	msStakeVKey, err := GetMultiSigStakeVKey(msStake)
 	require.NoError(t, err)
 	msStakeSKey, err := GetMultiSigStakeSKey(msStake)
 	require.NoError(t, err)
-	appendKeyPair(t, &vectors, "multi-sig stake", msStake, msStakeVKey, msStakeSKey)
+	appendKeyPair(
+		t,
+		&vectors,
+		"multi-sig stake",
+		msStake,
+		msStakeVKey,
+		msStakeSKey,
+	)
 
 	vrfSeed, err := GetVRFSeed(root, 0)
 	require.NoError(t, err)
@@ -223,9 +269,22 @@ func authoritativeEnvelopeVectors(t *testing.T) []authoritativeEnvelopeVector {
 	require.NoError(t, err)
 	vrfSKey, err := GetVRFSKey(vrfSec)
 	require.NoError(t, err)
-	vectors = append(vectors,
-		authoritativeEnvelopeVector{"VRF verification", vrfVKey, vrfPub, false, false},
-		authoritativeEnvelopeVector{"VRF signing", vrfSKey, vrfPub, false, true},
+	vectors = append(
+		vectors,
+		authoritativeEnvelopeVector{
+			"VRF verification",
+			vrfVKey,
+			vrfPub,
+			false,
+			false,
+		},
+		authoritativeEnvelopeVector{
+			"VRF signing",
+			vrfSKey,
+			vrfPub,
+			false,
+			true,
+		},
 	)
 
 	kesSeed, err := GetKESSeed(root, 0)
@@ -236,14 +295,29 @@ func authoritativeEnvelopeVectors(t *testing.T) []authoritativeEnvelopeVector {
 	require.NoError(t, err)
 	kesSKey, err := GetKESSKey(kesSec)
 	require.NoError(t, err)
-	vectors = append(vectors,
-		authoritativeEnvelopeVector{"KES verification", kesVKey, kesPub, false, false},
-		authoritativeEnvelopeVector{"KES signing", kesSKey, kesPub, false, true},
+	vectors = append(
+		vectors,
+		authoritativeEnvelopeVector{
+			"KES verification",
+			kesVKey,
+			kesPub,
+			false,
+			false,
+		},
+		authoritativeEnvelopeVector{
+			"KES signing",
+			kesSKey,
+			kesPub,
+			false,
+			true,
+		},
 	)
 
 	// Keep the standard legacy signer aliases in the matrix: these are accepted
 	// cardano-cli envelope names and use the same canonical 32-byte seed.
-	seedCbor, err := cbor.Encode(append([]byte(nil), payment.PrivateKey()[:32]...))
+	seedCbor, err := cbor.Encode(
+		append([]byte(nil), payment.PrivateKey()[:32]...),
+	)
 	require.NoError(t, err)
 	legacySeed := append([]byte(nil), payment.PrivateKey()[:32]...)
 	legacyPub := ed25519.NewKeyFromSeed(legacySeed).Public().(ed25519.PublicKey)
@@ -262,7 +336,11 @@ func authoritativeEnvelopeVectors(t *testing.T) []authoritativeEnvelopeVector {
 	} {
 		vectors = append(vectors, authoritativeEnvelopeVector{
 			"legacy " + name,
-			KeyFile{Type: name, Description: "legacy", CborHex: hex.EncodeToString(seedCbor)},
+			KeyFile{
+				Type:        name,
+				Description: "legacy",
+				CborHex:     hex.EncodeToString(seedCbor),
+			},
 			append([]byte(nil), legacyPub...),
 			false,
 			true,
@@ -276,12 +354,18 @@ func TestExportedKeyEnvelopeVectors(t *testing.T) {
 	require.GreaterOrEqual(t, len(vectors), 45)
 	for _, vector := range vectors {
 		t.Run(vector.name, func(t *testing.T) {
-			loaded, err := LoadKeyFromBytes(authoritativeEnvelopeJSON(t, vector.key))
+			loaded, err := LoadKeyFromBytes(
+				authoritativeEnvelopeJSON(t, vector.key),
+			)
 			require.NoError(t, err)
 			require.Equal(t, vector.key.Type, loaded.Type)
 			require.Equal(t, vector.wantVKey, loaded.VKey)
 			if vector.signing {
-				require.NotEmpty(t, loaded.SKey, "signing envelope must expose secret material")
+				require.NotEmpty(
+					t,
+					loaded.SKey,
+					"signing envelope must expose secret material",
+				)
 			}
 		})
 	}
@@ -358,14 +442,26 @@ func TestExportedKESAndVRFVectorsUseCanonicalLengths(t *testing.T) {
 		switch vector.key.Type {
 		case "VrfVerificationKey_PraosVRF", "VrfSigningKey_PraosVRF":
 			if vector.key.Type == "VrfSigningKey_PraosVRF" {
-				require.Len(t, decodeCborBytes(t, vector.key.CborHex), vrf.SeedSize+vrf.PublicKeySize)
+				require.Len(
+					t,
+					decodeCborBytes(t, vector.key.CborHex),
+					vrf.SeedSize+vrf.PublicKeySize,
+				)
 			} else {
 				require.Len(t, decodeCborBytes(t, vector.key.CborHex), vrf.PublicKeySize)
 			}
 		case "KesVerificationKey_ed25519_kes_2^6":
-			require.Len(t, decodeCborBytes(t, vector.key.CborHex), kes.PublicKeySize)
+			require.Len(
+				t,
+				decodeCborBytes(t, vector.key.CborHex),
+				kes.PublicKeySize,
+			)
 		case "KesSigningKey_ed25519_kes_2^6":
-			require.Len(t, decodeCborBytes(t, vector.key.CborHex), kes.CardanoKesSecretKeySize)
+			require.Len(
+				t,
+				decodeCborBytes(t, vector.key.CborHex),
+				kes.CardanoKesSecretKeySize,
+			)
 		}
 	}
 }
@@ -419,11 +515,13 @@ func TestPoolCertificateBuildersRejectInvalidInputs(t *testing.T) {
 		{name: "one", num: 10},
 	} {
 		t.Run("valid "+test.name, func(t *testing.T) {
-			_, err := CreatePoolRegistrationCertificate(&PoolRegistrationCertificate{
-				MarginNum:     test.num,
-				MarginDenom:   10,
-				RewardAccount: make([]byte, 29),
-			})
+			_, err := CreatePoolRegistrationCertificate(
+				&PoolRegistrationCertificate{
+					MarginNum:     test.num,
+					MarginDenom:   10,
+					RewardAccount: make([]byte, 29),
+				},
+			)
 			require.NoError(t, err)
 		})
 	}

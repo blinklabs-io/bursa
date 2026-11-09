@@ -22,6 +22,7 @@ package boot
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,10 +43,12 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/contacts"
 	"github.com/blinklabs-io/bursa/ui/internal/dex"
 	"github.com/blinklabs-io/bursa/ui/internal/diagnostics"
+	"github.com/blinklabs-io/bursa/ui/internal/handle"
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/settings"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
@@ -67,7 +70,11 @@ import (
 // opaquely and this bridges the two types.
 type scriptVault struct{ v *vault.Vault }
 
-func (s scriptVault) AddScriptWallet(id, name, network string, w multisig.ScriptWallet, vaultPassword string) error {
+func (s scriptVault) AddScriptWallet(
+	id, name, network string,
+	w multisig.ScriptWallet,
+	vaultPassword string,
+) error {
 	_, err := s.v.AddScriptWallet(id, name, network, vault.ScriptMeta{
 		Policy:        w.Policy,
 		ScriptCBOR:    w.ScriptCBOR,
@@ -138,7 +145,11 @@ func (s scriptAccounts) Get(id string) (multisig.Account, error) {
 func scriptAccountFromMeta(m vault.WalletMeta) (multisig.Account, error) {
 	var policy multisig.Policy
 	if err := json.Unmarshal(m.Script.Policy, &policy); err != nil {
-		return multisig.Account{}, fmt.Errorf("wallet %q: decode multi-signature policy: %w", m.Name, err)
+		return multisig.Account{}, fmt.Errorf(
+			"wallet %q: decode multi-signature policy: %w",
+			m.Name,
+			err,
+		)
 	}
 	return multisig.Account{
 		ID:            m.ID,
@@ -213,11 +224,25 @@ type Config struct {
 	// It is disabled by default so the extension-facing routes are absent unless
 	// the caller explicitly enables them.
 	ConnectorEnabled bool
+	// RemoteSubmission configures a separate TLS listener that accepts only
+	// fully signed transaction CBOR. The listener remains disabled until the
+	// user enables it in Settings.
+	RemoteSubmission RemoteSubmissionConfig
 	// LogFilePath is the file the Logger also writes to. When set, the
 	// diagnostics screen exposes it and the /diagnostics/logs endpoint can
 	// export it. Empty (the default, e.g. mobile / stderr-only) disables log
 	// export; the caller owns the file's lifecycle.
 	LogFilePath string
+}
+
+// RemoteSubmissionConfig describes the explicitly configured network and TLS
+// boundary for remote transaction submission. All fields are required when
+// any field is set.
+type RemoteSubmissionConfig struct {
+	Addr        string
+	PublicURL   string
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 // App is a booted wallet stack: a running supervised node and an HTTP control
@@ -226,6 +251,7 @@ type Config struct {
 // drive.
 type App struct {
 	srv          *http.Server
+	remoteSrv    *http.Server
 	handler      interface{ CheckAutoLock() }
 	listener     net.Listener
 	sup          *supervisor.Supervisor
@@ -281,6 +307,14 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = "127.0.0.1:0"
 	}
+	remoteConfigured := cfg.RemoteSubmission != (RemoteSubmissionConfig{})
+	if remoteConfigured &&
+		(cfg.RemoteSubmission.Addr == "" || cfg.RemoteSubmission.PublicURL == "" ||
+			cfg.RemoteSubmission.TLSCertFile == "" || cfg.RemoteSubmission.TLSKeyFile == "") {
+		return nil, errors.New(
+			"remote submission requires address, public URL, TLS certificate, and TLS key",
+		)
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -304,7 +338,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// The lean-node (history-expiry) profile is a persisted, user-facing setting
 	// (the source of truth). LeanDefault only seeds the first-run default; once a
 	// value is persisted it is honored and the seed is ignored.
-	settingsStore, err := settings.Load(filepath.Join(cfg.DataDir, "settings.json"))
+	settingsStore, err := settings.Load(
+		filepath.Join(cfg.DataDir, "settings.json"),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("load settings: %w", err)
 	}
@@ -318,10 +354,15 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	contactsStore := contacts.NewPersistenceDisabled()
 	if !cfg.ContactsPersistenceDisabled {
 		var contactsWarn error
-		contactsStore, contactsWarn = contacts.LoadOrEmpty(filepath.Join(cfg.DataDir, "contacts.json"))
+		contactsStore, contactsWarn = contacts.LoadOrEmpty(
+			filepath.Join(cfg.DataDir, "contacts.json"),
+		)
 		if contactsWarn != nil {
-			logger.Warn("address book could not be loaded; continuing with an empty one",
-				"error", contactsWarn)
+			logger.Warn(
+				"address book could not be loaded; continuing with an empty one",
+				"error",
+				contactsWarn,
+			)
 		}
 	}
 
@@ -332,6 +373,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	sup := supervisor.New(supervisor.Config{
 		Network:        cfg.Network,
 		DataDir:        nodeDataDir,
+		WalletDataDir:  cfg.DataDir,
 		SocketPath:     filepath.Join(cfg.DataDir, "node.socket"),
 		UtxorpcPort:    utxorpcPort,
 		BlockfrostPort: blockfrostPort,
@@ -345,7 +387,10 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// The wallet queries the node's own loopback Blockfrost endpoint. The same
 	// client also verifies pasted pool/DRep IDs and reads protocol params for the
 	// staking flow.
-	chainClient := chain.NewClient(blockfrostPort, chain.WithDingoDataDir(nodeDataDir))
+	chainClient := chain.NewClient(
+		blockfrostPort,
+		chain.WithDingoDataDir(nodeDataDir),
+	)
 	walletSvc := wallet.NewService(chainClient)
 
 	// Node-local wallet-activity detector: diffs the active wallet's confirmed
@@ -382,6 +427,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		genesisAdapter{c: poolGenesis},
 		tipAdapter{sup: sup},
 	)
+	poolSvc.SetPoolRegistry(poolRegistryAdapter{c: poolGenesis})
 
 	// DEX swap quotes read pool UTxOs from the node's loopback Blockfrost
 	// endpoint and compute prices/quotes locally. The service returns a clean
@@ -391,7 +437,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// Native multi-sig accounts are persisted under the data dir; signing uses
 	// the active wallet's CIP-1854 key, decrypted from the vault on demand.
 	multisigStorePath := filepath.Join(cfg.DataDir, "multisig.json")
-	multisigSvc := multisig.NewService(chainCtx, vaultKeystore{v: vlt}, scriptAccounts{v: vlt})
+	multisigSvc := multisig.NewService(
+		chainCtx,
+		vaultKeystore{v: vlt},
+		scriptAccounts{v: vlt},
+	)
 
 	// Multi-signature accounts predate the vault and were kept in a plain file
 	// beside it. Move them in on unlock, so they are behind the vault password
@@ -400,11 +450,16 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	// which is why this reports a count and logs its own trouble rather than
 	// propagating an error that would block entry to the wallet.
 	migrateScripts := func(vaultPassword string) int {
-		n, err := multisig.MigrateStoreToVault(multisigStorePath, scriptVault{v: vlt}, vaultPassword)
+		n, err := multisig.MigrateStoreToVault(
+			multisigStorePath,
+			scriptVault{v: vlt},
+			vaultPassword,
+		)
 		if err != nil {
 			logger.Warn(
 				"multi-signature accounts not migrated into the vault; the store is intact and this will retry",
-				"error", err,
+				"error",
+				err,
 			)
 		} else if n > 0 {
 			logger.Info("migrated multi-signature accounts into the vault", "count", n)
@@ -413,7 +468,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	}
 
 	var connectorSvc *connector.Service
-	if cfg.ConnectorEnabled {
+	if cfg.ConnectorEnabled || remoteConfigured {
 		connectorBackend := connector.NewWalletBackendWithReadiness(
 			walletSvc,
 			spendSvc,
@@ -429,6 +484,18 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			},
 		)
 		connectorSvc = connector.NewService(cfg.DataDir, connectorBackend, nil)
+	}
+	var remoteSubmitSvc *remotesubmit.Service
+	if remoteConfigured {
+		remoteSubmitSvc, err = remotesubmit.New(
+			filepath.Join(cfg.DataDir, "remote-submission.json"),
+			cfg.RemoteSubmission.PublicURL,
+			spendSvc,
+			connectorSvc,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("configure remote submission: %w", err)
+		}
 	}
 
 	// NFT discovery reads native-asset units from the active wallet and metadata
@@ -454,7 +521,11 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 			Chain: chainClient, Units: nftUnits, DataDir: cfg.DataDir, Logger: logger,
 		})
 		if nftErr != nil {
-			logger.Warn("nft: service unavailable, NFT media disabled", "err", nftErr)
+			logger.Warn(
+				"nft: service unavailable, NFT media disabled",
+				"err",
+				nftErr,
+			)
 		}
 	}
 
@@ -473,11 +544,47 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		}
 		return nil, fmt.Errorf("bind control surface %q: %w", cfg.Addr, err)
 	}
+	var remoteListener net.Listener
+	if remoteConfigured {
+		certificate, certErr := tls.LoadX509KeyPair(
+			cfg.RemoteSubmission.TLSCertFile,
+			cfg.RemoteSubmission.TLSKeyFile,
+		)
+		if certErr != nil {
+			_ = listener.Close()
+			if nftSvc != nil {
+				_ = nftSvc.Close()
+			}
+			return nil, fmt.Errorf(
+				"load remote submission TLS identity: %w",
+				certErr,
+			)
+		}
+		plainListener, listenErr := net.Listen("tcp", cfg.RemoteSubmission.Addr)
+		if listenErr != nil {
+			_ = listener.Close()
+			if nftSvc != nil {
+				_ = nftSvc.Close()
+			}
+			return nil, fmt.Errorf(
+				"bind remote submission %q: %w",
+				cfg.RemoteSubmission.Addr,
+				listenErr,
+			)
+		}
+		remoteListener = tls.NewListener(plainListener, &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+		})
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	if err := sup.Start(runCtx); err != nil {
 		cancel()
 		_ = listener.Close()
+		if remoteListener != nil {
+			_ = remoteListener.Close()
+		}
 		if nftSvc != nil {
 			_ = nftSvc.Close()
 		}
@@ -494,6 +601,9 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		sup.Stop()
 		cancel()
 		_ = listener.Close()
+		if remoteListener != nil {
+			_ = remoteListener.Close()
+		}
 		if nftSvc != nil {
 			_ = nftSvc.Close()
 		}
@@ -519,9 +629,16 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 		api.WithScriptMigration(migrateScripts),
 		api.WithActivity(activitySvc),
 		api.WithSurveys(surveySvc),
+		api.WithExternalHandleResolver(handle.NewAPIResolver()),
 	}
-	if connectorSvc != nil {
+	if cfg.ConnectorEnabled {
 		handlerOpts = append(handlerOpts, api.WithConnector(connectorSvc))
+	}
+	if remoteSubmitSvc != nil {
+		handlerOpts = append(
+			handlerOpts,
+			api.WithRemoteSubmission(remoteSubmitSvc, connectorSvc),
+		)
 	}
 	if nftSvc != nil {
 		handlerOpts = append(handlerOpts, api.WithNFTs(nftSvc))
@@ -529,7 +646,7 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	handler := api.NewHandler(
 		sessionToken,
 		sup, vlt, walletSvc, spendSvc,
-		&settingsController{store: settingsStore, sup: sup},
+		&settingsController{store: settingsStore, sup: sup, ctx: runCtx},
 		contactsStore,
 		chainClient,
 		poolSvc,
@@ -546,14 +663,41 @@ func Boot(ctx context.Context, cfg Config) (*App, error) {
 	}
 	srvErr := make(chan error, 1)
 	go func() {
-		logger.Info("control surface listening", "addr", listener.Addr().String())
-		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Info(
+			"control surface listening",
+			"addr",
+			listener.Addr().String(),
+		)
+		if err := srv.Serve(listener); err != nil &&
+			!errors.Is(err, http.ErrServerClosed) {
 			srvErr <- err
 		}
 	}()
+	var remoteSrv *http.Server
+	if remoteSubmitSvc != nil {
+		remoteSrv = &http.Server{
+			Handler:           remoteSubmitSvc,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      130 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+		go func() {
+			logger.Info(
+				"remote submission listener ready",
+				"addr",
+				remoteListener.Addr().String(),
+			)
+			if err := remoteSrv.Serve(remoteListener); err != nil &&
+				!errors.Is(err, http.ErrServerClosed) {
+				srvErr <- err
+			}
+		}()
+	}
 
 	return &App{
 		srv:          srv,
+		remoteSrv:    remoteSrv,
 		handler:      handler,
 		listener:     listener,
 		sup:          sup,
@@ -598,9 +742,16 @@ func (a *App) Stop() error {
 	// A detached submission can run for up to submissionctx.Timeout after its
 	// request is gone; draining must outlast it, or Shutdown gives up on a
 	// broadcast that is still bounded and about to finish.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), submissionctx.Timeout+5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		submissionctx.Timeout+5*time.Second,
+	)
 	defer cancel()
-	err := a.srv.Shutdown(shutdownCtx)
+	var err error
+	if a.remoteSrv != nil {
+		err = a.remoteSrv.Shutdown(shutdownCtx)
+	}
+	err = errors.Join(err, a.srv.Shutdown(shutdownCtx))
 	// Cancel the node context AFTER the control surface drains so in-flight API
 	// calls don't see the node yanked out from under them mid-request.
 	a.stop()
@@ -658,6 +809,7 @@ func (a *App) reconnect() error {
 type settingsController struct {
 	store *settings.Store
 	sup   *supervisor.Supervisor
+	ctx   context.Context
 }
 
 func (c *settingsController) HistoryExpiry() bool { return c.store.HistoryExpiry() }
@@ -694,6 +846,18 @@ func (c *settingsController) Notifications() bool { return c.store.Notifications
 
 func (c *settingsController) SetNotifications(enabled bool) error {
 	return c.store.SetNotifications(enabled)
+}
+
+func (c *settingsController) ExternalHandleLookup() bool {
+	return c.store.ExternalHandleLookup()
+}
+
+func (c *settingsController) SetExternalHandleLookup(enabled bool) error {
+	return c.store.SetExternalHandleLookup(enabled)
+}
+
+func (c *settingsController) RecoverNode() error {
+	return c.sup.Recover(c.ctx)
 }
 
 // diagChain adapts the loopback Blockfrost chain client to the diagnostics
@@ -734,6 +898,26 @@ func (g genesisAdapter) Genesis(ctx context.Context) (poolops.Genesis, error) {
 	}, nil
 }
 
+// poolRegistryAdapter tells the SPO toolkit whether the node already knows a
+// pool, so registration submits lock the pool deposit only for a new pool. It
+// reads the node directly rather than the cached pool list, which can miss a
+// pool registered within the cache lifetime and so add a deposit to an update.
+type poolRegistryAdapter struct{ c *chain.Client }
+
+func (p poolRegistryAdapter) PoolRegistered(
+	ctx context.Context,
+	poolID string,
+) (bool, error) {
+	_, err := p.c.PoolUncached(ctx, poolID)
+	if errors.Is(err, chain.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // tipAdapter exposes the supervisor's current tip slot to the SPO toolkit.
 // TipSlot returns an error when the node has not yet caught up to the chain
 // tip so that KES-period calculations do not silently use a stale slot.
@@ -742,7 +926,10 @@ type tipAdapter struct{ sup *supervisor.Supervisor }
 func (t tipAdapter) TipSlot() (uint64, error) {
 	st := t.sup.Status()
 	if st.State != supervisor.StateReady {
-		return 0, fmt.Errorf("node is not synced (state: %s); wait for it to reach 'ready' before issuing opcerts", st.State)
+		return 0, fmt.Errorf(
+			"node is not synced (state: %s); wait for it to reach 'ready' before issuing opcerts",
+			st.State,
+		)
 	}
 	return st.Tip, nil
 }
@@ -754,7 +941,10 @@ func (t tipAdapter) TipSlot() (uint64, error) {
 // in place and starts the node from an empty directory, which resyncs. Either
 // location failing to stat is an error instead: creating the node directory
 // would end the one-time move, so the decision is left to a later start.
-func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, error) {
+func prepareNodeDataDir(
+	dataDir, nodeDir string,
+	logger *slog.Logger,
+) (string, error) {
 	legacy := filepath.Join(dataDir, "db")
 	if nodeDir == "" || nodeDir == legacy {
 		return legacy, nil
@@ -767,14 +957,29 @@ func prepareNodeDataDir(dataDir, nodeDir string, logger *slog.Logger) (string, e
 		switch {
 		case legacyErr == nil:
 			if err := os.MkdirAll(filepath.Dir(nodeDir), 0o700); err != nil {
-				return "", fmt.Errorf("create node data dir parent %q: %w", nodeDir, err)
+				return "", fmt.Errorf(
+					"create node data dir parent %q: %w",
+					nodeDir,
+					err,
+				)
 			}
 			if err := os.Rename(legacy, nodeDir); err != nil {
-				logger.Warn("could not move the node database to its own directory; it will resync",
-					"from", legacy, "to", nodeDir, "error", err)
+				logger.Warn(
+					"could not move the node database to its own directory; it will resync",
+					"from",
+					legacy,
+					"to",
+					nodeDir,
+					"error",
+					err,
+				)
 			}
 		case !errors.Is(legacyErr, os.ErrNotExist):
-			return "", fmt.Errorf("inspect legacy node database %q: %w", legacy, legacyErr)
+			return "", fmt.Errorf(
+				"inspect legacy node database %q: %w",
+				legacy,
+				legacyErr,
+			)
 		}
 	default:
 		return "", fmt.Errorf("inspect node data dir %q: %w", nodeDir, err)

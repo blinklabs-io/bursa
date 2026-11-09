@@ -16,7 +16,8 @@ type accountIdentity struct {
 }
 
 func (i accountIdentity) valid() bool {
-	return i.WalletID != "" && strings.TrimSpace(i.WalletID) == i.WalletID && i.AccountIndex < 1<<31
+	return i.WalletID != "" && strings.TrimSpace(i.WalletID) == i.WalletID &&
+		i.AccountIndex < 1<<31
 }
 
 type grant struct {
@@ -59,7 +60,11 @@ func (g *GrantStore) Grant(origin string, identity accountIdentity) error {
 	if !identity.valid() {
 		return ErrNotGranted
 	}
-	item := grant{Origin: origin, WalletID: identity.WalletID, AccountIndex: identity.AccountIndex}
+	item := grant{
+		Origin:       origin,
+		WalletID:     identity.WalletID,
+		AccountIndex: identity.AccountIndex,
+	}
 	return g.mutate(func(s map[grant]bool) { s[item] = true })
 }
 
@@ -70,7 +75,11 @@ func (g *GrantStore) Revoke(origin string, identity accountIdentity) error {
 	if !identity.valid() {
 		return ErrNotGranted
 	}
-	item := grant{Origin: origin, WalletID: identity.WalletID, AccountIndex: identity.AccountIndex}
+	item := grant{
+		Origin:       origin,
+		WalletID:     identity.WalletID,
+		AccountIndex: identity.AccountIndex,
+	}
 	return g.mutate(func(s map[grant]bool) { delete(s, item) })
 }
 

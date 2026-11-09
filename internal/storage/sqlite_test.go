@@ -64,6 +64,18 @@ func TestSQLiteDatabasePath(t *testing.T) {
 			wantFile: true,
 		},
 		{
+			name:     "hierarchical URI decodes once",
+			dsn:      "file:///tmp/wallet%252Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet%2Dstore.db",
+			wantFile: true,
+		},
+		{
+			name:     "localhost URI decodes once",
+			dsn:      "file://localhost/tmp/wallet%252Dstore.db?mode=rwc",
+			wantPath: "/tmp/wallet%2Dstore.db",
+			wantFile: true,
+		},
+		{
 			name:     "remote URI authority",
 			dsn:      "file://other-host/tmp/wallets.db",
 			wantFile: false,
@@ -286,8 +298,16 @@ func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
 	sqliteWallet, ok := wallet.(*sqliteWallet)
 	require.True(t, ok)
 	assert.Zero(t, sqliteWallet.id)
-	assert.Zero(t, countRows(t, store, "wallets"), "failed save left a wallet row")
-	assert.Zero(t, countRows(t, store, "wallet_items"), "failed save left item rows")
+	assert.Zero(
+		t,
+		countRows(t, store, "wallets"),
+		"failed save left a wallet row",
+	)
+	assert.Zero(
+		t,
+		countRows(t, store, "wallet_items"),
+		"failed save left item rows",
+	)
 
 	_, err = store.db.Exec("DROP TRIGGER fail_wallet_item_insert")
 	require.NoError(t, err)
@@ -303,7 +323,10 @@ func TestSQLiteWalletSaveDoesNotPublishIDBeforeCommit(t *testing.T) {
 func countRows(t *testing.T, store *SQLiteStore, table string) int {
 	t.Helper()
 	var n int
-	require.NoError(t, store.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+	require.NoError(
+		t,
+		store.db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n),
+	)
 	return n
 }
 
@@ -562,7 +585,10 @@ func TestSQLiteFragmentIsNotPartOfTheFilename(t *testing.T) {
 
 	info, err := os.Stat(dbPath)
 	if err != nil {
-		t.Fatalf("the database SQLite opened should be the one we secured: %v", err)
+		t.Fatalf(
+			"the database SQLite opened should be the one we secured: %v",
+			err,
+		)
 	}
 	if runtime.GOOS != "windows" {
 		if got := info.Mode().Perm(); got != sqliteFileMode {

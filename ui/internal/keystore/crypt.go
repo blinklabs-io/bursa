@@ -48,7 +48,11 @@ type container = Container
 // encrypt seals plaintext under password using scrypt (cost kdf) + AES-256-GCM,
 // returning a self-describing Container. This is the single encrypt primitive
 // reused by both the mnemonic keystore and the vault index.
-func encrypt(plaintext []byte, password []byte, kdf kdfParams) (Container, error) {
+func encrypt(
+	plaintext []byte,
+	password []byte,
+	kdf kdfParams,
+) (Container, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return Container{}, err
@@ -91,7 +95,13 @@ func decrypt(c Container, password []byte, kdf kdfParams) ([]byte, error) {
 		c.N < kdf.minN || c.N > kdf.maxN ||
 		c.R < kdf.minR || c.R > kdf.maxR ||
 		c.P < kdf.minP || c.P > kdf.maxP {
-		return nil, fmt.Errorf("unsupported KDF params (kdf=%q n=%d r=%d p=%d)", c.KDF, c.N, c.R, c.P)
+		return nil, fmt.Errorf(
+			"unsupported KDF params (kdf=%q n=%d r=%d p=%d)",
+			c.KDF,
+			c.N,
+			c.R,
+			c.P,
+		)
 	}
 	salt, err := hex.DecodeString(c.Salt)
 	if err != nil {
@@ -108,6 +118,14 @@ func decrypt(c Container, password []byte, kdf kdfParams) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	authFailed := false
+	if kdf == productionKDF {
+		finish, err := processUnlockBudget.begin()
+		if err != nil {
+			return nil, err
+		}
+		defer func() { finish(authFailed) }()
+	}
 	key, err := scrypt.Key(password, salt, c.N, c.R, c.P, keyLen)
 	if err != nil {
 		return nil, fmt.Errorf("scrypt: %w", err)
@@ -123,7 +141,11 @@ func decrypt(c Container, password []byte, kdf kdfParams) ([]byte, error) {
 	}
 	pt, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: wrong password or corrupt container", ErrDecryptFailed)
+		authFailed = true
+		return nil, fmt.Errorf(
+			"%w: wrong password or corrupt container",
+			ErrDecryptFailed,
+		)
 	}
 	return pt, nil
 }

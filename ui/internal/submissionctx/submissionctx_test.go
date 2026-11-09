@@ -8,8 +8,13 @@ import (
 
 func TestNewBoundsDisconnectedSubmission(t *testing.T) {
 	key := struct{}{}
-	parent, cancel := context.WithCancel(context.WithValue(context.Background(), key, "preserved"))
-	parentDeadline, parentCancel := context.WithDeadline(parent, time.Now().Add(time.Hour))
+	parent, cancel := context.WithCancel(
+		context.WithValue(context.Background(), key, "preserved"),
+	)
+	parentDeadline, parentCancel := context.WithDeadline(
+		parent,
+		time.Now().Add(time.Hour),
+	)
 	defer parentCancel()
 	ctx, submissionCancel := New(parentDeadline)
 	defer submissionCancel()
@@ -25,7 +30,12 @@ func TestNewBoundsDisconnectedSubmission(t *testing.T) {
 	if !ok {
 		t.Fatal("submission context has no deadline")
 	}
-	if remaining := time.Until(deadline); remaining <= 0 || remaining > Timeout {
-		t.Fatalf("deadline remaining = %s, want >0 and <= %s", remaining, Timeout)
+	if remaining := time.Until(deadline); remaining <= 0 ||
+		remaining > Timeout {
+		t.Fatalf(
+			"deadline remaining = %s, want >0 and <= %s",
+			remaining,
+			Timeout,
+		)
 	}
 }

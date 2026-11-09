@@ -17,12 +17,59 @@
 package bursa
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+func openForOwnershipAdoption(file *os.File) (windows.Handle, error) {
+	attrs := &windows.OBJECT_ATTRIBUTES{
+		RootDirectory: windows.Handle(file.Fd()),
+		ObjectName:    &windows.NTUnicodeString{},
+		Attributes:    windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE,
+	}
+	attrs.Length = uint32(unsafe.Sizeof(*attrs))
+	var handle windows.Handle
+	open := func() error {
+		return windows.NtCreateFile(
+			&handle,
+			windows.SYNCHRONIZE|windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER,
+			attrs,
+			&windows.IO_STATUS_BLOCK{},
+			nil,
+			windows.FILE_ATTRIBUTE_NORMAL,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+			windows.FILE_OPEN,
+			windows.FILE_SYNCHRONOUS_IO_NONALERT|
+				windows.FILE_OPEN_FOR_BACKUP_INTENT|
+				windows.FILE_OPEN_REPARSE_POINT,
+			0,
+			0,
+		)
+	}
+	err := open()
+	if errors.Is(err, windows.STATUS_INVALID_PARAMETER) {
+		attrs.Attributes &^= windows.OBJ_DONT_REPARSE
+		handle = 0
+		err = open()
+	}
+	if err != nil {
+		var status windows.NTStatus
+		if errors.As(err, &status) {
+			err = status.Errno()
+		}
+		return 0, fmt.Errorf(
+			"failed to open %q for ownership adoption: %w",
+			file.Name(),
+			err,
+		)
+	}
+	return handle, nil
+}
 
 var insecureKeyFileSIDs = map[string]string{
 	"WD":           "Everyone",
@@ -32,9 +79,8 @@ var insecureKeyFileSIDs = map[string]string{
 	"AU":           "Authenticated Users",
 	"S-1-5-11":     "Authenticated Users",
 	// Built-in Administrators is rejected as a trustee outright (both the SDDL
-	// alias and its numeric SID) so an allow ACE granting every local
-	// administrator is refused even when the file is owned by that group
-	// (O:BA), where the owner allow-list would otherwise re-admit it.
+	// alias and its numeric SID) so an allow ACE cannot grant every local
+	// administrator access.
 	"BA":           `BUILTIN\Administrators`,
 	"S-1-5-32-544": `BUILTIN\Administrators`,
 }
@@ -74,7 +120,10 @@ func ownerOnlySecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, string, error)
 		fmt.Sprintf("O:%[1]sD:P(A;;GA;;;%[1]s)", userSID),
 	)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create owner-only security descriptor: %w", err)
+		return nil, "", fmt.Errorf(
+			"failed to create owner-only security descriptor: %w",
+			err,
+		)
 	}
 	return descriptor, userSID, nil
 }
@@ -84,17 +133,54 @@ func restrictSecretKeyFilePermissions(file *os.File) error {
 	if err != nil {
 		return err
 	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return fmt.Errorf("failed to get current-user owner: %w", err)
+	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil {
 		return fmt.Errorf("failed to get owner-only DACL: %w", err)
 	}
-	if err := windows.SetSecurityInfo(
+	existing, err := windows.GetSecurityInfo(
 		windows.Handle(file.Fd()),
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
+		windows.OWNER_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to get owner for %q: %w", file.Name(), err)
+	}
+	existingOwner, _, err := existing.Owner()
+	if err != nil {
+		return fmt.Errorf("failed to read owner for %q: %w", file.Name(), err)
+	}
+	if existingOwner == nil {
+		return fmt.Errorf("file %q has no owner", file.Name())
+	}
+	securityInformation := windows.SECURITY_INFORMATION(
+		windows.DACL_SECURITY_INFORMATION |
+			windows.PROTECTED_DACL_SECURITY_INFORMATION,
+	)
+	var newOwner *windows.SID
+	securityHandle := windows.Handle(file.Fd())
+	if !existingOwner.Equals(owner) {
+		securityInformation |= windows.OWNER_SECURITY_INFORMATION
+		newOwner = owner
+		securityHandle, err = openForOwnershipAdoption(file)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = windows.CloseHandle(securityHandle) }()
+	}
+	if err := windows.SetSecurityInfo(
+		securityHandle,
+		windows.SE_FILE_OBJECT,
+		securityInformation,
+		newOwner, nil, dacl, nil,
 	); err != nil {
-		return fmt.Errorf("failed to set owner-only DACL: %w", err)
+		return fmt.Errorf(
+			"failed to set current-user ownership and DACL: %w",
+			err,
+		)
 	}
 	return nil
 }
@@ -106,12 +192,80 @@ func checkOpenFilePermissions(file *os.File) error {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to get security info for %q: %w", file.Name(), err)
+		return fmt.Errorf(
+			"failed to get security info for %q: %w",
+			file.Name(),
+			err,
+		)
 	}
 	return checkOpenSecurityDescriptor(file.Name(), descriptor)
 }
 
-func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCRIPTOR) error {
+// sddlTrustee returns how SDDL writes sid as an ACE trustee. SDDL replaces
+// some account SIDs with a two-letter alias, such as "LA" for the built-in
+// local Administrator account, so comparing an ACE against the numeric SID
+// alone rejects that account's own owner-only DACL.
+func sddlTrustee(sid string) (string, error) {
+	descriptor, err := windows.SecurityDescriptorFromString(
+		"D:(A;;GA;;;" + sid + ")",
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to render SID %s as SDDL: %w", sid, err)
+	}
+	sddl := descriptor.String()
+	start := strings.LastIndexByte(sddl, ';')
+	end := strings.LastIndexByte(sddl, ')')
+	if start < 0 || end <= start {
+		return "", fmt.Errorf("unexpected SDDL %q for SID %s", sddl, sid)
+	}
+	return sddl[start+1 : end], nil
+}
+
+func checkOpenSecurityDescriptor(
+	path string,
+	descriptor *windows.SECURITY_DESCRIPTOR,
+) error {
+	_, currentUser, err := ownerOnlySecurityDescriptor()
+	if err != nil {
+		return err
+	}
+	return checkSecurityDescriptorForUser(path, descriptor, currentUser)
+}
+
+// checkSecurityDescriptorForUser applies the secret-file policy for the
+// account whose numeric SID is currentUser.
+func checkSecurityDescriptorForUser(
+	path string,
+	descriptor *windows.SECURITY_DESCRIPTOR,
+	currentUser string,
+) error {
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil {
+		return fmt.Errorf(
+			"secret key file %q has no readable owner: %w",
+			path, ErrInsecureFileMode,
+		)
+	}
+	if owner.String() != currentUser {
+		return fmt.Errorf(
+			"secret key file %q is owned by an unexpected identity: %w",
+			path, ErrInsecureFileMode,
+		)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		return fmt.Errorf(
+			"failed to read security descriptor control for %q: %w",
+			path,
+			err,
+		)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return fmt.Errorf(
+			"secret key file %q has an unprotected DACL: %w",
+			path, ErrInsecureFileMode,
+		)
+	}
 	daclObject, _, err := descriptor.DACL()
 	if err != nil || daclObject == nil {
 		return fmt.Errorf(
@@ -132,28 +286,20 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 		)
 	}
 	dacl := sddl[daclStart+2:]
-	owner := sddlSection(sddl, "O:")
-	if owner == "" {
-		return fmt.Errorf(
-			"secret key file %q has no owner in its security descriptor: %w",
-			path, ErrInsecureFileMode,
-		)
-	}
-	// Built-in Administrators is rejected earlier via insecureKeyFileSIDs (so an
-	// (A;;GA;;;BA) ACE fails even when the owner is BA); it is therefore absent
-	// here. Only the file owner, the current user, the OS (Local System), and
-	// the owner-equivalent aliases may hold an allow ACE.
+	// Built-in Administrators is rejected earlier via insecureKeyFileSIDs.
+	// Only the current user, the OS, and owner-equivalent aliases may hold an
+	// allow ACE.
 	allowed := map[string]bool{
-		owner: true,
-		"SY":  true, // Local System
-		"CO":  true, // Creator Owner
-		"OW":  true, // Owner Rights
+		currentUser: true,
+		"SY":        true, // Local System
+		"CO":        true, // Creator Owner
+		"OW":        true, // Owner Rights
 	}
-	_, currentUser, err := ownerOnlySecurityDescriptor()
+	alias, err := sddlTrustee(currentUser)
 	if err != nil {
 		return err
 	}
-	allowed[currentUser] = true
+	allowed[alias] = true
 	if saclStart := strings.Index(dacl, "S:"); saclStart >= 0 {
 		dacl = dacl[:saclStart]
 	}
@@ -201,19 +347,4 @@ func checkOpenSecurityDescriptor(path string, descriptor *windows.SECURITY_DESCR
 		}
 	}
 	return nil
-}
-
-func sddlSection(sddl, section string) string {
-	start := strings.Index(sddl, section)
-	if start < 0 {
-		return ""
-	}
-	value := sddl[start+len(section):]
-	end := len(value)
-	for _, next := range []string{"O:", "G:", "D:", "S:"} {
-		if idx := strings.Index(value, next); idx >= 0 && idx < end {
-			end = idx
-		}
-	}
-	return value[:end]
 }

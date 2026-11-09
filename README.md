@@ -70,12 +70,15 @@ signer:
     dsn_env: BURSA_SIGNER_WATERMARK_POSTGRES_DSN
 ```
 
-Set the named environment variable to a pgx/libpq connection string. Remote
-connections should require server identity verification, for example:
+Set the named environment variable to a pgx/libpq connection string. Bursa
+requires remote connections to verify the server hostname, for example:
 
 ```text
 postgres://bursa@postgres.example/bursa?sslmode=verify-full&sslrootcert=/etc/bursa/postgres-ca.pem
 ```
+
+Unix sockets, `localhost`, and loopback addresses may connect without TLS for
+local development.
 
 Supply the password through the process environment or another pgx-supported
 credential mechanism; do not store credentials in the YAML file. The database
@@ -106,13 +109,14 @@ private key, and exactly one of these API trust sources is configured:
 - `API_JWKS_URL` / `api.jwks_url`: an HTTPS JWKS endpoint (plain HTTP is only
   accepted for loopback development).
 
-`API_JWT_ISSUER` / `api.jwt_issuer` and `API_JWT_AUDIENCE` /
-`api.jwt_audience` optionally constrain accepted bearer tokens. The secret,
+`API_JWT_AUDIENCE` / `api.jwt_audience` is required with either trust source,
+and every bearer token must carry it in `aud`; startup fails without it.
+`API_JWT_ISSUER` / `api.jwt_issuer` optionally constrains the issuer. The secret,
 signing, and mnemonic/address-derivation endpoints require an
 `Authorization: Bearer <JWT>` header whenever API authentication is configured.
-When Google Secret Manager persistence is enabled, the wallet
-`list`, `get`, `update`, and `delete` endpoints use the same authentication
-requirement and additionally require a subject listed in
+When wallet persistence is enabled, the wallet `create`, `restore`, `list`,
+`get`, `update`, and `delete` endpoints use the same authentication requirement
+and additionally require a subject listed in
 `API_JWT_ADMIN_SUBJECTS` / `api.jwt_admin_subjects`. This is an explicit
 global-administrator model; wallet names are not caller ownership boundaries.
 Wallet creation is `POST /api/wallet/create`; wallet responses are marked
@@ -160,6 +164,16 @@ opt-in writes mnemonics and signing keys in plaintext; deleting a SQLite wallet
 does not guarantee that old page data is removed from the database file. Use
 the opt-in only for isolated development or test deployments.
 
+Bursa restricts the SQLite database and its `-wal`, `-shm` and `-journal`
+files to the owning account. On Windows it also refuses to open a database
+whose directory, or any parent directory, is owned by another account or lets
+another account delete, rename, take ownership of, or change permissions on
+its entries: such an account could replace a file after Bursa checks it and
+before SQLite opens it. A directory on the path that is a junction or symbolic
+link is also refused when another account may write to it, since that is
+enough to retarget it. Administrators, SYSTEM and TrustedInstaller are
+exempt. Keep the database in a directory under the account's profile.
+
 ### AWS Secrets Manager wallet storage
 
 To persist API-created wallets in AWS Secrets Manager, select the AWS backend
@@ -181,17 +195,19 @@ api:
 
 Set `STORAGE_BACKEND`, `AWS_SECRET_PREFIX`, and `AWS_KMS_KEY_ARN` through the
 process environment when those values should stay outside the config file.
-Configure `API_JWT_SECRET` or `API_JWKS_URL` as the API trust source. Remote
-API listeners also require TLS.
+Configure `API_JWT_SECRET` or `API_JWKS_URL` as the API trust source, together
+with `API_JWT_AUDIENCE`. Remote API listeners also require TLS.
 
 ### Kubernetes and Helm deployment contract
 
 The Bursa container listens on loopback by default. A Kubernetes Service must
 set `API_LISTEN_ADDRESS` to the pod address (normally `0.0.0.0`) and preserve
-the API and metrics container/Service ports of `8080` and `8081`. When Google
+the API container/Service port of `8080`. Metrics are served only on the
+dedicated loopback listener, which defaults to `127.0.0.1:8081`; scrape it with
+a collector in the same pod. When Google
 Secret Manager persistence is enabled, the deployment must inject
 `GOOGLE_PROJECT`, `GCP_KMS_RESOURCE_ID`, and `GCP_SECRET_PREFIX`, provide
-`API_JWT_SECRET` or `API_JWKS_URL`, provide at least one
+`API_JWT_SECRET` or `API_JWKS_URL` with `API_JWT_AUDIENCE`, provide at least one
 `API_JWT_ADMIN_SUBJECTS` value, and mount the matching TLS certificate and key
 as `API_TLS_CERT_FILE` and `API_TLS_KEY_FILE`. The API refuses a non-loopback
 listener without both TLS files and authentication. These values belong in
@@ -240,6 +256,7 @@ bursa key payment --mnemonic-file seed.txt --signing-key-file - # Payment key (C
 bursa key stake --mnemonic-file seed.txt --signing-key-file - # Stake key (CIP-1852)
 bursa key policy --mnemonic-file seed.txt --signing-key-file - # Forging policy key (CIP-1855)
 bursa key pool-cold --mnemonic-file seed.txt --signing-key-file - # Pool cold key (CIP-1853)
+bursa key pool-owner --mnemonic-file seed.txt --signing-key-file owner.skey # Plain Ed25519 stake key for hardware (CIP-1852 path)
 bursa key drep --mnemonic-file seed.txt --signing-key-file - # DRep key (CIP-0105)
 bursa key committee-cold --mnemonic-file seed.txt --signing-key-file - # Committee cold key (CIP-0105)
 bursa key committee-hot --mnemonic-file seed.txt --signing-key-file - # Committee hot key (CIP-0105)
@@ -320,6 +337,11 @@ standard, non-extended Ed25519 seed envelope, matching the pool verification
 key and pool ID. The optional extended pool-cold envelope expands that same
 seed and therefore implies the same pool identity. Bursa continues to accept
 valid non-extended envelopes produced from genuine Ed25519 seeds.
+
+`bursa key pool-owner` applies the same seed rule to the CIP-1852 stake path,
+for hardware that holds only plain Ed25519 keys. Its public key, stake key hash
+and reward address differ from those of `bursa key stake` for the same path, so
+a wallet restored from the mnemonic does not show them.
 
 Signing files generated by older Bursa versions may declare a non-extended
 type while containing the first 32 bytes of an HD key. Such a file does not

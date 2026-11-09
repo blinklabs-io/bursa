@@ -30,9 +30,35 @@ type SqliteWatermark struct {
 	db *sql.DB
 }
 
+// sqliteDSN is the data source NewSqliteWatermark opens for path.
+func sqliteDSN(path string) string {
+	return path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+}
+
+// SqliteFileBacked opens path as NewSqliteWatermark does and reports whether
+// SQLite backs the main database with a file. An in-memory database, such as
+// path ":memory:" or "file::memory:", reports false: its records do not
+// survive a restart. Opening a file path creates the file if it is missing.
+func SqliteFileBacked(path string) (bool, error) {
+	db, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		return false, fmt.Errorf("open watermark db: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	var (
+		seq        int
+		name, file string
+	)
+	if err := db.QueryRow(`PRAGMA database_list`).Scan(&seq, &name, &file); err != nil {
+		return false, fmt.Errorf("open watermark db: %w", err)
+	}
+	return file != "", nil
+}
+
 // NewSqliteWatermark opens (creating if needed) a sqlite watermark store at path.
 func NewSqliteWatermark(path string) (*SqliteWatermark, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open watermark db: %w", err)
 	}
@@ -98,11 +124,17 @@ func (s *SqliteWatermark) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *SqliteWatermark) Check(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (s *SqliteWatermark) Check(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	d := digest(payload)
 	want := hex.EncodeToString(d[:])
 	var have string
-	err := s.db.QueryRowContext(ctx, `SELECT payload_hash FROM watermark WHERE record_key = ?`, recordKey(key, scope)).Scan(&have)
+	err := s.db.QueryRowContext(ctx, `SELECT payload_hash FROM watermark WHERE record_key = ?`, recordKey(key, scope)).
+		Scan(&have)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -115,7 +147,12 @@ func (s *SqliteWatermark) Check(ctx context.Context, key backend.KeyHash, scope 
 	return nil
 }
 
-func (s *SqliteWatermark) CheckAndCommit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (s *SqliteWatermark) CheckAndCommit(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	d := digest(payload)
 	want := hex.EncodeToString(d[:])
 	var have string
@@ -137,7 +174,12 @@ func (s *SqliteWatermark) CheckAndCommit(ctx context.Context, key backend.KeyHas
 	return nil
 }
 
-func (s *SqliteWatermark) Commit(ctx context.Context, key backend.KeyHash, scope string, payload []byte) error {
+func (s *SqliteWatermark) Commit(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
 	d := digest(payload)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO watermark (record_key, payload_hash) VALUES (?, ?)
@@ -149,7 +191,11 @@ func (s *SqliteWatermark) Commit(ctx context.Context, key backend.KeyHash, scope
 	return nil
 }
 
-func (s *SqliteWatermark) CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+func (s *SqliteWatermark) CounterFor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+) (uint64, bool, error) {
 	var have string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT counter FROM counter_watermark WHERE record_key = ?`,
@@ -162,12 +208,20 @@ func (s *SqliteWatermark) CounterFor(ctx context.Context, key backend.KeyHash, s
 	}
 	v, err := counterDecode(have)
 	if err != nil {
-		return 0, false, fmt.Errorf("counter watermark: corrupt stored counter %q", have)
+		return 0, false, fmt.Errorf(
+			"counter watermark: corrupt stored counter %q",
+			have,
+		)
 	}
 	return v, true, nil
 }
 
-func (s *SqliteWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
+func (s *SqliteWatermark) CheckAndCommitCounter(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	counter uint64,
+) error {
 	// Single atomic upsert: insert when no row exists, else update only when the
 	// new counter is strictly greater. When the guard fails the DO UPDATE is a
 	// no-op and RETURNING yields no row (sql.ErrNoRows) -> regression. This is the
@@ -189,6 +243,127 @@ func (s *SqliteWatermark) CheckAndCommitCounter(ctx context.Context, key backend
 	}
 	if have != want {
 		return ErrCounterRegression
+	}
+	return nil
+}
+
+func (s *SqliteWatermark) CheckAndRaiseFloor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	value uint64,
+) error {
+	// The same single-statement upsert as CheckAndCommitCounter, with the
+	// guard relaxed to >= so an unchanged floor is accepted.
+	want := counterEncode(value)
+	var have string
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO counter_watermark (record_key, counter) VALUES (?, ?)
+		 ON CONFLICT(record_key) DO UPDATE SET counter = excluded.counter, updated_at = strftime('%s','now')
+		 WHERE excluded.counter >= counter_watermark.counter
+		 RETURNING counter`,
+		recordKey(key, scope), want).Scan(&have)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrCounterRegression
+	}
+	if err != nil {
+		return fmt.Errorf("counter watermark raise floor: %w", err)
+	}
+	if have != want {
+		return ErrCounterRegression
+	}
+	return nil
+}
+
+// sqliteCounterUpsert returns the guarded upsert for op and its arguments
+// (after the record key and encoded value). The guards match the single-scope
+// methods.
+func sqliteCounterUpsert(op CounterOp) (string, []any) {
+	var guard string
+	var extra []any
+	switch op.Kind {
+	case CounterFloor:
+		guard = `excluded.counter >= counter_watermark.counter`
+	case CounterFloorFrom:
+		guard = `excluded.counter >= counter_watermark.counter AND counter_watermark.counter >= ?`
+		extra = []any{counterEncode(op.Min)}
+	case CounterStrict:
+		guard = `excluded.counter > counter_watermark.counter`
+	case CounterEqual:
+		// checked by its own read, never upserted
+		guard = `false`
+	default:
+		guard = `false`
+	}
+	return `INSERT INTO counter_watermark (record_key, counter) VALUES (?, ?)
+		 ON CONFLICT(record_key) DO UPDATE SET counter = excluded.counter, updated_at = strftime('%s','now')
+		 WHERE ` + guard + `
+		 RETURNING counter`, extra
+}
+
+// CheckAndCommitCounters applies every op's guarded upsert in one transaction
+// and rolls back on the first refusal.
+func (s *SqliteWatermark) CheckAndCommitCounters(
+	ctx context.Context,
+	key backend.KeyHash,
+	ops ...CounterOp,
+) error {
+	if err := validateCounterOps(ops); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("counter watermark begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, op := range ops {
+		if op.Kind == CounterEqual {
+			if err := sqliteRequireCounter(ctx, tx, key, op); err != nil {
+				return err
+			}
+			continue
+		}
+		q, extra := sqliteCounterUpsert(op)
+		want := counterEncode(op.Value)
+		var have string
+		err := tx.QueryRowContext(ctx, q, append([]any{recordKey(key, op.Scope), want}, extra...)...).
+			Scan(&have)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && have != want) {
+			return &CounterRegressionError{Scope: op.Scope}
+		}
+		if err != nil {
+			return fmt.Errorf("counter watermark check and commit: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("counter watermark commit: %w", err)
+	}
+	return nil
+}
+
+// sqliteRequireCounter checks a CounterEqual op inside tx. The insert of a
+// missing record at 0 is a write, so the transaction holds SQLite's write lock
+// before it reads, and a reset in another process cannot slip in between.
+func sqliteRequireCounter(
+	ctx context.Context,
+	tx *sql.Tx,
+	key backend.KeyHash,
+	op CounterOp,
+) error {
+	rk := recordKey(key, op.Scope)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO counter_watermark (record_key, counter) VALUES (?, ?)`,
+		rk, counterEncode(0)); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	var have string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT counter FROM counter_watermark WHERE record_key = ?`,
+		rk).Scan(&have); err != nil {
+		return fmt.Errorf("counter watermark check and commit: %w", err)
+	}
+	if have != counterEncode(op.Value) {
+		return &CounterRegressionError{Scope: op.Scope}
 	}
 	return nil
 }

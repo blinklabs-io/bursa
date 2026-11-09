@@ -46,7 +46,10 @@ type Bootstrapper interface {
 // mithrilBootstrapper is the real Bootstrapper backed by dingo's mithril.Sync.
 type mithrilBootstrapper struct{ logger *slog.Logger }
 
-func (b mithrilBootstrapper) Bootstrap(ctx context.Context, p BootstrapParams) error {
+func (b mithrilBootstrapper) Bootstrap(
+	ctx context.Context,
+	p BootstrapParams,
+) error {
 	_, err := mithril.Sync(ctx, syncConfigFor(p, b.logger))
 	return err
 }
@@ -127,7 +130,11 @@ func shouldBootstrap(enabled bool, dataDir string) bool {
 	return enabled && !bootstrapDone(dataDir)
 }
 
-func markerPath(dataDir string) string { return filepath.Join(dataDir, bootstrapMarker) }
+func markerPath(
+	dataDir string,
+) string {
+	return filepath.Join(dataDir, bootstrapMarker)
+}
 
 // bootstrapDone reports whether a completed-bootstrap marker exists. Only a
 // definitively-missing marker counts as "not bootstrapped": any other stat

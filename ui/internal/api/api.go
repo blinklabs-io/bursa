@@ -37,6 +37,7 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/multisig"
 	"github.com/blinklabs-io/bursa/ui/internal/nft"
 	"github.com/blinklabs-io/bursa/ui/internal/poolops"
+	"github.com/blinklabs-io/bursa/ui/internal/remotesubmit"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/supervisor"
 	"github.com/blinklabs-io/bursa/ui/internal/survey"
@@ -65,7 +66,10 @@ type Wallet interface {
 	// BalanceForAccount aggregates the balance of an explicitly supplied account
 	// (not necessarily the bound one) — used to summarize each account in the
 	// multi-account listing without rebinding.
-	BalanceForAccount(ctx context.Context, acct *wallet.Account) (wallet.Balance, error)
+	BalanceForAccount(
+		ctx context.Context,
+		acct *wallet.Account,
+	) (wallet.Balance, error)
 	// LocalAddresses returns the derived receive window without consulting the
 	// node, so Receive remains available during startup and bootstrap.
 	LocalAddresses() (wallet.AddressView, error)
@@ -92,13 +96,34 @@ type Spender interface {
 	// SetAccount("", nil) clears the active wallet binding and pending sends.
 	SetAccount(id string, acct *wallet.Account)
 	Build(ctx context.Context, req spend.SendRequest) (spend.Preview, error)
-	Confirm(ctx context.Context, pendingID, password string) (spend.TxResult, error)
-	SignData(addr string, message []byte, password string) (signatureHex, keyHex string, err error)
-	VerifyData(signatureHex, keyHex string, message []byte, hashed bool, expectedAddress string) (valid bool, address string, err error)
+	Confirm(
+		ctx context.Context,
+		pendingID, password string,
+	) (spend.TxResult, error)
+	SignData(
+		addr string,
+		message []byte,
+		password string,
+	) (signatureHex, keyHex string, err error)
+	VerifyData(
+		signatureHex, keyHex string,
+		message []byte,
+		hashed bool,
+		expectedAddress string,
+	) (valid bool, address string, err error)
 	ExportUnsigned(pendingID string) (spend.UnsignedTx, error)
-	SignTx(unsignedTxCBOR, password string, requiredSigners []string) (spend.Witness, error)
-	SubmitSigned(ctx context.Context, unsignedTxCBOR, witnessCBOR string) (spend.TxResult, error)
-	BuildDelegation(ctx context.Context, req spend.DelegationRequest) (spend.DelegationPreview, error)
+	SignTx(
+		unsignedTxCBOR, password string,
+		requiredSigners []string,
+	) (spend.Witness, error)
+	SubmitSigned(
+		ctx context.Context,
+		unsignedTxCBOR, witnessCBOR string,
+	) (spend.TxResult, error)
+	BuildDelegation(
+		ctx context.Context,
+		req spend.DelegationRequest,
+	) (spend.DelegationPreview, error)
 	HardwareSignRequest(pendingID string) (spend.HardwareSignRequest, error)
 	// SignDataHardwareRequest resolves the seedless CIP-1852 paths + network a
 	// hardware device needs to sign a CIP-8 message for one of the wallet's own
@@ -108,14 +133,18 @@ type Spender interface {
 	// a user pastes a full tx CBOR built elsewhere (e.g. by a DApp or another
 	// wallet) to inspect it, add this wallet's witness(es), and broadcast it.
 	DecodeTx(ctx context.Context, txCbor string) (spend.TxSummary, error)
-	CosignTx(ctx context.Context, txCbor, password string, partialSign bool) (spend.CosignResult, error)
+	CosignTx(
+		ctx context.Context,
+		txCbor, password string,
+		partialSign bool,
+	) (spend.CosignResult, error)
 	SubmitTxCbor(ctx context.Context, txCbor string) (spend.TxResult, error)
 }
 
 // NodeLookup is the node-backed verification/lookup surface the wallet uses to
 // confirm a pasted pool or DRep ID exists, resolve ADA Handles, and read native
-// asset identity/metadata. The embedded node is the only component that
-// touches the network; *chain.Client satisfies this interface.
+// asset identity/metadata. Handle fallback traffic uses the separate,
+// consent-gated ExternalHandleResolver; *chain.Client satisfies this interface.
 type NodeLookup interface {
 	Pool(ctx context.Context, poolID string) (chain.PoolInfo, error)
 	// Pools returns the node's full stake-pool directory (from
@@ -128,7 +157,10 @@ type NodeLookup interface {
 	// DReps returns the node's full DRep directory (its paginated
 	// /governance/dreps list) for the read-only browse/search screen.
 	DReps(ctx context.Context) ([]chain.DRepListItem, error)
-	AssetAddresses(ctx context.Context, asset string) ([]chain.AssetAddress, error)
+	AssetAddresses(
+		ctx context.Context,
+		asset string,
+	) ([]chain.AssetAddress, error)
 	// Asset returns on-chain identity/metadata for a native asset (unit =
 	// policy ID + hex asset name). Most assets have no indexed on-chain
 	// metadata today (see chain.AssetInfo) — the Portfolio screen falls back
@@ -147,16 +179,39 @@ type Vault interface {
 	Unlock(vaultPassword string) ([]vault.WalletMeta, error)
 	Lock()
 	Wallets() ([]vault.WalletMeta, error)
-	AddWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
-	ImportWallet(name, mnemonic, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
-	ImportWalletMnemonicBytes(name string, mnemonic []byte, network, vaultPassword, spendPassword string, windowN int) (vault.WalletMeta, error)
-	AddHardwareWallet(name, accountXpubBech32, network, vaultPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
-	AddScriptWallet(id, name, network string, script vault.ScriptMeta, vaultPassword string) (vault.WalletMeta, error)
+	AddWallet(
+		name, mnemonic, network, vaultPassword, spendPassword string,
+		windowN int,
+	) (vault.WalletMeta, error)
+	ImportWallet(
+		name, mnemonic, network, vaultPassword, spendPassword string,
+		windowN int,
+	) (vault.WalletMeta, error)
+	ImportWalletMnemonicBytes(
+		name string,
+		mnemonic []byte,
+		network, vaultPassword, spendPassword string,
+		windowN int,
+	) (vault.WalletMeta, error)
+	AddHardwareWallet(
+		name, accountXpubBech32, network, vaultPassword string,
+		accountIndex uint32,
+		windowN int,
+	) (vault.WalletMeta, error)
+	AddScriptWallet(
+		id, name, network string,
+		script vault.ScriptMeta,
+		vaultPassword string,
+	) (vault.WalletMeta, error)
 	RemoveWallet(id, vaultPassword string) error
 	SetActive(id string) (vault.WalletMeta, error)
 	Active() (vault.WalletMeta, error)
 	// Multi-account (BIP44 account switching) for the active/bound wallet.
-	AddAccount(id, vaultPassword, spendPassword string, accountIndex uint32, windowN int) (vault.WalletMeta, error)
+	AddAccount(
+		id, vaultPassword, spendPassword string,
+		accountIndex uint32,
+		windowN int,
+	) (vault.WalletMeta, error)
 	SelectAccount(id string, accountIndex uint32) (vault.WalletMeta, error)
 	// TPM feature: machine-binding of the at-rest vault.
 	TPMStatus() vault.TPMStatusInfo
@@ -215,12 +270,15 @@ type Activity interface {
 type handlerOptions struct {
 	legacy          LegacyKeystore
 	connector       *connector.Service
+	approvals       *connector.Service
+	remoteSubmit    *remotesubmit.Service
 	nfts            NFTs
 	diagnostics     Diagnostics
 	migrateScripts  ScriptMigrator
 	activity        Activity
 	surveys         Surveys
 	autoLockRuntime autoLockRuntime
+	externalHandles ExternalHandleResolver
 }
 
 // ScriptMigrator moves saved multi-signature accounts out of the standalone
@@ -250,6 +308,19 @@ func WithConnector(svc *connector.Service) HandlerOption {
 	}
 }
 
+// WithRemoteSubmission enables the local control routes for a separately
+// hosted, TLS-only transaction submission listener. approvals is the shared
+// consent queue used by the wallet UI.
+func WithRemoteSubmission(
+	svc *remotesubmit.Service,
+	approvals *connector.Service,
+) HandlerOption {
+	return func(o *handlerOptions) {
+		o.remoteSubmit = svc
+		o.approvals = approvals
+	}
+}
+
 // WithNFTs enables the optional NFT discovery and media endpoints.
 func WithNFTs(nfts NFTs) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.nfts = nfts }
@@ -276,6 +347,12 @@ func WithActivity(a Activity) HandlerOption {
 // WithSurveys enables the CIP-179 survey routes.
 func WithSurveys(sv Surveys) HandlerOption {
 	return func(cfg *handlerOptions) { cfg.surveys = sv }
+}
+
+// WithExternalHandleResolver enables the fixed-service Handle fallback. The
+// route still requires both the persisted opt-in and per-name consent.
+func WithExternalHandleResolver(resolver ExternalHandleResolver) HandlerOption {
+	return func(cfg *handlerOptions) { cfg.externalHandles = resolver }
 }
 
 // Handler serves the wallet control surface and owns its server-side vault
@@ -318,6 +395,25 @@ type SettingsController interface {
 	Notifications() bool
 	// SetNotifications persists the wallet-activity notification preference.
 	SetNotifications(enabled bool) error
+	// ExternalHandleLookup controls whether the UI may offer the optional
+	// external fallback. Every disclosed name requires separate consent.
+	ExternalHandleLookup() bool
+	SetExternalHandleLookup(enabled bool) error
+	// RecoverNode removes only the embedded node's sync database and starts a
+	// fresh sync. The implementation owns the node lifecycle and data boundary.
+	RecoverNode() error
+}
+
+// ExternalHandleResolver is the narrow external lookup surface. Production
+// uses handle.APIResolver; tests supply a fake without network access.
+type ExternalHandleResolver interface {
+	// Supports reports whether the service can answer for network, so the UI
+	// never asks for consent to a lookup that is refused before it is sent.
+	Supports(network string) bool
+	Resolve(
+		ctx context.Context,
+		network, input string,
+	) (name, address string, err error)
 }
 
 // autoLockOptions are the only accepted auto-lock timeouts (minutes; 0 = Off).
@@ -328,7 +424,13 @@ type SettingsController interface {
 // (web/src/screens/Settings.tsx). TestAutoLockOptionsMatchesSettingsPackage in
 // api_test.go guards this set against settings.AutoLockOptions drifting apart;
 // keep the frontend list in sync by hand.
-var autoLockOptions = map[int]bool{0: true, 1: true, 5: true, 15: true, 30: true}
+var autoLockOptions = map[int]bool{
+	0:  true,
+	1:  true,
+	5:  true,
+	15: true,
+	30: true,
+}
 
 // Contacts is the local-only address-book surface: a per-instance store of
 // saved recipient addresses (a friendly name, a Cardano address, and an
@@ -345,7 +447,7 @@ type Contacts interface {
 // generation and seed-derived certificate/opcert building need the active
 // wallet + spending password; the air-gap builders (pool ID, opcert payload /
 // assembly, metadata, air-gap registration cert) need neither. Submission
-// (retirement) needs a synced node. It operates on the active wallet.
+// (registration, update, retirement) needs a synced node. It operates on the active wallet.
 type PoolOps interface {
 	// SetAccount binds the active wallet (both its ID and its read-only account)
 	// so pool operations always derive credentials from the same wallet whose
@@ -353,24 +455,63 @@ type PoolOps interface {
 	SetAccount(id string, acct *wallet.Account)
 	Credentials(password string) (poolops.Credentials, error)
 	KESPeriod(ctx context.Context) (poolops.KESPeriodInfo, error)
-	IssueOpCert(password string, kesIndex uint32, issueNumber, kesPeriod uint64) (poolops.OpCert, error)
-	RotateKES(password string, newKESIndex uint32, prevIssueNumber, kesPeriod uint64) (poolops.OpCert, error)
-	OpCertPayload(kesVKeyHex string, issueNumber, kesPeriod uint64) (poolops.OpCertPayload, error)
-	AssembleOpCert(coldVKeyHex, kesVKeyHex, signatureHex string, issueNumber, kesPeriod uint64) (poolops.OpCert, error)
+	IssueOpCert(
+		password string,
+		kesIndex uint32,
+		issueNumber, kesPeriod uint64,
+	) (poolops.OpCert, error)
+	RotateKES(
+		password string,
+		newKESIndex uint32,
+		prevIssueNumber, kesPeriod uint64,
+	) (poolops.OpCert, error)
+	OpCertPayload(
+		kesVKeyHex string,
+		issueNumber, kesPeriod uint64,
+	) (poolops.OpCertPayload, error)
+	AssembleOpCert(
+		coldVKeyHex, kesVKeyHex, signatureHex string,
+		issueNumber, kesPeriod uint64,
+	) (poolops.OpCert, error)
 	BuildMetadata(in poolops.MetadataInput) (poolops.MetadataResult, error)
 	PoolIDFromColdVKey(coldVKeyHex string) (poolID, poolIDHex string, err error)
-	BuildRegistrationFromSeed(password string, p poolops.RegistrationParams) (poolops.CertResult, error)
-	BuildRegistrationAirGap(p poolops.AirGapRegistrationParams) (poolops.CertResult, error)
-	BuildRetirementCert(password, coldVKeyHex string, epoch uint64) (poolops.CertResult, error)
-	SubmitRetirement(ctx context.Context, password string, epoch uint64) (poolops.TxResult, error)
-	SubmitPoolVote(ctx context.Context, password string, v poolops.PoolVoteParams) (poolops.TxResult, error)
+	BuildRegistrationFromSeed(
+		password string,
+		p poolops.RegistrationParams,
+	) (poolops.CertResult, error)
+	BuildRegistrationAirGap(
+		p poolops.AirGapRegistrationParams,
+	) (poolops.CertResult, error)
+	BuildRetirementCert(
+		password, coldVKeyHex string,
+		epoch uint64,
+	) (poolops.CertResult, error)
+	SubmitRetirement(
+		ctx context.Context,
+		password string,
+		epoch uint64,
+	) (poolops.TxResult, error)
+	SubmitRegistration(
+		ctx context.Context,
+		password string,
+		p poolops.RegistrationParams,
+	) (poolops.RegistrationTxResult, error)
+	SubmitPoolVote(
+		ctx context.Context,
+		password string,
+		v poolops.PoolVoteParams,
+	) (poolops.TxResult, error)
 }
 
 // DexQuoter is the node-local DEX surface: pool prices and best-pool swap
 // quotes, computed entirely from the embedded node (no external service).
 type DexQuoter interface {
 	Pools(ctx context.Context) ([]dex.Pool, error)
-	Quote(ctx context.Context, assetIn, assetOut string, amountIn uint64) (dex.Quote, error)
+	Quote(
+		ctx context.Context,
+		assetIn, assetOut string,
+		amountIn uint64,
+	) (dex.Quote, error)
 }
 
 // MultiSig is the native multi-signature surface the API exposes: reading saved
@@ -387,15 +528,26 @@ type MultiSig interface {
 	Compose(req multisig.CreateRequest) (multisig.Account, error)
 	MyKey(password string) (multisig.MyKey, error)
 	Balance(ctx context.Context, id string) (string, error)
-	Build(ctx context.Context, id string, req multisig.BuildRequest) (multisig.UnsignedTx, error)
+	Build(
+		ctx context.Context,
+		id string,
+		req multisig.BuildRequest,
+	) (multisig.UnsignedTx, error)
 	Sign(unsignedTxCBOR, password string) (multisig.Witness, error)
-	Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (multisig.TxResult, error)
+	Submit(
+		ctx context.Context,
+		id, unsignedTxCBOR string,
+		witnessCBORs []string,
+	) (multisig.TxResult, error)
 	// InspectTx, CosignImported, and SubmitImported back the import-tx routes'
 	// classification/dispatch (decode-tx/cosign-tx/submit-tx): see
 	// importDecode, importCosign, and importSubmit below.
 	InspectTx(txCbor string) (multisig.TxInfo, error)
 	CosignImported(txCbor, password string) (multisig.CosignResult, error)
-	SubmitImported(ctx context.Context, txCbor string) (multisig.TxResult, error)
+	SubmitImported(
+		ctx context.Context,
+		txCbor string,
+	) (multisig.TxResult, error)
 }
 
 type decimalUint64 uint64
@@ -472,6 +624,7 @@ type poolRegistrationAirGapRequest struct {
 type handleInfo struct {
 	Handle  string `json:"handle"`
 	Address string `json:"address"`
+	Source  string `json:"source,omitempty"`
 }
 
 // NFTs is the optional NFT discovery and media surface.
@@ -489,7 +642,10 @@ type NFTs interface {
 type Surveys interface {
 	List(ctx context.Context) ([]survey.Summary, error)
 	Get(ctx context.Context, id string) (survey.Detail, error)
-	Respond(ctx context.Context, req survey.RespondRequest) (spend.Preview, error)
+	Respond(
+		ctx context.Context,
+		req survey.RespondRequest,
+	) (spend.Preview, error)
 	Create(ctx context.Context, req survey.CreateRequest) (spend.Preview, error)
 	Cancel(ctx context.Context, req survey.CancelRequest) (spend.Preview, error)
 	// Reveal unseals a sealed survey's responses with the drand beacon for its
@@ -619,7 +775,10 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 		if acct == nil {
 			continue
 		}
-		v.Accounts = append(v.Accounts, toAccountSummary(acct, w.ActiveAccountIndex))
+		v.Accounts = append(
+			v.Accounts,
+			toAccountSummary(acct, w.ActiveAccountIndex),
+		)
 	}
 	return v
 }
@@ -637,7 +796,22 @@ func toWalletView(w vault.WalletMeta, activeID string) walletView {
 // the native multi-signature surface (may be nil, in which case the multi-sig
 // routes are not registered). spa is the embedded SPA, registered as the
 // catch-all so the specific API routes take precedence on the mux.
-func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spender, settings SettingsController, cb Contacts, lookup NodeLookup, po PoolOps, dx DexQuoter, ms MultiSig, network string, spa http.Handler, opts ...HandlerOption) *Handler {
+func NewHandler(
+	sessionToken string,
+	st Statuser,
+	vlt Vault,
+	wl Wallet,
+	sp Spender,
+	settings SettingsController,
+	cb Contacts,
+	lookup NodeLookup,
+	po PoolOps,
+	dx DexQuoter,
+	ms MultiSig,
+	network string,
+	spa http.Handler,
+	opts ...HandlerOption,
+) *Handler {
 	cfg := handlerOptions{}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -650,7 +824,11 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, statusResponse{Status: st.Status(), Network: network})
+		writeJSON(
+			w,
+			http.StatusOK,
+			statusResponse{Status: st.Status(), Network: network},
+		)
 	})
 
 	// Node diagnostics + log export. Deliberately UNGATED (like /status): a
@@ -664,24 +842,35 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// only when a Diagnostics provider is supplied.
 	if cfg.diagnostics != nil {
 		diag := cfg.diagnostics
-		mux.HandleFunc("GET /diagnostics", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, http.StatusOK, diag.Report(r.Context()))
-		})
+		mux.HandleFunc(
+			"GET /diagnostics",
+			func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(w, http.StatusOK, diag.Report(r.Context()))
+			},
+		)
 		// GET /diagnostics/logs streams the wallet's log file(s) as a zip for a
 		// browser download. 404 when there is no log file to export (e.g. the
 		// wallet is not configured to write logs to a file).
-		mux.HandleFunc("GET /diagnostics/logs", func(w http.ResponseWriter, _ *http.Request) {
-			if !diag.LogAvailable() {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "log export unavailable"})
-				return
-			}
-			w.Header().Set("Content-Type", "application/zip")
-			w.Header().Set("Content-Disposition", `attachment; filename="bursa-wallet-logs.zip"`)
-			// Headers are committed before streaming; a mid-stream write error
-			// (rare — existence was just checked) truncates the download rather
-			// than rewriting the status, which is the best a stream can do.
-			_ = diag.WriteLogsZip(w)
-		})
+		mux.HandleFunc(
+			"GET /diagnostics/logs",
+			func(w http.ResponseWriter, _ *http.Request) {
+				if !diag.LogAvailable() {
+					writeJSON(
+						w,
+						http.StatusNotFound,
+						map[string]string{"error": "log export unavailable"},
+					)
+					return
+				}
+				w.Header().Set("Content-Type", "application/zip")
+				w.Header().
+					Set("Content-Disposition", `attachment; filename="bursa-wallet-logs.zip"`)
+				// Headers are committed before streaming; a mid-stream write error
+				// (rare — existence was just checked) truncates the download rather
+				// than rewriting the status, which is the best a stream can do.
+				_ = diag.WriteLogsZip(w)
+			},
+		)
 	}
 
 	// bindActive pushes the active wallet's read-only account onto the read and
@@ -728,28 +917,40 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	if autoLockRuntime.now == nil || autoLockRuntime.afterFunc == nil {
 		autoLockRuntime = defaultAutoLockRuntime()
 	}
-	autoLock := newAutoLockController(vlt, settings, clearActive, autoLockRuntime)
+	autoLock := newAutoLockController(
+		vlt,
+		settings,
+		clearActive,
+		autoLockRuntime,
+	)
 	legacyAvailable := func() bool {
 		return !vlt.Exists() && cfg.legacy != nil && cfg.legacy.Exists()
 	}
 
 	// --- Vault lifecycle -----------------------------------------------------
 
-	mux.HandleFunc("GET /vault/status", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, vaultStatus{
-			Exists:         vlt.Exists(),
-			Locked:         vlt.Locked(),
-			WalletCount:    vlt.WalletCount(),
-			LegacyKeystore: legacyAvailable(),
-		})
-	})
+	mux.HandleFunc(
+		"GET /vault/status",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, vaultStatus{
+				Exists:         vlt.Exists(),
+				Locked:         vlt.Locked(),
+				WalletCount:    vlt.WalletCount(),
+				LegacyKeystore: legacyAvailable(),
+			})
+		},
+	)
 
 	mux.HandleFunc("POST /vault", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Password string `json:"password"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			writeJSON(
+				w,
+				http.StatusBadRequest,
+				map[string]string{"error": "invalid JSON body"},
+			)
 			return
 		}
 		if !requirePassword(w, req.Password) {
@@ -761,268 +962,381 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 		}
 		clearActive()
 		autoLock.Arm()
-		writeJSON(w, http.StatusOK, vaultStatus{Exists: true, Locked: false, WalletCount: 0})
+		writeJSON(
+			w,
+			http.StatusOK,
+			vaultStatus{Exists: true, Locked: false, WalletCount: 0},
+		)
 	})
 
-	mux.HandleFunc("POST /vault/unlock", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		wallets, err := vlt.Unlock(req.Password)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		// Unlock is the only moment the vault password is available, so it is
-		// where saved multi-signature accounts move out of their standalone
-		// store and into the vault. Re-read the wallet list when any moved, so
-		// the response already includes them.
-		if cfg.migrateScripts != nil && cfg.migrateScripts(req.Password) > 0 {
-			if refreshed, rErr := vlt.Wallets(); rErr == nil {
-				wallets = refreshed
+	mux.HandleFunc(
+		"POST /vault/unlock",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
 			}
-		}
-		// Unlock auto-activates a sole wallet; bind it so reads work immediately.
-		if active, err := vlt.Active(); err == nil {
-			bindActive(active)
-		}
-		autoLock.Arm()
-		writeJSON(w, http.StatusOK, walletList(wallets, vlt))
-	})
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			wallets, err := vlt.Unlock(req.Password)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			// Unlock is the only moment the vault password is available, so it is
+			// where saved multi-signature accounts move out of their standalone
+			// store and into the vault. Re-read the wallet list when any moved, so
+			// the response already includes them.
+			if cfg.migrateScripts != nil &&
+				cfg.migrateScripts(req.Password) > 0 {
+				if refreshed, rErr := vlt.Wallets(); rErr == nil {
+					wallets = refreshed
+				}
+			}
+			// Unlock auto-activates a sole wallet; bind it so reads work immediately.
+			if active, err := vlt.Active(); err == nil {
+				bindActive(active)
+			}
+			autoLock.Arm()
+			writeJSON(w, http.StatusOK, walletList(wallets, vlt))
+		},
+	)
 
-	mux.HandleFunc("POST /vault/activity", func(w http.ResponseWriter, _ *http.Request) {
-		if !autoLock.Activity() {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "vault is locked"})
-			return
-		}
-		writeJSON(w, http.StatusOK, vaultStatus{
-			Exists: vlt.Exists(), Locked: vlt.Locked(), WalletCount: vlt.WalletCount(),
-		})
-	})
+	mux.HandleFunc(
+		"POST /vault/activity",
+		func(w http.ResponseWriter, _ *http.Request) {
+			if !autoLock.Activity() {
+				writeJSON(
+					w,
+					http.StatusConflict,
+					map[string]string{"error": "vault is locked"},
+				)
+				return
+			}
+			writeJSON(w, http.StatusOK, vaultStatus{
+				Exists: vlt.Exists(), Locked: vlt.Locked(), WalletCount: vlt.WalletCount(),
+			})
+		},
+	)
 
-	mux.HandleFunc("POST /vault/lock", func(w http.ResponseWriter, _ *http.Request) {
-		autoLock.Stop()
-		vlt.Lock()
-		clearActive()
-		writeJSON(w, http.StatusOK, vaultStatus{
-			Exists: vlt.Exists(), Locked: true, WalletCount: vlt.WalletCount(),
-		})
-	})
+	mux.HandleFunc(
+		"POST /vault/lock",
+		func(w http.ResponseWriter, _ *http.Request) {
+			autoLock.Stop()
+			vlt.Lock()
+			clearActive()
+			writeJSON(w, http.StatusOK, vaultStatus{
+				Exists: vlt.Exists(), Locked: true, WalletCount: vlt.WalletCount(),
+			})
+		},
+	)
 
 	// --- TPM vault binding ---------------------------------------------------
 
 	// GET /vault/tpm/status returns a probe of TPM availability on this machine
 	// and whether the vault is currently TPM-enrolled. No vault unlock needed.
-	mux.HandleFunc("GET /vault/tpm/status", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
-	})
+	mux.HandleFunc(
+		"GET /vault/tpm/status",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
+		},
+	)
 
 	// POST /vault/tpm/enable adds a TPM protector to the vault. The vault
 	// password is required to authenticate and recover the VEK. pcrBound is
 	// optional (defaults to false); when true the seal additionally binds to PCR
 	// 7 (firmware state). The password protector is always kept as recovery.
-	mux.HandleFunc("POST /vault/tpm/enable", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-			PCRBound bool   `json:"pcrBound"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		if !requirePassword(w, req.Password) {
-			return
-		}
-		if err := vlt.EnableTPM(req.Password, req.PCRBound); err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
-	})
+	mux.HandleFunc(
+		"POST /vault/tpm/enable",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+				PCRBound bool   `json:"pcrBound"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if !requirePassword(w, req.Password) {
+				return
+			}
+			if err := vlt.EnableTPM(req.Password, req.PCRBound); err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
+		},
+	)
 
 	// POST /vault/tpm/disable removes the TPM protector and re-persists with
 	// the password protector only. A no-op vault (no TPM enrolled) succeeds
 	// silently.
-	mux.HandleFunc("POST /vault/tpm/disable", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		if !requirePassword(w, req.Password) {
-			return
-		}
-		if err := vlt.DisableTPM(req.Password); err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
-	})
-
-	mux.HandleFunc("POST /vault/migrate-legacy", func(w http.ResponseWriter, r *http.Request) {
-		if vlt.Exists() {
-			serve(w, struct{}{}, vault.ErrVaultExists)
-			return
-		}
-		if cfg.legacy == nil || !cfg.legacy.Exists() {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "legacy keystore not found"})
-			return
-		}
-		var req struct {
-			Name          string `json:"name"`
-			VaultPassword string `json:"vault_password"`
-			SpendPassword string `json:"spend_password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		if !requirePassword(w, req.VaultPassword) {
-			return
-		}
-		if req.SpendPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spend_password is required"})
-			return
-		}
-		if !requirePassword(w, req.SpendPassword) {
-			return
-		}
-		name := strings.TrimSpace(req.Name)
-		if name == "" {
-			name = "Wallet"
-		}
-		mnemonic, err := cfg.legacy.Unlock(req.SpendPassword)
-		if err != nil {
-			if errors.Is(err, keystore.ErrDecryptFailed) {
-				serve(w, struct{}{}, fmt.Errorf("%w: %w", vault.ErrWrongPassword, err))
+	mux.HandleFunc(
+		"POST /vault/tpm/disable",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+			}
+			if !decodeBody(w, r, &req) {
 				return
 			}
-			serve(w, struct{}{}, err)
-			return
-		}
-		defer keystore.Zero(mnemonic)
-		meta, err := vlt.ImportWalletMnemonicBytes(name, mnemonic, network, req.VaultPassword, req.SpendPassword, defaultWindow)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		bindActive(meta)
-		autoLock.Arm()
-		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
-	})
+			if !requirePassword(w, req.Password) {
+				return
+			}
+			if err := vlt.DisableTPM(req.Password); err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, toTPMStatusResponse(vlt.TPMStatus()))
+		},
+	)
+
+	mux.HandleFunc(
+		"POST /vault/migrate-legacy",
+		func(w http.ResponseWriter, r *http.Request) {
+			if vlt.Exists() {
+				serve(w, struct{}{}, vault.ErrVaultExists)
+				return
+			}
+			if cfg.legacy == nil || !cfg.legacy.Exists() {
+				writeJSON(
+					w,
+					http.StatusNotFound,
+					map[string]string{"error": "legacy keystore not found"},
+				)
+				return
+			}
+			var req struct {
+				Name          string `json:"name"`
+				VaultPassword string `json:"vault_password"`
+				SpendPassword string `json:"spend_password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			if !requirePassword(w, req.VaultPassword) {
+				return
+			}
+			if req.SpendPassword == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "spend_password is required"},
+				)
+				return
+			}
+			if !requirePassword(w, req.SpendPassword) {
+				return
+			}
+			name := strings.TrimSpace(req.Name)
+			if name == "" {
+				name = "Wallet"
+			}
+			mnemonic, err := cfg.legacy.Unlock(req.SpendPassword)
+			if err != nil {
+				if errors.Is(err, keystore.ErrDecryptFailed) {
+					serve(
+						w,
+						struct{}{},
+						fmt.Errorf("%w: %w", vault.ErrWrongPassword, err),
+					)
+					return
+				}
+				serve(w, struct{}{}, err)
+				return
+			}
+			defer keystore.Zero(mnemonic)
+			meta, err := vlt.ImportWalletMnemonicBytes(
+				name,
+				mnemonic,
+				network,
+				req.VaultPassword,
+				req.SpendPassword,
+				defaultWindow,
+			)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			bindActive(meta)
+			autoLock.Arm()
+			writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+		},
+	)
 
 	// --- Wallet management ---------------------------------------------------
 
 	// POST /wallet adds a wallet to the vault: derive + encrypt seed under the
 	// spending password, store read-only metadata under the vault password. The
 	// new wallet becomes active. No synced node needed (derivation is offline).
-	mux.HandleFunc("POST /wallet", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Name          string `json:"name"`
-			Mnemonic      string `json:"mnemonic"`
-			Network       string `json:"network"`
-			VaultPassword string `json:"vault_password"`
-			SpendPassword string `json:"spend_password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		net, ok := resolveNetwork(w, req.Network, network)
-		if !ok {
-			return
-		}
-		// The spending password is required and floored at MinPasswordLen; the
-		// vault password must be supplied to re-seal the index.
-		if !requirePassword(w, req.SpendPassword) {
-			return
-		}
-		if req.VaultPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
-			return
-		}
-		meta, err := vlt.AddWallet(req.Name, req.Mnemonic, net, req.VaultPassword, req.SpendPassword, defaultWindow)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		bindActive(meta)
-		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
-	})
+	mux.HandleFunc(
+		"POST /wallet",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Name          string `json:"name"`
+				Mnemonic      string `json:"mnemonic"`
+				Network       string `json:"network"`
+				VaultPassword string `json:"vault_password"`
+				SpendPassword string `json:"spend_password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			net, ok := resolveNetwork(w, req.Network, network)
+			if !ok {
+				return
+			}
+			// The spending password is required and floored at MinPasswordLen; the
+			// vault password must be supplied to re-seal the index.
+			if !requirePassword(w, req.SpendPassword) {
+				return
+			}
+			if req.VaultPassword == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "vault_password is required"},
+				)
+				return
+			}
+			meta, err := vlt.AddWallet(
+				req.Name,
+				req.Mnemonic,
+				net,
+				req.VaultPassword,
+				req.SpendPassword,
+				defaultWindow,
+			)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			bindActive(meta)
+			writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+		},
+	)
 
 	// POST /wallet/mnemonic/generate returns a freshly generated 24-word BIP39
 	// mnemonic (256-bit entropy). The phrase is generated server-side so the
 	// client never handles raw entropy. The endpoint is ungated because generation
 	// needs neither a running node nor an unlocked vault. Its response must remain
 	// non-cacheable because the phrase is a wallet recovery secret.
-	mux.HandleFunc("POST /wallet/mnemonic/generate", func(w http.ResponseWriter, _ *http.Request) {
-		setSecretResponseHeaders(w)
-		m, err := bursa.GenerateMnemonic()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errBody(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"mnemonic": m})
-	})
+	mux.HandleFunc(
+		"POST /wallet/mnemonic/generate",
+		func(w http.ResponseWriter, _ *http.Request) {
+			setSecretResponseHeaders(w)
+			m, err := bursa.GenerateMnemonic()
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, errBody(err))
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"mnemonic": m})
+		},
+	)
 
 	// POST /wallet/hardware adds a hardware-backed (watch-only) wallet derived
 	// from an account-level xpub supplied by the device. No mnemonic or spending
 	// password is required — the hardware device holds the private key. The new
 	// wallet becomes active.
-	mux.HandleFunc("POST /wallet/hardware", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Name          string `json:"name"`
-			AccountXpub   string `json:"account_xpub"`
-			AccountIndex  uint32 `json:"account_index"`
-			Network       string `json:"network"`
-			VaultPassword string `json:"vault_password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		if strings.TrimSpace(req.Name) == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
-			return
-		}
-		if strings.TrimSpace(req.AccountXpub) == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_xpub is required"})
-			return
-		}
-		if req.VaultPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
-			return
-		}
-		if req.AccountIndex >= 1<<31 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_index must be less than 2147483648"})
-			return
-		}
-		net, ok := resolveNetwork(w, req.Network, network)
-		if !ok {
-			return
-		}
-		meta, err := vlt.AddHardwareWallet(req.Name, req.AccountXpub, net, req.VaultPassword, req.AccountIndex, defaultWindow)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		bindActive(meta)
-		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
-	})
+	mux.HandleFunc(
+		"POST /wallet/hardware",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Name          string `json:"name"`
+				AccountXpub   string `json:"account_xpub"`
+				AccountIndex  uint32 `json:"account_index"`
+				Network       string `json:"network"`
+				VaultPassword string `json:"vault_password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			if strings.TrimSpace(req.Name) == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "name is required"},
+				)
+				return
+			}
+			if strings.TrimSpace(req.AccountXpub) == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "account_xpub is required"},
+				)
+				return
+			}
+			if req.VaultPassword == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "vault_password is required"},
+				)
+				return
+			}
+			if req.AccountIndex >= 1<<31 {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{
+						"error": "account_index must be less than 2147483648",
+					},
+				)
+				return
+			}
+			net, ok := resolveNetwork(w, req.Network, network)
+			if !ok {
+				return
+			}
+			meta, err := vlt.AddHardwareWallet(
+				req.Name,
+				req.AccountXpub,
+				net,
+				req.VaultPassword,
+				req.AccountIndex,
+				defaultWindow,
+			)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			bindActive(meta)
+			writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+		},
+	)
 
-	mux.HandleFunc("POST /wallet/{id}/activate", func(w http.ResponseWriter, r *http.Request) {
-		meta, err := vlt.SetActive(r.PathValue("id"))
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		bindActive(meta)
-		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
-	})
+	mux.HandleFunc(
+		"POST /wallet/{id}/activate",
+		func(w http.ResponseWriter, r *http.Request) {
+			meta, err := vlt.SetActive(r.PathValue("id"))
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			bindActive(meta)
+			writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+		},
+	)
 
 	// --- Multi-account (BIP44 account switching) -----------------------------
 
@@ -1031,172 +1345,226 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// balance summary (node-local). It is not gated: switching accounts must work
 	// even before the node is synced, so a balance that cannot be computed yet is
 	// simply omitted rather than failing the listing.
-	mux.HandleFunc("GET /wallet/accounts", func(w http.ResponseWriter, r *http.Request) {
-		active, err := vlt.Active()
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		out := struct {
-			Accounts           []accountSummary `json:"accounts"`
-			ActiveAccountIndex uint32           `json:"active_account_index"`
-		}{Accounts: []accountSummary{}, ActiveAccountIndex: active.ActiveAccountIndex}
-		nodeReady := st.Status().State == supervisor.StateReady
-		for _, acct := range active.AccountList() {
-			if acct == nil {
-				continue
+	mux.HandleFunc(
+		"GET /wallet/accounts",
+		func(w http.ResponseWriter, r *http.Request) {
+			active, err := vlt.Active()
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
 			}
-			summary := toAccountSummary(acct, active.ActiveAccountIndex)
-			if nodeReady {
-				if bal, err := wl.BalanceForAccount(r.Context(), acct); err == nil {
-					b := bal
-					summary.Balance = &b
+			out := struct {
+				Accounts           []accountSummary `json:"accounts"`
+				ActiveAccountIndex uint32           `json:"active_account_index"`
+			}{Accounts: []accountSummary{}, ActiveAccountIndex: active.ActiveAccountIndex}
+			nodeReady := st.Status().State == supervisor.StateReady
+			for _, acct := range active.AccountList() {
+				if acct == nil {
+					continue
 				}
+				summary := toAccountSummary(acct, active.ActiveAccountIndex)
+				if nodeReady {
+					if bal, err := wl.BalanceForAccount(r.Context(), acct); err == nil {
+						b := bal
+						summary.Balance = &b
+					}
+				}
+				out.Accounts = append(out.Accounts, summary)
 			}
-			out.Accounts = append(out.Accounts, summary)
-		}
-		writeJSON(w, http.StatusOK, out)
-	})
+			writeJSON(w, http.StatusOK, out)
+		},
+	)
 
 	// POST /wallet/account/select sets the active BIP44 account index for the
 	// active wallet and rebinds the read/spend/pool services to it. The selection
 	// is persisted (cleartext, non-secret) so no password is required — like
 	// switching the active wallet. The account must already be derived.
-	mux.HandleFunc("POST /wallet/account/select", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			AccountIndex uint32 `json:"account_index"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		active, err := vlt.Active()
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		meta, err := vlt.SelectAccount(active.ID, req.AccountIndex)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		bindActive(meta)
-		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
-	})
+	mux.HandleFunc(
+		"POST /wallet/account/select",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				AccountIndex uint32 `json:"account_index"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			active, err := vlt.Active()
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			meta, err := vlt.SelectAccount(active.ID, req.AccountIndex)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			bindActive(meta)
+			writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+		},
+	)
 
 	// POST /wallet/accounts derives and adds a new BIP44 account to the active
 	// wallet. Deriving a hardened account needs the seed (spend_password); storing
 	// its read-only material needs the vault_password (index re-seal). The new
 	// account is not auto-selected — the client selects it afterward.
-	mux.HandleFunc("POST /wallet/accounts", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			AccountIndex  uint32 `json:"account_index"`
-			VaultPassword string `json:"vault_password"`
-			SpendPassword string `json:"spend_password"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		if req.AccountIndex >= 1<<31 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_index must be less than 2147483648"})
-			return
-		}
-		if req.VaultPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
-			return
-		}
-		if req.SpendPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spend_password is required"})
-			return
-		}
-		active, err := vlt.Active()
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		meta, err := vlt.AddAccount(active.ID, req.VaultPassword, req.SpendPassword, req.AccountIndex, defaultWindow)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
-	})
+	mux.HandleFunc(
+		"POST /wallet/accounts",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				AccountIndex  uint32 `json:"account_index"`
+				VaultPassword string `json:"vault_password"`
+				SpendPassword string `json:"spend_password"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if req.AccountIndex >= 1<<31 {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{
+						"error": "account_index must be less than 2147483648",
+					},
+				)
+				return
+			}
+			if req.VaultPassword == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "vault_password is required"},
+				)
+				return
+			}
+			if req.SpendPassword == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "spend_password is required"},
+				)
+				return
+			}
+			active, err := vlt.Active()
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			meta, err := vlt.AddAccount(
+				active.ID,
+				req.VaultPassword,
+				req.SpendPassword,
+				req.AccountIndex,
+				defaultWindow,
+			)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, toWalletView(meta, meta.ID))
+		},
+	)
 
-	mux.HandleFunc("DELETE /wallet/{id}", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			VaultPassword string `json:"vault_password"`
-		}
-		// A DELETE may carry a body for the vault password; tolerate an empty body.
-		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&req)
-		}
-		if req.VaultPassword == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vault_password is required"})
-			return
-		}
-		if err := vlt.RemoveWallet(r.PathValue("id"), req.VaultPassword); err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		if active, err := vlt.Active(); err == nil {
-			bindActive(active)
-		} else {
-			clearActive()
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
-	})
+	mux.HandleFunc(
+		"DELETE /wallet/{id}",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				VaultPassword string `json:"vault_password"`
+			}
+			// A DELETE may carry a body for the vault password; tolerate an empty body.
+			if r.Body != nil {
+				_ = json.NewDecoder(r.Body).Decode(&req)
+			}
+			if req.VaultPassword == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "vault_password is required"},
+				)
+				return
+			}
+			if err := vlt.RemoveWallet(r.PathValue("id"), req.VaultPassword); err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			if active, err := vlt.Active(); err == nil {
+				bindActive(active)
+			} else {
+				clearActive()
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+		},
+	)
 
 	// --- Read-only views (active wallet) -------------------------------------
 
-	mux.HandleFunc("GET /wallet/balance", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := wl.Balance(r.Context())
-		serve(w, v, err)
-	}))
-	mux.HandleFunc("GET /wallet/addresses", func(w http.ResponseWriter, r *http.Request) {
-		var v wallet.AddressView
-		var err error
-		// A syncing node can answer reads, but its partial ledger view cannot
-		// authoritatively classify an address as unused. Query usage only after the
-		// node reaches the current chain tip; local derivation remains available in
-		// every earlier lifecycle state.
-		before := st.Status()
-		if before.State == supervisor.StateReady {
-			v, err = wl.Addresses(r.Context())
-			// Do not publish a classification obtained across a Ready -> syncing
-			// transition. The query result may reflect only the new partial view.
-			after := st.Status()
-			if err == nil && (after.State != supervisor.StateReady ||
-				after.ReadinessGeneration != before.ReadinessGeneration) {
-				v.Used = []string{}
-				v.UsageKnown = false
-				v.NextUnused = ""
+	mux.HandleFunc(
+		"GET /wallet/balance",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := wl.Balance(r.Context())
+			serve(w, v, err)
+		}),
+	)
+	mux.HandleFunc(
+		"GET /wallet/addresses",
+		func(w http.ResponseWriter, r *http.Request) {
+			var v wallet.AddressView
+			var err error
+			// A syncing node can answer reads, but its partial ledger view cannot
+			// authoritatively classify an address as unused. Query usage only after the
+			// node reaches the current chain tip; local derivation remains available in
+			// every earlier lifecycle state.
+			before := st.Status()
+			if before.State == supervisor.StateReady {
+				v, err = wl.Addresses(r.Context())
+				// Do not publish a classification obtained across a Ready -> syncing
+				// transition. The query result may reflect only the new partial view.
+				after := st.Status()
+				if err == nil && (after.State != supervisor.StateReady ||
+					after.ReadinessGeneration != before.ReadinessGeneration) {
+					v.Used = []string{}
+					v.UsageKnown = false
+					v.NextUnused = ""
+				}
+			} else {
+				v, err = wl.LocalAddresses()
 			}
-		} else {
-			v, err = wl.LocalAddresses()
-		}
-		serve(w, v, err)
-	})
-	mux.HandleFunc("GET /wallet/transactions", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := wl.Transactions(r.Context())
-		serve(w, v, err)
-	}))
+			serve(w, v, err)
+		},
+	)
+	mux.HandleFunc(
+		"GET /wallet/transactions",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := wl.Transactions(r.Context())
+			serve(w, v, err)
+		}),
+	)
 	// Drill-down for one transaction in the history: full input/output
 	// breakdown. Gated like the list above — it only needs the node serving
 	// queries, not a full sync.
-	mux.HandleFunc("GET /wallet/transactions/{hash}", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := wl.TransactionDetail(r.Context(), r.PathValue("hash"))
-		serve(w, v, err)
-	}))
-	mux.HandleFunc("GET /wallet/delegation", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := wl.Delegation(r.Context())
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/transactions/{hash}",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := wl.TransactionDetail(r.Context(), r.PathValue("hash"))
+			serve(w, v, err)
+		}),
+	)
+	mux.HandleFunc(
+		"GET /wallet/delegation",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := wl.Delegation(r.Context())
+			serve(w, v, err)
+		}),
+	)
 	// Read-only per-epoch stake-reward history for the active wallet, read from
 	// the embedded node (same source as delegation) — no external calls, so no
 	// consent gate; gated like other reads on a queryable node.
-	mux.HandleFunc("GET /wallet/rewards", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := wl.Rewards(r.Context())
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/rewards",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := wl.Rewards(r.Context())
+			serve(w, v, err)
+		}),
+	)
 
 	// Node-local wallet activity: the events (newly confirmed incoming funds,
 	// new stake-reward epochs) that appeared since the SPA's previous poll for
@@ -1206,17 +1574,23 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// on a queryable node. Registered only when an Activity detector is supplied.
 	if cfg.activity != nil {
 		act := cfg.activity
-		mux.HandleFunc("GET /wallet/activity", gated(st, func(w http.ResponseWriter, r *http.Request) {
-			events, err := act.Poll(r.Context())
-			if err != nil {
-				serve(w, struct{}{}, err)
-				return
-			}
-			if events == nil {
-				events = []activity.Event{}
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"events": events})
-		}))
+		mux.HandleFunc(
+			"GET /wallet/activity",
+			gated(st, func(w http.ResponseWriter, r *http.Request) {
+				if !requireSameOriginBrowserContext(w, r) {
+					return
+				}
+				events, err := act.Poll(r.Context())
+				if err != nil {
+					serve(w, struct{}{}, err)
+					return
+				}
+				if events == nil {
+					events = []activity.Event{}
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"events": events})
+			}),
+		)
 	}
 
 	// DEX swap quotes. These read ONLY from the embedded node (pool UTxOs at the
@@ -1224,346 +1598,647 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// nothing leaves 127.0.0.1. They are gated like other wallet reads: a node
 	// that can serve queries (synced/syncing).
 	if dx != nil {
-		mux.HandleFunc("GET /wallet/dex/pools", gated(st, func(w http.ResponseWriter, r *http.Request) {
-			pools, err := dx.Pools(r.Context())
-			serveDex(w, map[string]any{"pools": pools}, err)
-		}))
+		mux.HandleFunc(
+			"GET /wallet/dex/pools",
+			gated(st, func(w http.ResponseWriter, r *http.Request) {
+				pools, err := dx.Pools(r.Context())
+				serveDex(w, map[string]any{"pools": pools}, err)
+			}),
+		)
 
-		mux.HandleFunc("POST /wallet/dex/quote", gated(st, func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				AssetIn  string `json:"asset_in"`
-				AssetOut string `json:"asset_out"`
-				AmountIn string `json:"amount_in"`
-			}
-			if !decodeBody(w, r, &req) {
-				return
-			}
-			amountIn, err := strconv.ParseUint(req.AmountIn, 10, 64)
-			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{
-					"error": "amount_in must be a positive integer (base unit, e.g. lovelace)",
-				})
-				return
-			}
-			q, err := dx.Quote(r.Context(), req.AssetIn, req.AssetOut, amountIn)
-			serveDex(w, q, err)
-		}))
+		mux.HandleFunc(
+			"POST /wallet/dex/quote",
+			gated(st, func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					AssetIn  string `json:"asset_in"`
+					AssetOut string `json:"asset_out"`
+					AmountIn string `json:"amount_in"`
+				}
+				if !decodeBody(w, r, &req) {
+					return
+				}
+				amountIn, err := strconv.ParseUint(req.AmountIn, 10, 64)
+				if err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{
+						"error": "amount_in must be a positive integer (base unit, e.g. lovelace)",
+					})
+					return
+				}
+				q, err := dx.Quote(
+					r.Context(),
+					req.AssetIn,
+					req.AssetOut,
+					amountIn,
+				)
+				serveDex(w, q, err)
+			}),
+		)
 	}
 
 	// --- Spending (active wallet, spending password) -------------------------
 
-	mux.HandleFunc("POST /wallet/send", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req spend.SendRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		pv, err := sp.Build(r.Context(), req)
-		serve(w, pv, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/send",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req spend.SendRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			pv, err := sp.Build(r.Context(), req)
+			serve(w, pv, err)
+		}),
+	)
 
-	mux.HandleFunc("POST /wallet/send/{id}/confirm", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
-		serve(w, res, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/send/{id}/confirm",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
+			serve(w, res, err)
+		}),
+	)
 
 	// CIP-8 / CIP-30 message signing. Ungated: signing is fully offline (no node
 	// needed) — it requires only the active wallet's spending password to decrypt
 	// its seed.
-	mux.HandleFunc("POST /wallet/sign-data", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Address  string `json:"address"`
-			Message  string `json:"message"`
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		sig, key, err := sp.SignData(req.Address, []byte(req.Message), req.Password)
-		serve(w, map[string]string{"signature": sig, "key": key}, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/sign-data",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Address  string `json:"address"`
+				Message  string `json:"message"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			sig, key, err := sp.SignData(
+				req.Address,
+				[]byte(req.Message),
+				req.Password,
+			)
+			serve(w, map[string]string{"signature": sig, "key": key}, err)
+		},
+	)
 
 	// CIP-8 hardware message signing: resolve the seedless signing metadata
 	// (CIP-1852 paths + network) a hardware device needs to sign a message for one
 	// of the wallet's own receive addresses. Ungated like sign-data — pure
 	// derivation over the active account, no node and no keystore unlock.
-	mux.HandleFunc("GET /wallet/sign-data/hardware-request", func(w http.ResponseWriter, r *http.Request) {
-		addr := r.URL.Query().Get("address")
-		if addr == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "address is required"})
-			return
-		}
-		req, err := sp.SignDataHardwareRequest(addr)
-		serve(w, req, err)
-	})
+	mux.HandleFunc(
+		"GET /wallet/sign-data/hardware-request",
+		func(w http.ResponseWriter, r *http.Request) {
+			addr := r.URL.Query().Get("address")
+			if addr == "" {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "address is required"},
+				)
+				return
+			}
+			req, err := sp.SignDataHardwareRequest(addr)
+			serve(w, req, err)
+		},
+	)
 
 	// App settings: the lean-node (history-expiry) profile. Ungated — it is a
 	// config setting, not a node query, so it is readable/settable regardless of
 	// sync state. History expiry is a node-construction option, so a change only
 	// takes effect on the next node restart; restart_required surfaces that.
-	mux.HandleFunc("GET /wallet/settings/history-expiry", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{
-			"enabled":          settings.HistoryExpiry(),
-			"restart_required": settings.HistoryExpiryRestartRequired(),
-		})
-	})
-	mux.HandleFunc("PUT /wallet/settings/history-expiry", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		if req.Enabled == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
-			return
-		}
-		if err := settings.SetHistoryExpiry(*req.Enabled); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errBody(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{
-			"enabled":          settings.HistoryExpiry(),
-			"restart_required": settings.HistoryExpiryRestartRequired(),
-		})
-	})
+	mux.HandleFunc(
+		"GET /wallet/settings/history-expiry",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]bool{
+				"enabled":          settings.HistoryExpiry(),
+				"restart_required": settings.HistoryExpiryRestartRequired(),
+			})
+		},
+	)
+	mux.HandleFunc(
+		"PUT /wallet/settings/history-expiry",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			if req.Enabled == nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "enabled is required"},
+				)
+				return
+			}
+			if err := settings.SetHistoryExpiry(*req.Enabled); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errBody(err))
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{
+				"enabled":          settings.HistoryExpiry(),
+				"restart_required": settings.HistoryExpiryRestartRequired(),
+			})
+		},
+	)
 
 	// App settings: the idle auto-lock timeout. Ungated for the same reason as
 	// history-expiry — it is a local wallet preference, not a node query. Unlike
 	// history-expiry it takes effect immediately on the server-owned deadline,
 	// so there is no restart_required field.
-	mux.HandleFunc("GET /wallet/settings/auto-lock", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
-	})
-	mux.HandleFunc("PUT /wallet/settings/auto-lock", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Minutes *int `json:"minutes"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		if req.Minutes == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "minutes is required"})
-			return
-		}
-		if !autoLockOptions[*req.Minutes] {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid auto-lock timeout"})
-			return
-		}
-		if err := settings.SetAutoLockMinutes(*req.Minutes); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errBody(err))
-			return
-		}
-		autoLock.Arm()
-		writeJSON(w, http.StatusOK, map[string]int{"minutes": settings.AutoLockMinutes()})
-	})
+	mux.HandleFunc(
+		"GET /wallet/settings/auto-lock",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]int{"minutes": settings.AutoLockMinutes()},
+			)
+		},
+	)
+	mux.HandleFunc(
+		"PUT /wallet/settings/auto-lock",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Minutes *int `json:"minutes"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			if req.Minutes == nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "minutes is required"},
+				)
+				return
+			}
+			if !autoLockOptions[*req.Minutes] {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid auto-lock timeout"},
+				)
+				return
+			}
+			if err := settings.SetAutoLockMinutes(*req.Minutes); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errBody(err))
+				return
+			}
+			autoLock.Arm()
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]int{"minutes": settings.AutoLockMinutes()},
+			)
+		},
+	)
 
 	// App settings: the wallet-activity notification preference. Ungated for the
 	// same reason as auto-lock — it is a local UI preference, not a node query,
 	// and takes effect immediately (the frontend's activity poller reads it
 	// directly). Default off until the user opts in.
-	mux.HandleFunc("GET /wallet/settings/notifications", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
-	})
-	mux.HandleFunc("PUT /wallet/settings/notifications", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		if req.Enabled == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
-			return
-		}
-		if err := settings.SetNotifications(*req.Enabled); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errBody(err))
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": settings.Notifications()})
-	})
+	mux.HandleFunc(
+		"GET /wallet/settings/notifications",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]bool{"enabled": settings.Notifications()},
+			)
+		},
+	)
+	mux.HandleFunc(
+		"PUT /wallet/settings/notifications",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			if req.Enabled == nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "enabled is required"},
+				)
+				return
+			}
+			if err := settings.SetNotifications(*req.Enabled); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errBody(err))
+				return
+			}
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]bool{"enabled": settings.Notifications()},
+			)
+		},
+	)
+
+	// External Handle lookup is a two-part consent: this persisted setting lets
+	// the UI offer the fallback, while every individual name disclosure must
+	// still arrive through the explicit POST route below with consent=true.
+	externalHandlesAvailable := cfg.externalHandles != nil &&
+		cfg.externalHandles.Supports(network)
+	mux.HandleFunc(
+		"GET /wallet/settings/external-handle-lookup",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]bool{
+					"enabled":   settings.ExternalHandleLookup(),
+					"available": externalHandlesAvailable,
+				},
+			)
+		},
+	)
+	mux.HandleFunc(
+		"PUT /wallet/settings/external-handle-lookup",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if req.Enabled == nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "enabled is required"},
+				)
+				return
+			}
+			if err := settings.SetExternalHandleLookup(*req.Enabled); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errBody(err))
+				return
+			}
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]bool{
+					"enabled":   settings.ExternalHandleLookup(),
+					"available": externalHandlesAvailable,
+				},
+			)
+		},
+	)
+
+	// Failed-sync recovery is available only through an explicit confirmed
+	// mutation. The controller enforces the failed-state precondition and owns
+	// the exact node-only deletion boundary.
+	mux.HandleFunc(
+		"POST /wallet/settings/node/recover",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Confirmed *bool `json:"confirmed"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if req.Confirmed == nil || !*req.Confirmed {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "confirmation is required"},
+				)
+				return
+			}
+			if err := settings.RecoverNode(); err != nil {
+				if errors.Is(err, supervisor.ErrRecoveryUnavailable) {
+					writeJSON(w, http.StatusConflict, errBody(err))
+					return
+				}
+				writeJSON(w, http.StatusInternalServerError, errBody(err))
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"started": true})
+		},
+	)
 
 	// --- Address book (local-only, no network) -------------------------------
 	// Pure on-device CRUD storage: ungated (no node needed) and never reaches
 	// out to any external service.
 
-	mux.HandleFunc("GET /wallet/contacts", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, cb.List())
-	})
-	mux.HandleFunc("POST /wallet/contacts", func(w http.ResponseWriter, r *http.Request) {
-		var req contacts.Entry
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		entry, err := cb.Upsert(req)
-		serve(w, entry, err)
-	})
-	mux.HandleFunc("DELETE /wallet/contacts/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := cb.Delete(r.PathValue("id")); err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
-	})
+	mux.HandleFunc(
+		"GET /wallet/contacts",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, cb.List())
+		},
+	)
+	mux.HandleFunc(
+		"POST /wallet/contacts",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req contacts.Entry
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			entry, err := cb.Upsert(req)
+			serve(w, entry, err)
+		},
+	)
+	mux.HandleFunc(
+		"DELETE /wallet/contacts/{id}",
+		func(w http.ResponseWriter, r *http.Request) {
+			if err := cb.Delete(r.PathValue("id")); err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+		},
+	)
 
 	// CIP-8 / CIP-30 message verification — the inverse of sign-data. Pure
 	// crypto: ungated, no node, no keystore (a read-only wallet can verify too).
-	mux.HandleFunc("POST /wallet/verify-data", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Signature       string `json:"signature"`
-			Key             string `json:"key"`
-			Message         string `json:"message"`
-			Hashed          bool   `json:"hashed"`
-			ExpectedAddress string `json:"expected_address"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		valid, addr, err := sp.VerifyData(req.Signature, req.Key, []byte(req.Message), req.Hashed, req.ExpectedAddress)
-		serve(w, map[string]any{"valid": valid, "address": addr}, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/verify-data",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Signature       string `json:"signature"`
+				Key             string `json:"key"`
+				Message         string `json:"message"`
+				Hashed          bool   `json:"hashed"`
+				ExpectedAddress string `json:"expected_address"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			valid, addr, err := sp.VerifyData(
+				req.Signature,
+				req.Key,
+				[]byte(req.Message),
+				req.Hashed,
+				req.ExpectedAddress,
+			)
+			serve(w, map[string]any{"valid": valid, "address": addr}, err)
+		},
+	)
 
 	// NFT discovery remains node-local. Image serving is same-origin and the
 	// service enforces the off-by-default media consent gate.
-	mux.HandleFunc("GET /wallet/nft", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if nfts == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "nft media not available"})
-			return
-		}
-		v, err := nfts.List(r.Context())
-		serveNFT(w, v, err)
-	}))
-	mux.HandleFunc("GET /wallet/nft/{asset}/image", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if nfts == nil {
-			http.Error(w, "nft media not available", http.StatusServiceUnavailable)
-			return
-		}
-		nfts.ServeImage(r.Context(), w, r.PathValue("asset"))
-	}))
-	mux.HandleFunc("GET /wallet/settings/nft-media", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts != nil && nfts.Enabled(), "available": nfts != nil})
-	})
-	mux.HandleFunc("PUT /wallet/settings/nft-media", func(w http.ResponseWriter, r *http.Request) {
-		if nfts == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "nft media not available"})
-			return
-		}
-		var req struct {
-			Enabled *bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		if req.Enabled == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled is required"})
-			return
-		}
-		if err := nfts.SetEnabled(*req.Enabled); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"enabled": nfts.Enabled(), "available": true})
-	})
+	mux.HandleFunc(
+		"GET /wallet/nft",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if nfts == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "nft media not available"},
+				)
+				return
+			}
+			v, err := nfts.List(r.Context())
+			serveNFT(w, v, err)
+		}),
+	)
+	mux.HandleFunc(
+		"GET /wallet/nft/{asset}/image",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if !requireSameOriginBrowserContext(w, r) {
+				return
+			}
+			if nfts == nil {
+				http.Error(
+					w,
+					"nft media not available",
+					http.StatusServiceUnavailable,
+				)
+				return
+			}
+			nfts.ServeImage(r.Context(), w, r.PathValue("asset"))
+		}),
+	)
+	mux.HandleFunc(
+		"GET /wallet/settings/nft-media",
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]bool{
+					"enabled":   nfts != nil && nfts.Enabled(),
+					"available": nfts != nil,
+				},
+			)
+		},
+	)
+	mux.HandleFunc(
+		"PUT /wallet/settings/nft-media",
+		func(w http.ResponseWriter, r *http.Request) {
+			if nfts == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "nft media not available"},
+				)
+				return
+			}
+			var req struct {
+				Enabled *bool `json:"enabled"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			if req.Enabled == nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "enabled is required"},
+				)
+				return
+			}
+			if err := nfts.SetEnabled(*req.Enabled); err != nil {
+				writeJSON(
+					w,
+					http.StatusInternalServerError,
+					map[string]string{"error": err.Error()},
+				)
+				return
+			}
+			writeJSON(
+				w,
+				http.StatusOK,
+				map[string]bool{"enabled": nfts.Enabled(), "available": true},
+			)
+		},
+	)
 
 	// Air-gap step 1 (online instance): export the completed-but-unsigned tx for
 	// a pending send + the key-hashes that must sign it. Built against a synced
 	// node's UTxO view, so it shares the send flow's readyGate.
-	mux.HandleFunc("POST /wallet/send/{id}/export-unsigned", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := sp.ExportUnsigned(r.PathValue("id"))
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/send/{id}/export-unsigned",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := sp.ExportUnsigned(r.PathValue("id"))
+			serve(w, v, err)
+		}),
+	)
 
 	// Air-gap step 2 (offline instance): sign an unsigned tx with the active
 	// wallet's key. Ungated like sign-data — pure crypto over the keystore, no
 	// node needed; this is what the air-gapped machine runs.
-	mux.HandleFunc("POST /wallet/sign-tx", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			UnsignedTxCBOR  string   `json:"unsigned_tx_cbor"`
-			Password        string   `json:"password"`
-			RequiredSigners []string `json:"required_signers"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		v, err := sp.SignTx(req.UnsignedTxCBOR, req.Password, req.RequiredSigners)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/sign-tx",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				UnsignedTxCBOR  string   `json:"unsigned_tx_cbor"`
+				Password        string   `json:"password"`
+				RequiredSigners []string `json:"required_signers"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			v, err := sp.SignTx(
+				req.UnsignedTxCBOR,
+				req.Password,
+				req.RequiredSigners,
+			)
+			serve(w, v, err)
+		},
+	)
 
 	// Air-gap step 3 (online instance): attach the offline witness to the
 	// unsigned tx and broadcast. Needs a synced node (readyGate).
-	mux.HandleFunc("POST /wallet/submit-signed", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
-			WitnessCBOR    string `json:"witness_cbor"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		v, err := sp.SubmitSigned(r.Context(), req.UnsignedTxCBOR, req.WitnessCBOR)
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/submit-signed",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+				WitnessCBOR    string `json:"witness_cbor"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			v, err := sp.SubmitSigned(
+				r.Context(),
+				req.UnsignedTxCBOR,
+				req.WitnessCBOR,
+			)
+			serve(w, v, err)
+		}),
+	)
 
 	// Import transaction: paste a full tx CBOR built elsewhere to inspect it
 	// (decode-tx), add this wallet's witness(es) (cosign-tx), and broadcast the
-	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx —
-	// pure crypto over the keystore/tx bytes, no node needed; submit-tx needs a
-	// synced node like submit-signed. Each handler classifies the pasted tx via
+	// result (submit-tx). decode-tx and cosign-tx are ungated like sign-tx; they
+	// need no synced tip, but cosign-tx on either path refuses a transaction
+	// whose inputs the chain cannot resolve. submit-tx needs a synced node like
+	// submit-signed. Each handler classifies the pasted tx via
 	// ms.InspectTx and routes native-script multisig txs to the multisig
 	// service, ordinary vkey txs straight to the spender (see importDecode/
 	// importCosign/importSubmit below).
-	mux.HandleFunc("POST /wallet/decode-tx", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			TxCBOR string `json:"tx_cbor"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := importDecode(r.Context(), sp, ms, req.TxCBOR)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/decode-tx",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				TxCBOR string `json:"tx_cbor"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := importDecode(r.Context(), sp, ms, req.TxCBOR)
+			serve(w, v, err)
+		},
+	)
 
-	mux.HandleFunc("POST /wallet/cosign-tx", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			TxCBOR      string `json:"tx_cbor"`
-			Password    string `json:"password"`
-			PartialSign *bool  `json:"partial_sign,omitempty"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		partial := true
-		if req.PartialSign != nil {
-			partial = *req.PartialSign
-		}
-		v, err := importCosign(r.Context(), sp, ms, req.TxCBOR, req.Password, partial)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/cosign-tx",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				TxCBOR      string `json:"tx_cbor"`
+				Password    string `json:"password"`
+				PartialSign *bool  `json:"partial_sign,omitempty"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			partial := true
+			if req.PartialSign != nil {
+				partial = *req.PartialSign
+			}
+			v, err := importCosign(
+				r.Context(),
+				sp,
+				ms,
+				req.TxCBOR,
+				req.Password,
+				partial,
+			)
+			serve(w, v, err)
+		},
+	)
 
-	mux.HandleFunc("POST /wallet/submit-tx", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			TxCBOR string `json:"tx_cbor"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := importSubmit(r.Context(), sp, ms, req.TxCBOR)
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/submit-tx",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				TxCBOR string `json:"tx_cbor"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := importSubmit(r.Context(), sp, ms, req.TxCBOR)
+			serve(w, v, err)
+		}),
+	)
 
 	// Read-only stake-pool directory: browse/search the pools the node has
 	// indexed (from /pools/extended) for delegation. Node-local like the DEX
@@ -1572,21 +2247,28 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// Search (q) and pagination (page/count) are applied server-side over the
 	// node's list. This is a DIFFERENT surface from /wallet/dex/pools (AMM
 	// liquidity pools).
-	mux.HandleFunc("GET /wallet/pools", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "pool directory unavailable"})
-			return
-		}
-		pools, err := lookup.Pools(r.Context())
-		if err != nil {
-			serveLookup(w, poolDirectoryResponse{}, err)
-			return
-		}
-		q := r.URL.Query()
-		writeJSON(w, http.StatusOK, filterAndPagePools(
-			pools, q.Get("q"), q.Get("page"), q.Get("count"),
-		))
-	}))
+	mux.HandleFunc(
+		"GET /wallet/pools",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "pool directory unavailable"},
+				)
+				return
+			}
+			pools, err := lookup.Pools(r.Context())
+			if err != nil {
+				serveLookup(w, poolDirectoryResponse{}, err)
+				return
+			}
+			q := r.URL.Query()
+			writeJSON(w, http.StatusOK, filterAndPagePools(
+				pools, q.Get("q"), q.Get("page"), q.Get("count"),
+			))
+		}),
+	)
 
 	// Read-only governance-action (Conway proposal) browser: browse/search the
 	// governance actions the node has recorded, with their type, lifecycle
@@ -1595,113 +2277,256 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// so there is deliberately NO external-consent gate; it is gated like other
 	// reads (a queryable node). Search (q) and pagination (page/count) are
 	// applied server-side over the node's list.
-	mux.HandleFunc("GET /wallet/governance-actions", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "governance actions unavailable"})
-			return
-		}
-		actions, err := lookup.GovernanceActions(r.Context())
-		if err != nil {
-			serveLookup(w, governanceActionsResponse{}, err)
-			return
-		}
-		q := r.URL.Query()
-		writeJSON(w, http.StatusOK, filterAndPageGovernanceActions(
-			actions, q.Get("q"), q.Get("page"), q.Get("count"),
-		))
-	}))
+	mux.HandleFunc(
+		"GET /wallet/governance-actions",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{
+						"error": "governance actions unavailable",
+					},
+				)
+				return
+			}
+			actions, err := lookup.GovernanceActions(r.Context())
+			if err != nil {
+				serveLookup(w, governanceActionsResponse{}, err)
+				return
+			}
+			q := r.URL.Query()
+			writeJSON(w, http.StatusOK, filterAndPageGovernanceActions(
+				actions, q.Get("q"), q.Get("page"), q.Get("count"),
+			))
+		}),
+	)
 
 	// Read-only DRep directory: browse/search the delegated representatives the
 	// node has indexed, to inform vote-delegation. Node-local (the embedded
 	// node's own list endpoint over loopback, nothing leaves 127.0.0.1) — so,
 	// like the pool directory, there is deliberately NO external-consent gate. Search (q) and pagination
 	// (page/count) are applied server-side over the node's list.
-	mux.HandleFunc("GET /wallet/dreps", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drep directory unavailable"})
-			return
-		}
-		dreps, err := lookup.DReps(r.Context())
-		if err != nil {
-			serveLookup(w, drepDirectoryResponse{}, err)
-			return
-		}
-		q := r.URL.Query()
-		writeJSON(w, http.StatusOK, filterAndPageDReps(
-			dreps, q.Get("q"), q.Get("page"), q.Get("count"),
-		))
-	}))
+	mux.HandleFunc(
+		"GET /wallet/dreps",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "drep directory unavailable"},
+				)
+				return
+			}
+			dreps, err := lookup.DReps(r.Context())
+			if err != nil {
+				serveLookup(w, drepDirectoryResponse{}, err)
+				return
+			}
+			q := r.URL.Query()
+			writeJSON(w, http.StatusOK, filterAndPageDReps(
+				dreps, q.Get("q"), q.Get("page"), q.Get("count"),
+			))
+		}),
+	)
 
 	// Staking & governance. Pool/DRep lookups verify a pasted ID through the node
 	// (gated like reads — they only need the node serving queries). Building a
 	// delegation tx and confirming it are gated like sends (a fully synced node),
 	// since they select UTxOs and submit.
-	mux.HandleFunc("GET /wallet/pool/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "pool lookup unavailable"})
-			return
-		}
-		info, err := lookup.Pool(r.Context(), r.PathValue("id"))
-		serveLookup(w, info, err)
-	}))
-	mux.HandleFunc("GET /wallet/drep/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "drep lookup unavailable"})
-			return
-		}
-		info, err := lookup.DRep(r.Context(), r.PathValue("id"))
-		serveLookup(w, info, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/pool/{id}",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "pool lookup unavailable"},
+				)
+				return
+			}
+			info, err := lookup.Pool(r.Context(), r.PathValue("id"))
+			serveLookup(w, info, err)
+		}),
+	)
+	mux.HandleFunc(
+		"GET /wallet/drep/{id}",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "drep lookup unavailable"},
+				)
+				return
+			}
+			info, err := lookup.DRep(r.Context(), r.PathValue("id"))
+			serveLookup(w, info, err)
+		}),
+	)
 
 	// ADA Handle ($name) resolution for the Send screen: resolve the on-chain
 	// NFT to its current holding address through the node (never an external
 	// service). A leading '$' is optional; handle.Resolve normalizes it. A
 	// name on an unsupported network or with no on-chain holder reports as a
-	// clean not-found (404), never a hard error.
-	mux.HandleFunc("GET /wallet/handle/{name}", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "handle lookup unavailable"})
-			return
-		}
-		bare, addr, err := handle.Resolve(r.Context(), lookup, network, r.PathValue("name"))
-		serveLookup(w, handleInfo{Handle: bare, Address: addr}, err)
-	}))
+	// clean not-found (404). Conflicting holders are rejected rather than
+	// selecting a recipient.
+	mux.HandleFunc(
+		"GET /wallet/handle/{name}",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "handle lookup unavailable"},
+				)
+				return
+			}
+			bare, addr, err := handle.Resolve(
+				r.Context(),
+				lookup,
+				network,
+				r.PathValue("name"),
+			)
+			serveHandleLookup(
+				w,
+				handleInfo{Handle: bare, Address: addr, Source: "node"},
+				err,
+			)
+		}),
+	)
+
+	// The external fallback is POST-only because it discloses the requested
+	// Handle name. It never runs automatically: the feature must be enabled and
+	// the request must carry fresh consent for this exact disclosure. A final
+	// node lookup keeps the embedded node primary; ambiguity never falls through
+	// to a remote answer.
+	mux.HandleFunc(
+		"POST /wallet/handle/{name}/external",
+		func(w http.ResponseWriter, r *http.Request) {
+			if !settings.ExternalHandleLookup() {
+				writeJSON(
+					w,
+					http.StatusForbidden,
+					map[string]string{
+						"error": "external handle lookup is disabled",
+					},
+				)
+				return
+			}
+			var req struct {
+				Consent *bool `json:"consent"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if req.Consent == nil || !*req.Consent {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "consent is required"},
+				)
+				return
+			}
+			if lookup != nil {
+				bare, addr, err := handle.Resolve(
+					r.Context(),
+					lookup,
+					network,
+					r.PathValue("name"),
+				)
+				switch {
+				case err == nil:
+					writeJSON(
+						w,
+						http.StatusOK,
+						handleInfo{Handle: bare, Address: addr, Source: "node"},
+					)
+					return
+				case errors.Is(err, handle.ErrAmbiguousHolder):
+					serveHandleLookup(w, handleInfo{}, err)
+					return
+				}
+			}
+			if !externalHandlesAvailable {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{
+						"error": "external handle lookup unavailable",
+					},
+				)
+				return
+			}
+			bare, addr, err := cfg.externalHandles.Resolve(
+				r.Context(),
+				network,
+				r.PathValue("name"),
+			)
+			serveExternalHandleLookup(
+				w,
+				handleInfo{Handle: bare, Address: addr, Source: "external"},
+				err,
+			)
+		},
+	)
 
 	// GET /wallet/assets/{unit} reads a native asset's on-chain
 	// identity/metadata (unit = policy ID + hex asset name) through the node,
 	// for the Portfolio screen's token name/ticker/decimals display. Gated
 	// like the pool/DRep lookups above — it only needs the node serving
 	// queries, not a full sync.
-	mux.HandleFunc("GET /wallet/assets/{unit}", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		if lookup == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "asset lookup unavailable"})
-			return
-		}
-		info, err := lookup.Asset(r.Context(), r.PathValue("unit"))
-		serveLookup(w, info, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/assets/{unit}",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			if lookup == nil {
+				writeJSON(
+					w,
+					http.StatusServiceUnavailable,
+					map[string]string{"error": "asset lookup unavailable"},
+				)
+				return
+			}
+			info, err := lookup.Asset(r.Context(), r.PathValue("unit"))
+			serveLookup(w, info, err)
+		}),
+	)
 
-	mux.HandleFunc("POST /wallet/delegation", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req spend.DelegationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		pv, err := sp.BuildDelegation(r.Context(), req)
-		serve(w, pv, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/delegation",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req spend.DelegationRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			pv, err := sp.BuildDelegation(r.Context(), req)
+			serve(w, pv, err)
+		}),
+	)
 
-	mux.HandleFunc("POST /wallet/delegation/{id}/confirm", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
-		serve(w, res, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/delegation/{id}/confirm",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			res, err := sp.Confirm(r.Context(), r.PathValue("id"), req.Password)
+			serve(w, res, err)
+		}),
+	)
 
 	if sv := cfg.surveys; sv != nil {
 		registerSurveyRoutes(mux, st, sv)
@@ -1709,37 +2534,51 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 
 	// GET /wallet/send/{id}/hardware-sign-request — structured signing request for Ledger.
 	// The pending entry is NOT consumed — the user can still confirm online instead.
-	mux.HandleFunc("GET /wallet/send/{id}/hardware-sign-request", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := sp.HardwareSignRequest(r.PathValue("id"))
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/send/{id}/hardware-sign-request",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := sp.HardwareSignRequest(r.PathValue("id"))
+			serve(w, v, err)
+		}),
+	)
 
 	// POST /wallet/send/{id}/submit-hardware — attach hardware (Ledger) witness and broadcast.
 	// The witness CBOR is produced by the device; the unsigned tx comes from the pending entry.
-	mux.HandleFunc("POST /wallet/send/{id}/submit-hardware", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			WitnessCBOR string `json:"witness_cbor"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
-			return
-		}
-		// Fetch the unsigned tx CBOR from the pending entry.
-		unsigned, err := sp.ExportUnsigned(r.PathValue("id"))
-		if err != nil {
-			serve(w, spend.TxResult{}, err)
-			return
-		}
-		v, err := sp.SubmitSigned(r.Context(), unsigned.UnsignedTxCBOR, req.WitnessCBOR)
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/send/{id}/submit-hardware",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				WitnessCBOR string `json:"witness_cbor"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSON(
+					w,
+					http.StatusBadRequest,
+					map[string]string{"error": "invalid JSON body"},
+				)
+				return
+			}
+			// Fetch the unsigned tx CBOR from the pending entry.
+			unsigned, err := sp.ExportUnsigned(r.PathValue("id"))
+			if err != nil {
+				serve(w, spend.TxResult{}, err)
+				return
+			}
+			v, err := sp.SubmitSigned(
+				r.Context(),
+				unsigned.UnsignedTxCBOR,
+				req.WitnessCBOR,
+			)
+			serve(w, v, err)
+		}),
+	)
 
 	if po != nil {
 		registerPoolRoutes(mux, st, po)
 	}
 
 	if ms != nil {
-		registerMultiSigRoutes(mux, st, vlt, ms, network, bindActive)
+		registerMultiSigRoutes(mux, st, vlt, sp, ms, network, bindActive)
 	}
 
 	if cfg.connector != nil {
@@ -1757,6 +2596,11 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 			cfg.connector,
 			withConnectorPairingCodeAuthorizer(authorizePairingCode),
 		)
+	} else if cfg.approvals != nil {
+		registerApprovalRoutes(mux, cfg.approvals)
+	}
+	if cfg.remoteSubmit != nil {
+		registerRemoteSubmission(mux, cfg.remoteSubmit)
 	}
 
 	// SPA catch-all: the specific API routes above take precedence on the mux;
@@ -1767,7 +2611,10 @@ func NewHandler(sessionToken string, st Statuser, vlt Vault, wl Wallet, sp Spend
 	// /wallet/* routes register directly on the mux with no per-handler origin
 	// check, so this middleware is the single point that enforces it for them.
 	return &Handler{
-		Handler:  sessionGuard(sessionToken, sameOriginGuard(limitRequestBody(mux))),
+		Handler: sessionGuard(
+			sessionToken,
+			sameOriginGuard(limitRequestBody(mux)),
+		),
 		autoLock: autoLock,
 	}
 }
@@ -1824,6 +2671,8 @@ func limitRequestBody(next http.Handler) http.Handler {
 //   - Other methods (GET/HEAD, plus the SPA's navigations and asset loads) use
 //     sameOrigin, which additionally trusts the absent-Origin case that
 //     same-origin browser GETs produce — but only over a loopback Host.
+//     Ownership-dependent or state-consuming GETs require browser fetch
+//     metadata at their route before reading wallet state.
 //
 // It reuses connector.go's sameOrigin/strictSameOrigin/isLoopbackHost verbatim
 // so the SPA's own calls decide identically to the connector's SPA routes: in
@@ -1839,21 +2688,58 @@ func sameOriginGuard(next http.Handler) http.Handler {
 		}
 		// Loopback Host is required for every guarded request.
 		if !isLoopbackHost(r.Host) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		allowed := sameOrigin(r)
 		switch r.Method {
-		case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		case http.MethodPost,
+			http.MethodPut,
+			http.MethodDelete,
+			http.MethodPatch:
 			// State-changing methods must carry a matching Origin.
 			allowed = strictSameOrigin(r)
 		}
 		if !allowed {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+			writeJSON(
+				w,
+				http.StatusForbidden,
+				map[string]string{"error": "cross-origin request refused"},
+			)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireSameOriginBrowserContext rejects subresource-capable GET requests
+// unless they carry either a matching Origin or browser-controlled same-origin
+// fetch metadata. Callers use it before reading or advancing private wallet
+// state that a cross-site page could otherwise probe or consume.
+func requireSameOriginBrowserContext(
+	w http.ResponseWriter,
+	r *http.Request,
+) bool {
+	allowed := false
+	if r.Header.Get("Origin") != "" {
+		allowed = sameOrigin(r)
+	} else {
+		allowed = isLoopbackHost(r.Host) && r.Header.Get("Sec-Fetch-Site") == "same-origin"
+	}
+	if allowed {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(
+		w,
+		http.StatusForbidden,
+		map[string]string{"error": "cross-origin request refused"},
+	)
+	return false
 }
 
 // walletList maps vault metadata to the client-facing wallet views, marking the
@@ -1876,7 +2762,10 @@ func walletList(wallets []vault.WalletMeta, vlt Vault) []walletView {
 func requirePassword(w http.ResponseWriter, password string) bool {
 	if utf8.RuneCountInString(password) < keystore.MinPasswordLen {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("password must be at least %d characters", keystore.MinPasswordLen),
+			"error": fmt.Sprintf(
+				"password must be at least %d characters",
+				keystore.MinPasswordLen,
+			),
 		})
 		return false
 	}
@@ -1891,9 +2780,63 @@ func serveLookup[T any](w http.ResponseWriter, v T, err error) {
 	case err == nil:
 		writeJSON(w, http.StatusOK, v)
 	case errors.Is(err, chain.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found by your node"})
+		writeJSON(
+			w,
+			http.StatusNotFound,
+			map[string]string{"error": "not found by your node"},
+		)
 	default:
 		writeJSON(w, http.StatusBadGateway, errBody(err))
+	}
+}
+
+func serveHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(
+			w,
+			http.StatusNotFound,
+			map[string]string{"error": "handle not found by your node"},
+		)
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(
+			w,
+			http.StatusConflict,
+			map[string]string{"error": "handle holder is ambiguous"},
+		)
+	default:
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]string{"error": "handle lookup failed"},
+		)
+	}
+}
+
+func serveExternalHandleLookup(w http.ResponseWriter, v handleInfo, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, v)
+	case errors.Is(err, chain.ErrNotFound):
+		writeJSON(
+			w,
+			http.StatusNotFound,
+			map[string]string{"error": "handle not found"},
+		)
+	case errors.Is(err, handle.ErrAmbiguousHolder):
+		writeJSON(
+			w,
+			http.StatusConflict,
+			map[string]string{"error": "handle holder is ambiguous"},
+		)
+	default:
+		writeJSON(
+			w,
+			http.StatusBadGateway,
+			map[string]string{"error": "external handle service unavailable"},
+		)
 	}
 }
 
@@ -1918,7 +2861,11 @@ const (
 // clamped to [1, poolDirMaxCount]. Invalid/absent page or count fall back to
 // their defaults rather than erroring. start/end are clamped on both sides so
 // a very large page can't overflow the slice bounds and panic.
-func filterAndPage[T any](items []T, q, pageStr, countStr string, matches func(T, string) bool) (pageItems []T, total, page, count int) {
+func filterAndPage[T any](
+	items []T,
+	q, pageStr, countStr string,
+	matches func(T, string) bool,
+) (pageItems []T, total, page, count int) {
 	needle := strings.ToLower(strings.TrimSpace(q))
 	matched := make([]T, 0, len(items))
 	for _, item := range items {
@@ -1961,12 +2908,26 @@ func filterAndPage[T any](items []T, q, pageStr, countStr string, matches func(T
 // pagination over the node's full pool list. The search (q) is a
 // case-insensitive substring match against the pool's bech32 ID and hex ID —
 // the identity fields the node's /pools/extended list exposes.
-func filterAndPagePools(pools []chain.PoolInfo, q, pageStr, countStr string) poolDirectoryResponse {
-	pageItems, total, page, count := filterAndPage(pools, q, pageStr, countStr, func(p chain.PoolInfo, needle string) bool {
-		return strings.Contains(strings.ToLower(p.PoolID), needle) ||
-			strings.Contains(strings.ToLower(p.Hex), needle)
-	})
-	return poolDirectoryResponse{Pools: pageItems, Total: total, Page: page, Count: count}
+func filterAndPagePools(
+	pools []chain.PoolInfo,
+	q, pageStr, countStr string,
+) poolDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(
+		pools,
+		q,
+		pageStr,
+		countStr,
+		func(p chain.PoolInfo, needle string) bool {
+			return strings.Contains(strings.ToLower(p.PoolID), needle) ||
+				strings.Contains(strings.ToLower(p.Hex), needle)
+		},
+	)
+	return poolDirectoryResponse{
+		Pools: pageItems,
+		Total: total,
+		Page:  page,
+		Count: count,
+	}
 }
 
 // governanceActionsResponse is the GET /wallet/governance-actions response: one
@@ -1984,13 +2945,27 @@ type governanceActionsResponse struct {
 // (q) is a case-insensitive substring match against the action ID, tx hash, and
 // type label. page is 1-based; count is clamped to [1, poolDirMaxCount].
 // Invalid/absent page or count fall back to their defaults rather than erroring.
-func filterAndPageGovernanceActions(actions []chain.GovernanceAction, q, pageStr, countStr string) governanceActionsResponse {
-	pageItems, total, page, count := filterAndPage(actions, q, pageStr, countStr, func(a chain.GovernanceAction, needle string) bool {
-		return strings.Contains(strings.ToLower(a.ActionID), needle) ||
-			strings.Contains(strings.ToLower(a.TxHash), needle) ||
-			strings.Contains(strings.ToLower(a.Type), needle)
-	})
-	return governanceActionsResponse{Actions: pageItems, Total: total, Page: page, Count: count}
+func filterAndPageGovernanceActions(
+	actions []chain.GovernanceAction,
+	q, pageStr, countStr string,
+) governanceActionsResponse {
+	pageItems, total, page, count := filterAndPage(
+		actions,
+		q,
+		pageStr,
+		countStr,
+		func(a chain.GovernanceAction, needle string) bool {
+			return strings.Contains(strings.ToLower(a.ActionID), needle) ||
+				strings.Contains(strings.ToLower(a.TxHash), needle) ||
+				strings.Contains(strings.ToLower(a.Type), needle)
+		},
+	)
+	return governanceActionsResponse{
+		Actions: pageItems,
+		Total:   total,
+		Page:    page,
+		Count:   count,
+	}
 }
 
 // drepDirectoryResponse is the GET /wallet/dreps response: one page of the
@@ -2009,17 +2984,31 @@ type drepDirectoryResponse struct {
 // payload, and metadata anchor URL. Matching hex as a substring is what lets a
 // bare 28-byte credential — which is only the tail of the 29-byte CIP-129
 // payload the node reports — still find its DRep.
-func filterAndPageDReps(dreps []chain.DRepListItem, q, pageStr, countStr string) drepDirectoryResponse {
-	pageItems, total, page, count := filterAndPage(dreps, q, pageStr, countStr, func(d chain.DRepListItem, needle string) bool {
-		anchorURL := ""
-		if d.Metadata != nil {
-			anchorURL = d.Metadata.URL
-		}
-		return strings.Contains(strings.ToLower(d.DRepID), needle) ||
-			strings.Contains(strings.ToLower(d.Hex), needle) ||
-			strings.Contains(strings.ToLower(anchorURL), needle)
-	})
-	return drepDirectoryResponse{DReps: pageItems, Total: total, Page: page, Count: count}
+func filterAndPageDReps(
+	dreps []chain.DRepListItem,
+	q, pageStr, countStr string,
+) drepDirectoryResponse {
+	pageItems, total, page, count := filterAndPage(
+		dreps,
+		q,
+		pageStr,
+		countStr,
+		func(d chain.DRepListItem, needle string) bool {
+			anchorURL := ""
+			if d.Metadata != nil {
+				anchorURL = d.Metadata.URL
+			}
+			return strings.Contains(strings.ToLower(d.DRepID), needle) ||
+				strings.Contains(strings.ToLower(d.Hex), needle) ||
+				strings.Contains(strings.ToLower(anchorURL), needle)
+		},
+	)
+	return drepDirectoryResponse{
+		DReps: pageItems,
+		Total: total,
+		Page:  page,
+		Count: count,
+	}
 }
 
 // registerPoolRoutes wires the Stake Pool Operations (SPO) endpoints under
@@ -2030,177 +3019,268 @@ func filterAndPageDReps(dreps []chain.DRepListItem, q, pageStr, countStr string)
 // KES-period and retirement submission need a node (gated / readyGate).
 func registerPoolRoutes(mux *http.ServeMux, st Statuser, po PoolOps) {
 	// 1. Credentials (active wallet + password; offline).
-	mux.HandleFunc("POST /wallet/pool/credentials", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.Credentials(req.Password)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/credentials",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.Credentials(req.Password)
+			serve(w, v, err)
+		},
+	)
 
 	// 2. KES period (node tip + genesis; gated on a queryable node).
-	mux.HandleFunc("GET /wallet/pool/kes-period", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := po.KESPeriod(r.Context())
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/pool/kes-period",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := po.KESPeriod(r.Context())
+			serve(w, v, err)
+		}),
+	)
 
 	// 2. Operational certificate: issue (seed).
-	mux.HandleFunc("POST /wallet/pool/opcert", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password    string `json:"password"`
-			KESIndex    uint32 `json:"kes_index"`
-			IssueNumber uint64 `json:"issue_number"`
-			KESPeriod   uint64 `json:"kes_period"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.IssueOpCert(req.Password, req.KESIndex, req.IssueNumber, req.KESPeriod)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/opcert",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password    string `json:"password"`
+				KESIndex    uint32 `json:"kes_index"`
+				IssueNumber uint64 `json:"issue_number"`
+				KESPeriod   uint64 `json:"kes_period"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.IssueOpCert(
+				req.Password,
+				req.KESIndex,
+				req.IssueNumber,
+				req.KESPeriod,
+			)
+			serve(w, v, err)
+		},
+	)
 
 	// 2. Operational certificate: KES rotation (seed) — new KES key + counter bump.
-	mux.HandleFunc("POST /wallet/pool/opcert/rotate", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password        string `json:"password"`
-			NewKESIndex     uint32 `json:"new_kes_index"`
-			PrevIssueNumber uint64 `json:"prev_issue_number"`
-			KESPeriod       uint64 `json:"kes_period"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.RotateKES(req.Password, req.NewKESIndex, req.PrevIssueNumber, req.KESPeriod)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/opcert/rotate",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password        string `json:"password"`
+				NewKESIndex     uint32 `json:"new_kes_index"`
+				PrevIssueNumber uint64 `json:"prev_issue_number"`
+				KESPeriod       uint64 `json:"kes_period"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.RotateKES(
+				req.Password,
+				req.NewKESIndex,
+				req.PrevIssueNumber,
+				req.KESPeriod,
+			)
+			serve(w, v, err)
+		},
+	)
 
 	// Air-gap: opcert to-be-signed payload (no wallet needed).
-	mux.HandleFunc("POST /wallet/pool/opcert/payload", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			KESVKeyHex  string `json:"kes_vkey_hex"`
-			IssueNumber uint64 `json:"issue_number"`
-			KESPeriod   uint64 `json:"kes_period"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.OpCertPayload(req.KESVKeyHex, req.IssueNumber, req.KESPeriod)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/opcert/payload",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				KESVKeyHex  string `json:"kes_vkey_hex"`
+				IssueNumber uint64 `json:"issue_number"`
+				KESPeriod   uint64 `json:"kes_period"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.OpCertPayload(
+				req.KESVKeyHex,
+				req.IssueNumber,
+				req.KESPeriod,
+			)
+			serve(w, v, err)
+		},
+	)
 
 	// Air-gap: assemble opcert from an externally-produced cold-key signature.
-	mux.HandleFunc("POST /wallet/pool/opcert/assemble", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ColdVKeyHex  string `json:"cold_vkey_hex"`
-			KESVKeyHex   string `json:"kes_vkey_hex"`
-			SignatureHex string `json:"signature_hex"`
-			IssueNumber  uint64 `json:"issue_number"`
-			KESPeriod    uint64 `json:"kes_period"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.AssembleOpCert(req.ColdVKeyHex, req.KESVKeyHex, req.SignatureHex, req.IssueNumber, req.KESPeriod)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/opcert/assemble",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				ColdVKeyHex  string `json:"cold_vkey_hex"`
+				KESVKeyHex   string `json:"kes_vkey_hex"`
+				SignatureHex string `json:"signature_hex"`
+				IssueNumber  uint64 `json:"issue_number"`
+				KESPeriod    uint64 `json:"kes_period"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.AssembleOpCert(
+				req.ColdVKeyHex,
+				req.KESVKeyHex,
+				req.SignatureHex,
+				req.IssueNumber,
+				req.KESPeriod,
+			)
+			serve(w, v, err)
+		},
+	)
 
 	// 6. Metadata builder (pure transform; no wallet/node).
-	mux.HandleFunc("POST /wallet/pool/metadata", func(w http.ResponseWriter, r *http.Request) {
-		var in poolops.MetadataInput
-		if !decodeBody(w, r, &in) {
-			return
-		}
-		v, err := po.BuildMetadata(in)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/metadata",
+		func(w http.ResponseWriter, r *http.Request) {
+			var in poolops.MetadataInput
+			if !decodeBody(w, r, &in) {
+				return
+			}
+			v, err := po.BuildMetadata(in)
+			serve(w, v, err)
+		},
+	)
 
 	// Air-gap import: pool ID from an external cold vkey (pure transform).
-	mux.HandleFunc("POST /wallet/pool/id", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ColdVKeyHex string `json:"cold_vkey_hex"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		id, idHex, err := po.PoolIDFromColdVKey(req.ColdVKeyHex)
-		serve(w, map[string]string{"pool_id": id, "pool_id_hex": idHex}, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/id",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				ColdVKeyHex string `json:"cold_vkey_hex"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			id, idHex, err := po.PoolIDFromColdVKey(req.ColdVKeyHex)
+			serve(
+				w,
+				map[string]string{"pool_id": id, "pool_id_hex": idHex},
+				err,
+			)
+		},
+	)
 
 	// 3/4. Registration / update certificate (seed): build the canonical cert.
-	mux.HandleFunc("POST /wallet/pool/registration", func(w http.ResponseWriter, r *http.Request) {
-		var req poolRegistrationSeedRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.BuildRegistrationFromSeed(req.Password, req.params())
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/registration",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req poolRegistrationSeedRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.BuildRegistrationFromSeed(req.Password, req.params())
+			serve(w, v, err)
+		},
+	)
 
 	// 3/4. Registration / update certificate (air-gap): build from imported keys.
-	mux.HandleFunc("POST /wallet/pool/registration/airgap", func(w http.ResponseWriter, r *http.Request) {
-		var req poolRegistrationAirGapRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.BuildRegistrationAirGap(poolops.AirGapRegistrationParams{
-			RegistrationParams: req.params(),
-			VRFKeyHashHex:      req.VRFKeyHashHex,
-		})
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/registration/airgap",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req poolRegistrationAirGapRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.BuildRegistrationAirGap(
+				poolops.AirGapRegistrationParams{
+					RegistrationParams: req.params(),
+					VRFKeyHashHex:      req.VRFKeyHashHex,
+				},
+			)
+			serve(w, v, err)
+		},
+	)
+
+	// 3/4. Registration / update transaction submission (seed; needs a fully
+	// synced node). Locks the pool deposit only for a pool not yet registered.
+	mux.HandleFunc(
+		"POST /wallet/pool/registration/submit",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req poolRegistrationSeedRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.SubmitRegistration(
+				r.Context(),
+				req.Password,
+				req.params(),
+			)
+			serve(w, v, err)
+		}),
+	)
 
 	// 5. Retirement certificate (seed or air-gap cold vkey).
-	mux.HandleFunc("POST /wallet/pool/retirement/cert", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password    string `json:"password"`
-			ColdVKeyHex string `json:"cold_vkey_hex"`
-			Epoch       uint64 `json:"epoch"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.BuildRetirementCert(req.Password, req.ColdVKeyHex, req.Epoch)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/pool/retirement/cert",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password    string `json:"password"`
+				ColdVKeyHex string `json:"cold_vkey_hex"`
+				Epoch       uint64 `json:"epoch"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.BuildRetirementCert(
+				req.Password,
+				req.ColdVKeyHex,
+				req.Epoch,
+			)
+			serve(w, v, err)
+		},
+	)
 
 	// 5. Retirement transaction submission (seed; needs a fully synced node).
-	mux.HandleFunc("POST /wallet/pool/retirement/submit", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-			Epoch    uint64 `json:"epoch"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.SubmitRetirement(r.Context(), req.Password, req.Epoch)
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/pool/retirement/submit",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+				Epoch    uint64 `json:"epoch"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.SubmitRetirement(r.Context(), req.Password, req.Epoch)
+			serve(w, v, err)
+		}),
+	)
 
 	// Governance vote by stake pool operator (seed; needs a fully synced node).
-	mux.HandleFunc("POST /wallet/pool/vote", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password    string `json:"password"`
-			ActionTxID  string `json:"action_tx_id"`
-			ActionIndex uint32 `json:"action_index"`
-			Vote        string `json:"vote"`
-			AnchorURL   string `json:"anchor_url"`
-			AnchorHash  string `json:"anchor_hash"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := po.SubmitPoolVote(r.Context(), req.Password, poolops.PoolVoteParams{
-			ActionTxID:  req.ActionTxID,
-			ActionIndex: req.ActionIndex,
-			Vote:        req.Vote,
-			AnchorURL:   req.AnchorURL,
-			AnchorHash:  req.AnchorHash,
-		})
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/pool/vote",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password    string `json:"password"`
+				ActionTxID  string `json:"action_tx_id"`
+				ActionIndex uint32 `json:"action_index"`
+				Vote        string `json:"vote"`
+				AnchorURL   string `json:"anchor_url"`
+				AnchorHash  string `json:"anchor_hash"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := po.SubmitPoolVote(
+				r.Context(),
+				req.Password,
+				poolops.PoolVoteParams{
+					ActionTxID:  req.ActionTxID,
+					ActionIndex: req.ActionIndex,
+					Vote:        req.Vote,
+					AnchorURL:   req.AnchorURL,
+					AnchorHash:  req.AnchorHash,
+				},
+			)
+			serve(w, v, err)
+		}),
+	)
 }
 
 // surveyListResponse is the GET /wallet/surveys response: one page of surveys
@@ -2217,207 +3297,295 @@ type surveyListResponse struct {
 // embedded node only. Building a response, survey or cancellation returns a
 // pending transaction that POST /wallet/send/{id}/confirm signs and submits.
 func registerSurveyRoutes(mux *http.ServeMux, st Statuser, sv Surveys) {
-	mux.HandleFunc("GET /wallet/surveys", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		list, err := sv.List(r.Context())
-		partial := errors.Is(err, survey.ErrIndexing)
-		if err != nil && !partial {
-			serveSurvey(w, list, err)
-			return
-		}
-		q := r.URL.Query()
-		if status := q.Get("status"); status != "" {
-			list = slices.DeleteFunc(slices.Clone(list), func(s survey.Summary) bool { return s.Status != status })
-		}
-		// linked=true keeps only surveys a governance action links to, which is
-		// all the governance browser needs.
-		if q.Get("linked") == "true" {
-			list = slices.DeleteFunc(slices.Clone(list), func(s survey.Summary) bool { return len(s.LinkedActions) == 0 })
-		}
-		items, total, page, count := filterAndPage(list, q.Get("q"), q.Get("page"), q.Get("count"), func(s survey.Summary, needle string) bool {
-			return strings.Contains(strings.ToLower(s.Title), needle) ||
-				strings.Contains(strings.ToLower(s.Description), needle) ||
-				strings.Contains(strings.ToLower(s.ID), needle)
-		})
-		writeJSON(w, http.StatusOK, surveyListResponse{Surveys: items, Total: total, Page: page, Count: count, Partial: partial})
-	}))
-	mux.HandleFunc("GET /wallet/surveys/{id}", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		d, err := sv.Get(r.Context(), r.PathValue("id"))
-		serveSurvey(w, d, err)
-	}))
-	mux.HandleFunc("POST /wallet/surveys/{id}/reveal", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		var req survey.RevealRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		req.Survey = r.PathValue("id")
-		d, err := sv.Reveal(r.Context(), req)
-		serveSurvey(w, d, err)
-	}))
-	mux.HandleFunc("POST /wallet/surveys/respond", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req survey.RespondRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		pv, err := sv.Respond(r.Context(), req)
-		serveSurvey(w, pv, err)
-	}))
-	mux.HandleFunc("POST /wallet/surveys/create", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req survey.CreateRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		pv, err := sv.Create(r.Context(), req)
-		serveSurvey(w, pv, err)
-	}))
-	mux.HandleFunc("POST /wallet/surveys/cancel", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req survey.CancelRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		pv, err := sv.Cancel(r.Context(), req)
-		serveSurvey(w, pv, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/surveys",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			list, err := sv.List(r.Context())
+			partial := errors.Is(err, survey.ErrIndexing)
+			if err != nil && !partial {
+				serveSurvey(w, list, err)
+				return
+			}
+			q := r.URL.Query()
+			if status := q.Get("status"); status != "" {
+				list = slices.DeleteFunc(
+					slices.Clone(list),
+					func(s survey.Summary) bool { return s.Status != status },
+				)
+			}
+			// linked=true keeps only surveys a governance action links to, which is
+			// all the governance browser needs.
+			if q.Get("linked") == "true" {
+				list = slices.DeleteFunc(
+					slices.Clone(list),
+					func(s survey.Summary) bool { return len(s.LinkedActions) == 0 },
+				)
+			}
+			items, total, page, count := filterAndPage(
+				list,
+				q.Get("q"),
+				q.Get("page"),
+				q.Get("count"),
+				func(s survey.Summary, needle string) bool {
+					return strings.Contains(strings.ToLower(s.Title), needle) ||
+						strings.Contains(
+							strings.ToLower(s.Description),
+							needle,
+						) ||
+						strings.Contains(strings.ToLower(s.ID), needle)
+				},
+			)
+			writeJSON(
+				w,
+				http.StatusOK,
+				surveyListResponse{
+					Surveys: items,
+					Total:   total,
+					Page:    page,
+					Count:   count,
+					Partial: partial,
+				},
+			)
+		}),
+	)
+	mux.HandleFunc(
+		"GET /wallet/surveys/{id}",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			d, err := sv.Get(r.Context(), r.PathValue("id"))
+			serveSurvey(w, d, err)
+		}),
+	)
+	mux.HandleFunc(
+		"POST /wallet/surveys/{id}/reveal",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			var req survey.RevealRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			req.Survey = r.PathValue("id")
+			d, err := sv.Reveal(r.Context(), req)
+			serveSurvey(w, d, err)
+		}),
+	)
+	mux.HandleFunc(
+		"POST /wallet/surveys/respond",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req survey.RespondRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			pv, err := sv.Respond(r.Context(), req)
+			serveSurvey(w, pv, err)
+		}),
+	)
+	mux.HandleFunc(
+		"POST /wallet/surveys/create",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req survey.CreateRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			pv, err := sv.Create(r.Context(), req)
+			serveSurvey(w, pv, err)
+		}),
+	)
+	mux.HandleFunc(
+		"POST /wallet/surveys/cancel",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req survey.CancelRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			pv, err := sv.Cancel(r.Context(), req)
+			serveSurvey(w, pv, err)
+		}),
+	)
 }
 
 // registerMultiSigRoutes wires the native multi-signature endpoints under
 // /wallet/multisig. Account management (list/create/get/delete) and sharing the
 // wallet's own participant key are local/offline; balance is a node read
-// (gated); build and submit need a synced node (readyGate); sign is pure crypto
-// over the keystore (ungated).
+// (gated); build and submit need a synced node (readyGate). sign is ungated,
+// but it resolves the transaction's inputs through the chain before signing, so
+// it fails while the node cannot answer UTxO lookups.
 func registerMultiSigRoutes(
 	mux *http.ServeMux,
 	st Statuser,
 	vlt Vault,
+	sp Spender,
 	ms MultiSig,
 	network string,
 	bindActive func(vault.WalletMeta),
 ) {
 	// List saved multi-sig accounts.
-	mux.HandleFunc("GET /wallet/multisig", func(w http.ResponseWriter, _ *http.Request) {
-		v, err := ms.List()
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"GET /wallet/multisig",
+		func(w http.ResponseWriter, _ *http.Request) {
+			v, err := ms.List()
+			serve(w, v, err)
+		},
+	)
 
 	// Create a multi-signature account. It is a wallet now, so it is composed
 	// from the policy and then stored in the vault, which is why this needs the
 	// vault password like any other add-wallet call.
-	mux.HandleFunc("POST /wallet/multisig", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			multisig.CreateRequest
-			VaultPassword string `json:"vault_password"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		net, ok := resolveNetwork(w, req.Network, network)
-		if !ok {
-			return
-		}
-		req.Network = net
-		if !requirePassword(w, req.VaultPassword) {
-			return
-		}
-		// Compose first: an invalid policy should be rejected before the vault is
-		// touched at all.
-		acct, err := ms.Compose(req.CreateRequest)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		policy, err := json.Marshal(acct.Policy)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		// Empty id: this is a new account, so the vault assigns one. Migration is
-		// the only caller that supplies an existing id.
-		meta, err := vlt.AddScriptWallet("", acct.Label, acct.Network, vault.ScriptMeta{
-			Policy:        policy,
-			ScriptCBOR:    acct.ScriptCBOR,
-			ScriptAddress: acct.ScriptAddress,
-		}, req.VaultPassword)
-		if err != nil {
-			serve(w, struct{}{}, err)
-			return
-		}
-		// Adding a wallet selects it, as the other add-wallet paths do. Without
-		// this the response would claim the new wallet is active while balance
-		// and send requests kept answering for the previous one.
-		// When the selection fails the wallet is still created, so the response
-		// says so with a truthful active flag rather than a failure status: a 5xx
-		// would misdescribe a request that did create the resource, and a client
-		// retrying it hits the duplicate-script check. The client reconciles from
-		// `active` (see applyAdded) and can activate the wallet by id.
-		activeID := ""
-		if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
-			bindActive(active)
-			meta = active
-			activeID = meta.ID
-		}
-		serve(w, toWalletView(meta, activeID), nil)
-	})
+	mux.HandleFunc(
+		"POST /wallet/multisig",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				multisig.CreateRequest
+				VaultPassword string `json:"vault_password"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			net, ok := resolveNetwork(w, req.Network, network)
+			if !ok {
+				return
+			}
+			req.Network = net
+			if !requirePassword(w, req.VaultPassword) {
+				return
+			}
+			// Compose first: an invalid policy should be rejected before the vault is
+			// touched at all.
+			acct, err := ms.Compose(req.CreateRequest)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			policy, err := json.Marshal(acct.Policy)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			// Empty id: this is a new account, so the vault assigns one. Migration is
+			// the only caller that supplies an existing id.
+			meta, err := vlt.AddScriptWallet(
+				"",
+				acct.Label,
+				acct.Network,
+				vault.ScriptMeta{
+					Policy:        policy,
+					ScriptCBOR:    acct.ScriptCBOR,
+					ScriptAddress: acct.ScriptAddress,
+				},
+				req.VaultPassword,
+			)
+			if err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			// Adding a wallet selects it, as the other add-wallet paths do. Without
+			// this the response would claim the new wallet is active while balance
+			// and send requests kept answering for the previous one.
+			// When the selection fails the wallet is still created, so the response
+			// says so with a truthful active flag rather than a failure status: a 5xx
+			// would misdescribe a request that did create the resource, and a client
+			// retrying it hits the duplicate-script check. The client reconciles from
+			// `active` (see applyAdded) and can activate the wallet by id.
+			activeID := ""
+			if active, aErr := vlt.SetActive(meta.ID); aErr == nil {
+				bindActive(active)
+				meta = active
+				activeID = meta.ID
+			}
+			serve(w, toWalletView(meta, activeID), nil)
+		},
+	)
 
 	// The active wallet's own CIP-1854 multi-sig participant key, to share. Needs
 	// the spending password to unlock the seed; ungated (pure crypto, no node).
-	mux.HandleFunc("POST /wallet/multisig/my-key", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Password string `json:"password"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := ms.MyKey(req.Password)
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"POST /wallet/multisig/my-key",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				Password string `json:"password"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := ms.MyKey(req.Password)
+			serve(w, v, err)
+		},
+	)
 
 	// Fetch one saved account.
-	mux.HandleFunc("GET /wallet/multisig/{id}", func(w http.ResponseWriter, r *http.Request) {
-		v, err := ms.Get(r.PathValue("id"))
-		serve(w, v, err)
-	})
+	mux.HandleFunc(
+		"GET /wallet/multisig/{id}",
+		func(w http.ResponseWriter, r *http.Request) {
+			v, err := ms.Get(r.PathValue("id"))
+			serve(w, v, err)
+		},
+	)
 
 	// Balance held at the account's script address.
-	mux.HandleFunc("GET /wallet/multisig/{id}/balance", gated(st, func(w http.ResponseWriter, r *http.Request) {
-		v, err := ms.Balance(r.Context(), r.PathValue("id"))
-		serve(w, map[string]string{"lovelace": v}, err)
-	}))
+	mux.HandleFunc(
+		"GET /wallet/multisig/{id}/balance",
+		gated(st, func(w http.ResponseWriter, r *http.Request) {
+			v, err := ms.Balance(r.Context(), r.PathValue("id"))
+			serve(w, map[string]string{"lovelace": v}, err)
+		}),
+	)
 
 	// Build an unsigned spend from the account's script address.
-	mux.HandleFunc("POST /wallet/multisig/{id}/build", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req multisig.BuildRequest
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := ms.Build(r.Context(), r.PathValue("id"), req)
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/multisig/{id}/build",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req multisig.BuildRequest
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			v, err := ms.Build(r.Context(), r.PathValue("id"), req)
+			serve(w, v, err)
+		}),
+	)
 
 	// Co-sign an unsigned multi-sig tx with the wallet's CIP-1854 key. Ungated
-	// (pure crypto over the keystore, no node), like sign-tx.
-	mux.HandleFunc("POST /wallet/multisig/sign", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
-			Password       string `json:"password"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := ms.Sign(req.UnsignedTxCBOR, req.Password)
-		serve(w, v, err)
-	})
+	// like sign-tx; the effect check needs chain UTxO lookups, not a synced tip.
+	mux.HandleFunc(
+		"POST /wallet/multisig/sign",
+		func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				UnsignedTxCBOR string `json:"unsigned_tx_cbor"`
+				Password       string `json:"password"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if err := requireCompleteEffects(r.Context(), sp, req.UnsignedTxCBOR); err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			v, err := ms.Sign(req.UnsignedTxCBOR, req.Password)
+			serve(w, v, err)
+		},
+	)
 
 	// Attach the script + collected witnesses and broadcast (threshold enforced).
-	mux.HandleFunc("POST /wallet/multisig/{id}/submit", readyGate(st, func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			UnsignedTxCBOR string   `json:"unsigned_tx_cbor"`
-			Witnesses      []string `json:"witnesses"`
-		}
-		if !decodeBody(w, r, &req) {
-			return
-		}
-		v, err := ms.Submit(r.Context(), r.PathValue("id"), req.UnsignedTxCBOR, req.Witnesses)
-		serve(w, v, err)
-	}))
+	mux.HandleFunc(
+		"POST /wallet/multisig/{id}/submit",
+		readyGate(st, func(w http.ResponseWriter, r *http.Request) {
+			var req struct {
+				UnsignedTxCBOR string   `json:"unsigned_tx_cbor"`
+				Witnesses      []string `json:"witnesses"`
+			}
+			if !decodeBody(w, r, &req) {
+				return
+			}
+			if err := requireCompleteEffects(r.Context(), sp, req.UnsignedTxCBOR); err != nil {
+				serve(w, struct{}{}, err)
+				return
+			}
+			v, err := ms.Submit(
+				r.Context(),
+				r.PathValue("id"),
+				req.UnsignedTxCBOR,
+				req.Witnesses,
+			)
+			serve(w, v, err)
+		}),
+	)
 }
 
 // importDecodeResponse is decode-tx's response: the vkey-path TxSummary with
@@ -2434,7 +3602,12 @@ type importDecodeResponse struct {
 // routes native-script multi-sig transactions through the MultiSig service;
 // everything else (vkey path) delegates to the Spender, unchanged from the
 // prior (vkey-only) behavior.
-func importDecode(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (importDecodeResponse, error) {
+func importDecode(
+	ctx context.Context,
+	sp Spender,
+	ms MultiSig,
+	txCbor string,
+) (importDecodeResponse, error) {
 	info, err := ms.InspectTx(txCbor)
 	if err != nil {
 		return importDecodeResponse{}, err
@@ -2451,23 +3624,64 @@ func importDecode(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (
 	return resp, nil
 }
 
-func importCosign(ctx context.Context, sp Spender, ms MultiSig, txCbor, password string, partial bool) (any, error) {
+// requireCompleteEffects applies the vkey path's signing gate to a
+// transaction the multisig service is about to sign or broadcast: every input
+// and collateral input must resolve and no effect may be unsupported. It runs
+// before the multisig service so the keystore is never unlocked, and nothing is
+// submitted, for a transaction whose effects the wallet cannot account for.
+func requireCompleteEffects(
+	ctx context.Context,
+	sp Spender,
+	txCbor string,
+) error {
+	summary, err := sp.DecodeTx(ctx, txCbor)
+	if err != nil {
+		return err
+	}
+	if err := summary.ValidateForSigning(); err != nil {
+		return fmt.Errorf(
+			"%w: transaction effects are incomplete: %w",
+			spend.ErrInvalidTx,
+			err,
+		)
+	}
+	return nil
+}
+
+func importCosign(
+	ctx context.Context,
+	sp Spender,
+	ms MultiSig,
+	txCbor, password string,
+	partial bool,
+) (any, error) {
 	info, err := ms.InspectTx(txCbor)
 	if err != nil {
 		return nil, err
 	}
 	if info.IsMultiSig {
+		if err := requireCompleteEffects(ctx, sp, txCbor); err != nil {
+			return nil, err
+		}
 		return ms.CosignImported(txCbor, password)
 	}
 	return sp.CosignTx(ctx, txCbor, password, partial)
 }
 
-func importSubmit(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (any, error) {
+func importSubmit(
+	ctx context.Context,
+	sp Spender,
+	ms MultiSig,
+	txCbor string,
+) (any, error) {
 	info, err := ms.InspectTx(txCbor)
 	if err != nil {
 		return nil, err
 	}
 	if info.IsMultiSig {
+		if err := requireCompleteEffects(ctx, sp, txCbor); err != nil {
+			return nil, err
+		}
 		return ms.SubmitImported(ctx, txCbor)
 	}
 	return sp.SubmitTxCbor(ctx, txCbor)
@@ -2478,11 +3692,19 @@ func importSubmit(ctx context.Context, sp Spender, ms MultiSig, txCbor string) (
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(v); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			map[string]string{"error": "invalid JSON body"},
+		)
 		return false
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			map[string]string{"error": "invalid JSON body"},
+		)
 		return false
 	}
 	return true
@@ -2492,13 +3714,20 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // to the node's network and rejecting a mismatch (a wallet derived for a
 // different network than the node always reads as empty). ok is false when it
 // has already written an error response.
-func resolveNetwork(w http.ResponseWriter, reqNet, nodeNet string) (string, bool) {
+func resolveNetwork(
+	w http.ResponseWriter,
+	reqNet, nodeNet string,
+) (string, bool) {
 	if reqNet == "" {
 		return nodeNet, true
 	}
 	if reqNet != nodeNet {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("network mismatch: node is running %s, request says %s", nodeNet, reqNet),
+			"error": fmt.Sprintf(
+				"network mismatch: node is running %s, request says %s",
+				nodeNet,
+				reqNet,
+			),
 		})
 		return "", false
 	}
@@ -2547,29 +3776,73 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 	case err == nil:
 		writeJSON(w, http.StatusOK, v)
 	case errors.Is(err, chain.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: node has no record of this transaction
+		writeJSON(
+			w,
+			http.StatusNotFound,
+			errBody(err),
+		) // 404: node has no record of this transaction
 	case errors.Is(err, vault.ErrNoVault):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no vault yet
 	case errors.Is(err, vault.ErrVaultExists):
-		writeJSON(w, http.StatusConflict, errBody(err)) // 409: vault already exists
-	case errors.Is(err, vault.ErrUnknownWallet), errors.Is(err, vault.ErrUnknownAccount):
+		writeJSON(
+			w,
+			http.StatusConflict,
+			errBody(err),
+		) // 409: vault already exists
+	case errors.Is(err, vault.ErrUnknownWallet),
+		errors.Is(err, vault.ErrUnknownAccount):
 		writeJSON(w, http.StatusNotFound, errBody(err)) // 404
-	case errors.Is(err, vault.ErrDuplicateWallet), errors.Is(err, vault.ErrDuplicateAccount):
+	case errors.Is(err, vault.ErrDuplicateWallet),
+		errors.Is(err, vault.ErrDuplicateAccount):
 		writeJSON(w, http.StatusConflict, errBody(err)) // 409
-	case errors.Is(err, vault.ErrNoSeed), errors.Is(err, bursa.ErrInvalidMnemonic):
-		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400: cannot derive an account without a valid seed
-	case errors.Is(err, vault.ErrLocked), errors.Is(err, vault.ErrNoActiveWallet),
-		errors.Is(err, wallet.ErrNoWallet), errors.Is(err, spend.ErrNoWallet),
-		errors.Is(err, poolops.ErrNoWallet), errors.Is(err, multisig.ErrNoKeystore):
-		writeJSON(w, http.StatusConflict, errBody(err)) // 409: locked / no active wallet
+	case errors.Is(err, vault.ErrNoSeed),
+		errors.Is(err, bursa.ErrInvalidMnemonic):
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			errBody(err),
+		) // 400: cannot derive an account without a valid seed
+	case errors.Is(err, vault.ErrLocked),
+		errors.Is(err, vault.ErrNoActiveWallet),
+		errors.Is(err, wallet.ErrNoWallet),
+		errors.Is(err, spend.ErrNoWallet),
+		errors.Is(
+			err,
+			poolops.ErrNoWallet,
+		),
+		errors.Is(err, multisig.ErrNoKeystore):
+		writeJSON(
+			w,
+			http.StatusConflict,
+			errBody(err),
+		) // 409: locked / no active wallet
 	case errors.Is(err, spend.ErrWalletChanged):
-		writeJSON(w, http.StatusConflict, errBody(err)) // 409: active wallet switched during build
+		writeJSON(
+			w,
+			http.StatusConflict,
+			errBody(err),
+		) // 409: active wallet switched during build
 	case errors.Is(err, vault.ErrTPMUnavailable):
-		writeJSON(w, http.StatusConflict, errBody(err)) // 409: TPM not available on this machine
+		writeJSON(
+			w,
+			http.StatusConflict,
+			errBody(err),
+		) // 409: TPM not available on this machine
 	case errors.Is(err, vault.ErrCommittedWrite):
-		writeJSON(w, http.StatusServiceUnavailable, errBody(err)) // 503: state committed, durability sync failed
-	case errors.Is(err, vault.ErrWrongPassword), errors.Is(err, spend.ErrWrongPassword),
-		errors.Is(err, poolops.ErrWrongPassword), errors.Is(err, multisig.ErrWrongPassword):
+		writeJSON(
+			w,
+			http.StatusServiceUnavailable,
+			errBody(err),
+		) // 503: state committed, durability sync failed
+	case errors.Is(err, keystore.ErrUnlockLimited):
+		writeJSON(w, http.StatusTooManyRequests, errBody(err))
+	case errors.Is(err, vault.ErrWrongPassword),
+		errors.Is(err, spend.ErrWrongPassword),
+		errors.Is(
+			err,
+			poolops.ErrWrongPassword,
+		),
+		errors.Is(err, multisig.ErrWrongPassword):
 		writeJSON(w, http.StatusUnauthorized, errBody(err)) // 401
 	case errors.Is(err, spend.ErrInvalidRequest),
 		errors.Is(err, spend.ErrInvalidTx),
@@ -2586,14 +3859,24 @@ func serve[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	case errors.Is(err, spend.ErrExpiredPending):
 		writeJSON(w, http.StatusGone, errBody(err)) // 410
-	case errors.Is(err, spend.ErrInsufficientFunds), errors.Is(err, spend.ErrSubmitRejected),
-		errors.Is(err, spend.ErrNoChange), errors.Is(err, poolops.ErrSubmitRejected),
-		errors.Is(err, multisig.ErrInsufficientFunds), errors.Is(err, multisig.ErrSubmitRejected):
+	case errors.Is(err, spend.ErrInsufficientFunds),
+		errors.Is(err, spend.ErrSubmitRejected),
+		errors.Is(
+			err,
+			spend.ErrNoChange,
+		),
+		errors.Is(err, poolops.ErrSubmitRejected),
+		errors.Is(
+			err,
+			multisig.ErrInsufficientFunds,
+		),
+		errors.Is(err, multisig.ErrSubmitRejected):
 		// 422: the request was understood but cannot be fulfilled; the node's
 		// structured rejection reason (for submit), the funding shortfall, or the
 		// "already in the requested state" note rides along in the message.
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
-	case errors.Is(err, spend.ErrSubmitUnknown), errors.Is(err, multisig.ErrSubmitUnknown),
+	case errors.Is(err, spend.ErrSubmitUnknown),
+		errors.Is(err, multisig.ErrSubmitUnknown),
 		errors.Is(err, poolops.ErrSubmitUnknown):
 		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	default:
@@ -2610,7 +3893,11 @@ func serveDex[T any](w http.ResponseWriter, v T, err error) {
 	case errors.Is(err, dex.ErrInvalidRequest):
 		writeJSON(w, http.StatusBadRequest, errBody(err)) // 400
 	case errors.Is(err, dex.ErrNoRoute):
-		writeJSON(w, http.StatusNotFound, errBody(err)) // 404: no pool for the pair
+		writeJSON(
+			w,
+			http.StatusNotFound,
+			errBody(err),
+		) // 404: no pool for the pair
 	case errors.Is(err, dex.ErrNotMainnet):
 		// 422: understood, but unavailable on this network (pools are mainnet-only).
 		writeJSON(w, http.StatusUnprocessableEntity, errBody(err))
@@ -2660,7 +3947,11 @@ func setSecretResponseHeaders(w http.ResponseWriter) {
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		http.Error(w, "internal error encoding response", http.StatusInternalServerError)
+		http.Error(
+			w,
+			"internal error encoding response",
+			http.StatusInternalServerError,
+		)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -97,11 +97,17 @@ type Service struct {
 	mu       sync.Mutex
 	walletID string
 	account  *wallet.Account
+	registry PoolRegistry // on-chain pool lookup for registration/update submit
 }
 
 // NewService constructs a Service. cc/ks may be nil when only the offline
 // builders (credentials require ks; cert/metadata builders do not) are needed.
-func NewService(cc backend.ChainContext, ks Keystore, gq GenesisQuerier, tp Tipper) *Service {
+func NewService(
+	cc backend.ChainContext,
+	ks Keystore,
+	gq GenesisQuerier,
+	tp Tipper,
+) *Service {
 	return &Service{chain: cc, keys: ks, genesis: gq, tipper: tp}
 }
 
@@ -130,7 +136,9 @@ func (s *Service) currentBinding() (string, *wallet.Account) {
 // unlockRoot decrypts the keystore with password and returns the wallet root
 // key plus a zeroizer the caller must defer. Maps a decrypt failure to
 // ErrWrongPassword.
-func (s *Service) unlockRoot(walletID, password string) (bip32.XPrv, func(), error) {
+func (s *Service) unlockRoot(
+	walletID, password string,
+) (bip32.XPrv, func(), error) {
 	if s.keys == nil {
 		return nil, func() {}, errors.New("no keystore configured")
 	}
@@ -141,7 +149,10 @@ func (s *Service) unlockRoot(walletID, password string) (bip32.XPrv, func(), err
 	if walletID != "" {
 		ks, ok := s.keys.(walletSeedStore)
 		if !ok {
-			return nil, func() {}, fmt.Errorf("wallet-bound seed unlock requires UnlockFor support for wallet %q", walletID)
+			return nil, func() {}, fmt.Errorf(
+				"wallet-bound seed unlock requires UnlockFor support for wallet %q",
+				walletID,
+			)
 		}
 		mnemonic, err = ks.UnlockFor(walletID, password)
 	} else {
@@ -184,7 +195,13 @@ func (s *Service) Credentials(password string) (Credentials, error) {
 		return Credentials{}, err
 	}
 	defer zero()
-	return deriveCredentials(root, acct.Network, defaultColdIndex, defaultVRFIndex, defaultKESIndex)
+	return deriveCredentials(
+		root,
+		acct.Network,
+		defaultColdIndex,
+		defaultVRFIndex,
+		defaultKESIndex,
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -219,12 +236,20 @@ func (s *Service) KESPeriod(ctx context.Context) (KESPeriodInfo, error) {
 		return KESPeriodInfo{}, fmt.Errorf("tip slot: %w", err)
 	}
 	if g.SlotsPerKESPeriod < 0 {
-		return KESPeriodInfo{}, fmt.Errorf("genesis slots_per_kes_period is negative: %d", g.SlotsPerKESPeriod)
+		return KESPeriodInfo{}, fmt.Errorf(
+			"genesis slots_per_kes_period is negative: %d",
+			g.SlotsPerKESPeriod,
+		)
 	}
 	if g.MaxKESEvolutions < 0 {
-		return KESPeriodInfo{}, fmt.Errorf("genesis max_kes_evolutions is negative: %d", g.MaxKESEvolutions)
+		return KESPeriodInfo{}, fmt.Errorf(
+			"genesis max_kes_evolutions is negative: %d",
+			g.MaxKESEvolutions,
+		)
 	}
-	spkp := uint64(g.SlotsPerKESPeriod) //nolint:gosec // genesis value is non-negative
+	spkp := uint64(
+		g.SlotsPerKESPeriod,
+	) //nolint:gosec // genesis value is non-negative
 	period, err := kesPeriod(tip, spkp)
 	if err != nil {
 		return KESPeriodInfo{}, err
@@ -233,7 +258,9 @@ func (s *Service) KESPeriod(ctx context.Context) (KESPeriodInfo, error) {
 		CurrentPeriod:     period,
 		TipSlot:           tip,
 		SlotsPerKESPeriod: spkp,
-		MaxKESEvolutions:  uint64(g.MaxKESEvolutions), //nolint:gosec // genesis value is non-negative
+		MaxKESEvolutions: uint64(
+			g.MaxKESEvolutions,
+		), //nolint:gosec // genesis value is non-negative
 	}, nil
 }
 
@@ -242,7 +269,11 @@ func (s *Service) KESPeriod(ctx context.Context) (KESPeriodInfo, error) {
 // new index); issueNumber is the certificate counter (incremented on rotation);
 // kesPeriod is the period at which the cert becomes valid (default: the current
 // period). The cold key signs the (KES vkey, issue, period) tuple in-app.
-func (s *Service) IssueOpCert(password string, kesIndex uint32, issueNumber, kesPeriod uint64) (OpCert, error) {
+func (s *Service) IssueOpCert(
+	password string,
+	kesIndex uint32,
+	issueNumber, kesPeriod uint64,
+) (OpCert, error) {
 	walletID, acct := s.currentBinding()
 	if acct == nil {
 		return OpCert{}, ErrNoWallet
@@ -273,7 +304,12 @@ func (s *Service) IssueOpCert(password string, kesIndex uint32, issueNumber, kes
 		return OpCert{}, fmt.Errorf("derive KES key pair: %w", err)
 	}
 
-	opcert, err := bursa.CreateOperationalCertificate(kesPub, issueNumber, kesPeriod, cold.seed)
+	opcert, err := bursa.CreateOperationalCertificate(
+		kesPub,
+		issueNumber,
+		kesPeriod,
+		cold.seed,
+	)
 	if err != nil {
 		return OpCert{}, fmt.Errorf("create operational certificate: %w", err)
 	}
@@ -290,9 +326,16 @@ func (s *Service) IssueOpCert(password string, kesIndex uint32, issueNumber, kes
 // convention, supplied by the caller) and issues a fresh opcert with the issue
 // counter incremented. The current issue number is supplied by the caller (read
 // from the previous opcert / counter file); the new cert uses prevIssue+1.
-func (s *Service) RotateKES(password string, newKESIndex uint32, prevIssueNumber, kesPeriod uint64) (OpCert, error) {
+func (s *Service) RotateKES(
+	password string,
+	newKESIndex uint32,
+	prevIssueNumber, kesPeriod uint64,
+) (OpCert, error) {
 	if prevIssueNumber == math.MaxUint64 {
-		return OpCert{}, fmt.Errorf("%w: KES issue number overflow", ErrInvalidRequest)
+		return OpCert{}, fmt.Errorf(
+			"%w: KES issue number overflow",
+			ErrInvalidRequest,
+		)
 	}
 	return s.IssueOpCert(password, newKESIndex, prevIssueNumber+1, kesPeriod)
 }
@@ -317,13 +360,25 @@ type OpCertPayload struct {
 // OpCertPayloadForVKey builds the to-be-signed opcert payload for an externally
 // supplied KES verification key. No wallet/keystore is needed — this is the
 // air-gap path where the cold key never touches this machine.
-func (s *Service) OpCertPayload(kesVKeyHex string, issueNumber, kesPeriod uint64) (OpCertPayload, error) {
+func (s *Service) OpCertPayload(
+	kesVKeyHex string,
+	issueNumber, kesPeriod uint64,
+) (OpCertPayload, error) {
 	kesVkey, err := hex.DecodeString(strings.TrimSpace(kesVKeyHex))
 	if err != nil {
-		return OpCertPayload{}, fmt.Errorf("%w: KES vkey is not valid hex: %w", ErrInvalidRequest, err)
+		return OpCertPayload{}, fmt.Errorf(
+			"%w: KES vkey is not valid hex: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	if len(kesVkey) != coldVKeyLen {
-		return OpCertPayload{}, fmt.Errorf("%w: KES vkey must be %d bytes, got %d", ErrInvalidRequest, coldVKeyLen, len(kesVkey))
+		return OpCertPayload{}, fmt.Errorf(
+			"%w: KES vkey must be %d bytes, got %d",
+			ErrInvalidRequest,
+			coldVKeyLen,
+			len(kesVkey),
+		)
 	}
 	// The cold key signs the OCertSignable representation — the raw
 	// concatenation kes_vkey || issue_number || kes_period (both counters
@@ -344,7 +399,10 @@ func (s *Service) OpCertPayload(kesVKeyHex string, issueNumber, kesPeriod uint64
 // signature verifies against the supplied cold verification key over the
 // canonical opcert payload before returning — so a wrong key or corrupted
 // signature is rejected rather than producing an invalid certificate.
-func (s *Service) AssembleOpCert(coldVKeyHex, kesVKeyHex, signatureHex string, issueNumber, kesPeriod uint64) (OpCert, error) {
+func (s *Service) AssembleOpCert(
+	coldVKeyHex, kesVKeyHex, signatureHex string,
+	issueNumber, kesPeriod uint64,
+) (OpCert, error) {
 	coldVkey, err := decodeColdVKey(coldVKeyHex)
 	if err != nil {
 		return OpCert{}, err
@@ -359,13 +417,25 @@ func (s *Service) AssembleOpCert(coldVKeyHex, kesVKeyHex, signatureHex string, i
 	}
 	sig, err := hex.DecodeString(strings.TrimSpace(signatureHex))
 	if err != nil {
-		return OpCert{}, fmt.Errorf("%w: signature is not valid hex: %w", ErrInvalidRequest, err)
+		return OpCert{}, fmt.Errorf(
+			"%w: signature is not valid hex: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	if len(sig) != ed25519.SignatureSize {
-		return OpCert{}, fmt.Errorf("%w: signature must be %d bytes, got %d", ErrInvalidRequest, ed25519.SignatureSize, len(sig))
+		return OpCert{}, fmt.Errorf(
+			"%w: signature must be %d bytes, got %d",
+			ErrInvalidRequest,
+			ed25519.SignatureSize,
+			len(sig),
+		)
 	}
 	if !ed25519.Verify(coldVkey, payloadBytes, sig) {
-		return OpCert{}, fmt.Errorf("%w: signature does not verify against the supplied cold vkey", ErrInvalidRequest)
+		return OpCert{}, fmt.Errorf(
+			"%w: signature does not verify against the supplied cold vkey",
+			ErrInvalidRequest,
+		)
 	}
 	return OpCert{
 		KesVKeyHex:       payload.KesVKeyHex,
@@ -393,7 +463,9 @@ func (s *Service) BuildMetadata(in MetadataInput) (MetadataResult, error) {
 // PoolIDFromColdVKey computes the pool ID from an externally-supplied cold
 // verification key (raw 32-byte Ed25519, hex). Used by the air-gap flow where
 // the wallet never holds the cold signing key.
-func (s *Service) PoolIDFromColdVKey(coldVKeyHex string) (string, string, error) {
+func (s *Service) PoolIDFromColdVKey(
+	coldVKeyHex string,
+) (string, string, error) {
 	id, err := poolIDFromColdVKeyHex(coldVKeyHex)
 	if err != nil {
 		return "", "", err
@@ -433,27 +505,51 @@ type CertResult struct {
 
 // resolveRewardAccount returns the 29-byte reward-account bytes for the params,
 // defaulting to the active wallet's stake address.
-func (s *Service) resolveRewardAccount(p RegistrationParams, acct *wallet.Account) ([]byte, error) {
+func (s *Service) resolveRewardAccount(
+	p RegistrationParams,
+	acct *wallet.Account,
+) ([]byte, error) {
 	addrStr := strings.TrimSpace(p.RewardAddress)
 	if addrStr == "" {
 		if acct == nil {
-			return nil, fmt.Errorf("%w: no reward address and no active wallet", ErrInvalidRequest)
+			return nil, fmt.Errorf(
+				"%w: no reward address and no active wallet",
+				ErrInvalidRequest,
+			)
 		}
 		addrStr = acct.StakeAddress
 	}
 	addr, err := lcommon.NewAddress(addrStr)
 	if err != nil {
-		return nil, fmt.Errorf("%w: reward address %q: %w", ErrInvalidRequest, addrStr, err)
+		return nil, fmt.Errorf(
+			"%w: reward address %q: %w",
+			ErrInvalidRequest,
+			addrStr,
+			err,
+		)
 	}
-	if addr.Type() != lcommon.AddressTypeNoneKey && addr.Type() != lcommon.AddressTypeNoneScript {
-		return nil, fmt.Errorf("%w: reward address must be a stake/reward address", ErrInvalidRequest)
+	if addr.Type() != lcommon.AddressTypeNoneKey &&
+		addr.Type() != lcommon.AddressTypeNoneScript {
+		return nil, fmt.Errorf(
+			"%w: reward address must be a stake/reward address",
+			ErrInvalidRequest,
+		)
 	}
 	b, err := addr.Bytes()
 	if err != nil {
-		return nil, fmt.Errorf("%w: reward address bytes: %w", ErrInvalidRequest, err)
+		return nil, fmt.Errorf(
+			"%w: reward address bytes: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	if len(b) != 1+lcommon.AddressHashSize {
-		return nil, fmt.Errorf("%w: reward address must be %d bytes, got %d", ErrInvalidRequest, 1+lcommon.AddressHashSize, len(b))
+		return nil, fmt.Errorf(
+			"%w: reward address must be %d bytes, got %d",
+			ErrInvalidRequest,
+			1+lcommon.AddressHashSize,
+			len(b),
+		)
 	}
 	return b, nil
 }
@@ -461,10 +557,16 @@ func (s *Service) resolveRewardAccount(p RegistrationParams, acct *wallet.Accoun
 // resolveOwners returns the pool-owner stake key hashes. Each owner may be a
 // 28-byte stake key hash (hex) or a bech32 stake address. Defaults to the active
 // wallet's own stake key hash when none are supplied.
-func (s *Service) resolveOwners(owners []string, acct *wallet.Account) ([]lcommon.AddrKeyHash, error) {
+func (s *Service) resolveOwners(
+	owners []string,
+	acct *wallet.Account,
+) ([]lcommon.AddrKeyHash, error) {
 	if len(owners) == 0 {
 		if acct == nil {
-			return nil, fmt.Errorf("%w: no owners and no active wallet", ErrInvalidRequest)
+			return nil, fmt.Errorf(
+				"%w: no owners and no active wallet",
+				ErrInvalidRequest,
+			)
 		}
 		addr, err := lcommon.NewAddress(acct.StakeAddress)
 		if err != nil {
@@ -478,17 +580,33 @@ func (s *Service) resolveOwners(owners []string, acct *wallet.Account) ([]lcommo
 		if strings.HasPrefix(o, "stake") {
 			addr, err := lcommon.NewAddress(o)
 			if err != nil {
-				return nil, fmt.Errorf("%w: owner address %q: %w", ErrInvalidRequest, o, err)
+				return nil, fmt.Errorf(
+					"%w: owner address %q: %w",
+					ErrInvalidRequest,
+					o,
+					err,
+				)
 			}
 			out = append(out, addr.StakeKeyHash())
 			continue
 		}
 		hb, err := hex.DecodeString(o)
 		if err != nil {
-			return nil, fmt.Errorf("%w: owner %q is not a stake address or hex key hash: %w", ErrInvalidRequest, o, err)
+			return nil, fmt.Errorf(
+				"%w: owner %q is not a stake address or hex key hash: %w",
+				ErrInvalidRequest,
+				o,
+				err,
+			)
 		}
 		if len(hb) != lcommon.Blake2b224Size {
-			return nil, fmt.Errorf("%w: owner key hash %q must be %d bytes, got %d", ErrInvalidRequest, o, lcommon.Blake2b224Size, len(hb))
+			return nil, fmt.Errorf(
+				"%w: owner key hash %q must be %d bytes, got %d",
+				ErrInvalidRequest,
+				o,
+				lcommon.Blake2b224Size,
+				len(hb),
+			)
 		}
 		out = append(out, lcommon.NewBlake2b224(hb))
 	}
@@ -498,12 +616,22 @@ func (s *Service) resolveOwners(owners []string, acct *wallet.Account) ([]lcommo
 // buildRegistration assembles the registration certificate from cold vkey, VRF
 // hash, reward account, owners, relays, and optional metadata, returning the
 // CBOR and pool ID. It is shared by the seed and air-gap paths.
-func (s *Service) buildRegistration(coldVKey, vrfHash []byte, p RegistrationParams, acct *wallet.Account) (CertResult, error) {
+func (s *Service) buildRegistration(
+	coldVKey, vrfHash []byte,
+	p RegistrationParams,
+	acct *wallet.Account,
+) (CertResult, error) {
 	if p.MarginDenom == 0 {
-		return CertResult{}, fmt.Errorf("%w: margin denominator must not be zero", ErrInvalidRequest)
+		return CertResult{}, fmt.Errorf(
+			"%w: margin denominator must not be zero",
+			ErrInvalidRequest,
+		)
 	}
 	if p.MarginNum < 0 || p.MarginDenom < 0 || p.MarginNum > p.MarginDenom {
-		return CertResult{}, fmt.Errorf("%w: margin must be between 0 and 1", ErrInvalidRequest)
+		return CertResult{}, fmt.Errorf(
+			"%w: margin must be between 0 and 1",
+			ErrInvalidRequest,
+		)
 	}
 	reward, err := s.resolveRewardAccount(p, acct)
 	if err != nil {
@@ -533,15 +661,27 @@ func (s *Service) buildRegistration(coldVKey, vrfHash []byte, p RegistrationPara
 	metadataURL := strings.TrimSpace(p.MetadataURL)
 	metadataHash := strings.TrimSpace(p.MetadataHash)
 	if metadataHash != "" && metadataURL == "" {
-		return CertResult{}, fmt.Errorf("%w: metadata hash requires metadata URL", ErrInvalidRequest)
+		return CertResult{}, fmt.Errorf(
+			"%w: metadata hash requires metadata URL",
+			ErrInvalidRequest,
+		)
 	}
 	if metadataURL != "" {
 		hb, err := hex.DecodeString(metadataHash)
 		if err != nil {
-			return CertResult{}, fmt.Errorf("%w: metadata hash is not valid hex: %w", ErrInvalidRequest, err)
+			return CertResult{}, fmt.Errorf(
+				"%w: metadata hash is not valid hex: %w",
+				ErrInvalidRequest,
+				err,
+			)
 		}
 		if len(hb) != lcommon.Blake2b256Size {
-			return CertResult{}, fmt.Errorf("%w: metadata hash must be %d bytes, got %d", ErrInvalidRequest, lcommon.Blake2b256Size, len(hb))
+			return CertResult{}, fmt.Errorf(
+				"%w: metadata hash must be %d bytes, got %d",
+				ErrInvalidRequest,
+				lcommon.Blake2b256Size,
+				len(hb),
+			)
 		}
 		cert.MetadataURL = metadataURL
 		cert.MetadataHash = lcommon.PoolMetadataHash(hb)
@@ -549,7 +689,10 @@ func (s *Service) buildRegistration(coldVKey, vrfHash []byte, p RegistrationPara
 
 	cborBytes, err := bursa.CreatePoolRegistrationCertificate(cert)
 	if err != nil {
-		return CertResult{}, fmt.Errorf("create pool registration certificate: %w", err)
+		return CertResult{}, fmt.Errorf(
+			"create pool registration certificate: %w",
+			err,
+		)
 	}
 	return CertResult{
 		PoolID:  operator.Bech32("pool"),
@@ -560,9 +703,11 @@ func (s *Service) buildRegistration(coldVKey, vrfHash []byte, p RegistrationPara
 // BuildRegistrationFromSeed builds the registration/update certificate using the
 // active wallet's seed-derived cold + VRF keys. It requires the spending
 // password. The returned cert is the canonical CBOR (correct 29-byte reward
-// account) — submission is handled separately (see SubmitRetirement and the
-// package-level TODO about registration tx submission).
-func (s *Service) BuildRegistrationFromSeed(password string, p RegistrationParams) (CertResult, error) {
+// account); SubmitRegistration places it in a transaction and submits it.
+func (s *Service) BuildRegistrationFromSeed(
+	password string,
+	p RegistrationParams,
+) (CertResult, error) {
 	walletID, acct := s.currentBinding()
 	if acct == nil {
 		return CertResult{}, ErrNoWallet
@@ -572,6 +717,16 @@ func (s *Service) BuildRegistrationFromSeed(password string, p RegistrationParam
 		return CertResult{}, err
 	}
 	defer zero()
+	return s.buildRegistrationFromRoot(root, p, acct)
+}
+
+// buildRegistrationFromRoot derives the cold and VRF keys from root and builds
+// the registration/update certificate. The caller owns root and its zeroizer.
+func (s *Service) buildRegistrationFromRoot(
+	root bip32.XPrv,
+	p RegistrationParams,
+	acct *wallet.Account,
+) (CertResult, error) {
 	cold, err := deriveCold(root, defaultColdIndex)
 	if err != nil {
 		return CertResult{}, err
@@ -604,25 +759,44 @@ type AirGapRegistrationParams struct {
 // path. The resulting cert body is handed to an offline cold-key signer; the
 // pool-registration tx is then assembled and submitted (see the offline tx-witness
 // TODO). No keystore needed.
-func (s *Service) BuildRegistrationAirGap(p AirGapRegistrationParams) (CertResult, error) {
+func (s *Service) BuildRegistrationAirGap(
+	p AirGapRegistrationParams,
+) (CertResult, error) {
 	coldVkey, err := decodeColdVKey(p.ColdVKeyHex)
 	if err != nil {
 		return CertResult{}, err
 	}
 	vrfHash, err := hex.DecodeString(strings.TrimSpace(p.VRFKeyHashHex))
 	if err != nil {
-		return CertResult{}, fmt.Errorf("%w: VRF key hash is not valid hex: %w", ErrInvalidRequest, err)
+		return CertResult{}, fmt.Errorf(
+			"%w: VRF key hash is not valid hex: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 	if len(vrfHash) != lcommon.Blake2b256Size {
-		return CertResult{}, fmt.Errorf("%w: VRF key hash must be %d bytes, got %d", ErrInvalidRequest, lcommon.Blake2b256Size, len(vrfHash))
+		return CertResult{}, fmt.Errorf(
+			"%w: VRF key hash must be %d bytes, got %d",
+			ErrInvalidRequest,
+			lcommon.Blake2b256Size,
+			len(vrfHash),
+		)
 	}
-	return s.buildRegistration(coldVkey, vrfHash, p.RegistrationParams, s.currentAccount())
+	return s.buildRegistration(
+		coldVkey,
+		vrfHash,
+		p.RegistrationParams,
+		s.currentAccount(),
+	)
 }
 
 // BuildRetirementCert builds a pool retirement certificate for the given epoch.
 // coldVKeyHex, when set, uses an external cold vkey (air-gap); otherwise the
 // cold vkey is derived from the active wallet seed (requires the password).
-func (s *Service) BuildRetirementCert(password, coldVKeyHex string, epoch uint64) (CertResult, error) {
+func (s *Service) BuildRetirementCert(
+	password, coldVKeyHex string,
+	epoch uint64,
+) (CertResult, error) {
 	var coldVKey []byte
 	if strings.TrimSpace(coldVKeyHex) != "" {
 		b, err := decodeColdVKey(coldVKeyHex)
@@ -648,14 +822,22 @@ func (s *Service) BuildRetirementCert(password, coldVKeyHex string, epoch uint64
 		coldVKey = append([]byte(nil), cold.vkey...)
 	}
 	operator := poolIDFromVKey(coldVKey)
-	cborBytes, err := bursa.CreatePoolRetirementCertificate(&bursa.PoolRetirementCertificateParams{
-		PoolKeyHash: operator,
-		Epoch:       epoch,
-	})
+	cborBytes, err := bursa.CreatePoolRetirementCertificate(
+		&bursa.PoolRetirementCertificateParams{
+			PoolKeyHash: operator,
+			Epoch:       epoch,
+		},
+	)
 	if err != nil {
-		return CertResult{}, fmt.Errorf("create pool retirement certificate: %w", err)
+		return CertResult{}, fmt.Errorf(
+			"create pool retirement certificate: %w",
+			err,
+		)
 	}
-	return CertResult{PoolID: operator.Bech32("pool"), CBORHex: hex.EncodeToString(cborBytes)}, nil
+	return CertResult{
+		PoolID:  operator.Bech32("pool"),
+		CBORHex: hex.EncodeToString(cborBytes),
+	}, nil
 }
 
 // TxResult is returned after a successful pool-operation submission.
@@ -863,7 +1045,11 @@ func (s *Service) SubmitPoolVote(ctx context.Context, password string, v PoolVot
 // transaction to the embedded node. It requires the spending password and a
 // synced node. Retirement is the one pool operation whose certificate encodes
 // identically through apollo's typed path (verified), so it is submitted in-app.
-func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch uint64) (TxResult, error) {
+func (s *Service) SubmitRetirement(
+	ctx context.Context,
+	password string,
+	epoch uint64,
+) (TxResult, error) {
 	walletID, acct := s.currentBinding()
 	if acct == nil {
 		return TxResult{}, ErrNoWallet
@@ -886,19 +1072,60 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	defer cold.zero()
 	operator := poolIDFromVKey(cold.vkey)
 
+	hash, err := s.submitPoolTx(ctx, root, acct, &cold, poolTxPlan{
+		addCerts: func(a *apollo.Apollo) (*apollo.Apollo, error) {
+			return a.DeregisterPool(operator, epoch), nil
+		},
+	})
+	if err != nil {
+		return TxResult{}, err
+	}
+	return TxResult{TxHash: hash}, nil
+}
+
+// poolTxPlan is what differs between pool transactions: the certificates they
+// carry, the chain context they are built against, and whether the wallet's
+// stake key must also witness.
+type poolTxPlan struct {
+	// chain overrides the service chain context for building and submitting.
+	chain backend.ChainContext
+	// addCerts attaches the transaction's certificates.
+	addCerts func(a *apollo.Apollo) (*apollo.Apollo, error)
+	// stakeSigners are stake key hashes that must witness (pool owners). The
+	// wallet's stake key signs for them.
+	stakeSigners []lcommon.Blake2b224
+}
+
+// submitPoolTx builds a transaction funded from the active account, signs it
+// with the wallet payment keys that own the selected inputs, the pool cold key
+// and, when plan.stakeSigners is set, the account stake key, and submits it. The
+// caller owns root and cold and their zeroizers.
+func (s *Service) submitPoolTx(
+	ctx context.Context,
+	root bip32.XPrv,
+	acct *wallet.Account,
+	cold *coldKeyMaterial,
+	plan poolTxPlan,
+) (string, error) {
+	cc := s.chain
+	if plan.chain != nil {
+		cc = plan.chain
+	}
+	operator := poolIDFromVKey(cold.vkey)
+
 	// Fee-paying payment key is derived at the active account's index so pool
-	// retirement is funded from the account the wallet is currently bound to.
+	// transactions are funded from the account the wallet is currently bound to.
 	acctKey, err := bursa.GetAccountKey(root, acct.AccountIndex)
 	if err != nil {
-		return TxResult{}, fmt.Errorf("account key: %w", err)
+		return "", fmt.Errorf("account key: %w", err)
 	}
 	defer zeroBytes(acctKey)
 
 	changeAddr, err := lcommon.NewAddress(acct.ReceiveAddresses[0])
 	if err != nil {
-		return TxResult{}, fmt.Errorf("change address: %w", err)
+		return "", fmt.Errorf("change address: %w", err)
 	}
-	a := apollo.New(s.chain).
+	a := apollo.New(cc).
 		SetWallet(apollo.NewExternalWallet(changeAddr)).
 		SetChangeAddress(changeAddr).
 		SetFeePadding(retirementFeePaddingLovelace).
@@ -906,46 +1133,62 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 
 	fundingAddrs, err := retirementFundingAddresses(acct, acctKey)
 	if err != nil {
-		return TxResult{}, err
+		return "", err
 	}
 	utxoAddr := make(map[string]ownedPaymentAddress)
 	for _, owner := range fundingAddrs {
 		addrStr := owner.address
 		addr, err := lcommon.NewAddress(addrStr)
 		if err != nil {
-			return TxResult{}, fmt.Errorf("address %q: %w", addrStr, err)
+			return "", fmt.Errorf("address %q: %w", addrStr, err)
 		}
-		utxos, err := backend.UtxosContext(ctx, s.chain, addr)
+		utxos, err := backend.UtxosContext(ctx, cc, addr)
 		if err != nil {
-			return TxResult{}, fmt.Errorf("utxos for %s: %w", addrStr, err)
+			return "", fmt.Errorf("utxos for %s: %w", addrStr, err)
 		}
 		if len(utxos) > 0 {
 			a = a.AddLoadedUTxOs(utxos...)
 			for _, u := range utxos {
-				ref := hex.EncodeToString(u.Id.Id().Bytes()) + "#" + strconv.FormatUint(uint64(u.Id.Index()), 10)
+				ref := hex.EncodeToString(
+					u.Id.Id().Bytes(),
+				) + "#" + strconv.FormatUint(
+					uint64(u.Id.Index()),
+					10,
+				)
 				utxoAddr[ref] = owner
 			}
 		}
 	}
 
-	// Retirement certificate; the cold key must witness the tx.
-	a = a.DeregisterPool(operator, epoch).
-		AddRequiredSigner(operator)
+	// The certificates; the cold key (and any owner stake key) must witness.
+	a, err = plan.addCerts(a)
+	if err != nil {
+		return "", err
+	}
+	a = a.AddRequiredSigner(operator)
+	for _, h := range plan.stakeSigners {
+		a = a.AddRequiredSigner(h)
+	}
 
 	a, err = a.WithContext(ctx).Complete()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("complete transaction: %w", err)
+		return "", fmt.Errorf("complete transaction: %w", err)
 	}
 
 	// Sign for fee inputs with the wallet payment keys, then add the cold-key
 	// witness. Apollo's Sign() APPENDs a witness per SetWallet+Sign call.
 	tx := a.GetTx()
 	if tx == nil {
-		return TxResult{}, errors.New("transaction not built")
+		return "", errors.New("transaction not built")
 	}
 	seen := map[string]bool{}
 	for _, inp := range tx.Body.TxInputs.Items() {
-		ref := hex.EncodeToString(inp.TxId.Bytes()) + "#" + strconv.FormatUint(uint64(inp.OutputIndex), 10)
+		ref := hex.EncodeToString(
+			inp.TxId.Bytes(),
+		) + "#" + strconv.FormatUint(
+			uint64(inp.OutputIndex),
+			10,
+		)
 		owner, ok := utxoAddr[ref]
 		if !ok || seen[owner.address] {
 			continue
@@ -953,7 +1196,12 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 		seen[owner.address] = true
 		payKey, err := deriveOwnedPaymentKey(acctKey, owner)
 		if err != nil {
-			return TxResult{}, fmt.Errorf("%s payment key idx %d: %w", owner.role, owner.index, err)
+			return "", fmt.Errorf(
+				"%s payment key idx %d: %w",
+				owner.role,
+				owner.index,
+				err,
+			)
 		}
 		if err := func() error {
 			defer zeroBytes(payKey)
@@ -972,16 +1220,28 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 			}
 			return nil
 		}(); err != nil {
-			return TxResult{}, err
+			return "", err
+		}
+	}
+	// Owner stake-key witness (registration/update certificates).
+	if len(plan.stakeSigners) > 0 {
+		stakeKey, err := bursa.GetStakeKey(acctKey, 0)
+		if err != nil {
+			return "", fmt.Errorf("stake key: %w", err)
+		}
+		a, err = a.SignWithSkey([]byte(stakeKey))
+		zeroBytes(stakeKey)
+		if err != nil {
+			return "", fmt.Errorf("owner stake-key witness: %w", err)
 		}
 	}
 	// Cold-key witness: SignWithSkey accepts the 32-byte Ed25519 seed and adds a
 	// vkey witness whose key is the standard Ed25519 cold vkey — matching the
-	// operator hash in the retirement certificate.
+	// operator hash in the pool certificate.
 	a, err = a.SignWithSkey(cold.seed)
 	cold.zero()
 	if err != nil {
-		return TxResult{}, fmt.Errorf("cold-key witness: %w", err)
+		return "", fmt.Errorf("cold-key witness: %w", err)
 	}
 
 	// Submit passes this context to backend.SubmitTxContext, so detach from the
@@ -991,9 +1251,13 @@ func (s *Service) SubmitRetirement(ctx context.Context, password string, epoch u
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return "", submissionerror.Wrap(
+			err,
+			ErrSubmitUnknown,
+			ErrSubmitRejected,
+		)
 	}
-	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
+	return hex.EncodeToString(txHash.Bytes()), nil
 }
 
 func (r paymentKeyRole) String() string {
@@ -1007,36 +1271,67 @@ func (r paymentKeyRole) String() string {
 	}
 }
 
-func retirementFundingAddresses(acct *wallet.Account, acctKey bip32.XPrv) ([]ownedPaymentAddress, error) {
-	seen := make(map[string]bool, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
-	out := make([]ownedPaymentAddress, 0, len(acct.ReceiveAddresses)+len(acct.ChangeAddresses))
+func retirementFundingAddresses(
+	acct *wallet.Account,
+	acctKey bip32.XPrv,
+) ([]ownedPaymentAddress, error) {
+	seen := make(
+		map[string]bool,
+		len(acct.ReceiveAddresses)+len(acct.ChangeAddresses),
+	)
+	out := make(
+		[]ownedPaymentAddress,
+		0,
+		len(acct.ReceiveAddresses)+len(acct.ChangeAddresses),
+	)
 	add := func(addr string, role paymentKeyRole, index uint32) {
 		if addr == "" || seen[addr] {
 			return
 		}
 		seen[addr] = true
-		out = append(out, ownedPaymentAddress{address: addr, role: role, index: index})
+		out = append(
+			out,
+			ownedPaymentAddress{address: addr, role: role, index: index},
+		)
 	}
 
 	for i, addr := range acct.ReceiveAddresses {
-		add(addr, paymentKeyRoleReceive, uint32(i)) //nolint:gosec // bounded by the derived address window
+		add(
+			addr,
+			paymentKeyRoleReceive,
+			uint32(i),
+		) //nolint:gosec // bounded by the derived address window
 	}
 
 	changeAddresses := append([]string(nil), acct.ChangeAddresses...)
 	if len(changeAddresses) < len(acct.ReceiveAddresses) {
-		derived, err := deriveChangeAddresses(acct.ReceiveAddresses[0], acctKey, len(acct.ReceiveAddresses))
+		derived, err := deriveChangeAddresses(
+			acct.ReceiveAddresses[0],
+			acctKey,
+			len(acct.ReceiveAddresses),
+		)
 		if err != nil {
 			return nil, err
 		}
-		changeAddresses = append(changeAddresses, derived[len(changeAddresses):]...)
+		changeAddresses = append(
+			changeAddresses,
+			derived[len(changeAddresses):]...)
 	}
 	for i, addr := range changeAddresses {
-		add(addr, paymentKeyRoleChange, uint32(i)) //nolint:gosec // bounded by the derived address window
+		add(
+			addr,
+			paymentKeyRoleChange,
+			uint32(i),
+		) //nolint:gosec // bounded by the derived address window
 	}
 	return out, nil
 }
 
-func deriveChangeAddresses(referenceAddr string, acctKey bip32.XPrv, count int) ([]string, error) {
+func deriveChangeAddresses(
+	referenceAddr string,
+	acctKey bip32.XPrv,
+	count int,
+) ([]string, error) {
 	ref, err := lcommon.NewAddress(referenceAddr)
 	if err != nil {
 		return nil, fmt.Errorf("reference receive address: %w", err)
@@ -1048,7 +1343,10 @@ func deriveChangeAddresses(referenceAddr string, acctKey bip32.XPrv, count int) 
 	case uint(lcommon.AddressNetworkMainnet):
 		networkID = lcommon.AddressNetworkMainnet
 	default:
-		return nil, fmt.Errorf("reference receive address network id %d is invalid", ref.NetworkId())
+		return nil, fmt.Errorf(
+			"reference receive address network id %d is invalid",
+			ref.NetworkId(),
+		)
 	}
 	stakeHash := ref.StakeKeyHash()
 	out := make([]string, 0, count)
@@ -1077,7 +1375,10 @@ func deriveChangeAddresses(referenceAddr string, acctKey bip32.XPrv, count int) 
 	return out, nil
 }
 
-func deriveOwnedPaymentKey(acctKey bip32.XPrv, owner ownedPaymentAddress) (bip32.XPrv, error) {
+func deriveOwnedPaymentKey(
+	acctKey bip32.XPrv,
+	owner ownedPaymentAddress,
+) (bip32.XPrv, error) {
 	switch owner.role {
 	case paymentKeyRoleReceive:
 		return bursa.GetPaymentKey(acctKey, owner.index)

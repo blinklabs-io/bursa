@@ -16,7 +16,10 @@ package signer
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,7 +38,12 @@ type capturingHandler struct {
 	records []slog.Record
 }
 
-func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *capturingHandler) Enabled(
+	context.Context,
+	slog.Level,
+) bool {
+	return true
+}
 
 func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
@@ -68,14 +76,14 @@ func (h *capturingHandler) findByReason(reason string) (slog.Record, bool) {
 	return slog.Record{}, false
 }
 
-// pausingCounterWatermark wraps a CounterWatermark and, on the first call to
-// CounterFor, blocks the caller until released. Tests use it to force a
-// specific interleaving between two concurrent SignOpCert calls: the paused
-// goroutine's pre-sign lookup completes (and sees no conflict) before the
-// other goroutine commits, so any regression can only be detected later, at
-// commit time.
+// pausingCounterWatermark wraps a CounterWatermark and, on the first
+// CounterFor of the issued record, the last lookup before signing, blocks the
+// caller until released. Tests use it to force a specific interleaving
+// between two concurrent opcert requests: the paused goroutine's pre-sign
+// checks complete (and see no conflict) before the other goroutine commits,
+// so any regression can only be detected later, at commit time.
 //
-// The "first call" gate uses an atomic CompareAndSwap rather than sync.Once:
+// The "first lookup" gate uses an atomic CompareAndSwap rather than sync.Once:
 // a second, concurrent Once.Do call blocks on Once's internal mutex until the
 // first call's function returns, which here would deadlock (the first call's
 // function only returns once the test observes the second call completing).
@@ -89,20 +97,55 @@ type pausingCounterWatermark struct {
 	didPause atomic.Bool
 }
 
-func (p *pausingCounterWatermark) CounterFor(ctx context.Context, key backend.KeyHash, scope string) (uint64, bool, error) {
+func (p *pausingCounterWatermark) CounterFor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+) (uint64, bool, error) {
 	v, ok, err := p.counter.CounterFor(ctx, key, scope)
-	if p.didPause.CompareAndSwap(false, true) {
+	// the issued record is the last lookup before signing, so the paused
+	// request has passed every pre-sign check when the other one runs
+	if (scope == opcertChainIssuedScope ||
+		strings.HasPrefix(scope, opcertChainIssuedScope+"|")) &&
+		p.didPause.CompareAndSwap(false, true) {
 		close(p.paused)
 		<-p.release
 	}
 	return v, ok, err
 }
 
-func (p *pausingCounterWatermark) CheckAndCommitCounter(ctx context.Context, key backend.KeyHash, scope string, counter uint64) error {
+func (p *pausingCounterWatermark) CheckAndCommitCounter(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	counter uint64,
+) error {
 	return p.counter.CheckAndCommitCounter(ctx, key, scope, counter)
 }
 
-func newOpCertCoordinator(t *testing.T, k *fakeKey, wm watermark.Watermark, mode watermark.Mode) (*Coordinator, *Metrics) {
+func (p *pausingCounterWatermark) CheckAndRaiseFloor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	value uint64,
+) error {
+	return p.counter.CheckAndRaiseFloor(ctx, key, scope, value)
+}
+
+func (p *pausingCounterWatermark) CheckAndCommitCounters(
+	ctx context.Context,
+	key backend.KeyHash,
+	ops ...watermark.CounterOp,
+) error {
+	return p.counter.CheckAndCommitCounters(ctx, key, ops...)
+}
+
+func newOpCertCoordinator(
+	t *testing.T,
+	k *fakeKey,
+	wm watermark.Watermark,
+	mode watermark.Mode,
+) (*Coordinator, *Metrics) {
 	t.Helper()
 	return newOpCertCoordinatorWithLogger(t, k, wm, mode, nil)
 }
@@ -111,7 +154,13 @@ func newOpCertCoordinator(t *testing.T, k *fakeKey, wm watermark.Watermark, mode
 // inject a logger (e.g. one backed by capturingHandler) to assert on the
 // exact fields an audit log line carries. A nil logger defaults to
 // slog.Default(), matching newOpCertCoordinator's prior behavior.
-func newOpCertCoordinatorWithLogger(t *testing.T, k *fakeKey, wm watermark.Watermark, mode watermark.Mode, logger *slog.Logger) (*Coordinator, *Metrics) {
+func newOpCertCoordinatorWithLogger(
+	t *testing.T,
+	k *fakeKey,
+	wm watermark.Watermark,
+	mode watermark.Mode,
+	logger *slog.Logger,
+) (*Coordinator, *Metrics) {
 	t.Helper()
 	k.typ = backend.KeyTypePool
 	eng, err := policy.NewEngine([]policy.KeyPolicy{{
@@ -137,7 +186,12 @@ func newOpCertCoordinatorWithLogger(t *testing.T, k *fakeKey, wm watermark.Water
 // guard: a counter must be strictly greater than the highest already signed.
 func TestSignOpCert_CounterMonotonicity_Enforce(t *testing.T) {
 	k := newFakeKey(t)
-	c, m := newOpCertCoordinator(t, k, watermark.NewMemWatermark(), watermark.ModeEnforce)
+	c, m := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeEnforce,
+	)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
@@ -147,21 +201,47 @@ func TestSignOpCert_CounterMonotonicity_Enforce(t *testing.T) {
 	}
 
 	// Same counter 3 -> conflict.
-	if res, code, err := c.SignOpCert(ctx, kes, 3, 101, k.hash.String()); err == nil || code != CodeConflict || res != nil {
-		t.Fatalf("counter 3 repeat: want CodeConflict/nil, got (res=%v, code=%s, err=%v)", res, code, err)
+	if res, code, err := c.SignOpCert(ctx, kes, 3, 101, k.hash.String()); err == nil ||
+		code != CodeConflict ||
+		res != nil {
+		t.Fatalf(
+			"counter 3 repeat: want CodeConflict/nil, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 	// Lower counter 2 -> conflict.
-	if res, code, err := c.SignOpCert(ctx, kes, 2, 102, k.hash.String()); err == nil || code != CodeConflict || res != nil {
-		t.Fatalf("counter 2: want CodeConflict/nil, got (res=%v, code=%s, err=%v)", res, code, err)
+	if res, code, err := c.SignOpCert(ctx, kes, 2, 102, k.hash.String()); err == nil ||
+		code != CodeConflict ||
+		res != nil {
+		t.Fatalf(
+			"counter 2: want CodeConflict/nil, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 
 	// Higher counter 4 -> signs and advances.
-	if res, code, err := c.SignOpCert(ctx, kes, 4, 103, k.hash.String()); err != nil || res == nil || res.SignatureHex == "" {
-		t.Fatalf("counter 4: want signature, got (res=%v, code=%s, err=%v)", res, code, err)
+	if res, code, err := c.SignOpCert(ctx, kes, 4, 103, k.hash.String()); err != nil ||
+		res == nil ||
+		res.SignatureHex == "" {
+		t.Fatalf(
+			"counter 4: want signature, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 	// After advancing, counter 4 is now stale.
-	if _, code, err := c.SignOpCert(ctx, kes, 4, 104, k.hash.String()); err == nil || code != CodeConflict {
-		t.Fatalf("counter 4 repeat: want CodeConflict, got (code=%s, err=%v)", code, err)
+	if _, code, err := c.SignOpCert(ctx, kes, 4, 104, k.hash.String()); err == nil ||
+		code != CodeConflict {
+		t.Fatalf(
+			"counter 4 repeat: want CodeConflict, got (code=%s, err=%v)",
+			code,
+			err,
+		)
 	}
 
 	// Two rejections each incremented the conflict metric (repeat-3, lower-2,
@@ -199,7 +279,12 @@ func TestSignOpCert_CounterPerKeyIsolation(t *testing.T) {
 // signature is still produced.
 func TestSignOpCert_CounterWarnMode(t *testing.T) {
 	k := newFakeKey(t)
-	c, m := newOpCertCoordinator(t, k, watermark.NewMemWatermark(), watermark.ModeWarn)
+	c, m := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeWarn,
+	)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
@@ -209,7 +294,12 @@ func TestSignOpCert_CounterWarnMode(t *testing.T) {
 	// Repeat counter 9: warn mode allows the signature.
 	res, code, err := c.SignOpCert(ctx, kes, 9, 2, k.hash.String())
 	if err != nil || res == nil || res.SignatureHex == "" {
-		t.Fatalf("warn-mode repeat: want signature, got (res=%v, code=%s, err=%v)", res, code, err)
+		t.Fatalf(
+			"warn-mode repeat: want signature, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 	if got := testutil.ToFloat64(m.watermarkConflicts); got != 1 {
 		t.Fatalf("watermark_conflicts_total = %v, want 1", got)
@@ -259,10 +349,17 @@ func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression(t *testing.T) {
 	wg.Wait()
 
 	if loserErr != nil || loserRes == nil || loserRes.SignatureHex == "" {
-		t.Fatalf("loser: want successful warn-mode signature, got (res=%v, err=%v)", loserRes, loserErr)
+		t.Fatalf(
+			"loser: want successful warn-mode signature, got (res=%v, err=%v)",
+			loserRes,
+			loserErr,
+		)
 	}
 	if got := testutil.ToFloat64(m.watermarkConflicts); got != 1 {
-		t.Fatalf("watermark_conflicts_total = %v, want 1 (exactly once, detected at commit)", got)
+		t.Fatalf(
+			"watermark_conflicts_total = %v, want 1 (exactly once, detected at commit)",
+			got,
+		)
 	}
 }
 
@@ -272,7 +369,9 @@ func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression(t *testing.T) {
 // the audit record's fields directly: the commit-time warn log must include
 // the stored counter that won the race, so the record can be correlated to
 // it, matching the fields the pre-sign warn path records.
-func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields(t *testing.T) {
+func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields(
+	t *testing.T,
+) {
 	k := newFakeKey(t)
 	pw := &pausingCounterWatermark{
 		Watermark: watermark.NewMemWatermark(),
@@ -281,7 +380,13 @@ func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields(t *te
 		release:   make(chan struct{}),
 	}
 	h := &capturingHandler{}
-	c, _ := newOpCertCoordinatorWithLogger(t, k, pw, watermark.ModeWarn, slog.New(h))
+	c, _ := newOpCertCoordinatorWithLogger(
+		t,
+		k,
+		pw,
+		watermark.ModeWarn,
+		slog.New(h),
+	)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
@@ -304,10 +409,16 @@ func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields(t *te
 	wg.Wait()
 
 	if loserErr != nil || loserRes == nil || loserRes.SignatureHex == "" {
-		t.Fatalf("loser: want successful warn-mode signature, got (res=%v, err=%v)", loserRes, loserErr)
+		t.Fatalf(
+			"loser: want successful warn-mode signature, got (res=%v, err=%v)",
+			loserRes,
+			loserErr,
+		)
 	}
 
-	rec, ok := h.findByReason("issue counter regression detected at commit (concurrent signer; warn mode)")
+	rec, ok := h.findByReason(
+		"issue counter regression detected at commit (concurrent signer; warn mode)",
+	)
 	if !ok {
 		t.Fatalf("commit-time warn audit record not found")
 	}
@@ -324,17 +435,27 @@ func TestSignOpCert_CounterWarnMode_ConcurrentCommitRegression_AuditFields(t *te
 		return true
 	})
 	if !hasStored {
-		t.Fatalf("commit-time warn audit record is missing the stored-counter field")
+		t.Fatalf(
+			"commit-time warn audit record is missing the stored-counter field",
+		)
 	}
 	if stored != 7 {
-		t.Fatalf("stored-counter = %d, want 7 (the counter that won the race)", stored)
+		t.Fatalf(
+			"stored-counter = %d, want 7 (the counter that won the race)",
+			stored,
+		)
 	}
 }
 
 // TestSignOpCert_CounterOffMode: no counter enforcement at all.
 func TestSignOpCert_CounterOffMode(t *testing.T) {
 	k := newFakeKey(t)
-	c, m := newOpCertCoordinator(t, k, watermark.NewMemWatermark(), watermark.ModeOff)
+	c, m := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeOff,
+	)
 	ctx := context.Background()
 	kes := make([]byte, kesVkeySize)
 
@@ -342,10 +463,60 @@ func TestSignOpCert_CounterOffMode(t *testing.T) {
 		t.Fatalf("counter 5: %v (code=%s)", err, code)
 	}
 	// A stale counter still signs when the guard is off.
-	if res, code, err := c.SignOpCert(ctx, kes, 5, 2, k.hash.String()); err != nil || res == nil {
-		t.Fatalf("off-mode repeat: want signature, got (res=%v, code=%s, err=%v)", res, code, err)
+	if res, code, err := c.SignOpCert(ctx, kes, 5, 2, k.hash.String()); err != nil ||
+		res == nil {
+		t.Fatalf(
+			"off-mode repeat: want signature, got (res=%v, code=%s, err=%v)",
+			res,
+			code,
+			err,
+		)
 	}
 	if got := testutil.ToFloat64(m.watermarkConflicts); got != 0 {
 		t.Fatalf("watermark_conflicts_total = %v, want 0", got)
+	}
+}
+
+// TestSignOpCert_BackendFailureRecordsNoCounter pins the ordering a custody
+// retry depends on: a counter is committed only after a verified signature,
+// so a backend failure leaves no record and the same request can be retried.
+func TestSignOpCert_BackendFailureRecordsNoCounter(t *testing.T) {
+	k := newFakeKey(t)
+	c, _ := newOpCertCoordinator(
+		t,
+		k,
+		watermark.NewMemWatermark(),
+		watermark.ModeEnforce,
+	)
+	ctx := context.Background()
+	kes := make([]byte, kesVkeySize)
+
+	k.signErr = errors.New("enclave sign unavailable")
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeBackend {
+		t.Fatalf("failed sign: want CodeBackend, got (code=%s, err=%v)", code, err)
+	}
+
+	// a signature that fails verification records nothing either
+	k.signErr = nil
+	_, wrong, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv := k.priv
+	k.priv = wrong
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeInternal {
+		t.Fatalf("unverified signature: want CodeInternal, got (code=%s, err=%v)", code, err)
+	}
+	k.priv = priv
+
+	res, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String())
+	if err != nil || res == nil {
+		t.Fatalf("retry of counter 3: got (code=%s, err=%v)", code, err)
+	}
+	if _, code, err := c.SignOpCert(ctx, kes, 3, 100, k.hash.String()); err == nil ||
+		code != CodeConflict {
+		t.Fatalf("counter 3 after a signed retry: want CodeConflict, got (code=%s, err=%v)", code, err)
 	}
 }

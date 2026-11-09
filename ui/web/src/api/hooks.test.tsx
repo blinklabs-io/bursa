@@ -1,5 +1,5 @@
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { useStatus, useAsync, useAssetMetadata } from "./hooks";
+import { useStatus, useAsync, useAssetMetadata, useExternalHandleLookup } from "./hooks";
 import * as client from "./client";
 import type { AssetInfo } from "./types";
 
@@ -261,4 +261,39 @@ test("useAssetMetadata: duplicate units trigger only one lookup", async () => {
   const { result } = renderHook(() => useAssetMetadata(["unitA", "unitA", "unitA"]));
   await waitFor(() => expect(result.current.unitA).toBeDefined());
   expect(spy).toHaveBeenCalledTimes(1);
+});
+
+test("useExternalHandleLookup re-reads the server value after a failed save", async () => {
+  let resolveReread: (v: { enabled: boolean }) => void = () => {};
+  vi.spyOn(client, "getExternalHandleLookup")
+    .mockResolvedValueOnce({ enabled: false })
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveReread = resolve; }));
+  vi.spyOn(client, "setExternalHandleLookup").mockRejectedValueOnce(new Error("sync failed"));
+  const { result } = renderHook(() => useExternalHandleLookup());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.enabled).toBe(false);
+
+  let save: Promise<void> = Promise.resolve();
+  act(() => { save = result.current.setEnabled(true); });
+  await waitFor(() => expect(client.getExternalHandleLookup).toHaveBeenCalledTimes(2));
+  expect(result.current.saving).toBe(true);
+
+  await act(async () => { resolveReread({ enabled: true }); await save; });
+  expect(result.current.enabled).toBe(true);
+  expect(result.current.saving).toBe(false);
+  expect(result.current.error?.message).toBe("sync failed");
+});
+
+test("useExternalHandleLookup keeps the save error when the re-read fails", async () => {
+  vi.spyOn(client, "getExternalHandleLookup")
+    .mockResolvedValueOnce({ enabled: false })
+    .mockRejectedValueOnce(new Error("offline"));
+  vi.spyOn(client, "setExternalHandleLookup").mockRejectedValueOnce(new Error("sync failed"));
+  const { result } = renderHook(() => useExternalHandleLookup());
+  await waitFor(() => expect(result.current.loading).toBe(false));
+
+  await act(async () => { await result.current.setEnabled(true); });
+  expect(result.current.enabled).toBe(false);
+  expect(result.current.saving).toBe(false);
+  expect(result.current.error?.message).toBe("sync failed");
 });

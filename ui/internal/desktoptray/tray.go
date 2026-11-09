@@ -186,7 +186,10 @@ func (t *Tray) onReady() {
 	mStatus := systray.AddMenuItem("Node: starting…", "Embedded node status")
 	mStatus.Disable()
 	systray.AddSeparator()
-	mUpdates := systray.AddMenuItem("Check for updates", "Check the latest Bursa release")
+	mUpdates := systray.AddMenuItem(
+		"Check for updates",
+		"Check the latest Bursa release",
+	)
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Bursa Wallet and stop the node")
 

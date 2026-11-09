@@ -106,6 +106,8 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 	kesSKey, kesVKey, err := GetKESKeyPair(kesSeed)
 	require.NoError(t, err)
 
+	stakeSeed := stake.PrivateKey()[:ed25519.SeedSize]
+	stakePlainVKey := ed25519.NewKeyFromSeed(stakeSeed).Public().(ed25519.PublicKey)
 	poolSeed := poolCold.PrivateKey()[:ed25519.SeedSize]
 	poolVKey := ed25519.NewKeyFromSeed(poolSeed).Public().(ed25519.PublicKey)
 
@@ -201,6 +203,11 @@ func signingKeyExporterRegistry(t *testing.T) []signingKeyExporterVector {
 			wantType:        "PaymentExtendedSigningKeyShelley_ed25519_bip32", wantMaterialBytes: 128,
 		},
 		{
+			name: "GetStakePlainSKey", signingKey: mustSigningKey(GetStakePlainSKey(stake)),
+			verificationKey: stakePlainVKey,
+			wantType:        "StakeSigningKeyShelley_ed25519", wantMaterialBytes: 32,
+		},
+		{
 			name: "GetVRFSKey", signingKey: mustSigningKey(GetVRFSKey(vrfSKey)),
 			verificationKey: vrfVKey,
 			wantType:        "VrfSigningKey_PraosVRF", wantMaterialBytes: len(vrfSKey) + vrf.PublicKeySize,
@@ -271,7 +278,8 @@ func TestSigningKeyExportersImplyPairedVerificationIdentity(t *testing.T) {
 			loaded, err := LoadKeyFromBytes(envelope)
 			require.NoError(t, err)
 			assert.Equal(t, vector.verificationKey, loaded.VKey)
-			if len(loaded.SKey) == ed25519.PrivateKeySize || len(loaded.SKey) == 96 {
+			if len(loaded.SKey) == ed25519.PrivateKeySize ||
+				len(loaded.SKey) == 96 {
 				actualSigningIdentity, err := PublicKeyOf(loaded)
 				require.NoError(t, err)
 				assert.Equal(t, vector.verificationKey, actualSigningIdentity)
@@ -295,7 +303,11 @@ func TestSigningKeyEnvelopeControls(t *testing.T) {
 	require.NoError(t, err)
 	loaded, err := LoadKeyFromBytes(raw)
 	require.NoError(t, err)
-	assert.Equal(t, ed25519.NewKeyFromSeed(seed).Public(), ed25519.PublicKey(loaded.VKey))
+	assert.Equal(
+		t,
+		ed25519.NewKeyFromSeed(seed).Public(),
+		ed25519.PublicKey(loaded.VKey),
+	)
 
 	root, err := GetRootKeyFromMnemonic(signingEnvelopeTestMnemonic, "")
 	require.NoError(t, err)
@@ -317,7 +329,9 @@ func TestSigningKeyEnvelopeControls(t *testing.T) {
 	require.ErrorContains(t, err, "expected 32 bytes")
 }
 
-func TestLegacyBIP32MaterialInNonExtendedEnvelopeDoesNotMatchIdentity(t *testing.T) {
+func TestLegacyBIP32MaterialInNonExtendedEnvelopeDoesNotMatchIdentity(
+	t *testing.T,
+) {
 	root, err := GetRootKeyFromMnemonic(signingEnvelopeTestMnemonic, "")
 	require.NoError(t, err)
 	account, err := GetAccountKey(root, 0)
@@ -368,7 +382,11 @@ func TestSigningKeyCardanoCLIDifferential(t *testing.T) {
 	version, err := exec.Command(cardanoCLI, "version").CombinedOutput()
 	require.NoError(t, err)
 	if !strings.Contains(string(version), pinnedCardanoCLIVersion) {
-		t.Skipf("requires pinned %s, got %q", pinnedCardanoCLIVersion, strings.TrimSpace(string(version)))
+		t.Skipf(
+			"requires pinned %s, got %q",
+			pinnedCardanoCLIVersion,
+			strings.TrimSpace(string(version)),
+		)
 	}
 
 	wallet, err := NewWallet(signingEnvelopeTestMnemonic)
@@ -422,8 +440,16 @@ func TestSigningKeyCardanoCLIDifferential(t *testing.T) {
 			var derivedMaterial []byte
 			_, err = cbor.Decode(derivedRawCBOR, &derivedMaterial)
 			require.NoError(t, err)
-			require.GreaterOrEqual(t, len(derivedMaterial), ed25519.PublicKeySize)
-			assert.Equal(t, pairedIdentity, derivedMaterial[:ed25519.PublicKeySize])
+			require.GreaterOrEqual(
+				t,
+				len(derivedMaterial),
+				ed25519.PublicKeySize,
+			)
+			assert.Equal(
+				t,
+				pairedIdentity,
+				derivedMaterial[:ed25519.PublicKeySize],
+			)
 		})
 	}
 }
@@ -437,9 +463,21 @@ func TestSigningKeyGoldenVerificationVectors(t *testing.T) {
 		key  KeyFile
 		want string
 	}{
-		{name: "payment", key: wallet.PaymentVKey, want: "58207ea09a34aebb13c9841c71397b1cabfec5ddf950405293dee496cac2f437480a"},
-		{name: "stake", key: wallet.StakeVKey, want: "5820012f5dc3115b8a07981e6e50f5a671e2c6fbb26c3ffde1cd1dcaf40a7fe8f160"},
-		{name: "pool-cold", key: wallet.PoolColdVKey, want: "5820beafe7eb55afd03bde1170d2286695085e5fce98a1529456bff18c17e6f6cf4e"},
+		{
+			name: "payment",
+			key:  wallet.PaymentVKey,
+			want: "58207ea09a34aebb13c9841c71397b1cabfec5ddf950405293dee496cac2f437480a",
+		},
+		{
+			name: "stake",
+			key:  wallet.StakeVKey,
+			want: "5820012f5dc3115b8a07981e6e50f5a671e2c6fbb26c3ffde1cd1dcaf40a7fe8f160",
+		},
+		{
+			name: "pool-cold",
+			key:  wallet.PoolColdVKey,
+			want: "5820beafe7eb55afd03bde1170d2286695085e5fce98a1529456bff18c17e6f6cf4e",
+		},
 	}
 	for _, vector := range vectors {
 		t.Run(vector.name, func(t *testing.T) {

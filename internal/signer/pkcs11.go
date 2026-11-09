@@ -30,13 +30,17 @@ import (
 // the configured env var and never taken from plaintext config.
 func buildPKCS11Backend(c config.SignerBackendConfig) (backend.Backend, error) {
 	if c.Module == "" {
-		return nil, errors.New("pkcs11 backend requires module (path to the PKCS#11 .so)")
+		return nil, errors.New(
+			"pkcs11 backend requires module (path to the PKCS#11 .so)",
+		)
 	}
 	if c.TokenLabel == "" && c.Slot == nil {
 		return nil, errors.New("pkcs11 backend requires token_label or slot")
 	}
 	if c.PINEnv == "" {
-		return nil, errors.New("pkcs11 backend requires pin_env (env var holding the user PIN)")
+		return nil, errors.New(
+			"pkcs11 backend requires pin_env (env var holding the user PIN)",
+		)
 	}
 	pin := os.Getenv(c.PINEnv)
 	if pin == "" {
@@ -46,7 +50,11 @@ func buildPKCS11Backend(c config.SignerBackendConfig) (backend.Backend, error) {
 	for _, k := range c.Keys {
 		kt := backend.KeyType(k.Type)
 		if !kt.Valid() {
-			return nil, fmt.Errorf("pkcs11 key %q: invalid key type %q", k.Name, k.Type)
+			return nil, fmt.Errorf(
+				"pkcs11 key %q: invalid key type %q",
+				k.Name,
+				k.Type,
+			)
 		}
 		keys = append(keys, backend.PKCS11KeyConfig{Label: k.Name, Type: kt})
 	}

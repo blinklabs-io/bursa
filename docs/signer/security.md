@@ -11,7 +11,7 @@ protect them:
 |-------|--------|---------|
 | Private key material | Exfiltration from the signer host | Prefer custody where the key never enters the signer process - a PKCS#11 HSM token or Vault Transit; keep the plaintext software backend on loopback/dev only |
 | The signing capability | Unauthorized callers | mTLS client certificates, authorized-keys Ed25519 request signing (timestamp window + nonce replay cache), or bearer JWT (HS256/JWKS) with configured `iss`/`aud` checks; per-subject caller ACL over the resolved identity |
-| Correct-but-unwanted signatures | Over-broad key use | Deny-by-default per-key policy (`allowed_requests`, tx/cip8 policy) |
+| Correct-but-unwanted signatures | Over-broad key use | Deny-by-default per-key policy (`allowed_requests`, `backend`, tx/cip8 policy) |
 | Consensus safety / key reuse | Double-signing, period rollback | Watermark store in `enforce` mode; KES period guard in the KES agent |
 | Request contents | Leakage via logs/errors | No secrets or raw CBOR logged; 5xx bodies masked; audit IDs correlate |
 | Transport | Eavesdropping / tampering | Server-side TLS required off-loopback |
@@ -57,8 +57,8 @@ enclave and trust a key only after verifying platform attestation and each
 signature; see [`attested-custody.md`](attested-custody.md) for the protocol and
 for what the enclave itself must enforce when the host is untrusted.
 
-The `sops` backend fetches SOPS-encrypted envelopes from GCP Secret Manager and
-decrypts them **in process** at boot; the decrypted key then lives in signer
+The `sops` backend fetches SOPS-encrypted envelopes from GCP Secret Manager or a
+local directory and decrypts them **in process** at boot; the decrypted key then lives in signer
 memory for the process lifetime. This is stronger than plaintext-at-rest but
 still places key material in the signer's address space.
 
@@ -98,8 +98,10 @@ anything that can read the process memory or the key directory.
 - Run the watermark in `enforce` mode with a durable `file` (SQLite) store for
   one active signer. Multiple replicas for the same keys require one shared
   `postgres` store; never point active replicas at independent databases or
-  per-instance stores. Require verified TLS for remote database connections and
-  configure failover so every acknowledged watermark row survives promotion.
+  per-instance stores. Bursa requires hostname-verified TLS for remote database
+  connections; configure failover so every acknowledged watermark row survives
+  promotion.
 - Restrict the config file, TLS key, and any key files to the service user.
-- Scrape `/metrics`; alert on `bursa_signer_watermark_conflicts_total` and
+- Scrape `/metrics` from the dedicated loopback listener; alert on
+  `bursa_signer_watermark_conflicts_total` and
   `bursa_signer_backend_errors_total`.

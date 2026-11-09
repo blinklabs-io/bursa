@@ -65,7 +65,10 @@ func TestVaultBackend_Sign(t *testing.T) {
 }
 
 func TestVaultBackend_RejectsExtendedPubkeyLength(t *testing.T) {
-	b := NewVaultBackend("vault", func(context.Context, string, []byte) (string, error) { return "", nil })
+	b := NewVaultBackend(
+		"vault",
+		func(context.Context, string, []byte) (string, error) { return "", nil },
+	)
 	// A 64-byte "public key" (extended xpub-like) is invalid for a standard ed25519 vault key.
 	if _, err := b.AddKey("bad", make([]byte, 64), KeyTypePool); err == nil {
 		t.Fatalf("expected error adding non-32-byte public key")
@@ -73,7 +76,10 @@ func TestVaultBackend_RejectsExtendedPubkeyLength(t *testing.T) {
 }
 
 func TestVaultBackend_GetKey_NotFound(t *testing.T) {
-	b := NewVaultBackend("vault", func(context.Context, string, []byte) (string, error) { return "", nil })
+	b := NewVaultBackend(
+		"vault",
+		func(context.Context, string, []byte) (string, error) { return "", nil },
+	)
 	_, err := b.GetKey(context.Background(), KeyHash{})
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
@@ -98,7 +104,10 @@ func TestParseTransitSignature_Malformed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := parseTransitSignature(tc.input)
 			if err == nil {
-				t.Fatalf("parseTransitSignature(%q): expected error, got nil", tc.input)
+				t.Fatalf(
+					"parseTransitSignature(%q): expected error, got nil",
+					tc.input,
+				)
 			}
 		})
 	}

@@ -64,7 +64,11 @@ func TestTxEnvelopesNameTheEra(t *testing.T) {
 		t.Fatalf("RunTxWitness: %v", err)
 	}
 	if got := readEnvelopeType(t, witFile); got != "TxWitness ConwayEra" {
-		t.Errorf("witness envelope type = %q, want %q", got, "TxWitness ConwayEra")
+		t.Errorf(
+			"witness envelope type = %q, want %q",
+			got,
+			"TxWitness ConwayEra",
+		)
 	}
 
 	// The era-typed witness must remain readable by assemble.
@@ -162,7 +166,11 @@ func TestTxBabbageEnvelopeKeepsEra(t *testing.T) {
 			}
 			signed := readEnvelope(t, signedFile)
 			if signed.Type != "Tx BabbageEra" {
-				t.Errorf("sign envelope type = %q, want %q", signed.Type, "Tx BabbageEra")
+				t.Errorf(
+					"sign envelope type = %q, want %q",
+					signed.Type,
+					"Tx BabbageEra",
+				)
 			}
 			if vkeyWitnessesTagged(t, signed.CborHex) {
 				t.Errorf("sign wrapped Babbage vkey witnesses in tag 258")
@@ -173,7 +181,11 @@ func TestTxBabbageEnvelopeKeepsEra(t *testing.T) {
 				t.Fatalf("RunTxWitness: %v", err)
 			}
 			if got := readEnvelope(t, witFile).Type; got != "TxWitness BabbageEra" {
-				t.Errorf("witness envelope type = %q, want %q", got, "TxWitness BabbageEra")
+				t.Errorf(
+					"witness envelope type = %q, want %q",
+					got,
+					"TxWitness BabbageEra",
+				)
 			}
 
 			assembledFile := filepath.Join(dir, "assembled.tx")
@@ -182,7 +194,11 @@ func TestTxBabbageEnvelopeKeepsEra(t *testing.T) {
 			}
 			assembled := readEnvelope(t, assembledFile)
 			if assembled.Type != "Tx BabbageEra" {
-				t.Errorf("assemble envelope type = %q, want %q", assembled.Type, "Tx BabbageEra")
+				t.Errorf(
+					"assemble envelope type = %q, want %q",
+					assembled.Type,
+					"Tx BabbageEra",
+				)
 			}
 			if vkeyWitnessesTagged(t, assembled.CborHex) {
 				t.Errorf("assemble wrapped Babbage vkey witnesses in tag 258")
@@ -193,7 +209,13 @@ func TestTxBabbageEnvelopeKeepsEra(t *testing.T) {
 
 func TestTxAmbiguousEraRequiresContext(t *testing.T) {
 	t.Parallel()
-	zeroWitness := "825820" + strings.Repeat("00", 32) + "5840" + strings.Repeat("00", 64)
+	zeroWitness := "825820" + strings.Repeat(
+		"00",
+		32,
+	) + "5840" + strings.Repeat(
+		"00",
+		64,
+	)
 	for _, tc := range []struct{ name, envType string }{
 		{"raw hex", ""},
 		{"legacy Tx envelope", "Tx"},
@@ -202,19 +224,55 @@ func TestTxAmbiguousEraRequiresContext(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			keyFile := writeTestSigningKey(t, dir)
-			txFile := writeTxFile(t, dir, "tx.unsigned", tc.envType, babbageTxHex)
-			err := RunTxSign(txFile, []string{keyFile}, filepath.Join(dir, "signed.tx"), "")
+			txFile := writeTxFile(
+				t,
+				dir,
+				"tx.unsigned",
+				tc.envType,
+				babbageTxHex,
+			)
+			err := RunTxSign(
+				txFile,
+				[]string{keyFile},
+				filepath.Join(dir, "signed.tx"),
+				"",
+			)
 			if err == nil || !strings.Contains(err.Error(), "--era") {
-				t.Errorf("RunTxSign error = %v, want an error asking for --era", err)
+				t.Errorf(
+					"RunTxSign error = %v, want an error asking for --era",
+					err,
+				)
 			}
-			err = RunTxWitness(txFile, keyFile, filepath.Join(dir, "tx.witness"), "")
+			err = RunTxWitness(
+				txFile,
+				keyFile,
+				filepath.Join(dir, "tx.witness"),
+				"",
+			)
 			if err == nil || !strings.Contains(err.Error(), "--era") {
-				t.Errorf("RunTxWitness error = %v, want an error asking for --era", err)
+				t.Errorf(
+					"RunTxWitness error = %v, want an error asking for --era",
+					err,
+				)
 			}
-			witFile := writeTxFile(t, dir, "w.witness", "TxWitness", zeroWitness)
-			err = RunTxAssemble(txFile, []string{witFile}, filepath.Join(dir, "assembled.tx"), "")
+			witFile := writeTxFile(
+				t,
+				dir,
+				"w.witness",
+				"TxWitness",
+				zeroWitness,
+			)
+			err = RunTxAssemble(
+				txFile,
+				[]string{witFile},
+				filepath.Join(dir, "assembled.tx"),
+				"",
+			)
 			if err == nil || !strings.Contains(err.Error(), "--era") {
-				t.Errorf("RunTxAssemble error = %v, want an error asking for --era", err)
+				t.Errorf(
+					"RunTxAssemble error = %v, want an error asking for --era",
+					err,
+				)
 			}
 		})
 	}
@@ -222,20 +280,33 @@ func TestTxAmbiguousEraRequiresContext(t *testing.T) {
 
 func TestTxLegacyEnvelopeConwayStillWorks(t *testing.T) {
 	t.Parallel()
-	raw, err := bursa.ReadCborInputFile(filepath.Join("..", "..", "testdata", "conway-unsigned.tx"))
+	raw, err := bursa.ReadCborInputFile(
+		filepath.Join("..", "..", "testdata", "conway-unsigned.tx"),
+	)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
 	for _, envType := range []string{"", "Tx"} {
 		dir := t.TempDir()
 		keyFile := writeTestSigningKey(t, dir)
-		txFile := writeTxFile(t, dir, "tx.unsigned", envType, hex.EncodeToString(raw))
+		txFile := writeTxFile(
+			t,
+			dir,
+			"tx.unsigned",
+			envType,
+			hex.EncodeToString(raw),
+		)
 		signedFile := filepath.Join(dir, "signed.tx")
 		if err := RunTxSign(txFile, []string{keyFile}, signedFile, ""); err != nil {
 			t.Fatalf("RunTxSign (%q): %v", envType, err)
 		}
 		if got := readEnvelope(t, signedFile).Type; got != "Tx ConwayEra" {
-			t.Errorf("sign envelope type for %q input = %q, want %q", envType, got, "Tx ConwayEra")
+			t.Errorf(
+				"sign envelope type for %q input = %q, want %q",
+				envType,
+				got,
+				"Tx ConwayEra",
+			)
 		}
 	}
 }
@@ -252,7 +323,11 @@ func TestTxEraFlag(t *testing.T) {
 	}
 	signed := readEnvelope(t, signedFile)
 	if signed.Type != "Tx BabbageEra" {
-		t.Errorf("sign envelope type = %q, want %q", signed.Type, "Tx BabbageEra")
+		t.Errorf(
+			"sign envelope type = %q, want %q",
+			signed.Type,
+			"Tx BabbageEra",
+		)
 	}
 	if vkeyWitnessesTagged(t, signed.CborHex) {
 		t.Errorf("sign wrapped Babbage vkey witnesses in tag 258")
@@ -262,16 +337,42 @@ func TestTxEraFlag(t *testing.T) {
 		t.Fatalf("RunTxWitness --era Babbage: %v", err)
 	}
 	if got := readEnvelope(t, witFile).Type; got != "TxWitness BabbageEra" {
-		t.Errorf("witness envelope type = %q, want %q", got, "TxWitness BabbageEra")
+		t.Errorf(
+			"witness envelope type = %q, want %q",
+			got,
+			"TxWitness BabbageEra",
+		)
 	}
 
-	envFile := writeTxFile(t, dir, "env.unsigned", "Tx BabbageEra", babbageTxHex)
-	err := RunTxSign(envFile, []string{keyFile}, filepath.Join(dir, "conflict.tx"), "conway")
+	envFile := writeTxFile(
+		t,
+		dir,
+		"env.unsigned",
+		"Tx BabbageEra",
+		babbageTxHex,
+	)
+	err := RunTxSign(
+		envFile,
+		[]string{keyFile},
+		filepath.Join(dir, "conflict.tx"),
+		"conway",
+	)
 	if err == nil || !strings.Contains(err.Error(), "conflicts") {
-		t.Errorf("RunTxSign with conflicting --era error = %v, want a conflict error", err)
+		t.Errorf(
+			"RunTxSign with conflicting --era error = %v, want a conflict error",
+			err,
+		)
 	}
-	err = RunTxSign(rawFile, []string{keyFile}, filepath.Join(dir, "bad.tx"), "goguen")
+	err = RunTxSign(
+		rawFile,
+		[]string{keyFile},
+		filepath.Join(dir, "bad.tx"),
+		"goguen",
+	)
 	if err == nil || !strings.Contains(err.Error(), "unknown era") {
-		t.Errorf("RunTxSign with unknown --era error = %v, want an unknown era error", err)
+		t.Errorf(
+			"RunTxSign with unknown --era error = %v, want an unknown era error",
+			err,
+		)
 	}
 }

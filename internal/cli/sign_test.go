@@ -30,7 +30,10 @@ func TestReadPayloadRejectsConflictingInputs(t *testing.T) {
 
 func TestRunVerifyDataAllowsMissingPayload(t *testing.T) {
 	root := bip32.FromBip39Entropy(make([]byte, 32), nil)
-	lk := &bursa.LoadedKey{SKey: []byte(root), VKey: bip32.XPrv(root).PublicKey()}
+	lk := &bursa.LoadedKey{
+		SKey: []byte(root),
+		VKey: bip32.XPrv(root).PublicKey(),
+	}
 	keyHash := lcommon.Blake2b224Hash(lk.VKey)
 	addr, err := lcommon.NewAddressFromParts(
 		lcommon.AddressTypeKeyNone,

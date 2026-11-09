@@ -41,7 +41,10 @@ func TestMemWatermark_ConflictAndIdempotent(t *testing.T) {
 		t.Fatalf("idempotent check should pass: %v", err)
 	}
 	// different payload, same scope -> conflict
-	if err := wm.Check(ctx, key, "tx:abc", []byte("payload-2")); !errors.Is(err, ErrConflict) {
+	if err := wm.Check(ctx, key, "tx:abc", []byte("payload-2")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("expected ErrConflict, got %v", err)
 	}
 	// different scope -> OK
@@ -71,7 +74,10 @@ func TestMemWatermark_FirstWriterWins(t *testing.T) {
 		t.Fatalf("payloadA should still pass after second Commit: %v", err)
 	}
 	// payloadB must conflict because the first write (payloadA) wins.
-	if err := wm.Check(ctx, key, "tx:fw", payloadB); !errors.Is(err, ErrConflict) {
+	if err := wm.Check(ctx, key, "tx:fw", payloadB); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("expected ErrConflict for payloadB, got %v", err)
 	}
 }
@@ -88,7 +94,10 @@ func TestMemWatermark_CheckAndCommit(t *testing.T) {
 	if err := wm.CheckAndCommit(ctx, key, "kes:1", []byte("payload-1")); err != nil {
 		t.Fatalf("idempotent CheckAndCommit: %v", err)
 	}
-	if err := wm.CheckAndCommit(ctx, key, "kes:1", []byte("payload-2")); !errors.Is(err, ErrConflict) {
+	if err := wm.CheckAndCommit(ctx, key, "kes:1", []byte("payload-2")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("expected ErrConflict, got %v", err)
 	}
 }
@@ -110,7 +119,10 @@ func TestWarningMemWatermarkBoundsRecords(t *testing.T) {
 	if err := wm.Check(ctx, key, "tx:00000000", []byte("different")); err != nil {
 		t.Fatalf("oldest record was not evicted: %v", err)
 	}
-	if err := wm.Check(ctx, key, fmt.Sprintf("tx:%08x", maxWarningRecords), []byte("different")); !errors.Is(err, ErrConflict) {
+	if err := wm.Check(ctx, key, fmt.Sprintf("tx:%08x", maxWarningRecords), []byte("different")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("newest record: got %v, want ErrConflict", err)
 	}
 }
@@ -126,7 +138,10 @@ func TestMemWatermarkDoesNotEvictEnforcedRecords(t *testing.T) {
 			t.Fatalf("commit %d: %v", i, err)
 		}
 	}
-	if err := wm.Check(ctx, key, "scope:00000000", []byte("different")); !errors.Is(err, ErrConflict) {
+	if err := wm.Check(ctx, key, "scope:00000000", []byte("different")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("oldest enforced record: got %v, want ErrConflict", err)
 	}
 }

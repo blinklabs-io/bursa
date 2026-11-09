@@ -41,7 +41,11 @@ const blockCacheMaxEntries = 1024
 
 func newLRUDatastore(maxBytes, maxEntry int) (*lruDatastore, error) {
 	if maxEntry <= 0 || maxEntry > maxBytes {
-		return nil, fmt.Errorf("nft: invalid block cache entry limit %d for byte limit %d", maxEntry, maxBytes)
+		return nil, fmt.Errorf(
+			"nft: invalid block cache entry limit %d for byte limit %d",
+			maxEntry,
+			maxBytes,
+		)
 	}
 	// Retain a modest count ceiling as defense against many zero/tiny blocks;
 	// the byte limit remains the primary bound for ordinary block data.
@@ -57,11 +61,19 @@ func newLRUDatastore(maxBytes, maxEntry int) (*lruDatastore, error) {
 	return d, nil
 }
 
-func (d *lruDatastore) Put(_ context.Context, key datastore.Key, value []byte) error {
+func (d *lruDatastore) Put(
+	_ context.Context,
+	key datastore.Key,
+	value []byte,
+) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(value) > d.maxEntry {
-		return fmt.Errorf("nft: IPFS block is %d bytes, per-block limit is %d", len(value), d.maxEntry)
+		return fmt.Errorf(
+			"nft: IPFS block is %d bytes, per-block limit is %d",
+			len(value),
+			d.maxEntry,
+		)
 	}
 	if d.cache.Contains(key) {
 		d.cache.Remove(key)
@@ -77,7 +89,10 @@ func (d *lruDatastore) Put(_ context.Context, key datastore.Key, value []byte) e
 	return nil
 }
 
-func (d *lruDatastore) Get(_ context.Context, key datastore.Key) ([]byte, error) {
+func (d *lruDatastore) Get(
+	_ context.Context,
+	key datastore.Key,
+) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	value, ok := d.cache.Get(key)
@@ -93,7 +108,10 @@ func (d *lruDatastore) Has(_ context.Context, key datastore.Key) (bool, error) {
 	return d.cache.Contains(key), nil
 }
 
-func (d *lruDatastore) GetSize(_ context.Context, key datastore.Key) (int, error) {
+func (d *lruDatastore) GetSize(
+	_ context.Context,
+	key datastore.Key,
+) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	value, ok := d.cache.Peek(key)
@@ -112,7 +130,10 @@ func (d *lruDatastore) Delete(_ context.Context, key datastore.Key) error {
 	return nil
 }
 
-func (d *lruDatastore) Query(_ context.Context, q query.Query) (query.Results, error) {
+func (d *lruDatastore) Query(
+	_ context.Context,
+	q query.Query,
+) (query.Results, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	entries := make([]query.Entry, 0, d.cache.Len())

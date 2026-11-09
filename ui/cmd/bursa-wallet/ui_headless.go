@@ -27,13 +27,22 @@ import (
 // awaitUI (default, headless build) serves the wallet UI over loopback for the
 // user's browser and blocks until a shutdown signal arrives or the control
 // surface fails. This build is pure Go (CGO_ENABLED=0) — no GUI dependency.
-func awaitUI(ctx context.Context, url string, _ *slog.Logger, srvErr <-chan error) error {
+func awaitUI(
+	ctx context.Context,
+	url string,
+	_ *slog.Logger,
+	srvErr <-chan error,
+) error {
 	if err := waitReachable(ctx, url, 15*time.Second, srvErr); err != nil {
 		return err
 	}
 	// This is the trusted handoff for browser mode. Keep it out of the logger,
 	// which may persist to the wallet log file.
-	_, _ = fmt.Fprintln(os.Stderr, "Open Bursa using this authenticated URL:", url)
+	_, _ = fmt.Fprintln(
+		os.Stderr,
+		"Open Bursa using this authenticated URL:",
+		url,
+	)
 
 	select {
 	case <-ctx.Done():

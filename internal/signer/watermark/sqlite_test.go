@@ -41,7 +41,10 @@ func TestSqliteWatermark(t *testing.T) {
 	if err := wm.Commit(ctx, key, "kes:42", []byte("blockA")); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	if err := wm.Check(ctx, key, "kes:42", []byte("blockB")); !errors.Is(err, ErrConflict) {
+	if err := wm.Check(ctx, key, "kes:42", []byte("blockB")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("expected ErrConflict, got %v", err)
 	}
 	if err := wm.Check(ctx, key, "kes:42", []byte("blockA")); err != nil {
@@ -53,7 +56,10 @@ func TestSqliteWatermark(t *testing.T) {
 	if err := wm.CheckAndCommit(ctx, key, "kes:43", []byte("blockA")); err != nil {
 		t.Fatalf("idempotent check and commit: %v", err)
 	}
-	if err := wm.CheckAndCommit(ctx, key, "kes:43", []byte("blockB")); !errors.Is(err, ErrConflict) {
+	if err := wm.CheckAndCommit(ctx, key, "kes:43", []byte("blockB")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("expected ErrConflict from check and commit, got %v", err)
 	}
 }
@@ -89,8 +95,14 @@ func TestSqliteWatermark_PersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("same payload after reopen should pass: %v", err)
 	}
 	// Different payload -> ErrConflict.
-	if err := wm2.Check(ctx, key, "tx:persist", []byte("block-2")); !errors.Is(err, ErrConflict) {
-		t.Fatalf("expected ErrConflict for different payload after reopen, got %v", err)
+	if err := wm2.Check(ctx, key, "tx:persist", []byte("block-2")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
+		t.Fatalf(
+			"expected ErrConflict for different payload after reopen, got %v",
+			err,
+		)
 	}
 }
 

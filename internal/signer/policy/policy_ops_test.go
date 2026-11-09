@@ -38,7 +38,8 @@ func TestVoterKindName(t *testing.T) {
 	if got := VoterKindName(2); got != VoterDrepKey {
 		t.Fatalf("voter type 2: want %q, got %q", VoterDrepKey, got)
 	}
-	if !IsDrepVoterKind(VoterDrepScript) || IsDrepVoterKind(VoterStakingPoolKey) {
+	if !IsDrepVoterKind(VoterDrepScript) ||
+		IsDrepVoterKind(VoterStakingPoolKey) {
 		t.Fatalf("IsDrepVoterKind classification wrong")
 	}
 	if got := VoterKindName(200); got != "unknown_voter_200" {
@@ -55,7 +56,12 @@ func TestEvaluateTx_CertificateAllowList(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
 		// allow-list mode: only stake_delegation permitted (AllowCertificates left false)
-		Tx: &TxPolicy{AllowedCertificates: []string{CertStakeDelegation, CertVoteDelegation}},
+		Tx: &TxPolicy{
+			AllowedCertificates: []string{
+				CertStakeDelegation,
+				CertVoteDelegation,
+			},
+		},
 	})
 
 	// stake_delegation is listed -> allow
@@ -64,7 +70,9 @@ func TestEvaluateTx_CertificateAllowList(t *testing.T) {
 	}
 	// pool_retirement is NOT listed -> deny
 	if d := e.EvaluateTx(h, certTx(), WithOps(TxOps{Certificates: []string{CertPoolRetirement}})); d.Allow {
-		t.Fatalf("expected deny for pool_retirement not in allowed_certificates")
+		t.Fatalf(
+			"expected deny for pool_retirement not in allowed_certificates",
+		)
 	}
 	// mixed: one listed, one not -> deny
 	if d := e.EvaluateTx(h, &bursa.TxInspection{TTL: 1, CertificateCount: 2},
@@ -73,14 +81,18 @@ func TestEvaluateTx_CertificateAllowList(t *testing.T) {
 	}
 	// allow-list mode but kinds unavailable (empty ops) -> fail closed
 	if d := e.EvaluateTx(h, certTx()); d.Allow {
-		t.Fatalf("expected deny: allow-list mode with no decoded kinds must fail closed")
+		t.Fatalf(
+			"expected deny: allow-list mode with no decoded kinds must fail closed",
+		)
 	}
 }
 
 func TestEvaluateTx_CertificateAllowAllBoolStillWorks(t *testing.T) {
 	e, h := engineWith(t, KeyPolicy{
 		AllowedRequests: []string{"tx"},
-		Tx:              &TxPolicy{AllowCertificates: true}, // allow-all, no list
+		Tx: &TxPolicy{
+			AllowCertificates: true,
+		}, // allow-all, no list
 	})
 	// Any cert kind passes under the allow-all bool.
 	if d := e.EvaluateTx(h, certTx(), WithOps(TxOps{Certificates: []string{CertPoolRetirement}})); !d.Allow {
@@ -89,7 +101,10 @@ func TestEvaluateTx_CertificateAllowAllBoolStillWorks(t *testing.T) {
 }
 
 func TestEvaluateTx_CertificateDenyByDefault(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{}},
+	)
 	if d := e.EvaluateTx(h, certTx(), WithOps(TxOps{Certificates: []string{CertStakeDelegation}})); d.Allow {
 		t.Fatalf("expected deny-by-default: no bool, no list")
 	}
@@ -134,7 +149,13 @@ func TestEvaluateTx_VoteDrepIdAllowList(t *testing.T) {
 }
 
 func TestEvaluateTx_VoteAllowAllBoolStillWorks(t *testing.T) {
-	e, h := engineWith(t, KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{AllowVotes: true}})
+	e, h := engineWith(
+		t,
+		KeyPolicy{
+			AllowedRequests: []string{"tx"},
+			Tx:              &TxPolicy{AllowVotes: true},
+		},
+	)
 	if d := e.EvaluateTx(h, voteTx(), WithOps(TxOps{Voters: []VoterInfo{{Kind: VoterStakingPoolKey}}})); !d.Allow {
 		t.Fatalf("expected allow_votes bool to permit any voter: %s", d.Reason)
 	}
@@ -143,7 +164,12 @@ func TestEvaluateTx_VoteAllowAllBoolStillWorks(t *testing.T) {
 const hashB = "00000000000000000000000000000000000000000000000000000042"
 
 // buildEngineWithOverride wires one key (base policy) plus a per-caller override.
-func buildEngineWithOverride(t *testing.T, base KeyPolicy, caller string, ov *CallerTxOverride) (*Engine, backend.KeyHash) {
+func buildEngineWithOverride(
+	t *testing.T,
+	base KeyPolicy,
+	caller string,
+	ov *CallerTxOverride,
+) (*Engine, backend.KeyHash) {
 	t.Helper()
 	base.Hash = hashB
 	e, err := NewEngine([]KeyPolicy{base})
@@ -194,7 +220,12 @@ func TestEvaluateTx_CallerOverrideNarrowsCollateral(t *testing.T) {
 		AllowedRequests: []string{"tx"},
 		Tx:              &TxPolicy{MaxFeeAda: 10},
 	}
-	e, h := buildEngineWithOverride(t, base, "bob", &CallerTxOverride{MaxFeeAda: 2})
+	e, h := buildEngineWithOverride(
+		t,
+		base,
+		"bob",
+		&CallerTxOverride{MaxFeeAda: 2},
+	)
 	insp := &bursa.TxInspection{
 		CollateralInputs: []bursa.TxInput{{}},
 		TotalCollateral:  "3000000",
@@ -203,7 +234,10 @@ func TestEvaluateTx_CallerOverrideNarrowsCollateral(t *testing.T) {
 		t.Fatal("caller override must apply max_fee_ada to total collateral")
 	}
 	if decision := e.EvaluateTx(h, insp, WithCaller("alice")); !decision.Allow {
-		t.Fatalf("base policy should allow bounded collateral: %s", decision.Reason)
+		t.Fatalf(
+			"base policy should allow bounded collateral: %s",
+			decision.Reason,
+		)
 	}
 }
 
@@ -217,12 +251,17 @@ func TestEvaluateTx_CallerOverrideCannotWiden(t *testing.T) {
 
 	if d := e.EvaluateTx(h, &bursa.TxInspection{TTL: 1, CertificateCount: 1},
 		WithCaller("carol"), WithOps(TxOps{Certificates: []string{CertStakeDelegation}})); d.Allow {
-		t.Fatalf("override must not widen: cert denied by base must stay denied")
+		t.Fatalf(
+			"override must not widen: cert denied by base must stay denied",
+		)
 	}
 }
 
 func TestSetCallerPolicies_ClearAndCopy(t *testing.T) {
-	base := KeyPolicy{AllowedRequests: []string{"tx"}, Tx: &TxPolicy{AllowCertificates: true}}
+	base := KeyPolicy{
+		AllowedRequests: []string{"tx"},
+		Tx:              &TxPolicy{AllowCertificates: true},
+	}
 	ov := &CallerTxOverride{ForbidCertificates: true}
 	e, h := buildEngineWithOverride(t, base, "dave", ov)
 
@@ -236,6 +275,9 @@ func TestSetCallerPolicies_ClearAndCopy(t *testing.T) {
 	// Clearing overrides restores base behavior (certs allowed).
 	e.SetCallerPolicies(nil)
 	if d := e.EvaluateTx(h, certTxn, WithCaller("dave"), WithOps(TxOps{Certificates: []string{CertStakeDelegation}})); !d.Allow {
-		t.Fatalf("after clearing overrides, base policy should allow certs: %s", d.Reason)
+		t.Fatalf(
+			"after clearing overrides, base policy should allow certs: %s",
+			d.Reason,
+		)
 	}
 }

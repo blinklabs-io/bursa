@@ -59,7 +59,9 @@ func mustTxVkeyWitnesses(t *testing.T, txBytes []byte) []lcommon.VkeyWitness {
 }
 
 func TestVkeyWitnessFieldRoundTrip_Array(t *testing.T) {
-	in := []lcommon.VkeyWitness{{Vkey: make([]byte, 32), Signature: make([]byte, 64)}}
+	in := []lcommon.VkeyWitness{
+		{Vkey: make([]byte, 32), Signature: make([]byte, 64)},
+	}
 	encoded, err := encodeVkeyWitnessField(in, false)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
@@ -77,7 +79,9 @@ func TestVkeyWitnessFieldRoundTrip_Array(t *testing.T) {
 }
 
 func TestVkeyWitnessFieldRoundTrip_Set(t *testing.T) {
-	in := []lcommon.VkeyWitness{{Vkey: make([]byte, 32), Signature: make([]byte, 64)}}
+	in := []lcommon.VkeyWitness{
+		{Vkey: make([]byte, 32), Signature: make([]byte, 64)},
+	}
 	encoded, err := encodeVkeyWitnessField(in, true)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
@@ -114,8 +118,15 @@ func TestInjectVkeyWitnesses_PreservesTxId(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode before: %v", err)
 	}
-	wit := lcommon.VkeyWitness{Vkey: make([]byte, 32), Signature: make([]byte, 64)}
-	signed, err := injectVkeyWitnesses(txBytes, []lcommon.VkeyWitness{wit}, true)
+	wit := lcommon.VkeyWitness{
+		Vkey:      make([]byte, 32),
+		Signature: make([]byte, 64),
+	}
+	signed, err := injectVkeyWitnesses(
+		txBytes,
+		[]lcommon.VkeyWitness{wit},
+		true,
+	)
 	if err != nil {
 		t.Fatalf("inject: %v", err)
 	}
@@ -149,9 +160,17 @@ func TestCreateWitness_Extended(t *testing.T) {
 		t.Fatalf("CreateWitness: %v", err)
 	}
 	if len(wit.Vkey) != 32 || len(wit.Signature) != 64 {
-		t.Fatalf("bad witness sizes: vkey=%d sig=%d", len(wit.Vkey), len(wit.Signature))
+		t.Fatalf(
+			"bad witness sizes: vkey=%d sig=%d",
+			len(wit.Vkey),
+			len(wit.Signature),
+		)
 	}
-	if !ed25519.Verify(ed25519.PublicKey(xprv.PublicKey()), txid, wit.Signature) {
+	if !ed25519.Verify(
+		ed25519.PublicKey(xprv.PublicKey()),
+		txid,
+		wit.Signature,
+	) {
 		t.Fatalf("extended-key signature does not verify with standard ed25519")
 	}
 }
@@ -182,7 +201,10 @@ func TestCreateWitness_Ed25519DerivesVKeyFromSKey(t *testing.T) {
 		t.Fatalf("wrong keygen: %v", err)
 	}
 	txid := make([]byte, 32)
-	wit, err := CreateWitness(txid, &LoadedKey{SKey: []byte(priv), VKey: wrongPub})
+	wit, err := CreateWitness(
+		txid,
+		&LoadedKey{SKey: []byte(priv), VKey: wrongPub},
+	)
 	if err != nil {
 		t.Fatalf("CreateWitness: %v", err)
 	}
@@ -225,7 +247,11 @@ func TestSignTransaction_RoundTrip(t *testing.T) {
 	if len(wits) != 1 {
 		t.Fatalf("expected 1 witness, got %d", len(wits))
 	}
-	if !ed25519.Verify(ed25519.PublicKey(xprv.PublicKey()), tx.Hash().Bytes(), wits[0].Signature) {
+	if !ed25519.Verify(
+		ed25519.PublicKey(xprv.PublicKey()),
+		tx.Hash().Bytes(),
+		wits[0].Signature,
+	) {
 		t.Fatalf("witness signature does not verify against txid")
 	}
 }
@@ -241,7 +267,10 @@ func TestSignTransaction_DeduplicatesDuplicateSigners(t *testing.T) {
 	}
 	wits := mustTxVkeyWitnesses(t, signed)
 	if len(wits) != 1 {
-		t.Fatalf("expected duplicate signer to produce 1 witness, got %d", len(wits))
+		t.Fatalf(
+			"expected duplicate signer to produce 1 witness, got %d",
+			len(wits),
+		)
 	}
 }
 
@@ -249,11 +278,17 @@ func TestAssembleTransaction_MergesWitnesses(t *testing.T) {
 	txBytes := mustTestTx(t)
 	r1 := bip32.FromBip39Entropy(make([]byte, 32), nil)
 	r2 := bip32.FromBip39Entropy(append(make([]byte, 31), 1), nil)
-	w1, err := WitnessTransaction(txBytes, &LoadedKey{SKey: []byte(r1), VKey: bip32.XPrv(r1).PublicKey()})
+	w1, err := WitnessTransaction(
+		txBytes,
+		&LoadedKey{SKey: []byte(r1), VKey: bip32.XPrv(r1).PublicKey()},
+	)
 	if err != nil {
 		t.Fatalf("witness 1: %v", err)
 	}
-	w2, err := WitnessTransaction(txBytes, &LoadedKey{SKey: []byte(r2), VKey: bip32.XPrv(r2).PublicKey()})
+	w2, err := WitnessTransaction(
+		txBytes,
+		&LoadedKey{SKey: []byte(r2), VKey: bip32.XPrv(r2).PublicKey()},
+	)
 	if err != nil {
 		t.Fatalf("witness 2: %v", err)
 	}
@@ -283,23 +318,36 @@ func TestAssembleTransaction_DeduplicatesRepeatedWitnesses(t *testing.T) {
 	txBytes := mustTestTx(t)
 	r1 := bip32.FromBip39Entropy(make([]byte, 32), nil)
 	r2 := bip32.FromBip39Entropy(append(make([]byte, 31), 1), nil)
-	w1, err := WitnessTransaction(txBytes, &LoadedKey{SKey: []byte(r1), VKey: bip32.XPrv(r1).PublicKey()})
+	w1, err := WitnessTransaction(
+		txBytes,
+		&LoadedKey{SKey: []byte(r1), VKey: bip32.XPrv(r1).PublicKey()},
+	)
 	if err != nil {
 		t.Fatalf("witness 1: %v", err)
 	}
-	w2, err := WitnessTransaction(txBytes, &LoadedKey{SKey: []byte(r2), VKey: bip32.XPrv(r2).PublicKey()})
+	w2, err := WitnessTransaction(
+		txBytes,
+		&LoadedKey{SKey: []byte(r2), VKey: bip32.XPrv(r2).PublicKey()},
+	)
 	if err != nil {
 		t.Fatalf("witness 2: %v", err)
 	}
-	signed, err := AssembleTransaction(txBytes, []lcommon.VkeyWitness{w1, w1, w2, w2})
+	signed, err := AssembleTransaction(
+		txBytes,
+		[]lcommon.VkeyWitness{w1, w1, w2, w2},
+	)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
 	wits := mustTxVkeyWitnesses(t, signed)
 	if len(wits) != 2 {
-		t.Fatalf("expected repeated witnesses to dedupe to 2, got %d", len(wits))
+		t.Fatalf(
+			"expected repeated witnesses to dedupe to 2, got %d",
+			len(wits),
+		)
 	}
-	if !bytes.Equal(wits[0].Vkey, w1.Vkey) || !bytes.Equal(wits[1].Vkey, w2.Vkey) {
+	if !bytes.Equal(wits[0].Vkey, w1.Vkey) ||
+		!bytes.Equal(wits[1].Vkey, w2.Vkey) {
 		t.Fatalf("deduplication did not preserve witness order")
 	}
 }
@@ -322,7 +370,10 @@ func TestAssembleTransaction_DeduplicatesExistingWitnesses(t *testing.T) {
 	}
 	wits := mustTxVkeyWitnesses(t, signed)
 	if len(wits) != 1 {
-		t.Fatalf("expected existing duplicate witness to remain 1, got %d", len(wits))
+		t.Fatalf(
+			"expected existing duplicate witness to remain 1, got %d",
+			len(wits),
+		)
 	}
 }
 
@@ -398,18 +449,31 @@ func TestEstimateWitnessedTxSize_MatchesAssembledVkeyWitnesses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("estimate %d: %v", n, err)
 		}
-		signed, err := AssembleTransactionForEra(tx, ledger.TxTypeConway, testVkeyWitnesses(t, n))
+		signed, err := AssembleTransactionForEra(
+			tx,
+			ledger.TxTypeConway,
+			testVkeyWitnesses(t, n),
+		)
 		if err != nil {
 			t.Fatalf("assemble %d: %v", n, err)
 		}
 		if got != len(signed) {
-			t.Errorf("%d witnesses: estimate %d, signed size %d", n, got, len(signed))
+			t.Errorf(
+				"%d witnesses: estimate %d, signed size %d",
+				n,
+				got,
+				len(signed),
+			)
 		}
 	}
 }
 
 func TestEstimateWitnessedTxSize_ExistingVkeyWitnesses(t *testing.T) {
-	base, err := AssembleTransactionForEra(mustTestTx(t), ledger.TxTypeConway, testVkeyWitnesses(t, 2))
+	base, err := AssembleTransactionForEra(
+		mustTestTx(t),
+		ledger.TxTypeConway,
+		testVkeyWitnesses(t, 2),
+	)
 	if err != nil {
 		t.Fatalf("assemble base: %v", err)
 	}
@@ -417,7 +481,11 @@ func TestEstimateWitnessedTxSize_ExistingVkeyWitnesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("estimate: %v", err)
 	}
-	signed, err := AssembleTransactionForEra(base, ledger.TxTypeConway, testVkeyWitnesses(t, 3))
+	signed, err := AssembleTransactionForEra(
+		base,
+		ledger.TxTypeConway,
+		testVkeyWitnesses(t, 3),
+	)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -445,7 +513,12 @@ func TestEstimateWitnessedTxSize_SetFraming(t *testing.T) {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if got-len(tx) != tc.added {
-			t.Errorf("%s: added %d bytes, want %d", tc.name, got-len(tx), tc.added)
+			t.Errorf(
+				"%s: added %d bytes, want %d",
+				tc.name,
+				got-len(tx),
+				tc.added,
+			)
 		}
 	}
 }
@@ -460,7 +533,11 @@ func TestEstimateWitnessedTxSize_CoversPreConwayEncoding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("estimate: %v", err)
 	}
-	signed, err := AssembleTransactionForEra(tx, ledger.TxTypeBabbage, testVkeyWitnesses(t, 4))
+	signed, err := AssembleTransactionForEra(
+		tx,
+		ledger.TxTypeBabbage,
+		testVkeyWitnesses(t, 4),
+	)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
@@ -478,7 +555,12 @@ func TestEstimateWitnessedTxSize_RejectsExcessiveCount(t *testing.T) {
 // withBootstrapWitnesses returns txCbor with a tag-258 witness-set key 2
 // holding n bootstrap witnesses signed by fresh keys and carrying the given
 // serialized Byron address attributes.
-func withBootstrapWitnesses(t *testing.T, txCbor []byte, n int, attributes []byte) []byte {
+func withBootstrapWitnesses(
+	t *testing.T,
+	txCbor []byte,
+	n int,
+	attributes []byte,
+) []byte {
 	t.Helper()
 	var arr []cbor.RawMessage
 	if _, err := cbor.Decode(txCbor, &arr); err != nil {
@@ -537,7 +619,9 @@ func TestEstimateWitnessedTxSize_BootstrapAddressAttributes(t *testing.T) {
 		// The ledger reference estimator sizes testnet maxBound magic.
 		{name: "testnet magic maxBound", network: magic(math.MaxUint32), exact: true},
 	} {
-		attributes, err := lcommon.ByronAddressAttributes{Network: tc.network}.MarshalCBOR()
+		attributes, err := lcommon.ByronAddressAttributes{
+			Network: tc.network,
+		}.MarshalCBOR()
 		if err != nil {
 			t.Fatalf("%s: encode attributes: %v", tc.name, err)
 		}
@@ -548,22 +632,42 @@ func TestEstimateWitnessedTxSize_BootstrapAddressAttributes(t *testing.T) {
 		}
 		for _, n := range []int{1, 3} {
 			signed := withBootstrapWitnesses(t, tx, n, attributes)
-			parsed, err := ledger.NewTransactionFromCbor(ledger.TxTypeConway, signed)
+			parsed, err := ledger.NewTransactionFromCbor(
+				ledger.TxTypeConway,
+				signed,
+			)
 			if err != nil {
 				t.Fatalf("%s: parse signed transaction: %v", tc.name, err)
 			}
 			if got := len(parsed.Witnesses().Bootstrap()); got != n {
-				t.Fatalf("%s: parsed %d bootstrap witnesses, want %d", tc.name, got, n)
+				t.Fatalf(
+					"%s: parsed %d bootstrap witnesses, want %d",
+					tc.name,
+					got,
+					n,
+				)
 			}
 			got, err := EstimateWitnessedTxSize(tx, 0, uint(n))
 			if err != nil {
 				t.Fatalf("%s: estimate: %v", tc.name, err)
 			}
 			if got < len(signed) {
-				t.Errorf("%s, %d witnesses: estimate %d below signed size %d", tc.name, n, got, len(signed))
+				t.Errorf(
+					"%s, %d witnesses: estimate %d below signed size %d",
+					tc.name,
+					n,
+					got,
+					len(signed),
+				)
 			}
 			if tc.exact && (got != len(signed) || got-len(tx) != 5+n*144) {
-				t.Errorf("%s, %d witnesses: estimate %d, signed size %d", tc.name, n, got, len(signed))
+				t.Errorf(
+					"%s, %d witnesses: estimate %d, signed size %d",
+					tc.name,
+					n,
+					got,
+					len(signed),
+				)
 			}
 		}
 	}

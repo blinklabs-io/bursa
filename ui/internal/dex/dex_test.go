@@ -18,7 +18,9 @@ import (
 )
 
 // A 28-byte token policy used across fixtures.
-var tokenPolicy = mustHex("11223344556677889900aabbccddeeff00112233445566778899aabb")
+var tokenPolicy = mustHex(
+	"11223344556677889900aabbccddeeff00112233445566778899aabb",
+)
 
 // minswapV1Addr is the real mainnet script address shai locates Minswap V1 pools
 // at — used so the scan actually maps a UTxO to the v1 parser.
@@ -77,7 +79,10 @@ type fakeChain struct {
 	addrCalls int
 }
 
-func (f *fakeChain) AddressUTxOs(_ context.Context, addr string) ([]chain.UTxO, error) {
+func (f *fakeChain) AddressUTxOs(
+	_ context.Context,
+	addr string,
+) ([]chain.UTxO, error) {
 	f.mu.Lock()
 	f.addrCalls++
 	f.mu.Unlock()
@@ -88,7 +93,10 @@ func (f *fakeChain) AddressUTxOs(_ context.Context, addr string) ([]chain.UTxO, 
 	return us, nil
 }
 
-func (f *fakeChain) TxOutputs(_ context.Context, txHash string) ([]chain.TxOutput, error) {
+func (f *fakeChain) TxOutputs(
+	_ context.Context,
+	txHash string,
+) ([]chain.TxOutput, error) {
 	f.mu.Lock()
 	f.txCalls++
 	f.mu.Unlock()
@@ -124,7 +132,14 @@ func TestEncodeTxOutRoundTripsThroughParser(t *testing.T) {
 	}
 
 	parser := shaidex.NewMinswapV1Parser()
-	st, err := parser.ParsePoolDatum(minswapV1Datum(), value, "abc", 0, 0, time.Time{})
+	st, err := parser.ParsePoolDatum(
+		minswapV1Datum(),
+		value,
+		"abc",
+		0,
+		0,
+		time.Time{},
+	)
 	if err != nil {
 		t.Fatalf("ParsePoolDatum: %v", err)
 	}
@@ -159,7 +174,23 @@ func TestEncodeAssetMapShape(t *testing.T) {
 
 // --- Pools: scan + parse from the node, inline datum recovered via tx-utxos ---
 
-func newServiceWithPool(t *testing.T, lovelace, token uint64) (*Service, *fakeChain) {
+func newServiceWithPool(
+	t *testing.T,
+	lovelace, token uint64,
+) (*Service, *fakeChain) {
+	t.Helper()
+	return newServiceWithAmounts(t, []chain.Amount{
+		{Unit: "lovelace", Quantity: strconv.FormatUint(lovelace, 10)},
+		{Unit: tokenUnit(), Quantity: strconv.FormatUint(token, 10)},
+		{Unit: minswapPoolMarkerUnit, Quantity: "1"},
+	})
+}
+
+// newServiceWithAmounts serves one Minswap V1 pool output holding amounts.
+func newServiceWithAmounts(
+	t *testing.T,
+	amounts []chain.Amount,
+) (*Service, *fakeChain) {
 	t.Helper()
 	datumHex := hex.EncodeToString(minswapV1Datum())
 	fc := &fakeChain{
@@ -168,10 +199,7 @@ func newServiceWithPool(t *testing.T, lovelace, token uint64) (*Service, *fakeCh
 				Address:     minswapV1Addr,
 				TxHash:      "pooltx",
 				OutputIndex: 0,
-				Amount: []chain.Amount{
-					{Unit: "lovelace", Quantity: strconv.FormatUint(lovelace, 10)},
-					{Unit: tokenUnit(), Quantity: strconv.FormatUint(token, 10)},
-				},
+				Amount:      amounts,
 				// address-utxos does not carry the inline datum (matches dingo).
 				InlineDatum: nil,
 			}},
@@ -180,6 +208,7 @@ func newServiceWithPool(t *testing.T, lovelace, token uint64) (*Service, *fakeCh
 			"pooltx": {{
 				Address:     minswapV1Addr,
 				OutputIndex: 0,
+				Amount:      amounts,
 				InlineDatum: &datumHex,
 			}},
 		},
@@ -207,7 +236,11 @@ func TestPoolsParsesNodeUTxO(t *testing.T) {
 		t.Errorf("assetY = %q, want %q", p.AssetY, tokenUnit())
 	}
 	if p.ReserveX != "100000000" || p.ReserveY != "200000000" {
-		t.Errorf("reserves = %s/%s, want 100000000/200000000", p.ReserveX, p.ReserveY)
+		t.Errorf(
+			"reserves = %s/%s, want 100000000/200000000",
+			p.ReserveX,
+			p.ReserveY,
+		)
 	}
 	if p.PriceXY != 2.0 {
 		t.Errorf("priceXY = %f, want 2.0", p.PriceXY)
@@ -215,6 +248,206 @@ func TestPoolsParsesNodeUTxO(t *testing.T) {
 	// inline datum had to be recovered from tx-utxos (one call).
 	if fc.txCalls == 0 {
 		t.Error("expected a tx-utxos call to recover the inline datum")
+	}
+}
+
+func TestPoolsRejectsMinswapV1PoolWithoutMarker(t *testing.T) {
+	svc, _ := newServiceWithAmounts(t, []chain.Amount{
+		{Unit: "lovelace", Quantity: "100000000"},
+		{Unit: tokenUnit(), Quantity: "200000000"},
+	})
+
+	pools, err := svc.Pools(context.Background())
+	if err != nil {
+		t.Fatalf("Pools: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("got %d pools, want 0", len(pools))
+	}
+}
+
+// The Minswap V2 cases below use two mainnet pool outputs: their values as
+// they sit on chain and the reserves from their inline datums. The ADA/CHONG
+// pool holds more CHONG than its datum reserve (accrued fee sharing), which
+// the pool script permits.
+const (
+	minswapV2ValidityUnit = "f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4c4d5350"
+	chongUnit             = "a156cc0fa2501d2ba45d1d6506f0ac5dbd08b79294610721426e089543484f4e47"
+	wmtxUnit              = "09847e90c045539b069edb977e3eccae19dfc8a0f311faf921a563a9574d5458"
+	dramaUnit             = "c8e4a73d9e38eb89b7587ca4fa334cf89162d4b1a994f509a328bba2244452414d41"
+)
+
+func minswapV2AdaChongValue() map[string]uint64 {
+	return map[string]uint64{
+		"lovelace":            9306511,
+		chongUnit:             124956,
+		minswapV2ValidityUnit: 1,
+		"f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4cea87c6fd773653b5baa944dd51f81120f072c9ae626f394d0c61f2bd7e7ec8e3": 9223372036854001211,
+	}
+}
+
+func minswapV2TokenPairValue() map[string]uint64 {
+	return map[string]uint64{
+		"lovelace":            4500000,
+		wmtxUnit:              69420420,
+		dramaUnit:             420420420,
+		minswapV2ValidityUnit: 1,
+		"f5808c2c990d86da54bfc97d89cee6efa20cd8461616359478d96b4c38407e39c58055fcf76d3d85e1ccdc9b38145c24d12740e8b88cf62823c53042": 9223372036683937407,
+	}
+}
+
+func assetAmount(
+	t *testing.T,
+	unit string,
+	amount uint64,
+) shaicommon.AssetAmount {
+	t.Helper()
+	if unit == "lovelace" {
+		return shaicommon.AssetAmount{Amount: amount}
+	}
+	policy, name, err := splitUnit(unit)
+	if err != nil {
+		t.Fatalf("splitUnit(%s): %v", unit, err)
+	}
+	return shaicommon.AssetAmount{
+		Class:  shaicommon.AssetClass{PolicyId: policy, Name: name},
+		Amount: amount,
+	}
+}
+
+func minswapV2State(
+	t *testing.T,
+	unitX string,
+	reserveX uint64,
+	unitY string,
+	reserveY uint64,
+) *shaidex.PoolState {
+	t.Helper()
+	return &shaidex.PoolState{
+		Protocol: "minswap-v2",
+		AssetX:   assetAmount(t, unitX, reserveX),
+		AssetY:   assetAmount(t, unitY, reserveY),
+	}
+}
+
+func acceptsMinswapV2(state *shaidex.PoolState, locked map[string]uint64) bool {
+	return validPoolIdentity(identityMinswapV2, locked) &&
+		reservesMatchLocked("minswap-v2", state, locked)
+}
+
+func TestDefaultProtocolsUseMinswapV2Identity(t *testing.T) {
+	for _, def := range defaultProtocols() {
+		if def.parser.Protocol() == "minswap-v2" &&
+			def.identity != identityMinswapV2 {
+			t.Fatalf(
+				"minswap-v2 identity = %d, want identityMinswapV2",
+				def.identity,
+			)
+		}
+	}
+}
+
+func TestMinswapV2AcceptsMainnetPoolOutputs(t *testing.T) {
+	cases := []struct {
+		name   string
+		state  *shaidex.PoolState
+		locked map[string]uint64
+	}{
+		{
+			"ADA pair with accrued fee sharing",
+			minswapV2State(t, "lovelace", 4806511, chongUnit, 124875),
+			minswapV2AdaChongValue(),
+		},
+		{
+			"token pair",
+			minswapV2State(t, wmtxUnit, 69420420, dramaUnit, 420420420),
+			minswapV2TokenPairValue(),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !acceptsMinswapV2(c.state, c.locked) {
+				t.Fatal("mainnet Minswap V2 pool output rejected")
+			}
+		})
+	}
+}
+
+func TestMinswapV2RejectsInvalidPoolOutputs(t *testing.T) {
+	with := func(locked map[string]uint64, edit func(map[string]uint64)) map[string]uint64 {
+		edit(locked)
+		return locked
+	}
+	adaChong := func() *shaidex.PoolState { return minswapV2State(t, "lovelace", 4806511, chongUnit, 124875) }
+	tokenPair := func() *shaidex.PoolState { return minswapV2State(t, wmtxUnit, 69420420, dramaUnit, 420420420) }
+	cases := []struct {
+		name   string
+		state  *shaidex.PoolState
+		locked map[string]uint64
+	}{
+		{
+			"V1 marker instead of validity asset",
+			adaChong(),
+			with(minswapV2AdaChongValue(), func(m map[string]uint64) {
+				delete(m, minswapV2ValidityUnit)
+				m[minswapPoolMarkerUnit] = 1
+			}),
+		},
+		{
+			"two validity assets",
+			adaChong(),
+			with(
+				minswapV2AdaChongValue(),
+				func(m map[string]uint64) { m[minswapV2ValidityUnit] = 2 },
+			),
+		},
+		{
+			"token below datum reserve",
+			adaChong(),
+			with(
+				minswapV2AdaChongValue(),
+				func(m map[string]uint64) { m[chongUnit] = 124874 },
+			),
+		},
+		{
+			"lovelace below datum reserve plus pool minimum",
+			adaChong(),
+			with(
+				minswapV2AdaChongValue(),
+				func(m map[string]uint64) { m["lovelace"] = 9306510 },
+			),
+		},
+		{
+			"lovelace below pool minimum",
+			adaChong(),
+			with(
+				minswapV2AdaChongValue(),
+				func(m map[string]uint64) { m["lovelace"] = 4499999 },
+			),
+		},
+		{
+			"token pair with extra lovelace",
+			tokenPair(),
+			with(
+				minswapV2TokenPairValue(),
+				func(m map[string]uint64) { m["lovelace"] = 4500001 },
+			),
+		},
+		{
+			"token pair below pool minimum",
+			tokenPair(),
+			with(
+				minswapV2TokenPairValue(),
+				func(m map[string]uint64) { m["lovelace"] = 2000000 },
+			),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if acceptsMinswapV2(c.state, c.locked) {
+				t.Fatal("invalid Minswap V2 pool output accepted")
+			}
+		})
 	}
 }
 
@@ -228,7 +461,11 @@ func TestPoolsCachesScan(t *testing.T) {
 		t.Fatalf("Pools #2: %v", err)
 	}
 	if fc.txCalls != first {
-		t.Errorf("second Pools call re-scanned the node (txCalls %d → %d); expected cache hit", first, fc.txCalls)
+		t.Errorf(
+			"second Pools call re-scanned the node (txCalls %d → %d); expected cache hit",
+			first,
+			fc.txCalls,
+		)
 	}
 }
 
@@ -265,8 +502,12 @@ func TestPoolsCoalescesConcurrentScans(t *testing.T) {
 		}
 	}
 	if got := fc.addressCalls(); got != wantCalls {
-		t.Errorf("AddressUTxOs called %d times across %d concurrent cache-miss requests; want %d (one coalesced scan)",
-			got, n, wantCalls)
+		t.Errorf(
+			"AddressUTxOs called %d times across %d concurrent cache-miss requests; want %d (one coalesced scan)",
+			got,
+			n,
+			wantCalls,
+		)
 	}
 }
 
@@ -297,7 +538,10 @@ func TestPoolsSkipsUTxOWhenTxGenuinelyNotFound(t *testing.T) {
 		t.Fatalf("Pools: %v", err)
 	}
 	if len(pools) != 0 {
-		t.Fatalf("got %d pools, want 0 (stray utxo should be skipped)", len(pools))
+		t.Fatalf(
+			"got %d pools, want 0 (stray utxo should be skipped)",
+			len(pools),
+		)
 	}
 }
 
@@ -326,7 +570,9 @@ func TestPoolsPropagatesTxOutputsTransportError(t *testing.T) {
 
 	_, err := svc.Pools(context.Background())
 	if err == nil {
-		t.Fatal("Pools: expected a transport-failure error, got nil (pool silently dropped)")
+		t.Fatal(
+			"Pools: expected a transport-failure error, got nil (pool silently dropped)",
+		)
 	}
 	if !errors.Is(err, boom) {
 		t.Errorf("Pools error = %v, want it to wrap %v", err, boom)
@@ -334,7 +580,9 @@ func TestPoolsPropagatesTxOutputsTransportError(t *testing.T) {
 
 	_, err = svc.Quote(context.Background(), "lovelace", tokenUnit(), 1000000)
 	if err == nil {
-		t.Fatal("Quote: expected a transport-failure error, got nil (pool silently dropped)")
+		t.Fatal(
+			"Quote: expected a transport-failure error, got nil (pool silently dropped)",
+		)
 	}
 	if !errors.Is(err, boom) {
 		t.Errorf("Quote error = %v, want it to wrap %v", err, boom)
@@ -370,7 +618,11 @@ func TestQuoteAdaToToken(t *testing.T) {
 
 func TestQuoteUnknownPairNoRoute(t *testing.T) {
 	svc, _ := newServiceWithPool(t, 100000000, 200000000)
-	other := hex.EncodeToString(make([]byte, 28)) + hex.EncodeToString([]byte("NOPE"))
+	other := hex.EncodeToString(
+		make([]byte, 28),
+	) + hex.EncodeToString(
+		[]byte("NOPE"),
+	)
 	_, err := svc.Quote(context.Background(), "lovelace", other, 1000000)
 	if !errors.Is(err, ErrNoRoute) {
 		t.Errorf("err = %v, want ErrNoRoute", err)
@@ -387,7 +639,12 @@ func TestQuoteInvalidRequests(t *testing.T) {
 		{"same asset", "lovelace", "lovelace", 1000000},
 		{"zero amount", "lovelace", tokenUnit(), 0},
 		{"bad asset_in", "zz", tokenUnit(), 1000000},
-		{"overlong asset_out", "lovelace", hex.EncodeToString(tokenPolicy) + strings.Repeat("aa", 33), 1000000},
+		{
+			"overlong asset_out",
+			"lovelace",
+			hex.EncodeToString(tokenPolicy) + strings.Repeat("aa", 33),
+			1000000,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -408,8 +665,17 @@ func TestQuoteSelectsBestPool(t *testing.T) {
 		return &shaidex.PoolState{
 			Protocol: "minswap-v1",
 			PoolId:   id,
-			AssetX:   shaicommon.AssetAmount{Class: shaicommon.AssetClass{}, Amount: ada},
-			AssetY:   shaicommon.AssetAmount{Class: shaicommon.AssetClass{PolicyId: tokenPolicy, Name: []byte("TEST")}, Amount: tok},
+			AssetX: shaicommon.AssetAmount{
+				Class:  shaicommon.AssetClass{},
+				Amount: ada,
+			},
+			AssetY: shaicommon.AssetAmount{
+				Class: shaicommon.AssetClass{
+					PolicyId: tokenPolicy,
+					Name:     []byte("TEST"),
+				},
+				Amount: tok,
+			},
 			FeeNum:   9970,
 			FeeDenom: 10000,
 		}
@@ -434,10 +700,16 @@ func TestQuoteSelectsBestPool(t *testing.T) {
 
 func TestNonMainnetHasNoPools(t *testing.T) {
 	svc := NewService(&fakeChain{}, "preview")
-	if _, err := svc.Pools(context.Background()); !errors.Is(err, ErrNotMainnet) {
+	if _, err := svc.Pools(context.Background()); !errors.Is(
+		err,
+		ErrNotMainnet,
+	) {
 		t.Errorf("Pools err = %v, want ErrNotMainnet", err)
 	}
-	if _, err := svc.Quote(context.Background(), "lovelace", tokenUnit(), 1000000); !errors.Is(err, ErrNotMainnet) {
+	if _, err := svc.Quote(context.Background(), "lovelace", tokenUnit(), 1000000); !errors.Is(
+		err,
+		ErrNotMainnet,
+	) {
 		t.Errorf("Quote err = %v, want ErrNotMainnet", err)
 	}
 }

@@ -9,7 +9,11 @@ afterEach(() => {
 
 const vkeySummary: TxSummary = {
   kind: "vkey",
-  outputs: [{ address: "addr_test1xyz", lovelace: "2000000" }],
+  outputs: [{
+    address: "addr_test1xyz",
+    lovelace: "2000000",
+    assets: [{ unit: "policyasset", quantity: "42" }],
+  }],
   fee: "170000",
   existing_signatures: [],
   wallet_can_add: [{ key_hash: "aa".repeat(28), role: "payment" }],
@@ -27,7 +31,29 @@ test("decodes a pasted tx and shows the preview", async () => {
   fireEvent.click(screen.getByRole("button", { name: /decode/i }));
 
   await waitFor(() => expect(screen.getByText(/170000|0.17/)).toBeInTheDocument());
+  expect(screen.getByText("policyasset")).toBeInTheDocument();
+  expect(screen.getByText(/42/)).toBeInTheDocument();
   expect(screen.getByText(/add my signature/i)).toBeInTheDocument();
+});
+
+test("shows unresolved consumed and collateral references for offline review", async () => {
+  vi.spyOn(client, "decodeTx").mockResolvedValue({
+    ...vkeySummary,
+    inputs: [{ tx_hash: "aa".repeat(32), index: 0, resolved: false }],
+    collateral_inputs: [{ tx_hash: "bb".repeat(32), index: 1, resolved: false }],
+    total_collateral: "1000000",
+  });
+
+  render(<ImportTransaction canSubmit={true} />);
+  fireEvent.change(screen.getByLabelText(/transaction cbor/i), {
+    target: { value: "84a4" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /decode/i }));
+
+  await screen.findByText(`${"aa".repeat(32)}#0`);
+  expect(screen.getByText(`${"bb".repeat(32)}#1`)).toBeInTheDocument();
+  expect(screen.getAllByText(/unresolved.*value unavailable/i)).toHaveLength(2);
+  expect(screen.getByText(/collateral if script validation fails/i)).toBeInTheDocument();
 });
 
 test("adds a signature and reveals export + submit", async () => {
@@ -231,6 +257,21 @@ test("renders imported certificate details", async () => {
         pool_id: "33".repeat(28),
         reward_account: { type: "script_hash", hash: "44".repeat(28) },
         pool_owners: ["55".repeat(28), "66".repeat(28)],
+        pool_params: {
+          pledge_lovelace: "500000000",
+          cost_lovelace: "340000000",
+          margin_numerator: "3",
+          margin_denominator: "100",
+          vrf_key_hash: "77".repeat(32),
+          leios_public_key: "bb".repeat(96),
+          relays: [
+            { type: "single_host_addr", ipv4: "192.0.2.7", ipv6: "2001:db8::1", port: 3001 },
+            { type: "single_host_addr", ipv6: "2001:db8::2" },
+            { type: "single_host_name", hostname: "relay.example.test", port: 3001 },
+            { type: "multi_host_name", hostname: "pool.example.test" },
+          ],
+          metadata: { url: "https://example.test/pool.json", hash: "99".repeat(32) },
+        },
       },
       { kind: "pool_retirement", pool_id: "33".repeat(28), retirement_epoch: 0 },
       {
@@ -269,6 +310,16 @@ test("renders imported certificate details", async () => {
   const poolReg = screen.getByText("pool_registration").closest("li")!;
   expect(poolReg).toHaveTextContent(`rewards to script hash ${"44".repeat(28)}`);
   expect(poolReg).toHaveTextContent(`owners ${"55".repeat(28)}, ${"66".repeat(28)}`);
+  expect(poolReg).toHaveTextContent("pledge 500 ADA");
+  expect(poolReg).toHaveTextContent("cost 340 ADA");
+  expect(poolReg).toHaveTextContent("margin 3/100");
+  expect(poolReg).toHaveTextContent(`VRF key ${"77".repeat(32)}`);
+  expect(poolReg).toHaveTextContent(`Leios key ${"bb".repeat(96)}`);
+  expect(poolReg).toHaveTextContent("single host addr 192.0.2.7:3001 / [2001:db8::1]:3001");
+  expect(poolReg).toHaveTextContent("single host addr 2001:db8::2,");
+  expect(poolReg).toHaveTextContent("single host name relay.example.test:3001");
+  expect(poolReg).toHaveTextContent("multi host name pool.example.test");
+  expect(poolReg).toHaveTextContent(`metadata https://example.test/pool.json ${"99".repeat(32)}`);
 
   expect(screen.getByText("pool_retirement").closest("li")!).toHaveTextContent("retires at epoch 0");
 

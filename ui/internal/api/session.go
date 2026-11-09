@@ -39,7 +39,8 @@ func NewSessionToken() (string, error) {
 }
 
 func sessionTokenMatches(got, want string) bool {
-	return len(got) == len(want) && subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+	return len(got) == len(want) &&
+		subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 func requestSessionToken(r *http.Request) string {
@@ -67,6 +68,7 @@ func isControlRoute(path string) bool {
 		strings.HasPrefix(path, "/diagnostics") ||
 		strings.HasPrefix(path, "/vault") ||
 		strings.HasPrefix(path, "/wallet") ||
+		strings.HasPrefix(path, "/remote-submission") ||
 		strings.HasPrefix(path, "/connector/")
 }
 
@@ -83,8 +85,13 @@ func sessionGuard(token string, next http.Handler) http.Handler {
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			if !strictSameOrigin(r) || !sessionTokenMatches(r.Header.Get(sessionHeaderName), token) {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			if !strictSameOrigin(r) ||
+				!sessionTokenMatches(r.Header.Get(sessionHeaderName), token) {
+				writeJSON(
+					w,
+					http.StatusUnauthorized,
+					map[string]string{"error": "unauthorized"},
+				)
 				return
 			}
 			cookie := &http.Cookie{
@@ -109,12 +116,17 @@ func sessionGuard(token string, next http.Handler) http.Handler {
 
 		// Health checks and static SPA files carry no wallet data. The extension
 		// routes retain their independently paired bearer-token boundary.
-		if r.URL.Path == "/health" || isExtensionConnectorRoute(r.URL.Path) || !isControlRoute(r.URL.Path) {
+		if r.URL.Path == "/health" || isExtensionConnectorRoute(r.URL.Path) ||
+			!isControlRoute(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		if !sessionTokenMatches(requestSessionToken(r), token) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			writeJSON(
+				w,
+				http.StatusUnauthorized,
+				map[string]string{"error": "unauthorized"},
+			)
 			return
 		}
 		next.ServeHTTP(w, r)

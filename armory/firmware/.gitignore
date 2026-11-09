@@ -1,0 +1,9 @@
+armory
+armory.bin
+armory.dcd
+armory.imx
+armory-*
+# HAB keys never belong in the repository; keep them offline, outside the
+# checkout. This is a backstop, not a control.
+*.pem
+SRK_*.bin

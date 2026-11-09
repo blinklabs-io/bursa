@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/spend"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
 
@@ -25,7 +26,9 @@ var (
 	ErrInvalidParams       = errors.New("connector: invalid request params")
 	ErrInvalidOrigin       = errors.New("connector: invalid origin")
 	ErrTooManyPairings     = errors.New("connector: too many pending pairings")
-	ErrAddressUsageUnknown = errors.New("connector: address usage is unavailable")
+	ErrAddressUsageUnknown = errors.New(
+		"connector: address usage is unavailable",
+	)
 	// ErrInvalidExtensionID is defined in token.go.
 )
 
@@ -61,14 +64,24 @@ type Paginate struct {
 // Backend is the wallet capability interface that Phase 2 implements.
 type Backend interface {
 	NetworkID() int
-	Utxos(ctx context.Context, amount string, paginate *Paginate) ([]string, error)
+	Utxos(
+		ctx context.Context,
+		amount string,
+		paginate *Paginate,
+	) ([]string, error)
 	Balance(ctx context.Context) (string, error)
 	UsedAddresses(ctx context.Context, paginate *Paginate) ([]string, error)
 	UnusedAddresses(ctx context.Context) ([]string, error)
 	ChangeAddress(ctx context.Context) (string, error)
 	RewardAddresses(ctx context.Context) ([]string, error)
 	Collateral(ctx context.Context, amount string) ([]string, error)
-	SignTx(ctx context.Context, txHex string, partialSign bool, password string) (string, error)
+	InspectTx(ctx context.Context, txHex string) (spend.TxSummary, error)
+	SignTx(
+		ctx context.Context,
+		txHex string,
+		partialSign bool,
+		password string,
+	) (string, error)
 	SignData(addrHex, payloadHex, password string) (sig, key string, err error)
 	SubmitTx(ctx context.Context, txHex string) (string, error)
 	PubDRepKey(password string) (string, error)
@@ -91,11 +104,21 @@ type Service struct {
 	// while rebinding the backend, closing the authorization-to-use race.
 	bindingMu sync.RWMutex
 	identity  accountIdentity
+	// pairingMu linearizes token replacement/revocation with admission and final
+	// execution of token-bound queued work.
+	pairingMu sync.RWMutex
 
 	// pending pair codes: extensionID → entry (code + expiry/attempt metadata)
 	pairMu    sync.Mutex
 	pairCodes map[string]*pairEntry
 }
+
+type pairingAuthority struct {
+	extensionID string
+	token       string
+}
+
+type pairingAuthorityContextKey struct{}
 
 // NewService constructs a Service, creating the three stores under dir.
 // networkPrompt is called (if non-nil) after each new request is enqueued so
@@ -109,7 +132,10 @@ func NewService(dir string, be Backend, networkPrompt func()) *Service {
 		return hex.EncodeToString(b), nil
 	}
 	return &Service{
-		tokens:    NewTokenStore(filepath.Join(dir, "connector-token.json"), nil),
+		tokens: NewTokenStore(
+			filepath.Join(dir, "connector-token.json"),
+			nil,
+		),
 		grants:    NewGrantStore(filepath.Join(dir, "connector-grants.json")),
 		queue:     NewQueue(time.Now, mkID, 120*time.Second),
 		be:        be,
@@ -138,7 +164,10 @@ func (s *Service) SetActiveAccount(walletID string, acct *wallet.Account) {
 
 	s.identity = accountIdentity{}
 	if walletID != "" && acct != nil {
-		s.identity = accountIdentity{WalletID: walletID, AccountIndex: acct.AccountIndex}
+		s.identity = accountIdentity{
+			WalletID:     walletID,
+			AccountIndex: acct.AccountIndex,
+		}
 	}
 	if rb, ok := s.be.(accountRebinder); ok {
 		rb.SetAccount(walletID, acct)
@@ -161,32 +190,38 @@ func (s *Service) grantedIdentity(origin string) (accountIdentity, bool) {
 }
 
 func (s *Service) withCurrentGrant(
+	ctx context.Context,
 	origin string,
 	fn func() (json.RawMessage, error),
 ) (json.RawMessage, error) {
-	s.bindingMu.RLock()
-	defer s.bindingMu.RUnlock()
-	if !s.identity.valid() || !s.grants.IsGranted(origin, s.identity) {
-		return nil, ErrNotGranted
-	}
-	return fn()
+	return s.withPairingAuthority(ctx, func() (json.RawMessage, error) {
+		s.bindingMu.RLock()
+		defer s.bindingMu.RUnlock()
+		if !s.identity.valid() || !s.grants.IsGranted(origin, s.identity) {
+			return nil, ErrNotGranted
+		}
+		return fn()
+	})
 }
 
 func (s *Service) withExpectedIdentity(
+	ctx context.Context,
 	expected accountIdentity,
 	origin string,
 	requireGrant bool,
 	fn func() (json.RawMessage, error),
 ) (json.RawMessage, error) {
-	s.bindingMu.RLock()
-	defer s.bindingMu.RUnlock()
-	if !expected.valid() || s.identity != expected {
-		return nil, ErrNotGranted
-	}
-	if requireGrant && !s.grants.IsGranted(origin, expected) {
-		return nil, ErrNotGranted
-	}
-	return fn()
+	return s.withPairingAuthority(ctx, func() (json.RawMessage, error) {
+		s.bindingMu.RLock()
+		defer s.bindingMu.RUnlock()
+		if !expected.valid() || s.identity != expected {
+			return nil, ErrNotGranted
+		}
+		if requireGrant && !s.grants.IsGranted(origin, expected) {
+			return nil, ErrNotGranted
+		}
+		return fn()
+	})
 }
 
 // BeginPair generates a numeric pairing code for the given extensionID and
@@ -214,7 +249,9 @@ func (s *Service) BeginPair(extensionID string) (string, error) {
 	if err != nil {
 		// A CSPRNG failure is a fatal system condition; never fall back to a
 		// predictable code.
-		panic("connector: crypto/rand failure generating pair code: " + err.Error())
+		panic(
+			"connector: crypto/rand failure generating pair code: " + err.Error(),
+		)
 	}
 	code := fmt.Sprintf("%0*d", pairCodeDigits, n.Int64())
 	s.pairCodes[extensionID] = &pairEntry{code: code, created: s.now()}
@@ -254,7 +291,17 @@ func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
 	if !match {
 		return "", ErrPairCodeMismatch
 	}
-	return s.tokens.Mint(extensionID)
+	s.pairingMu.Lock()
+	defer s.pairingMu.Unlock()
+	oldExtensionID, oldToken, paired := s.tokens.Pair()
+	token, err := s.tokens.Mint(extensionID)
+	if err == nil && paired {
+		s.queue.cancelAuthority(pairingAuthority{
+			extensionID: oldExtensionID,
+			token:       oldToken,
+		})
+	}
+	return token, err
 }
 
 // prunePairCodesLocked removes expired pairing codes. Callers must hold pairMu.
@@ -281,7 +328,17 @@ func (s *Service) PairedExtensionID() (string, bool) {
 
 // Unpair clears the paired token, effectively disconnecting the extension.
 func (s *Service) Unpair() error {
-	return s.tokens.Clear()
+	s.pairingMu.Lock()
+	defer s.pairingMu.Unlock()
+	extensionID, token, paired := s.tokens.Pair()
+	err := s.tokens.Clear()
+	if paired {
+		s.queue.cancelAuthority(pairingAuthority{
+			extensionID: extensionID,
+			token:       token,
+		})
+	}
+	return err
 }
 
 // Pending returns all requests currently awaiting a decision.
@@ -336,17 +393,23 @@ func (s *Service) PendingPairings() []PendingPairing {
 // Handle is the primary dispatch method. It routes a CIP-30/CIP-95 method call
 // to either an immediate Backend read (for granted origins) or a queued approval
 // flow (for enable and signing methods).
-func (s *Service) Handle(ctx context.Context, origin, method string, params json.RawMessage) (json.RawMessage, error) {
+func (s *Service) Handle(
+	ctx context.Context,
+	origin, method string,
+	params json.RawMessage,
+) (json.RawMessage, error) {
 	if !validDAppOrigin(origin) {
 		return nil, ErrInvalidOrigin
 	}
 	switch method {
 	// isEnabled is a special case: returns a bool without requiring a grant.
 	case "isEnabled":
-		if _, ok := s.grantedIdentity(origin); ok {
-			return json.RawMessage(`true`), nil
-		}
-		return json.RawMessage(`false`), nil
+		return s.withPairingAuthority(ctx, func() (json.RawMessage, error) {
+			if _, ok := s.grantedIdentity(origin); ok {
+				return json.RawMessage(`true`), nil
+			}
+			return json.RawMessage(`false`), nil
+		})
 
 	// enable: capture the identity being presented for consent, enqueue, then
 	// grant only if that exact identity remains active after approval.
@@ -355,26 +418,38 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, false, func() (json.RawMessage, error) {
-				if err := s.grants.Grant(origin, identity); err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.RawMessage(`true`), nil
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					false,
+					func() (json.RawMessage, error) {
+						if err := s.grants.Grant(origin, identity); err != nil {
+							return nil, err
+						}
+						return json.RawMessage(`true`), nil
+					},
+				)
+			},
+		)
 
 	// Read methods: require grant, call Backend immediately.
 	case "getNetworkId":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			return json.Marshal(s.be.NetworkID())
 		})
 
 	case "getBalance":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.Balance(ctx)
 			if err != nil {
 				return nil, err
@@ -394,13 +469,19 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-			v, err := s.be.Utxos(ctx, p.Amount, p.Paginate)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
-		})
+		return s.withExpectedIdentity(
+			ctx,
+			identity,
+			origin,
+			true,
+			func() (json.RawMessage, error) {
+				v, err := s.be.Utxos(ctx, p.Amount, p.Paginate)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			},
+		)
 
 	case "getCollateral":
 		identity, ok := s.grantedIdentity(origin)
@@ -413,13 +494,19 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-			v, err := s.be.Collateral(ctx, p.Amount)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
-		})
+		return s.withExpectedIdentity(
+			ctx,
+			identity,
+			origin,
+			true,
+			func() (json.RawMessage, error) {
+				v, err := s.be.Collateral(ctx, p.Amount)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			},
+		)
 
 	case "getUsedAddresses":
 		identity, ok := s.grantedIdentity(origin)
@@ -432,16 +519,22 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if err := unmarshalParams(params, &p); err != nil {
 			return nil, err
 		}
-		return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-			v, err := s.be.UsedAddresses(ctx, p.Paginate)
-			if err != nil {
-				return nil, err
-			}
-			return json.Marshal(v)
-		})
+		return s.withExpectedIdentity(
+			ctx,
+			identity,
+			origin,
+			true,
+			func() (json.RawMessage, error) {
+				v, err := s.be.UsedAddresses(ctx, p.Paginate)
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(v)
+			},
+		)
 
 	case "getUnusedAddresses":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.UnusedAddresses(ctx)
 			if err != nil {
 				return nil, err
@@ -450,7 +543,7 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		})
 
 	case "getChangeAddress":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.ChangeAddress(ctx)
 			if err != nil {
 				return nil, err
@@ -459,7 +552,7 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		})
 
 	case "getRewardAddresses":
-		return s.withCurrentGrant(origin, func() (json.RawMessage, error) {
+		return s.withCurrentGrant(ctx, origin, func() (json.RawMessage, error) {
 			v, err := s.be.RewardAddresses(ctx)
 			if err != nil {
 				return nil, err
@@ -476,54 +569,90 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.PubDRepKey(d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.PubDRepKey(d.Password)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	case "cip95.getRegisteredPubStakeKeys", "getRegisteredPubStakeKeys":
 		identity, ok := s.grantedIdentity(origin)
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.RegisteredPubStakeKeys(d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.RegisteredPubStakeKeys(d.Password)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	case "cip95.getUnregisteredPubStakeKeys", "getUnregisteredPubStakeKeys":
 		identity, ok := s.grantedIdentity(origin)
 		if !ok {
 			return nil, ErrNotGranted
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.UnregisteredPubStakeKeys(d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.UnregisteredPubStakeKeys(d.Password)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	// Sign/submit methods: always enqueue (password required).
 	case "signTx":
@@ -541,18 +670,36 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if p.Tx == "" {
 			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.SignTx(ctx, p.Tx, p.PartialSign, d.Password)
-				if err != nil {
-					return nil, err
+		return s.inspectEnqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			p.Tx,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.SignTx(
+							ctx,
+							p.Tx,
+							p.PartialSign,
+							d.Password,
+						)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	case "signData":
 		identity, ok := s.grantedIdentity(origin)
@@ -570,20 +717,41 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 			return nil, err
 		}
 		if p.Addr == "" || p.Payload == nil {
-			return nil, fmt.Errorf("%w: addr and payload are required", ErrInvalidParams)
+			return nil, fmt.Errorf(
+				"%w: addr and payload are required",
+				ErrInvalidParams,
+			)
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				sig, key, err := s.be.SignData(p.Addr, *p.Payload, d.Password)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(map[string]string{"signature": sig, "key": key})
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						sig, key, err := s.be.SignData(
+							p.Addr,
+							*p.Payload,
+							d.Password,
+						)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(
+							map[string]string{"signature": sig, "key": key},
+						)
+					},
+				)
+			},
+		)
 
 	case "submitTx":
 		identity, ok := s.grantedIdentity(origin)
@@ -599,22 +767,57 @@ func (s *Service) Handle(ctx context.Context, origin, method string, params json
 		if p.Tx == "" {
 			return nil, fmt.Errorf("%w: tx is required", ErrInvalidParams)
 		}
-		return s.enqueueAndAwait(ctx, origin, method, params, func(d Decision) (json.RawMessage, error) {
-			if !d.Approved {
-				return nil, ErrUserDeclined
-			}
-			return s.withExpectedIdentity(identity, origin, true, func() (json.RawMessage, error) {
-				v, err := s.be.SubmitTx(ctx, p.Tx)
-				if err != nil {
-					return nil, err
+		return s.enqueueAndAwait(
+			ctx,
+			origin,
+			method,
+			params,
+			func(d Decision) (json.RawMessage, error) {
+				if !d.Approved {
+					return nil, ErrUserDeclined
 				}
-				return json.Marshal(v)
-			})
-		})
+				return s.withExpectedIdentity(
+					ctx,
+					identity,
+					origin,
+					true,
+					func() (json.RawMessage, error) {
+						v, err := s.be.SubmitTx(ctx, p.Tx)
+						if err != nil {
+							return nil, err
+						}
+						return json.Marshal(v)
+					},
+				)
+			},
+		)
 
 	default:
 		return nil, ErrRefused
 	}
+}
+
+// HandleAuthorized dispatches a connector request under the exact pairing
+// token admitted by the HTTP boundary. Queued work revalidates that token after
+// approval so unpairing or re-pairing cannot leave an older request executable.
+func (s *Service) HandleAuthorized(
+	ctx context.Context,
+	extensionID, token, origin, method string,
+	params json.RawMessage,
+) (json.RawMessage, error) {
+	extensionID = normalizeExtensionID(extensionID)
+	s.pairingMu.RLock()
+	if !s.tokens.Verify(token, extensionID) {
+		s.pairingMu.RUnlock()
+		return nil, ErrRefused
+	}
+	s.pairingMu.RUnlock()
+	ctx = context.WithValue(
+		ctx,
+		pairingAuthorityContextKey{},
+		pairingAuthority{extensionID: extensionID, token: token},
+	)
+	return s.Handle(ctx, origin, method, params)
 }
 
 // unmarshalParams decodes the optional raw JSON params into dst. A nil/empty
@@ -638,6 +841,65 @@ func unmarshalRequiredParams(params json.RawMessage, dst any) error {
 	return unmarshalParams(params, dst)
 }
 
+func pairingAuthorityFromContext(
+	ctx context.Context,
+) (pairingAuthority, bool) {
+	authority, ok := ctx.Value(pairingAuthorityContextKey{}).(pairingAuthority)
+	return authority, ok
+}
+
+func (s *Service) withPairingAuthority(
+	ctx context.Context,
+	fn func() (json.RawMessage, error),
+) (json.RawMessage, error) {
+	authority, ok := pairingAuthorityFromContext(ctx)
+	if !ok {
+		return fn()
+	}
+	// Keep the read lock through the protected operation so token revocation
+	// cannot return while work admitted under that token is still running.
+	s.pairingMu.RLock()
+	defer s.pairingMu.RUnlock()
+	if !s.tokens.Verify(authority.token, authority.extensionID) {
+		return nil, ErrRefused
+	}
+	return fn()
+}
+
+func (s *Service) submit(
+	ctx context.Context,
+	origin, method string,
+	params json.RawMessage,
+) (*Request, error) {
+	authority, ok := pairingAuthorityFromContext(ctx)
+	if !ok {
+		return s.queue.Submit(origin, method, params)
+	}
+	s.pairingMu.RLock()
+	defer s.pairingMu.RUnlock()
+	if !s.tokens.Verify(authority.token, authority.extensionID) {
+		return nil, ErrRefused
+	}
+	return s.queue.submitAuthorized(origin, method, params, authority)
+}
+
+func (s *Service) reserve(
+	ctx context.Context,
+	origin, method string,
+	params json.RawMessage,
+) (*Request, error) {
+	authority, ok := pairingAuthorityFromContext(ctx)
+	if !ok {
+		return s.queue.reserve(origin, method, params)
+	}
+	s.pairingMu.RLock()
+	defer s.pairingMu.RUnlock()
+	if !s.tokens.Verify(authority.token, authority.extensionID) {
+		return nil, ErrRefused
+	}
+	return s.queue.reserveAuthorized(origin, method, params, authority)
+}
+
 // enqueueAndAwait submits a request to the queue, optionally calls the
 // networkPrompt, then blocks until a Decision arrives and passes it to fn.
 func (s *Service) enqueueAndAwait(
@@ -646,10 +908,47 @@ func (s *Service) enqueueAndAwait(
 	params json.RawMessage,
 	fn func(Decision) (json.RawMessage, error),
 ) (json.RawMessage, error) {
-	req, err := s.queue.Submit(origin, method, params)
+	req, err := s.submit(ctx, origin, method, params)
 	if err != nil {
 		return nil, err
 	}
+	return s.promptAndAwait(ctx, req, fn)
+}
+
+func (s *Service) inspectEnqueueAndAwait(
+	ctx context.Context,
+	origin, method string,
+	params json.RawMessage,
+	txHex string,
+	fn func(Decision) (json.RawMessage, error),
+) (json.RawMessage, error) {
+	req, err := s.reserve(ctx, origin, method, params)
+	if err != nil {
+		return nil, err
+	}
+	effects, err := s.be.InspectTx(ctx, txHex)
+	if err != nil {
+		s.queue.cancelReservation(req.ID)
+		return nil, fmt.Errorf(
+			"%w: transaction effects unavailable: %w",
+			ErrInvalidParams,
+			err,
+		)
+	}
+	reservedID := req.ID
+	req, err = s.queue.publish(reservedID, &effects)
+	if err != nil {
+		s.queue.cancelReservation(reservedID)
+		return nil, err
+	}
+	return s.promptAndAwait(ctx, req, fn)
+}
+
+func (s *Service) promptAndAwait(
+	ctx context.Context,
+	req *Request,
+	fn func(Decision) (json.RawMessage, error),
+) (json.RawMessage, error) {
 	if s.prompt != nil {
 		s.prompt()
 	}
@@ -658,4 +957,43 @@ func (s *Service) enqueueAndAwait(
 		return nil, err
 	}
 	return fn(d)
+}
+
+// ApproveSubmission places an already-validated, fully signed transaction in
+// the wallet's approval queue and runs submit only after an explicit approval.
+// This narrow entry point is for Bursa's remote submission listener: it grants
+// no wallet identity, read access, signing operation, or key capability.
+func (s *Service) ApproveSubmission(
+	ctx context.Context,
+	origin string,
+	params json.RawMessage,
+	submit func(context.Context) (string, error),
+) (string, error) {
+	if submit == nil {
+		return "", ErrRefused
+	}
+	result, err := s.enqueueAndAwait(
+		ctx,
+		origin,
+		"remoteSubmitTx",
+		params,
+		func(d Decision) (json.RawMessage, error) {
+			if !d.Approved {
+				return nil, ErrUserDeclined
+			}
+			hash, err := submit(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(hash)
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	var hash string
+	if err := json.Unmarshal(result, &hash); err != nil {
+		return "", err
+	}
+	return hash, nil
 }

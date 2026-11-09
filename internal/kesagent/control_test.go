@@ -70,11 +70,16 @@ func TestControlGenInstallInfoDrop(t *testing.T) {
 
 	// install-key with a valid opcert
 	opcert := makeOpCert(t, vkey, 1, 3, cold)
-	instReply := request(t, conn, Command{Command: CmdInstallKey, OpCert: opcert})
+	instReply := request(
+		t,
+		conn,
+		Command{Command: CmdInstallKey, OpCert: opcert},
+	)
 	if !instReply.Ok {
 		t.Fatalf("install failed: %s", instReply.Error)
 	}
-	if instReply.Info == nil || !instReply.Info.HasActiveKey || instReply.Info.ActivePeriod != 5 {
+	if instReply.Info == nil || !instReply.Info.HasActiveKey ||
+		instReply.Info.ActivePeriod != 5 {
 		t.Fatalf("install info: %+v", instReply.Info)
 	}
 
@@ -85,7 +90,11 @@ func TestControlGenInstallInfoDrop(t *testing.T) {
 	}
 
 	// drop-key
-	dropReply := request(t, conn, Command{Command: CmdDropKey, Target: "active"})
+	dropReply := request(
+		t,
+		conn,
+		Command{Command: CmdDropKey, Target: "active"},
+	)
 	if !dropReply.Ok || dropReply.Info.HasActiveKey {
 		t.Fatalf("drop reply: %+v", dropReply)
 	}
@@ -149,7 +158,9 @@ func TestServeControlShutdownWithIdleConnection(t *testing.T) {
 			t.Fatalf("ServeControl returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("ServeControl did not return within 2s of an idle connection outliving shutdown")
+		t.Fatal(
+			"ServeControl did not return within 2s of an idle connection outliving shutdown",
+		)
 	}
 }
 
@@ -190,6 +201,8 @@ func TestServeControlListenerCloseUnblocksIdleHandler(t *testing.T) {
 		// Any return (with or without an Accept error) is fine; what matters
 		// is that it doesn't hang on the idle handler.
 	case <-time.After(2 * time.Second):
-		t.Fatal("ServeControl did not return within 2s of a direct listener close with an idle connection")
+		t.Fatal(
+			"ServeControl did not return within 2s of a direct listener close with an idle connection",
+		)
 	}
 }

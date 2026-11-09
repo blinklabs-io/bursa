@@ -38,16 +38,24 @@ func metaUint(n uint64) lcommon.TransactionMetadatum {
 func metaValue() lcommon.TransactionMetadatum {
 	var pairs []lcommon.MetaPair
 	for _, k := range []uint64{0, 1, 2, 10, 300} {
-		pairs = append(pairs, lcommon.MetaPair{Key: metaUint(k), Value: metaUint(k + 100)})
+		pairs = append(
+			pairs,
+			lcommon.MetaPair{Key: metaUint(k), Value: metaUint(k + 100)},
+		)
 	}
 	return lcommon.MetaList{Items: []lcommon.TransactionMetadatum{
-		metaUint(1), lcommon.MetaList{Items: []lcommon.TransactionMetadatum{lcommon.MetaMap{Pairs: pairs}}},
+		metaUint(
+			1,
+		), lcommon.MetaList{Items: []lcommon.TransactionMetadatum{lcommon.MetaMap{Pairs: pairs}}},
 	}}
 }
 
 // accountKeyHashes returns the wallet's payment (address 0), stake and DRep
 // key hashes, read from the account independently of the service.
-func accountKeyHashes(t *testing.T, acct *wallet.Account) map[SignerKind]string {
+func accountKeyHashes(
+	t *testing.T,
+	acct *wallet.Account,
+) map[SignerKind]string {
 	t.Helper()
 	return map[SignerKind]string{
 		SignerPayment: paymentKeyHashForAddress(t, acct.ReceiveAddresses[0]),
@@ -56,7 +64,11 @@ func accountKeyHashes(t *testing.T, acct *wallet.Account) map[SignerKind]string 
 	}
 }
 
-func expectedCredential(t *testing.T, acct *wallet.Account, kind SignerKind) [28]byte {
+func expectedCredential(
+	t *testing.T,
+	acct *wallet.Account,
+	kind SignerKind,
+) [28]byte {
 	t.Helper()
 	hash, err := hex.DecodeString(accountKeyHashes(t, acct)[kind])
 	if err != nil {
@@ -83,7 +95,10 @@ func TestWalletCredential(t *testing.T) {
 	if _, err := s.WalletCredential("spo"); !errors.Is(err, ErrInvalidRequest) {
 		t.Errorf("unknown kind: err = %v, want ErrInvalidRequest", err)
 	}
-	if _, err := NewService(nil, nil, nil).WalletCredential(SignerStake); !errors.Is(err, ErrNoWallet) {
+	if _, err := NewService(nil, nil, nil).WalletCredential(SignerStake); !errors.Is(
+		err,
+		ErrNoWallet,
+	) {
 		t.Errorf("no wallet: err = %v, want ErrNoWallet", err)
 	}
 }
@@ -91,7 +106,11 @@ func TestWalletCredential(t *testing.T) {
 func TestBuildMetadataCarriesTheValueUnchanged(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
+	s := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		nil,
+		acct,
+	)
 	value := metaValue()
 
 	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
@@ -116,12 +135,20 @@ func TestBuildMetadataCarriesTheValueUnchanged(t *testing.T) {
 
 	// The auxiliary data is exactly {17: value}: the supplied metadatum, byte for
 	// byte, so its integer map keys stay in ascending order.
-	want, err := cbor.Encode(lcommon.MetaMap{Pairs: []lcommon.MetaPair{{Key: metaUint(17), Value: value}}})
+	want, err := cbor.Encode(
+		lcommon.MetaMap{
+			Pairs: []lcommon.MetaPair{{Key: metaUint(17), Value: value}},
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(parts[3], want) {
-		t.Fatalf("auxiliary data = %x\nwant           %x", []byte(parts[3]), want)
+		t.Fatalf(
+			"auxiliary data = %x\nwant           %x",
+			[]byte(parts[3]),
+			want,
+		)
 	}
 
 	// The body commits to those exact bytes.
@@ -131,7 +158,11 @@ func TestBuildMetadataCarriesTheValueUnchanged(t *testing.T) {
 	}
 	hash := lcommon.Blake2b256Hash(want)
 	if tx.Body.TxAuxDataHash == nil || *tx.Body.TxAuxDataHash != hash {
-		t.Fatalf("auxiliary data hash = %v, want %x", tx.Body.TxAuxDataHash, hash)
+		t.Fatalf(
+			"auxiliary data hash = %v, want %x",
+			tx.Body.TxAuxDataHash,
+			hash,
+		)
 	}
 }
 
@@ -141,7 +172,11 @@ func TestBuildMetadataRequiresTheCredentialSigner(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 			acct := mustDeriveConfirmAccount(t)
-			s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
+			s := NewService(
+				newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+				nil,
+				acct,
+			)
 			pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
 				Label: 17, Value: metaValue(), Signer: kind,
 				ExpectedSignerCredential: expectedCredential(t, acct, kind),
@@ -153,7 +188,10 @@ func TestBuildMetadataRequiresTheCredentialSigner(t *testing.T) {
 			signers := exportedRequiredSignerSet(t, s, pv.PendingID)
 			// The credential's key plus the payment key of the spent input, and
 			// no other wallet key.
-			want := map[string]bool{hashes[SignerPayment]: true, hashes[kind]: true}
+			want := map[string]bool{
+				hashes[SignerPayment]: true,
+				hashes[kind]:          true,
+			}
 			if len(signers) != len(want) {
 				t.Fatalf("required signers = %v, want %v", signers, want)
 			}
@@ -211,8 +249,12 @@ func TestConfirmMetadataTxSignsWithTheCredentialKey(t *testing.T) {
 					t.Errorf("witnesses %v lack key %s", got, want)
 				}
 			}
-			if kind != SignerStake && got[hashes[SignerStake]] || kind != SignerDRep && got[hashes[SignerDRep]] {
-				t.Errorf("witnesses %v include a key the credential did not need", got)
+			if kind != SignerStake && got[hashes[SignerStake]] ||
+				kind != SignerDRep && got[hashes[SignerDRep]] {
+				t.Errorf(
+					"witnesses %v include a key the credential did not need",
+					got,
+				)
 			}
 		})
 	}
@@ -223,7 +265,11 @@ func TestConfirmMetadataTxSignsWithTheCredentialKey(t *testing.T) {
 func TestBuildMetadataStaysUnsignableOnHardware(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
+	s := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		nil,
+		acct,
+	)
 	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
 		Label: 17, Value: metaValue(), Signer: SignerPayment,
 		ExpectedSignerCredential: expectedCredential(t, acct, SignerPayment),
@@ -236,14 +282,54 @@ func TestBuildMetadataStaysUnsignableOnHardware(t *testing.T) {
 		t.Fatalf("HardwareSignRequest: %v", err)
 	}
 	if !strings.Contains(req.Unsupported, "auxiliary data") {
-		t.Fatalf("Unsupported = %q, want an auxiliary data rejection", req.Unsupported)
+		t.Fatalf(
+			"Unsupported = %q, want an auxiliary data rejection",
+			req.Unsupported,
+		)
+	}
+}
+
+func TestImportedMetadataStaysOutsideGeneralSigningPaths(t *testing.T) {
+	t.Parallel()
+	acct := mustDeriveConfirmAccount(t)
+	s := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		fakeKeystore{mnemonic: testMnemonic},
+		acct,
+	)
+	pv, err := s.BuildMetadata(context.Background(), MetadataRequest{
+		Label: 17, Value: metaValue(), Signer: SignerPayment,
+		ExpectedSignerCredential: expectedCredential(t, acct, SignerPayment),
+	})
+	if err != nil {
+		t.Fatalf("BuildMetadata: %v", err)
+	}
+	unsigned, err := s.ExportUnsigned(pv.PendingID)
+	if err != nil {
+		t.Fatalf("ExportUnsigned: %v", err)
+	}
+	if _, err := s.SignTx(unsigned.UnsignedTxCBOR, "pw", unsigned.RequiredSigners); !errors.Is(
+		err,
+		ErrInvalidTx,
+	) {
+		t.Fatalf("SignTx imported metadata err = %v, want ErrInvalidTx", err)
+	}
+	if _, err := s.CosignTx(context.Background(), unsigned.UnsignedTxCBOR, "pw", true); !errors.Is(
+		err,
+		ErrInvalidTx,
+	) {
+		t.Fatalf("CosignTx imported metadata err = %v, want ErrInvalidTx", err)
 	}
 }
 
 func TestBuildMetadataRejectsChangedWalletCredential(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
+	s := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		nil,
+		acct,
+	)
 	got := expectedCredential(t, acct, SignerPayment)
 	got[0] ^= 0xff
 	_, err := s.BuildMetadata(context.Background(), MetadataRequest{
@@ -258,16 +344,30 @@ func TestBuildMetadataRejectsChangedWalletCredential(t *testing.T) {
 func TestBuildMetadataRejectsBadRequests(t *testing.T) {
 	t.Parallel()
 	acct := mustDeriveConfirmAccount(t)
-	s := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, acct)
+	s := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		nil,
+		acct,
+	)
 	ctx := context.Background()
 
-	if _, err := s.BuildMetadata(ctx, MetadataRequest{Label: 17, Signer: SignerPayment}); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := s.BuildMetadata(ctx, MetadataRequest{Label: 17, Signer: SignerPayment}); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Errorf("nil value: err = %v, want ErrInvalidRequest", err)
 	}
-	if _, err := s.BuildMetadata(ctx, MetadataRequest{Label: 17, Value: metaValue(), Signer: "spo"}); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := s.BuildMetadata(ctx, MetadataRequest{Label: 17, Value: metaValue(), Signer: "spo"}); !errors.Is(
+		err,
+		ErrInvalidRequest,
+	) {
 		t.Errorf("unknown signer: err = %v, want ErrInvalidRequest", err)
 	}
-	empty := NewService(newFakeChain(10_000_000, acct.ReceiveAddresses[0]), nil, nil)
+	empty := NewService(
+		newFakeChain(10_000_000, acct.ReceiveAddresses[0]),
+		nil,
+		nil,
+	)
 	if _, err := empty.BuildMetadata(ctx, MetadataRequest{
 		Label: 17, Value: metaValue(), Signer: SignerPayment,
 	}); !errors.Is(err, ErrNoWallet) {
@@ -296,14 +396,29 @@ func TestWalletCredentialRefusesScriptCredentials(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			s := NewService(nil, nil, &wallet.Account{ReceiveAddresses: []string{tc.addr}})
-			if _, err := s.WalletCredential(tc.kind); !errors.Is(err, ErrInvalidRequest) {
+			s := NewService(
+				nil,
+				nil,
+				&wallet.Account{ReceiveAddresses: []string{tc.addr}},
+			)
+			if _, err := s.WalletCredential(tc.kind); !errors.Is(
+				err,
+				ErrInvalidRequest,
+			) {
 				t.Fatalf("err = %v, want ErrInvalidRequest", err)
 			}
 		})
 	}
 	// The key half of a mixed address still serves.
-	s := NewService(nil, nil, &wallet.Account{ReceiveAddresses: []string{addr(lcommon.AddressTypeScriptKey, hash[:], key[:])}})
+	s := NewService(
+		nil,
+		nil,
+		&wallet.Account{
+			ReceiveAddresses: []string{
+				addr(lcommon.AddressTypeScriptKey, hash[:], key[:]),
+			},
+		},
+	)
 	got, err := s.WalletCredential(SignerStake)
 	if err != nil || got != key {
 		t.Fatalf("stake key of a script/key address = %x, %v", got, err)

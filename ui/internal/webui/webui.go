@@ -40,7 +40,8 @@ func Handler() http.Handler {
 	}
 	files := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
+		w.Header().
+			Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
 		w.Header().Set("X-Frame-Options", "DENY")
 		// The SPA is read-only: serve only safe methods. A non-GET/HEAD request
 		// that fell through the API routes is a misuse — return 405 rather than
@@ -63,7 +64,11 @@ func Handler() http.Handler {
 		}
 		// Root, /index.html, or unknown client-route → SPA entry point. no-cache
 		// so a redeploy's new asset hashes aren't masked by a stale cached index.
+		// Clear-Site-Data evicts wallet NFT images that earlier releases marked
+		// immutable for a year; browsers that ignore the directive keep them
+		// until they expire or the user clears the cache.
 		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Clear-Site-Data", `"cache"`)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(index)
 	})

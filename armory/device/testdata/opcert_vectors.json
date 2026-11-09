@@ -1,0 +1,13 @@
+[
+  {"name": "first issue, nothing recorded", "floor": 0, "floor_set": false, "last_issued": 0, "chain": 0, "issue": 1, "new_floor": 0},
+  {"name": "chain advances from fresh record", "floor": 0, "floor_set": false, "last_issued": 0, "chain": 5, "issue": 6, "new_floor": 5},
+  {"name": "reissue the last issued number", "floor": 4, "floor_set": true, "last_issued": 5, "chain": 4, "issue": 5, "new_floor": 4},
+  {"name": "next number after the last issued", "floor": 4, "floor_set": true, "last_issued": 5, "chain": 5, "issue": 6, "new_floor": 5},
+  {"name": "chain equal to the floor", "floor": 3, "floor_set": true, "last_issued": 5, "chain": 3, "issue": 4, "new_floor": 3},
+  {"name": "chain below the floor", "floor": 3, "floor_set": true, "last_issued": 5, "chain": 2, "error": "chain counter below the recorded on-chain counter"},
+  {"name": "floor ignored while unset", "floor": 3, "floor_set": false, "last_issued": 5, "chain": 2, "issue": 3, "new_floor": 3},
+  {"name": "chain above the last issued", "floor": 3, "floor_set": true, "last_issued": 5, "chain": 6, "error": "chain counter above the last counter the device issued"},
+  {"name": "no bound while last issued unset", "floor": 0, "floor_set": false, "last_issued": 0, "chain": 40, "issue": 41, "new_floor": 40},
+  {"name": "floor wins over below-issued ordering", "floor": 7, "floor_set": true, "last_issued": 5, "chain": 6, "error": "chain counter below the recorded on-chain counter"},
+  {"name": "chain counter at max", "floor": 0, "floor_set": false, "last_issued": 0, "chain": 18446744073709551615, "error": "chain counter out of range"}
+]

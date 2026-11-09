@@ -74,7 +74,9 @@ const nonceCacheKeyBytes = sha256.Size
 // defaultNonceCacheMaxBytes bounds retained replay-key bytes independently of
 // the entry count. It is derived from the fixed-width key so valid nonces of
 // any size accepted by the HTTP server remain compatible.
-const defaultNonceCacheMaxBytes = int64(defaultNonceCacheMax) * nonceCacheKeyBytes
+const defaultNonceCacheMaxBytes = int64(
+	defaultNonceCacheMax,
+) * nonceCacheKeyBytes
 
 // An Ed25519 signature is fixed-width and is represented as lower-case hex in
 // the request header. Check that width before touching the request body.
@@ -104,7 +106,10 @@ type RequestSigningAuthenticator struct {
 // panics on a malformed key, and BuildAuthorizedKeys already validates length,
 // but this constructor is exported, so a future or external caller passing a
 // short key must not be able to turn an unauthenticated request into a panic.
-func NewRequestSigningAuthenticator(keys map[string]ed25519.PublicKey, skew time.Duration) *RequestSigningAuthenticator {
+func NewRequestSigningAuthenticator(
+	keys map[string]ed25519.PublicKey,
+	skew time.Duration,
+) *RequestSigningAuthenticator {
 	valid := make(map[string]ed25519.PublicKey, len(keys))
 	for caller, pub := range keys {
 		if len(pub) == ed25519.PublicKeySize {
@@ -115,15 +120,21 @@ func NewRequestSigningAuthenticator(keys map[string]ed25519.PublicKey, skew time
 		skew = 60 * time.Second
 	}
 	return &RequestSigningAuthenticator{
-		keys:    valid,
-		skew:    skew,
-		cache:   newNonceCacheWithByteLimit(2*skew, defaultNonceCacheMax, defaultNonceCacheMaxBytes),
+		keys: valid,
+		skew: skew,
+		cache: newNonceCacheWithByteLimit(
+			2*skew,
+			defaultNonceCacheMax,
+			defaultNonceCacheMaxBytes,
+		),
 		now:     time.Now,
 		maxBody: maxSignedBody,
 	}
 }
 
-func (a *RequestSigningAuthenticator) Authenticate(r *http.Request) (string, bool, error) {
+func (a *RequestSigningAuthenticator) Authenticate(
+	r *http.Request,
+) (string, bool, error) {
 	if r == nil || r.Header == nil || r.URL == nil {
 		return "", true, errNilRequest
 	}
@@ -185,7 +196,9 @@ func (a *RequestSigningAuthenticator) Authenticate(r *http.Request) (string, boo
 
 // readBody buffers up to maxBody+1 bytes, rejecting oversized bodies, and
 // resets r.Body so downstream handlers read the same bytes.
-func (a *RequestSigningAuthenticator) readBody(r *http.Request) ([]byte, error) {
+func (a *RequestSigningAuthenticator) readBody(
+	r *http.Request,
+) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
 	}
@@ -214,7 +227,11 @@ type nonceCache struct {
 	now      func() time.Time
 }
 
-func newNonceCacheWithByteLimit(ttl time.Duration, max int, maxBytes int64) *nonceCache {
+func newNonceCacheWithByteLimit(
+	ttl time.Duration,
+	max int,
+	maxBytes int64,
+) *nonceCache {
 	return &nonceCache{
 		entries:  make(map[[nonceCacheKeyBytes]byte]int64),
 		ttl:      ttl,

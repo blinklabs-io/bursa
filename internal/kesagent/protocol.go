@@ -31,7 +31,8 @@
 //	payload = JSON object (UTF-8)
 //
 // The maximum payload length is maxFrameLen (1 MiB); larger frames are
-// rejected. []byte fields are base64-encoded by encoding/json.
+// rejected. []byte fields are base64-encoded by encoding/json. The frame
+// types and framing live in the public kesagent/wire package.
 //
 // # Handshake
 //
@@ -87,120 +88,50 @@
 package kesagent
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 )
 
 const (
 	// ProtocolID is the handshake protocol/version string.
-	ProtocolID = "bursa-kes-agent/1"
+	ProtocolID = wire.ProtocolID
 
 	// maxFrameLen caps a single frame payload to guard against abuse.
-	maxFrameLen = 1 << 20 // 1 MiB
+	maxFrameLen = wire.MaxFrameLen
 
 	// frameIOTimeout bounds a complete inbound or outbound frame. Inbound
 	// timing includes idle time before the length header; outbound timing starts
-	// immediately before the header write.
+	// before the frame is marshaled and covers marshaling and the write.
 	frameIOTimeout = 10 * time.Second
 )
 
 // Socket modes for the service socket.
 const (
-	ModeServeKey = "serve-key"
-	ModeSign     = "sign"
+	ModeServeKey = wire.ModeServeKey
+	ModeSign     = wire.ModeSign
 )
 
-// Hello is the first frame the server sends after a client connects.
-type Hello struct {
-	Protocol string `json:"protocol"`
-	Mode     string `json:"mode"`
-}
-
-// KeyPush is sent by the server in serve-key mode to deliver the current KES
-// signing key, its verification key, its absolute KES period, and the
-// operational certificate.
-type KeyPush struct {
-	Type       string `json:"type"` // "key_push"
-	Period     uint64 `json:"period"`
-	Depth      uint64 `json:"depth"`
-	KESSignKey []byte `json:"kes_sign_key"`
-	KESVKey    []byte `json:"kes_vkey"`
-	OpCert     []byte `json:"opcert"`
-}
-
-// SignRequest is sent by the client in sign mode.
-type SignRequest struct {
-	Type    string `json:"type"` // "sign_request"
-	Period  uint64 `json:"period"`
-	Message []byte `json:"message"`
-}
-
-// SignResponse is the server's reply to a SignRequest.
-type SignResponse struct {
-	Type      string `json:"type"` // "sign_response"
-	Period    uint64 `json:"period"`
-	Signature []byte `json:"signature"`
-	Error     string `json:"error,omitempty"`
-}
-
-// Command is a control-socket request.
-type Command struct {
-	Command string `json:"command"`
-	OpCert  []byte `json:"opcert,omitempty"`
-	Target  string `json:"target,omitempty"` // drop-key: active|staged|all
-}
-
-// Reply is a control-socket response.
-type Reply struct {
-	Ok      bool       `json:"ok"`
-	Error   string     `json:"error,omitempty"`
-	KESVKey []byte     `json:"kes_vkey,omitempty"`
-	Info    *AgentInfo `json:"info,omitempty"`
-}
-
-// AgentInfo is the status snapshot returned by the info command.
-type AgentInfo struct {
-	Version       string `json:"version"`
-	Mode          string `json:"mode"`
-	HasActiveKey  bool   `json:"has_active_key"`
-	ActivePeriod  uint64 `json:"active_period"`   // current absolute KES period of the active key
-	ActiveStart   uint64 `json:"active_start"`    // absolute KES period the opcert was issued for
-	ActiveEnd     uint64 `json:"active_end"`      // last absolute KES period the key can serve
-	ActiveKESVKey []byte `json:"active_kes_vkey"` // 32-byte KES vkey (nil if none)
-	// ActiveIssueNumber is the opcert issue counter the agent is serving. It is
-	// the field the network uses to decide whether to accept the pool's blocks,
-	// so an operator needs it to confirm a rotation actually took effect.
-	ActiveIssueNumber uint64 `json:"active_issue_number"`
-	// ActiveOpCert is the installed opcert CBOR. In sign mode the producer never
-	// receives the key, so this is the only way to confirm the agent and the
-	// producer agree on the certificate after a KES rotation.
-	ActiveOpCert     []byte `json:"active_opcert,omitempty"`
-	StagedKESVKey    []byte `json:"staged_kes_vkey"`   // 32-byte staged KES vkey (nil if none)
-	Exhausted        bool   `json:"exhausted"`         // active key has run out of evolutions
-	CurrentPeriod    uint64 `json:"current_period"`    // agent's computed current KES period
-	MonotonicFloor   uint64 `json:"monotonic_floor"`   // period guard floor
-	FloorInitialized bool   `json:"floor_initialized"` // whether the guard floor is set
-}
+// Frame types, defined in kesagent/wire.
+type (
+	Hello        = wire.Hello
+	KeyPush      = wire.KeyPush
+	SignRequest  = wire.SignRequest
+	SignResponse = wire.SignResponse
+	Command      = wire.Command
+	Reply        = wire.Reply
+	AgentInfo    = wire.AgentInfo
+)
 
 type deadlineWriter interface {
 	io.Writer
 	SetWriteDeadline(time.Time) error
 }
 
-// writeFrame writes a single length-prefixed JSON frame.
+// writeFrame writes a single length-prefixed JSON frame under frameIOTimeout.
 func writeFrame(w deadlineWriter, v any) (retErr error) {
-	payload, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("kesagent: marshal frame: %w", err)
-	}
-	if len(payload) > maxFrameLen {
-		return fmt.Errorf("kesagent: frame too large (%d bytes)", len(payload))
-	}
 	if err := w.SetWriteDeadline(time.Now().Add(frameIOTimeout)); err != nil {
 		return fmt.Errorf("kesagent: set frame write deadline: %w", err)
 	}
@@ -209,23 +140,7 @@ func writeFrame(w deadlineWriter, v any) (retErr error) {
 			retErr = fmt.Errorf("kesagent: clear frame write deadline: %w", err)
 		}
 	}()
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload))) // #nosec G115 -- bounded by maxFrameLen
-	n, err := w.Write(hdr[:])
-	if err != nil {
-		return fmt.Errorf("kesagent: write frame header: %w", err)
-	}
-	if n != len(hdr) {
-		return fmt.Errorf("kesagent: write frame header: %w", io.ErrShortWrite)
-	}
-	n, err = w.Write(payload)
-	if err != nil {
-		return fmt.Errorf("kesagent: write frame payload: %w", err)
-	}
-	if n != len(payload) {
-		return fmt.Errorf("kesagent: write frame payload: %w", io.ErrShortWrite)
-	}
-	return nil
+	return wire.WriteFrameLimit(w, maxFrameLen, v)
 }
 
 type deadlineReader interface {
@@ -233,7 +148,8 @@ type deadlineReader interface {
 	SetReadDeadline(time.Time) error
 }
 
-// readFrame reads a single length-prefixed JSON frame into v.
+// readFrame reads a single length-prefixed JSON frame into v under
+// frameIOTimeout.
 func readFrame(r deadlineReader, v any) (retErr error) {
 	if err := r.SetReadDeadline(time.Now().Add(frameIOTimeout)); err != nil {
 		return fmt.Errorf("kesagent: set frame read deadline: %w", err)
@@ -243,28 +159,5 @@ func readFrame(r deadlineReader, v any) (retErr error) {
 			retErr = fmt.Errorf("kesagent: clear frame read deadline: %w", err)
 		}
 	}()
-	var hdr [4]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return err // may be io.EOF; callers distinguish
-	}
-	n := binary.BigEndian.Uint32(hdr[:])
-	if n == 0 {
-		return errors.New("kesagent: zero-length frame")
-	}
-	if n > maxFrameLen {
-		return fmt.Errorf("kesagent: frame too large (%d bytes)", n)
-	}
-	// Grow the payload buffer as bytes actually arrive rather than
-	// pre-allocating the full advertised length: a client that announces a
-	// large frame (up to maxFrameLen) but never sends the body then ties up
-	// only what it actually delivered, not the whole advertised buffer.
-	var buf bytes.Buffer
-	if _, err := io.CopyN(&buf, r, int64(n)); err != nil {
-		return fmt.Errorf("kesagent: read frame payload: %w", err)
-	}
-	payload := buf.Bytes()
-	if err := json.Unmarshal(payload, v); err != nil {
-		return fmt.Errorf("kesagent: unmarshal frame: %w", err)
-	}
-	return nil
+	return wire.ReadFrameLimit(r, maxFrameLen, nil, v)
 }

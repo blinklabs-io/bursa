@@ -31,7 +31,11 @@ func TestParseImageCID(t *testing.T) {
 		{"ipfs scheme v1", "ipfs://" + v1, v1},
 		{"ipfs double prefix", "ipfs://ipfs/" + v0, v0},
 		{"ipfs path prefix", "ipfs:///ipfs/" + v0, v0},
-		{"ipfs path prefix with suffix rejected", "ipfs:///ipfs/" + v0 + "/image.png", ""},
+		{
+			"ipfs path prefix with suffix rejected",
+			"ipfs:///ipfs/" + v0 + "/image.png",
+			"",
+		},
 		{"bare cid", v0, v0},
 		{"cid with path rejected", "ipfs://" + v0 + "/image.png", ""},
 		{"cid with trailing slash rejected", "ipfs://" + v0 + "/", ""},
@@ -60,15 +64,19 @@ func TestParseMetadata(t *testing.T) {
 			"name": "My NFT", "image": "ipfs://" + cid, "description": "a token",
 		})
 		md := parseMetadata(raw)
-		if md.Name != "My NFT" || md.ImageCID != cid || md.Description != "a token" {
+		if md.Name != "My NFT" || md.ImageCID != cid ||
+			md.Description != "a token" {
 			t.Fatalf("unexpected: %+v", md)
 		}
 	})
 
 	t.Run("array image chunks concatenate", func(t *testing.T) {
 		raw, _ := json.Marshal(map[string]any{
-			"name":  "Chunked",
-			"image": []string{"ipfs://Qm", "YwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"},
+			"name": "Chunked",
+			"image": []string{
+				"ipfs://Qm",
+				"YwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			},
 		})
 		md := parseMetadata(raw)
 		if md.ImageCID != cid {
@@ -99,7 +107,9 @@ func TestParseMetadata(t *testing.T) {
 	})
 
 	t.Run("http image yields no CID", func(t *testing.T) {
-		raw, _ := json.Marshal(map[string]any{"name": "Web", "image": "https://x/y.png"})
+		raw, _ := json.Marshal(
+			map[string]any{"name": "Web", "image": "https://x/y.png"},
+		)
 		md := parseMetadata(raw)
 		if md.Name != "Web" || md.ImageCID != "" {
 			t.Fatalf("http image: %+v, want name only, no CID", md)

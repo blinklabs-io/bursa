@@ -939,6 +939,39 @@ func GetStakeSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	)
 }
 
+// GetStakePlainSKey creates a plain StakeSigningKeyShelley_ed25519 file from a
+// CIP-1852 stake key. The derived key's k_L is used as the RFC 8032 seed, so
+// the matching public key is GetStakePlainVKey's, not the BIP32 public key.
+func GetStakePlainSKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	return getNonExtendedSigningKeyFile(
+		stakeKey,
+		"StakeSigningKeyShelley_ed25519",
+		"Stake Signing Key",
+	)
+}
+
+// GetStakePlainVKey creates the verification key file for GetStakePlainSKey.
+// It is computed with crypto/ed25519 from the k_L seed and differs from
+// GetStakeVKey, which exports the BIP32 extended public key.
+func GetStakePlainVKey(stakeKey bip32.XPrv) (KeyFile, error) {
+	seed := stakeKey.PrivateKey()[:ed25519.SeedSize]
+	vkey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	keyCbor, err := cbor.Encode([]byte(vkey))
+	if err != nil {
+		return KeyFile{}, fmt.Errorf(
+			"failed to encode plain stake verification key CBOR: %w",
+			err,
+		)
+	}
+	kf := KeyFile{
+		Type:        "StakeVerificationKeyShelley_ed25519",
+		Description: "Stake Verification Key",
+		CborHex:     hex.EncodeToString(keyCbor),
+	}
+	kf.SetCbor(keyCbor)
+	return kf, nil
+}
+
 func GetStakeExtendedSKey(stakeKey bip32.XPrv) (KeyFile, error) {
 	return getExtendedSigningKeyFile(
 		stakeKey,
@@ -1285,7 +1318,10 @@ func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
 	case vrf.SeedSize:
 		derived, _, err := vrf.KeyGen(vrfSecKey)
 		if err != nil {
-			return KeyFile{}, fmt.Errorf("failed to derive VRF public key: %w", err)
+			return KeyFile{}, fmt.Errorf(
+				"failed to derive VRF public key: %w",
+				err,
+			)
 		}
 		vrfSecKey = append(append([]byte(nil), vrfSecKey...), derived...)
 	case vrf.SeedSize + vrf.PublicKeySize:
@@ -1293,7 +1329,10 @@ func GetVRFSKey(vrfSecKey []byte) (KeyFile, error) {
 		// seed.
 		derived, _, err := vrf.KeyGen(vrfSecKey[:vrf.SeedSize])
 		if err != nil {
-			return KeyFile{}, fmt.Errorf("failed to derive VRF public key: %w", err)
+			return KeyFile{}, fmt.Errorf(
+				"failed to derive VRF public key: %w",
+				err,
+			)
 		}
 		if subtle.ConstantTimeCompare(derived, vrfSecKey[vrf.SeedSize:]) != 1 {
 			return KeyFile{}, errors.New(
@@ -1520,7 +1559,9 @@ func CreatePoolRegistrationCertificate(
 		return nil, errors.New("margin denominator must be positive")
 	}
 	if cert.MarginNum < 0 || cert.MarginNum > cert.MarginDenom {
-		return nil, errors.New("margin numerator must be between zero and denominator")
+		return nil, errors.New(
+			"margin numerator must be between zero and denominator",
+		)
 	}
 	margin := lcommon.NewGenesisRat(
 		cert.MarginNum,
@@ -1592,7 +1633,9 @@ func CreatePoolRetirementCertificate(
 	params *PoolRetirementCertificateParams,
 ) ([]byte, error) {
 	if params == nil {
-		return nil, errors.New("pool retirement certificate parameters cannot be nil")
+		return nil, errors.New(
+			"pool retirement certificate parameters cannot be nil",
+		)
 	}
 	// CBOR structure: [4, pool_keyhash, epoch]
 	certData := []any{
@@ -2127,7 +2170,11 @@ func validateScriptSig(
 		return false
 	}
 	for _, witness := range witnessesByHash[string(script.Hash)] {
-		if lcommon.VerifyVKeySignature(witness.Vkey, witness.Signature, message) == nil {
+		if lcommon.VerifyVKeySignature(
+			witness.Vkey,
+			witness.Signature,
+			message,
+		) == nil {
 			return true
 		}
 	}
@@ -2663,7 +2710,11 @@ func LoadKeyFromFile(path string) (*LoadedKey, error) {
 		return nil, fmt.Errorf("failed to stat key file %q: %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("key file %q is not a regular file (mode %s)", path, info.Mode())
+		return nil, fmt.Errorf(
+			"key file %q is not a regular file (mode %s)",
+			path,
+			info.Mode(),
+		)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxSecretKeyFileSize+1))
 	if err != nil {
@@ -2790,6 +2841,11 @@ func CreateSecretKeyFile(path string) (*os.File, error) {
 		_ = os.Remove(path)
 		return nil, err
 	}
+	if err := checkOpenFilePermissions(file); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
 	return file, nil
 }
 
@@ -2809,6 +2865,11 @@ func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
 				_ = os.Remove(path)
 				return nil, err
 			}
+			if err := checkOpenFilePermissions(file); err != nil {
+				_ = file.Close()
+				_ = os.Remove(path)
+				return nil, err
+			}
 			return file, nil
 		}
 		if errors.Is(err, fs.ErrExist) {
@@ -2824,6 +2885,13 @@ func CreateSecretKeyTempFile(dir, pattern string) (*os.File, error) {
 // atomic temporary-file workflow before renaming the file into place.
 func RestrictSecretKeyFilePermissions(file *os.File) error {
 	return restrictSecretKeyFilePermissions(file)
+}
+
+// CheckSecretFilePermissions verifies that an opened secret-bearing file or
+// directory is accessible only to the identities allowed by the platform's
+// secret-file policy.
+func CheckSecretFilePermissions(file *os.File) error {
+	return checkOpenFilePermissions(file)
 }
 
 // LoadSecretKeyFromFile loads a secret key from a file after checking the
@@ -3190,7 +3258,10 @@ func mapToScriptWithBudget(
 		n := int(nFloat)
 		scriptsInterface, ok := m["scripts"].([]any)
 		if !ok {
-			return nil, fmt.Errorf("missing or invalid scripts for %s script", scriptType)
+			return nil, fmt.Errorf(
+				"missing or invalid scripts for %s script",
+				scriptType,
+			)
 		}
 		if n < 1 || n > len(scriptsInterface) {
 			return nil, fmt.Errorf(

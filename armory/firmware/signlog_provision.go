@@ -12,21 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build unix
+//go:build provision || wipe
 
-package storage
+package main
 
-import "os"
+import (
+	"sync"
 
-// syncDirectory flushes the directory entry so a rename survives a crash.
-func syncDirectory(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	"github.com/blinklabs-io/bursa/armory/device"
+)
+
+// The provisioning and wipe images do not sign, so they neither open nor
+// require the signing log, and never format a card: the signing image formats
+// a blank card on its first start, when the head object in the SE050 is not
+// yet set.
+func requireSigningLog(*device.Service) {}
+
+func openSigningLog(r *Report, _ sync.Locker, _ *device.Service, _ *chip) bool {
+	r.Logf("signing log: not used by this image")
+
+	return true
 }

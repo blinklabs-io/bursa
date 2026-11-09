@@ -168,7 +168,11 @@ type AccountSource interface {
 }
 
 // NewService constructs a Service reading its accounts from src.
-func NewService(cc backend.ChainContext, ks Keystore, src AccountSource) *Service {
+func NewService(
+	cc backend.ChainContext,
+	ks Keystore,
+	src AccountSource,
+) *Service {
 	return &Service{
 		chain:    cc,
 		keys:     ks,
@@ -193,7 +197,10 @@ func NewService(cc backend.ChainContext, ks Keystore, src AccountSource) *Servic
 // With no time-lock the script is just the threshold script.
 func composeScript(p Policy) (*bursa.NativeScript, error) {
 	if p.Threshold < 1 {
-		return nil, fmt.Errorf("%w: threshold must be at least 1", ErrInvalidRequest)
+		return nil, fmt.Errorf(
+			"%w: threshold must be at least 1",
+			ErrInvalidRequest,
+		)
 	}
 	if p.Threshold > len(p.Participants) {
 		return nil, fmt.Errorf(
@@ -206,7 +213,12 @@ func composeScript(p Policy) (*bursa.NativeScript, error) {
 	for _, part := range p.Participants {
 		kh, err := hex.DecodeString(strings.TrimSpace(part.KeyHashHex))
 		if err != nil {
-			return nil, fmt.Errorf("%w: key hash %q is not valid hex: %w", ErrInvalidRequest, part.KeyHashHex, err)
+			return nil, fmt.Errorf(
+				"%w: key hash %q is not valid hex: %w",
+				ErrInvalidRequest,
+				part.KeyHashHex,
+				err,
+			)
 		}
 		if len(kh) != 28 {
 			return nil, fmt.Errorf(
@@ -215,15 +227,23 @@ func composeScript(p Policy) (*bursa.NativeScript, error) {
 			)
 		}
 		if seen[string(kh)] {
-			return nil, fmt.Errorf("%w: duplicate participant key hash %s", ErrInvalidRequest, part.KeyHashHex)
+			return nil, fmt.Errorf(
+				"%w: duplicate participant key hash %s",
+				ErrInvalidRequest,
+				part.KeyHashHex,
+			)
 		}
 		seen[string(kh)] = true
 		keyHashes = append(keyHashes, kh)
 	}
 	if len(keyHashes) == 0 {
-		return nil, fmt.Errorf("%w: at least one participant required", ErrInvalidRequest)
+		return nil, fmt.Errorf(
+			"%w: at least one participant required",
+			ErrInvalidRequest,
+		)
 	}
-	if p.InvalidBefore != nil && p.InvalidAfter != nil && *p.InvalidBefore >= *p.InvalidAfter {
+	if p.InvalidBefore != nil && p.InvalidAfter != nil &&
+		*p.InvalidBefore >= *p.InvalidAfter {
 		return nil, fmt.Errorf(
 			"%w: invalid_before (%d) must be less than invalid_after (%d)",
 			ErrInvalidRequest, *p.InvalidBefore, *p.InvalidAfter,
@@ -346,7 +366,10 @@ func PolicyFromScript(ns *bursa.NativeScript) (Policy, error) {
 		return Policy{}, err
 	}
 	if p.Threshold == 0 || len(p.Participants) == 0 {
-		return Policy{}, fmt.Errorf("%w: script has no threshold clause", ErrInvalidTx)
+		return Policy{}, fmt.Errorf(
+			"%w: script has no threshold clause",
+			ErrInvalidTx,
+		)
 	}
 	return p, nil
 }
@@ -365,7 +388,12 @@ func scriptAddress(script *bursa.NativeScript, network string) (string, error) {
 		return "", err
 	}
 	hash := script.Hash() // Blake2b-224(0x00 || cbor); the canonical native-script hash
-	addr, err := lcommon.NewAddressFromParts(lcommon.AddressTypeScriptNone, netID, hash.Bytes(), nil)
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeScriptNone,
+		netID,
+		hash.Bytes(),
+		nil,
+	)
 	if err != nil {
 		return "", fmt.Errorf("script address: %w", err)
 	}
@@ -398,7 +426,9 @@ func (s *Service) Get(id string) (Account, error) {
 // (Account{}, false, nil) when no account matches. A saved account whose
 // ScriptCBOR fails to decode is skipped rather than aborting the search —
 // one corrupt record must not hide every other account.
-func (s *Service) FindByScriptHash(scriptHashHex string) (Account, bool, error) {
+func (s *Service) FindByScriptHash(
+	scriptHashHex string,
+) (Account, bool, error) {
 	accts, err := s.accounts.List()
 	if err != nil {
 		return Account{}, false, err
@@ -438,7 +468,11 @@ func (s *Service) Compose(req CreateRequest) (Account, error) {
 		return Account{}, fmt.Errorf("%w: label is required", ErrInvalidRequest)
 	}
 	if !cardanonet.ValidNetwork(req.Network) {
-		return Account{}, fmt.Errorf("%w: unknown network %q", ErrInvalidRequest, req.Network)
+		return Account{}, fmt.Errorf(
+			"%w: unknown network %q",
+			ErrInvalidRequest,
+			req.Network,
+		)
 	}
 	script, err := composeScript(req.Policy)
 	if err != nil {
@@ -556,7 +590,10 @@ type BuildRequest struct {
 // margin that mirrors the single-sig send path. Overpaying a little is
 // harmless — change returns to the script address — but underpaying causes a
 // hard FeeTooSmallUTxO node rejection once the extra witnesses are attached.
-func (s *Service) multisigFeePadding(ctx context.Context, participantCount int) (int64, error) {
+func (s *Service) multisigFeePadding(
+	ctx context.Context,
+	participantCount int,
+) (int64, error) {
 	extraWitnesses := participantCount - 1
 	if extraWitnesses < 1 {
 		return feePaddingLovelace, nil
@@ -565,7 +602,9 @@ func (s *Service) multisigFeePadding(ctx context.Context, participantCount int) 
 	if err != nil {
 		return 0, err
 	}
-	return feePaddingLovelace + int64(extraWitnesses)*vkeyWitnessCBORBytes*pp.MinFeeCoefficient, nil
+	return feePaddingLovelace + int64(
+		extraWitnesses,
+	)*vkeyWitnessCBORBytes*pp.MinFeeCoefficient, nil
 }
 
 // Build composes a transaction spending UTxOs at the account's script address.
@@ -577,7 +616,11 @@ func (s *Service) multisigFeePadding(ctx context.Context, participantCount int) 
 //
 // Unlike the send path there is no in-memory pending entry: the unsigned tx is
 // the durable artifact, carried/collected off-band and handed back to Submit.
-func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (UnsignedTx, error) {
+func (s *Service) Build(
+	ctx context.Context,
+	id string,
+	req BuildRequest,
+) (UnsignedTx, error) {
 	acct, err := s.accounts.Get(id)
 	if err != nil {
 		return UnsignedTx{}, err
@@ -593,11 +636,20 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 	}
 	recvAddr, err := lcommon.NewAddress(strings.TrimSpace(req.To))
 	if err != nil {
-		return UnsignedTx{}, fmt.Errorf("%w: recipient %q: %w", ErrInvalidRequest, req.To, err)
+		return UnsignedTx{}, fmt.Errorf(
+			"%w: recipient %q: %w",
+			ErrInvalidRequest,
+			req.To,
+			err,
+		)
 	}
 	lovelace, err := parseAmount(req.Lovelace)
 	if err != nil {
-		return UnsignedTx{}, fmt.Errorf("%w: lovelace: %w", ErrInvalidRequest, err)
+		return UnsignedTx{}, fmt.Errorf(
+			"%w: lovelace: %w",
+			ErrInvalidRequest,
+			err,
+		)
 	}
 
 	keyHashes, err := scriptKeyHashes(acct.Policy)
@@ -618,14 +670,25 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 
 	utxos, err := backend.UtxosContext(ctx, s.chain, scriptAddr)
 	if err != nil {
-		return UnsignedTx{}, fmt.Errorf("utxos for %s: %w", acct.ScriptAddress, err)
+		return UnsignedTx{}, fmt.Errorf(
+			"utxos for %s: %w",
+			acct.ScriptAddress,
+			err,
+		)
 	}
 	if len(utxos) == 0 {
-		return UnsignedTx{}, fmt.Errorf("%w: no UTxOs at script address", ErrInsufficientFunds)
+		return UnsignedTx{}, fmt.Errorf(
+			"%w: no UTxOs at script address",
+			ErrInsufficientFunds,
+		)
 	}
 	a = a.AddLoadedUTxOs(utxos...)
 
-	a = a.PayToAddress(recvAddr, int64(lovelace)) //nolint:gosec // validated by parseAmount
+	amount := int64(lovelace) //nolint:gosec // validated by parseAmount
+	a = a.PayToAddress(
+		recvAddr,
+		amount,
+	)
 
 	// Attach the native script so the witness set carries it (the ledger needs
 	// the script that hashes to the input's payment credential). We deliberately
@@ -644,14 +707,20 @@ func (s *Service) Build(ctx context.Context, id string, req BuildRequest) (Unsig
 	if acct.Policy.InvalidBefore != nil {
 		start := *acct.Policy.InvalidBefore
 		if start > math.MaxInt64 {
-			return UnsignedTx{}, fmt.Errorf("%w: invalid_before slot out of range", ErrInvalidRequest)
+			return UnsignedTx{}, fmt.Errorf(
+				"%w: invalid_before slot out of range",
+				ErrInvalidRequest,
+			)
 		}
 		a = a.SetValidityStart(int64(start)) //nolint:gosec // bounded above
 	}
 	if acct.Policy.InvalidAfter != nil {
 		ttl := *acct.Policy.InvalidAfter
 		if ttl > math.MaxInt64 {
-			return UnsignedTx{}, fmt.Errorf("%w: invalid_after slot out of range", ErrInvalidRequest)
+			return UnsignedTx{}, fmt.Errorf(
+				"%w: invalid_after slot out of range",
+				ErrInvalidRequest,
+			)
 		}
 		a = a.SetTtl(int64(ttl)) //nolint:gosec // bounded above
 	}
@@ -808,7 +877,10 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		// Input lookup failures are intentionally classified as unsupported
 		// imports here; callers must not treat an unresolved input as a valid
 		// multisig authorization.
-		return TxInfo{IsMultiSig: true, ScriptEmbedded: true}, nil //nolint:nilerr // unresolved inputs are classified as unsupported imports
+		return TxInfo{ //nolint:nilerr // unresolved inputs are classified as unsupported imports
+			IsMultiSig:     true,
+			ScriptEmbedded: true,
+		}, nil
 	}
 	ns := candidates[0]
 	if !spendScripts[hex.EncodeToString(ns.Hash().Bytes())] {
@@ -821,7 +893,11 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		// Not a recognizable N-of-M policy: report multi-sig + the script hash
 		// so the UI can warn, but leave the policy fields empty. Deliberately
 		// not an error — this is a classification result, not a failure.
-		return TxInfo{IsMultiSig: true, ScriptEmbedded: true, ScriptHash: scriptHash}, nil //nolint:nilerr // classification, not failure — see comment above
+		return TxInfo{ //nolint:nilerr // classification, not failure — see comment above
+			IsMultiSig:     true,
+			ScriptEmbedded: true,
+			ScriptHash:     scriptHash,
+		}, nil
 	}
 
 	info := TxInfo{
@@ -854,7 +930,9 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 		if !txwitness.Valid(w, bodyHash.Bytes()) {
 			continue
 		}
-		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
+		kh := strings.ToLower(
+			hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()),
+		)
 		signed[kh] = true
 	}
 	info.Participants = make([]TxParticipant, 0, len(policy.Participants))
@@ -874,7 +952,9 @@ func (s *Service) InspectTx(txCbor string) (TxInfo, error) {
 // must be bound to these chain-owned outputs before a witness script is treated
 // as a payment authorization.  A missing output is an error: guessing would
 // recreate the decoy-script signing vulnerability this check prevents.
-func (s *Service) paymentScriptHashes(tx *conway.ConwayTransaction) (map[string]bool, error) {
+func (s *Service) paymentScriptHashes(
+	tx *conway.ConwayTransaction,
+) (map[string]bool, error) {
 	if s.chain == nil {
 		return nil, errors.New("chain context unavailable")
 	}
@@ -972,7 +1052,11 @@ func (s *Service) Sign(unsignedTxCBOR, password string) (Witness, error) {
 //
 // witnessCBORs is the list of per-co-signer witness blobs (each a hex CBOR array
 // of common.VkeyWitness) collected during the multi-party flow.
-func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witnessCBORs []string) (TxResult, error) {
+func (s *Service) Submit(
+	ctx context.Context,
+	id, unsignedTxCBOR string,
+	witnessCBORs []string,
+) (TxResult, error) {
 	acct, err := s.accounts.Get(id)
 	if err != nil {
 		return TxResult{}, err
@@ -1011,11 +1095,21 @@ func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witness
 	for i, wc := range witnessCBORs {
 		witBytes, err := hex.DecodeString(strings.TrimSpace(wc))
 		if err != nil {
-			return TxResult{}, fmt.Errorf("%w: witness %d hex: %w", ErrInvalidWitness, i, err)
+			return TxResult{}, fmt.Errorf(
+				"%w: witness %d hex: %w",
+				ErrInvalidWitness,
+				i,
+				err,
+			)
 		}
 		var witnesses []lcommon.VkeyWitness
 		if _, err := cbor.Decode(witBytes, &witnesses); err != nil {
-			return TxResult{}, fmt.Errorf("%w: witness %d: %w", ErrInvalidWitness, i, err)
+			return TxResult{}, fmt.Errorf(
+				"%w: witness %d: %w",
+				ErrInvalidWitness,
+				i,
+				err,
+			)
 		}
 		for _, wit := range witnesses {
 			kh := hex.EncodeToString(lcommon.Blake2b224Hash(wit.Vkey).Bytes())
@@ -1050,7 +1144,11 @@ func (s *Service) Submit(ctx context.Context, id, unsignedTxCBOR string, witness
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return TxResult{}, submissionerror.Wrap(
+			err,
+			ErrSubmitUnknown,
+			ErrSubmitRejected,
+		)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1068,13 +1166,19 @@ type TxResult struct {
 // collected witnesses meet the script's threshold, and broadcasts —
 // mirroring Submit's byte-safety (clear the tx-level and witness-set CBOR
 // caches, leave the body cache intact) and submit call.
-func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, error) {
+func (s *Service) SubmitImported(
+	ctx context.Context,
+	txCbor string,
+) (TxResult, error) {
 	info, err := s.InspectTx(txCbor)
 	if err != nil {
 		return TxResult{}, err
 	}
 	if !info.IsMultiSig || info.Threshold == 0 {
-		return TxResult{}, fmt.Errorf("%w: not a recognizable multisig transaction", ErrInvalidTx)
+		return TxResult{}, fmt.Errorf(
+			"%w: not a recognizable multisig transaction",
+			ErrInvalidTx,
+		)
 	}
 
 	a, err := apollo.New(s.chain).LoadTxCbor(strings.TrimSpace(txCbor))
@@ -1114,7 +1218,11 @@ func (s *Service) SubmitImported(ctx context.Context, txCbor string) (TxResult, 
 	defer cancel()
 	txHash, err := a.WithContext(submissionContext).Submit()
 	if err != nil {
-		return TxResult{}, submissionerror.Wrap(err, ErrSubmitUnknown, ErrSubmitRejected)
+		return TxResult{}, submissionerror.Wrap(
+			err,
+			ErrSubmitUnknown,
+			ErrSubmitRejected,
+		)
 	}
 	return TxResult{TxHash: hex.EncodeToString(txHash.Bytes())}, nil
 }
@@ -1142,7 +1250,9 @@ type CosignResult struct {
 // tx's existing witness set, preserving whatever co-signer witnesses are
 // already attached. Merging is deduped by key-hash, so cosigning a tx that
 // already carries this wallet's witness is a no-op (Added=false).
-func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) {
+func (s *Service) CosignImported(
+	txCbor, password string,
+) (CosignResult, error) {
 	if s.keys == nil || !s.keys.Exists() {
 		return CosignResult{}, ErrNoKeystore
 	}
@@ -1151,7 +1261,10 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 		return CosignResult{}, err
 	}
 	if !info.IsMultiSig || info.Threshold == 0 {
-		return CosignResult{}, fmt.Errorf("%w: not a recognizable multisig transaction", ErrInvalidTx)
+		return CosignResult{}, fmt.Errorf(
+			"%w: not a recognizable multisig transaction",
+			ErrInvalidTx,
+		)
 	}
 	participants := make(map[string]bool, len(info.Participants))
 	for _, p := range info.Participants {
@@ -1164,7 +1277,13 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 	}
 	tx := a.GetTx()
 	if tx == nil {
-		return CosignResult{}, fmt.Errorf("%w: no transaction body", ErrInvalidTx)
+		return CosignResult{}, fmt.Errorf(
+			"%w: no transaction body",
+			ErrInvalidTx,
+		)
+	}
+	if err := txwitness.RejectImportedAuxiliaryData(&tx.Body); err != nil {
+		return CosignResult{}, fmt.Errorf("%w: %w", ErrInvalidTx, err)
 	}
 	// Witnesses sign the exact body bytes carried by the imported transaction.
 	// Re-encoding can drift while preserving semantics (mirrors Sign).
@@ -1204,7 +1323,11 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 	if err != nil {
 		return CosignResult{}, fmt.Errorf("multisig payment key: %w", err)
 	}
-	myKH := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(payKey.Public().PublicKey()).Bytes()))
+	myKH := strings.ToLower(
+		hex.EncodeToString(
+			lcommon.Blake2b224Hash(payKey.Public().PublicKey()).Bytes(),
+		),
+	)
 	if !participants[myKH] {
 		return CosignResult{}, fmt.Errorf(
 			"%w: this wallet is not a participant in the transaction's policy",
@@ -1219,12 +1342,18 @@ func (s *Service) CosignImported(txCbor, password string) (CosignResult, error) 
 	// no-op (added=false) and leave the bogus witness in place for the node to
 	// reject. Dropping non-verifying witnesses lets our valid one replace it.
 	signed := make(map[string]bool, len(tx.WitnessSet.VkeyWitnesses.Items()))
-	kept := make([]lcommon.VkeyWitness, 0, len(tx.WitnessSet.VkeyWitnesses.Items()))
+	kept := make(
+		[]lcommon.VkeyWitness,
+		0,
+		len(tx.WitnessSet.VkeyWitnesses.Items()),
+	)
 	for _, w := range tx.WitnessSet.VkeyWitnesses.Items() {
 		if !txwitness.Valid(w, bodyHash.Bytes()) {
 			continue
 		}
-		kh := strings.ToLower(hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()))
+		kh := strings.ToLower(
+			hex.EncodeToString(lcommon.Blake2b224Hash(w.Vkey).Bytes()),
+		)
 		if signed[kh] {
 			continue
 		}
@@ -1392,7 +1521,12 @@ func scriptKeyHashes(p Policy) ([][]byte, error) {
 	for _, part := range p.Participants {
 		kh, err := hex.DecodeString(strings.TrimSpace(part.KeyHashHex))
 		if err != nil {
-			return nil, fmt.Errorf("%w: key hash %q: %w", ErrInvalidRequest, part.KeyHashHex, err)
+			return nil, fmt.Errorf(
+				"%w: key hash %q: %w",
+				ErrInvalidRequest,
+				part.KeyHashHex,
+				err,
+			)
 		}
 		out = append(out, kh)
 	}

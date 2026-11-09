@@ -29,6 +29,15 @@ func main() {
 	// CLI commands default to text logs. Server commands override this to JSON.
 	logging.ConfigureText()
 
+	rootCmd := newRootCommand()
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}
+
+// newRootCommand builds the bursa command tree.
+func newRootCommand() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use: programName,
 		CompletionOptions: cobra.CompletionOptions{
@@ -44,13 +53,13 @@ func main() {
 		hashCommand(),
 		apiCommand(),
 		signerCommand(),
+		nitroCommand(),
+		confidentialSpaceCommand(),
 		kesAgentCommand(),
 		scriptCommand(),
 		txCommand(),
+		queryCommand(),
 		signCommand(),
 	)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	return rootCmd
 }

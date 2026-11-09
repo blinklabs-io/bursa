@@ -83,10 +83,16 @@ func TestPostgres_PayloadDivergence(t *testing.T) {
 		t.Fatalf("idempotent check-and-commit A: %v", err)
 	}
 	// Divergent payload conflicts on both Check and CheckAndCommit.
-	if err := wm.Check(ctx, key, scope, []byte("B")); !errors.Is(err, ErrConflict) {
+	if err := wm.Check(ctx, key, scope, []byte("B")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("Check divergent: want ErrConflict, got %v", err)
 	}
-	if err := wm.CheckAndCommit(ctx, key, scope, []byte("B")); !errors.Is(err, ErrConflict) {
+	if err := wm.CheckAndCommit(ctx, key, scope, []byte("B")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
 		t.Fatalf("CheckAndCommit divergent: want ErrConflict, got %v", err)
 	}
 	// Commit is first-writer-wins: a divergent Commit keeps the original.
@@ -111,18 +117,33 @@ func TestPostgres_CounterMonotonicity(t *testing.T) {
 	if err := wm.CheckAndCommitCounter(ctx, key, scope, 5); err != nil {
 		t.Fatalf("first commit at 5: %v", err)
 	}
-	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok || v != 5 {
-		t.Fatalf("after first commit: got (v=%d, ok=%v, err=%v), want 5", v, ok, err)
+	if v, ok, err := wm.CounterFor(ctx, key, scope); err != nil || !ok ||
+		v != 5 {
+		t.Fatalf(
+			"after first commit: got (v=%d, ok=%v, err=%v), want 5",
+			v,
+			ok,
+			err,
+		)
 	}
 	// Equal and lower are regressions and record nothing.
-	if err := wm.CheckAndCommitCounter(ctx, key, scope, 5); !errors.Is(err, ErrCounterRegression) {
+	if err := wm.CheckAndCommitCounter(ctx, key, scope, 5); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
 		t.Fatalf("re-commit at 5: want ErrCounterRegression, got %v", err)
 	}
-	if err := wm.CheckAndCommitCounter(ctx, key, scope, 4); !errors.Is(err, ErrCounterRegression) {
+	if err := wm.CheckAndCommitCounter(ctx, key, scope, 4); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
 		t.Fatalf("commit at 4: want ErrCounterRegression, got %v", err)
 	}
 	if v, _, _ := wm.CounterFor(ctx, key, scope); v != 5 {
-		t.Fatalf("stored counter regressed to %d after rejected commits, want 5", v)
+		t.Fatalf(
+			"stored counter regressed to %d after rejected commits, want 5",
+			v,
+		)
 	}
 	// Strictly greater advances, including a large jump past int64-relevant values.
 	if err := wm.CheckAndCommitCounter(ctx, key, scope, 6); err != nil {
@@ -136,9 +157,57 @@ func TestPostgres_CounterMonotonicity(t *testing.T) {
 		t.Fatalf("after 2^63 jump: got %d, want %d", v, big)
 	}
 	// A value below 2^63 must now regress (ordering correct across the int64 boundary).
-	if err := wm.CheckAndCommitCounter(ctx, key, scope, big-1); !errors.Is(err, ErrCounterRegression) {
-		t.Fatalf("commit below high watermark: want ErrCounterRegression, got %v", err)
+	if err := wm.CheckAndCommitCounter(ctx, key, scope, big-1); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
+		t.Fatalf(
+			"commit below high watermark: want ErrCounterRegression, got %v",
+			err,
+		)
 	}
+}
+
+func TestPostgres_RaiseFloor(t *testing.T) {
+	dsn := testPGDSN(t)
+	wm := newTestPG(t, dsn)
+	ctx := context.Background()
+	key := randKey(t)
+	scope := "opcert-chain-floor"
+
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
+		t.Fatalf("first raise at 4: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 4); err != nil {
+		t.Fatalf("equal raise at 4: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, 3); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
+		t.Fatalf("raise at 3: want ErrCounterRegression, got %v", err)
+	}
+	const big = uint64(1) << 63
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, big); err != nil {
+		t.Fatalf("raise at 2^63: %v", err)
+	}
+	if err := wm.CheckAndRaiseFloor(ctx, key, scope, big-1); !errors.Is(
+		err,
+		ErrCounterRegression,
+	) {
+		t.Fatalf(
+			"raise below 2^63 floor: want ErrCounterRegression, got %v",
+			err,
+		)
+	}
+	if v, _, _ := wm.CounterFor(ctx, key, scope); v != big {
+		t.Fatalf("floor = %d, want %d", v, big)
+	}
+}
+
+func TestPostgres_CommitCountersFloorFrom(t *testing.T) {
+	// the CI database is shared across runs, so each run uses a fresh key
+	runCommitCountersFloorFrom(t, newTestPG(t, testPGDSN(t)), randKey(t))
 }
 
 func TestPostgres_CounterPerKeyIsolation(t *testing.T) {
@@ -186,11 +255,21 @@ func TestPostgres_DurabilityAcrossReconnect(t *testing.T) {
 		t.Fatalf("open 2: %v", err)
 	}
 	defer wm2.Close()
-	if err := wm2.Check(ctx, key, "tx", []byte("payload-2")); !errors.Is(err, ErrConflict) {
-		t.Fatalf("payload must survive reconnect: want ErrConflict, got %v", err)
+	if err := wm2.Check(ctx, key, "tx", []byte("payload-2")); !errors.Is(
+		err,
+		ErrConflict,
+	) {
+		t.Fatalf(
+			"payload must survive reconnect: want ErrConflict, got %v",
+			err,
+		)
 	}
 	if v, ok, _ := wm2.CounterFor(ctx, key, "opcert"); !ok || v != 42 {
-		t.Fatalf("counter must survive reconnect: got (v=%d, ok=%v), want 42", v, ok)
+		t.Fatalf(
+			"counter must survive reconnect: got (v=%d, ok=%v), want 42",
+			v,
+			ok,
+		)
 	}
 }
 
@@ -217,7 +296,12 @@ func TestPostgres_ConcurrentAdvanceExactlyOneWins(t *testing.T) {
 			go func(i int) {
 				defer wg.Done()
 				<-start
-				errs[i] = stores[i].CheckAndCommitCounter(ctx, key, scope, target)
+				errs[i] = stores[i].CheckAndCommitCounter(
+					ctx,
+					key,
+					scope,
+					target,
+				)
 			}(i)
 		}
 		close(start)
@@ -235,7 +319,12 @@ func TestPostgres_ConcurrentAdvanceExactlyOneWins(t *testing.T) {
 			}
 		}
 		if wins != 1 || regressions != 1 {
-			t.Fatalf("target %d: want exactly one winner, got wins=%d regressions=%d", target, wins, regressions)
+			t.Fatalf(
+				"target %d: want exactly one winner, got wins=%d regressions=%d",
+				target,
+				wins,
+				regressions,
+			)
 		}
 		if v, _, _ := replicaA.CounterFor(ctx, key, scope); v != target {
 			t.Fatalf("target %d: stored counter %d, want %d", target, v, target)
@@ -394,4 +483,10 @@ func TestPostgres_PingHonorsCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Ping canceled context: want context.Canceled, got %v", err)
 	}
+}
+
+func TestPostgres_CheckAndCommitCounters(t *testing.T) {
+	t.Parallel()
+	// the CI database is shared across runs, so each run uses a fresh key
+	runCheckAndCommitCounters(t, newTestPG(t, testPGDSN(t)), randKey(t))
 }
