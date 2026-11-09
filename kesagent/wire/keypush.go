@@ -32,11 +32,8 @@ func (k KeyPush) MarshalFrame(max int) ([]byte, error) {
 	}
 	// Size the buffer for the whole frame: if append outgrew it, the copy would
 	// move the signing key to a new array and leave the old one unwiped.
-	const (
-		maxUintLen = 20
-		fixedLen   = len(
-			`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`,
-		)
+	const fixedLen = len(
+		`{"type":,"period":,"depth":,"kes_sign_key":,"kes_vkey":,"opcert":}`,
 	)
 	// Bounding every term first keeps the sum from overflowing, and rejects an
 	// oversized push before the signing key is encoded at all.
@@ -44,7 +41,7 @@ func (k KeyPush) MarshalFrame(max int) ([]byte, error) {
 		len(k.KESVKey) > max || len(k.OpCert) > max {
 		return nil, ErrFrameTooLarge
 	}
-	size := fixedLen + len(typ) + 2*maxUintLen +
+	size := fixedLen + len(typ) + uintLen(k.Period) + uintLen(k.Depth) +
 		jsonBytesLen(
 			k.KESSignKey,
 		) + jsonBytesLen(k.KESVKey) + jsonBytesLen(k.OpCert)
@@ -65,6 +62,16 @@ func (k KeyPush) MarshalFrame(max int) ([]byte, error) {
 	buf = append(buf, `,"opcert":`...)
 	buf = appendJSONBytes(buf, k.OpCert)
 	return append(buf, '}'), nil
+}
+
+// uintLen is the length strconv.AppendUint appends for v in base 10.
+func uintLen(v uint64) int {
+	n := 1
+	for v >= 10 {
+		v /= 10
+		n++
+	}
+	return n
 }
 
 // jsonBytesLen is the length appendJSONBytes appends for b.

@@ -104,7 +104,7 @@ const (
 
 	// frameIOTimeout bounds a complete inbound or outbound frame. Inbound
 	// timing includes idle time before the length header; outbound timing starts
-	// immediately before the header write.
+	// before the frame is marshaled and covers marshaling and the write.
 	frameIOTimeout = 10 * time.Second
 )
 

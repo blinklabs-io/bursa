@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -145,6 +146,165 @@ func TestKeyPushMarshalFrameMatchesJSON(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Fatalf("MarshalFrame() = %s, want %s", got, want)
 		}
+		if cap(got) != len(got) {
+			t.Fatalf(
+				"MarshalFrame() cap = %d, len = %d: buffer was not sized exactly",
+				cap(got),
+				len(got),
+			)
+		}
+	}
+}
+
+func TestKeyPushMarshalFrameExactLimit(t *testing.T) {
+	t.Parallel()
+	for _, v := range []uint64{0, 9, 10, 1<<64 - 1} {
+		push := KeyPush{
+			Type:       "key_push",
+			Period:     v,
+			Depth:      v,
+			KESSignKey: []byte{1, 2, 3},
+			KESVKey:    []byte{4},
+			OpCert:     []byte{5},
+		}
+		want, err := json.Marshal(push)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := push.MarshalFrame(len(want))
+		if err != nil {
+			t.Fatalf("MarshalFrame(%d) with period %d: %v", len(want), v, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("MarshalFrame() = %s, want %s", got, want)
+		}
+		if _, err := push.MarshalFrame(len(want) - 1); !errors.Is(
+			err,
+			ErrFrameTooLarge,
+		) {
+			t.Fatalf(
+				"MarshalFrame(%d) with period %d error = %v, want ErrFrameTooLarge",
+				len(want)-1,
+				v,
+				err,
+			)
+		}
+	}
+}
+
+// partialFrameMarshaler returns a payload together with an error and keeps a
+// reference to it so the test can inspect it afterwards.
+type partialFrameMarshaler struct{ payload []byte }
+
+func (m *partialFrameMarshaler) MarshalFrame(int) ([]byte, error) {
+	m.payload = bytes.Repeat([]byte{0x5a}, 64)
+	return m.payload, errors.New("partial marshal")
+}
+
+func TestWriteFrameWipesPayloadOnMarshalError(t *testing.T) {
+	t.Parallel()
+	m := &partialFrameMarshaler{}
+	writer := &discardFrameWriter{}
+	if err := WriteFrameLimit(writer, MaxFrameLen, m); err == nil {
+		t.Fatal("WriteFrameLimit() succeeded, want marshal error")
+	}
+	if writer.bytes != 0 {
+		t.Fatalf("WriteFrameLimit() wrote %d bytes after marshal error", writer.bytes)
+	}
+	if !bytes.Equal(m.payload, make([]byte, len(m.payload))) {
+		t.Fatal("partial payload retained bytes after WriteFrameLimit returned")
+	}
+}
+
+// retainingFrameReader serves src in small chunks and keeps every buffer the
+// reader under test passed to Read, so the test can check they were wiped.
+type retainingFrameReader struct {
+	src   []byte
+	chunk int
+	err   error
+	bufs  [][]byte
+}
+
+func (r *retainingFrameReader) Read(p []byte) (int, error) {
+	if len(r.src) == 0 {
+		if r.err != nil {
+			return 0, r.err
+		}
+		return 0, io.EOF
+	}
+	r.bufs = append(r.bufs, p)
+	n := copy(p[:min(len(p), r.chunk)], r.src)
+	r.src = r.src[n:]
+	return n, nil
+}
+
+func TestReadFrameLimitWipesBody(t *testing.T) {
+	t.Parallel()
+	push := KeyPush{
+		Type:       "key_push",
+		Period:     1234,
+		Depth:      6,
+		KESSignKey: bytes.Repeat([]byte{0x5c}, 608),
+		KESVKey:    bytes.Repeat([]byte{0x2a}, 32),
+		OpCert:     bytes.Repeat([]byte{0x3b}, 140),
+	}
+	payload, err := json.Marshal(push)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := func(body []byte, declared int) []byte {
+		out := binary.BigEndian.AppendUint32(nil, uint32(declared)) // #nosec G115 -- test sizes
+		return append(out, body...)
+	}
+	errDeadline := errors.New("read deadline")
+	for _, test := range []struct {
+		name    string
+		frame   []byte
+		err     error
+		wantErr bool
+	}{
+		{name: "success", frame: frame(payload, len(payload))},
+		{
+			name:    "unmarshal error",
+			frame:   frame(append(bytes.Clone(payload), '}'), len(payload)+1),
+			wantErr: true,
+		},
+		{
+			name:    "body eof",
+			frame:   frame(payload[:len(payload)-1], len(payload)),
+			wantErr: true,
+		},
+		{
+			name:    "body read error",
+			frame:   frame(payload[:len(payload)-1], len(payload)),
+			err:     errDeadline,
+			wantErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			r := &retainingFrameReader{src: test.frame, chunk: 97, err: test.err}
+			var got KeyPush
+			err := ReadFrameLimit(r, MaxFrameLen, &got)
+			if test.wantErr != (err != nil) {
+				t.Fatalf("ReadFrameLimit() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if test.err != nil && !errors.Is(err, test.err) {
+				t.Fatalf("ReadFrameLimit() error = %v, want %v", err, test.err)
+			}
+			if !test.wantErr && !bytes.Equal(got.KESSignKey, push.KESSignKey) {
+				t.Fatal("decoded KeyPush signing key changed")
+			}
+			// The first Read fills the header, which carries no key bytes.
+			if len(r.bufs) < 3 {
+				t.Fatalf("body read in %d calls, want growth across several", len(r.bufs))
+			}
+			for i, b := range r.bufs[1:] {
+				if !bytes.Equal(b, make([]byte, len(b))) {
+					t.Fatalf("body buffer %d retained bytes after ReadFrameLimit returned", i)
+				}
+			}
+		})
 	}
 }
 
