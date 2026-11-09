@@ -114,7 +114,7 @@ func TestPeriodGuardHeaderSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	if slot, ok := g2.LastSignedSlot(); !ok || slot != 130 {
+	if slot, ok := lastSignedSlot(g2); !ok || slot != 130 {
 		t.Fatalf("reloaded slot = %d %v, want 130 true", slot, ok)
 	}
 	if err := g2.AuthorizeHeader("vk3", 6, 130, a); !errors.Is(
@@ -147,7 +147,7 @@ func TestPeriodGuardLoadsFileWithoutSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPeriodGuard: %v", err)
 	}
-	if _, ok := g.LastSignedSlot(); ok {
+	if _, ok := lastSignedSlot(g); ok {
 		t.Fatal("old guard file loaded a signed slot")
 	}
 	if err := g.AuthorizeHeader("vk", 7, 1, []byte("h")); err != nil {
@@ -179,4 +179,11 @@ func TestPeriodGuardHeaderRetryAtHigherPeriodRaisesFloor(t *testing.T) {
 	if err := g.Authorize("aa", 1); !errors.Is(err, ErrPeriodRollback) {
 		t.Fatalf("Authorize period 1 after the floor rose: got %v, want ErrPeriodRollback", err)
 	}
+}
+
+// lastSignedSlot reads g's slot record for assertions.
+func lastSignedSlot(g *PeriodGuard) (uint64, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.slot, g.slotSet
 }
