@@ -172,6 +172,10 @@ type profile struct {
 	mu      sync.Mutex
 	active  *keyState
 	staged  *keyState
+	// activeVKey is a copy of active's verification key, nil with no active
+	// key. setActiveLocked keeps it in step with active so header routing
+	// can read it without taking mu, which sign holds across guard writes.
+	activeVKey atomic.Pointer[[]byte]
 	subs    map[int]chan KeyPush
 	nextSub int
 
@@ -204,6 +208,18 @@ type profile struct {
 }
 
 func (p *profile) now() time.Time { return (*p.nowFn)() }
+
+// setActiveLocked sets the active key and its routing snapshot. Caller must
+// hold p.mu.
+func (p *profile) setActiveLocked(ks *keyState) {
+	p.active = ks
+	if ks == nil {
+		p.activeVKey.Store(nil)
+		return
+	}
+	vkey := append([]byte(nil), ks.vkey...)
+	p.activeVKey.Store(&vkey)
+}
 
 // maxEvolutions returns the effective evolution ceiling for keys created
 // under the current config: the smaller of the configured max opcert
@@ -533,7 +549,7 @@ func (p *profile) activateLocked(
 	ks.issueNumber = dec.IssueNumber
 	ks.coldSig = append([]byte(nil), dec.ColdSig...)
 	ks.exhausted = false
-	p.active = ks
+	p.setActiveLocked(ks)
 
 	// Evolve to the current period and serve.
 	p.evolveToLocked(cur)
@@ -541,7 +557,7 @@ func (p *profile) activateLocked(
 		// evolveToLocked can only clear p.active on an internal key-store
 		// failure (see the buf.Set failure path); treat it the same as a
 		// guard refusal and restore the previous key.
-		p.active = oldActive
+		p.setActiveLocked(oldActive)
 		return errors.New(
 			"kesagent: failed to evolve newly installed key to the current period",
 		)
@@ -554,7 +570,7 @@ func (p *profile) activateLocked(
 		// Roll back the install: keep serving the previous active key
 		// rather than discarding a working key on a rollback refusal.
 		p.active.close()
-		p.active = oldActive
+		p.setActiveLocked(oldActive)
 		// The floor may have advanced anyway (a rename that committed before a
 		// later step failed), which would leave the restored key below it.
 		// buildKeyPushLocked refuses to build such a push, but a push built
@@ -585,14 +601,14 @@ func (p *profile) DropKey(target string) error {
 	switch target {
 	case "active":
 		p.active.close()
-		p.active = nil
+		p.setActiveLocked(nil)
 		p.guardedSet = false
 	case "staged":
 		p.staged.close()
 		p.staged = nil
 	case "", "all":
 		p.active.close()
-		p.active = nil
+		p.setActiveLocked(nil)
 		p.staged.close()
 		p.staged = nil
 		p.guardedSet = false
@@ -772,7 +788,7 @@ func (p *profile) evolveToLocked(targetAbs uint64) {
 			// it installed: Sign() would otherwise happily sign over the
 			// zeroed buffer for the (unchanged) period it still reports.
 			p.active.close()
-			p.active = nil
+			p.setActiveLocked(nil)
 			// No active key exists at all now, so "exhausted" (which implies a
 			// key that reached its final period) is the wrong signal; clear it
 			// rather than reporting a false key-exhaustion health state.
@@ -999,7 +1015,7 @@ func (p *profile) close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.active.close()
-	p.active = nil
+	p.setActiveLocked(nil)
 	p.staged.close()
 	p.staged = nil
 	p.guard.Close()

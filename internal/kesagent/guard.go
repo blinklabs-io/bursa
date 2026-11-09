@@ -119,16 +119,18 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 		return g, nil
 	}
 	// Lock before reading, so the record loaded is the one this process
-	// alone will advance. The sidecar is named from the guard path with
-	// symlinks resolved, so a symlink to a guard file locks the same sidecar
-	// as the file itself; resolving it also fails here, on every platform,
-	// when the directory is missing. A hard link to the guard file is not
-	// detected.
-	lockBase, err := resolveGuardPath(path)
+	// alone will advance. The guard works on the path with symlinks
+	// resolved: a symlink to a guard file locks the same sidecar as the file
+	// itself, and every write renames over the file it points to rather
+	// than replacing the symlink with a regular file. Resolving it also
+	// fails here, on every platform, when the directory is missing. A hard
+	// link to the guard file is not detected.
+	resolved, err := resolveGuardPath(path)
 	if err != nil {
 		return nil, err
 	}
-	lock, err := lockGuardFile(lockBase + ".lock")
+	g.path = resolved
+	lock, err := lockGuardFile(resolved + ".lock")
 	if err != nil {
 		return nil, err
 	}
@@ -141,14 +143,30 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 }
 
 // resolveGuardPath returns path with symlinks resolved: the file itself when
-// it exists, otherwise its directory joined with its base name.
+// it exists, otherwise its directory joined with its base name. A symlink
+// to a guard file not yet created resolves to the file it names, so the
+// first write creates that file instead of replacing the symlink.
 func resolveGuardPath(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return resolved, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("kesagent: resolve guard file: %w", err)
+	for range maxGuardLinkHops {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("kesagent: resolve guard file: %w", err)
+		}
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			break
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", fmt.Errorf("kesagent: resolve guard file: %w", err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
 	}
 	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
 	if err != nil {
@@ -156,6 +174,10 @@ func resolveGuardPath(path string) (string, error) {
 	}
 	return filepath.Join(dir, filepath.Base(path)), nil
 }
+
+// maxGuardLinkHops bounds how many dangling symlinks resolveGuardPath
+// follows to reach a guard file that does not exist yet.
+const maxGuardLinkHops = 40
 
 // load reads the guard file into g. A missing or empty file leaves g empty
 // and marks it fresh.

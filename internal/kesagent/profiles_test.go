@@ -183,6 +183,46 @@ func TestAgentTellsOneColdKeyOnTwoNetworksApartByKESKey(t *testing.T) {
 	}
 }
 
+// Routing a header must not wait on another profile's lock. With one cold
+// key on two networks, a profile held mid-sign (its lock is held across the
+// durable guard write) must not stall signing, or selecting by KES key, for
+// the other.
+func TestRoutingDoesNotWaitOnAnotherProfilesLock(t *testing.T) {
+	cold := newColdKey(t)
+	a := newMultiAgent(t,
+		profileOn(t, networkA, "mainnet-pool", cold),
+		profileOn(t, networkB, "testnet-pool", cold),
+	)
+	install(t, a, "mainnet-pool", cold, 3, 52, 5)
+	pb := install(t, a, "testnet-pool", cold, 0, 25, 1)
+
+	stalled := named(t, a, "mainnet-pool")
+	stalled.mu.Lock()
+	defer stalled.mu.Unlock()
+
+	done := make(chan error, 2)
+	go func() {
+		_, err := a.signHeaderFor(
+			named(t, a, "testnet-pool"), pb.period, pb.header.encode(t),
+		)
+		done <- err
+	}()
+	go func() {
+		_, err := a.selectProfile("", pb.vkey)
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("testnet-pool while mainnet-pool is held: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("routing waited on another profile's lock")
+		}
+	}
+}
+
 func TestAgentRefusalInOneProfileLeavesTheOtherSigning(t *testing.T) {
 	coldA, coldB := newColdKey(t), newColdKey(t)
 	a := newMultiAgent(t,

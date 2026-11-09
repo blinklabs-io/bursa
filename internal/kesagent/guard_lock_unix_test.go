@@ -178,6 +178,87 @@ func TestPeriodGuardLockSharedThroughAFileSymlink(t *testing.T) {
 	}
 }
 
+// TestPeriodGuardKeepsAFileSymlinkAcrossWrites verifies that a guard opened
+// through a symlink writes through it: the symlink survives a signed header,
+// so a second open of the same configured path still finds the lock held,
+// and after close it reloads the signed slot from the file it points to.
+func TestPeriodGuardKeepsAFileSymlinkAcrossWrites(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "guard.json")
+	link := filepath.Join(t.TempDir(), "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewPeriodGuard(link)
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	t.Cleanup(g.Close)
+	if err := g.AuthorizeHeader("vk", 5, 100, []byte("a")); err != nil {
+		t.Fatalf("AuthorizeHeader: %v", err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("guard write replaced the symlink with mode %v", fi.Mode())
+	}
+	g2, err := NewPeriodGuard(link)
+	if err == nil {
+		g2.Close()
+	}
+	if !errors.Is(err, ErrGuardLocked) {
+		t.Fatalf("reopen through the symlink: err = %v, want ErrGuardLocked", err)
+	}
+	g.Close()
+	g3, err := NewPeriodGuard(link)
+	if err != nil {
+		t.Fatalf("reopen after close: %v", err)
+	}
+	t.Cleanup(g3.Close)
+	if slot, ok := lastSignedSlot(g3); !ok || slot != 100 {
+		t.Fatalf("reloaded slot = %d %v, want 100 true", slot, ok)
+	}
+}
+
+// TestPeriodGuardWritesThroughADanglingSymlink verifies that a symlink to a
+// guard file not yet created stays a symlink: the first write creates the
+// file it names, and an open of either path finds the lock held.
+func TestPeriodGuardWritesThroughADanglingSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "guard.json")
+	link := filepath.Join(t.TempDir(), "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewPeriodGuard(link)
+	if err != nil {
+		t.Fatalf("NewPeriodGuard: %v", err)
+	}
+	t.Cleanup(g.Close)
+	if err := g.AuthorizeHeader("vk", 5, 100, []byte("a")); err != nil {
+		t.Fatalf("AuthorizeHeader: %v", err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("guard write replaced the symlink with mode %v", fi.Mode())
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("guard file not written through the symlink: %v", err)
+	}
+	for _, path := range []string{link, target} {
+		g2, err := NewPeriodGuard(path)
+		if err == nil {
+			g2.Close()
+		}
+		if !errors.Is(err, ErrGuardLocked) {
+			t.Fatalf("open %s: err = %v, want ErrGuardLocked", path, err)
+		}
+	}
+}
+
 // TestPeriodGuardRefusesAMissingDirectory verifies that a guard whose
 // directory does not exist fails when it is opened.
 func TestPeriodGuardRefusesAMissingDirectory(t *testing.T) {
