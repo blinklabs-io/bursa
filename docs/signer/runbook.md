@@ -170,20 +170,23 @@ the same `path` under distinct profiles, each holding the same cold key:
 - name: "cold-preview"
   type: "sops"
   path: "/etc/bursa/signer/sops-keys"
-  profile: "otg@preview"
+  profile: "pool@preview"
 - name: "cold-preprod"
   type: "sops"
   path: "/etc/bursa/signer/sops-keys"
-  profile: "otg@preprod"
+  profile: "pool@preprod"
 ```
 
 A profiled sops backend serves a request only under its own profile and
 refuses one that names another. Its opcert counter, chain floor and issued
 records are kept per profile. It adds no binding signature: the backend signs
-in process, so no proxy sits between the profile and the key. A new profile
-does not adopt records written without one, so its counter starts empty; for a
-pool already on chain, the first certificate uses `opcert-next` with the
-on-chain counter. A sops backend without `profile` behaves as before.
+in process, so no proxy sits between the profile and the key. Opcert records
+written before the backend had a profile still bound its requests while it is
+the key's only holder; once a second profile holds the key they are not read
+and each profile starts empty, so migrate them first (see Profile routing). For
+a profile with no records and a pool already on chain, the first certificate
+uses `opcert-next` with the on-chain counter. A sops backend without `profile`
+behaves as before.
 
 ### software / file (development only)
 
@@ -426,10 +429,10 @@ only routes: the caller is authorized by key hash.
 Records of a key served by a profiled backend carry the profile:
 `<hash>|<scope>|<profile>` for the opcert counter, floor and issued scopes and
 for tx records, so each network keeps its own history. Records of an
-unprofiled backend are unchanged. Opcert records an armory-backed key wrote
-before profile scoping are keyed without the profile. While one backend holds
-the key, they still bound its opcert requests until a record under its profile
-exists. Once several backends hold it they are not consulted, as they cannot
+unprofiled backend are unchanged. Opcert records an armory- or sops-backed
+key wrote before profile scoping are keyed without the profile. While one
+backend holds the key, they still bound its opcert requests until a record
+under its profile exists. Once several backends hold it they are not consulted, as they cannot
 be attributed to one profile. Before adding a second profile for a key, stop
 every signer instance that uses the store, then migrate each of the key's
 `opcert-counter`, `opcert-chain-floor` and `opcert-chain-issued` rows keyed
