@@ -79,8 +79,9 @@ func TestSopsBackend_LoadAndSign(t *testing.T) {
 		"signer-payment-1": mkKeyEnvelope(t, priv),
 	}}
 	// identity decrypt for the test
-	b := NewSopsBackend(
+	b := NewProfiledSopsBackend(
 		"gcp",
+		"",
 		src,
 		func(data []byte) ([]byte, error) { return data, nil },
 	)
@@ -110,8 +111,9 @@ func TestSopsBackend_LoadAndSign(t *testing.T) {
 func TestSopsBackend_Load_FetchError(t *testing.T) {
 	// fakeSecretSource has no secrets, so fetching "missing-key" must fail.
 	src := &fakeSecretSource{secrets: map[string][]byte{}}
-	b := NewSopsBackend(
+	b := NewProfiledSopsBackend(
 		"gcp",
+		"",
 		src,
 		func(data []byte) ([]byte, error) { return data, nil },
 	)
@@ -128,12 +130,12 @@ func TestSopsBackend_Load_NilDependencies(t *testing.T) {
 		err.Error() != "sops backend is nil" {
 		t.Fatalf("nil backend: got %v", err)
 	}
-	if err := NewSopsBackend("gcp", nil, func(data []byte) ([]byte, error) { return data, nil }).Load(context.Background()); err == nil ||
+	if err := NewProfiledSopsBackend("gcp", "", nil, func(data []byte) ([]byte, error) { return data, nil }).Load(context.Background()); err == nil ||
 		err.Error() != "sops backend source is nil" {
 		t.Fatalf("nil source: got %v", err)
 	}
 	src := &fakeSecretSource{secrets: map[string][]byte{}}
-	if err := NewSopsBackend("gcp", src, nil).Load(context.Background()); err == nil ||
+	if err := NewProfiledSopsBackend("gcp", "", src, nil).Load(context.Background()); err == nil ||
 		err.Error() != "sops backend decrypt function is nil" {
 		t.Fatalf("nil decrypt: got %v", err)
 	}
@@ -162,8 +164,9 @@ func TestSopsBackend_DerivesPolicyTypeFromPaymentEnvelope(t *testing.T) {
 	src := &fakeSecretSource{secrets: map[string][]byte{
 		"policy-1": envelope,
 	}}
-	b := NewSopsBackend(
+	b := NewProfiledSopsBackend(
 		"sops",
+		"",
 		src,
 		func(d []byte) ([]byte, error) { return d, nil },
 	)
@@ -197,8 +200,9 @@ func TestSopsBackend_DerivesTypeFromEnvelope(t *testing.T) {
 	src := &fakeSecretSource{secrets: map[string][]byte{
 		"stake-1": []byte(envelope),
 	}}
-	b := NewSopsBackend(
+	b := NewProfiledSopsBackend(
 		"sops",
+		"",
 		src,
 		func(d []byte) ([]byte, error) { return d, nil },
 	)

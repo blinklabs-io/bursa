@@ -52,21 +52,13 @@ type SopsBackend struct {
 	keys       map[KeyHash]KeyRef
 }
 
-// NewSopsBackend builds a SOPS-backed backend. decrypt may be sops.Decrypt.
-func NewSopsBackend(
-	name string,
-	source SecretSource,
-	decrypt DecryptFunc,
-) *SopsBackend {
-	return NewProfiledSopsBackend(name, "", source, decrypt)
-}
-
-// NewProfiledSopsBackend is NewSopsBackend bound to a workload profile. Its
-// backend and key references implement Profiled, so the resolver and the
-// watermark scope treat it as an attested backend bound to that profile. An
-// empty profile gives the unprofiled backend. A sops backend signs in process,
-// so there is no binding signature: no proxy can move a request to another
-// profile. The caller validates the profile name.
+// NewProfiledSopsBackend builds a SOPS-backed backend. decrypt may be
+// sops.Decrypt. With a non-empty profile, the backend and its key references
+// implement Profiled, so the resolver and the watermark scope treat it as an
+// attested backend bound to that profile; an empty profile gives an
+// unprofiled backend. A sops backend signs in process, so there is no binding
+// signature: no proxy can move a request to another profile. The caller
+// validates the profile name.
 func NewProfiledSopsBackend(
 	name, profile string,
 	source SecretSource,
