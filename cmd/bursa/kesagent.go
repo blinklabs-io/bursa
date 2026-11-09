@@ -34,6 +34,8 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/kesagent"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/signer"
+	"github.com/blinklabs-io/bursa/internal/signer/api"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/bursa/internal/version"
 	"github.com/blinklabs-io/gouroboros/cbor"
@@ -62,13 +64,112 @@ The pool cold signing key never touches the agent: it only holds the cold
 verification key and consumes the operational certificate the cold signer
 issued. Manage keys over the control socket: gen-staged-key, install-key,
 drop-key, info.`,
+		// A non-root command with subcommands accepts stray arguments by
+		// default, so a misspelled subcommand would start the daemon.
+		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			os.Exit(runKesAgent(configFile))
 		},
 	}
 	cmd.Flags().
 		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
+	cmd.AddCommand(kesAgentReadyCommand())
 	return cmd
+}
+
+// kesAgentReadyCommand checks a running agent's readiness for an exec probe.
+// The health endpoints share the metrics listener, which binds only
+// loopback, so an HTTP probe from outside the host or pod cannot reach them.
+func kesAgentReadyCommand() *cobra.Command {
+	var configFile string
+	cmd := &cobra.Command{
+		Use:   "ready",
+		Short: "Exit 0 when the local KES agent reports ready",
+		Long: `Query /readyz on the local KES agent's metrics listener and exit 0 when
+it reports ready, 1 otherwise. It reads the same config file as the agent to
+find the listener. Use it as an exec readiness probe.`,
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := checkKesAgentReady(configFile); err != nil {
+				fmt.Fprintln(os.Stderr, "kes-agent not ready:", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().
+		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
+	return cmd
+}
+
+// kesAgentReadyClientTimeout bounds the ready command's request. It exceeds
+// the agent's own readiness timeout so a slow store reports 503, not a
+// client timeout.
+const kesAgentReadyClientTimeout = 5 * time.Second
+
+func checkKesAgentReady(configFile string) error {
+	if configFile == "" {
+		configFile = os.Getenv("BURSA_CONFIG")
+	}
+	cfg, err := config.LoadConfigFile(configFile)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if cfg.Metrics.ListenPort == 0 {
+		return errors.New(
+			"metrics.port is 0, so the agent serves no readiness endpoint",
+		)
+	}
+	addr, err := signer.LoopbackBindAddress(
+		cfg.Metrics.ListenAddress,
+		cfg.Metrics.ListenPort,
+	)
+	if err != nil {
+		return err
+	}
+	return getKesAgentReadyz("http://" + addr + "/readyz")
+}
+
+func getKesAgentReadyz(url string) error {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		kesAgentReadyClientTimeout,
+	)
+	defer cancel()
+	// url is the agent's own loopback metrics address from the local config.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // loopback only, see above
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // loopback only, see above
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readyz returned %s", resp.Status)
+	}
+	return nil
+}
+
+// kesAgentHealthMux serves the metrics handler alongside /healthz and
+// /readyz. Readiness fails while the shared store does not answer or a
+// profile cannot load its installed key; without a store it always passes.
+func kesAgentHealthMux(
+	metricsHandler http.Handler,
+	store watermark.Pinger,
+	agent interface{ Ready() error },
+) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metricsHandler)
+	mux.Handle("/", api.HealthHandler(func(ctx context.Context) error {
+		if store != nil {
+			if err := store.Ping(ctx); err != nil {
+				return fmt.Errorf("shared store: %w", err)
+			}
+		}
+		return agent.Ready()
+	}))
+	return mux
 }
 
 // runKesAgent runs the KES agent daemon to completion and returns the process
@@ -203,6 +304,14 @@ func runKesAgent(configFile string) int {
 		return 1
 	}
 	defer agent.Close()
+	if metricsSrv != nil {
+		// A nil *PostgresWatermark in the interface would not compare nil.
+		var pinger watermark.Pinger
+		if store != nil {
+			pinger = store
+		}
+		metricsSrv.Handler = kesAgentHealthMux(metricsSrv.Handler, pinger, agent)
+	}
 	if keyStore != nil {
 		// Load the installed keys before the sockets open. A profile that
 		// fails is logged, refuses signs, and is retried on every poll.

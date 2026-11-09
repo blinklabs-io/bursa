@@ -204,6 +204,8 @@ type profile struct {
 	// failure from being logged on every poll.
 	loadErr    error
 	lastKeyErr string
+	// loadErrPub mirrors loadErr for Ready, which reads it without p.mu.
+	loadErrPub atomic.Pointer[error]
 }
 
 func (p *profile) now() time.Time { return (*p.nowFn)() }
