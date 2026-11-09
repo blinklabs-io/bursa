@@ -235,7 +235,7 @@ func TestPeriodGuardHeaderSlotPersistFailures(t *testing.T) {
 			if err := g.AuthorizeHeader("vk", 5, 101, []byte("b")); err == nil {
 				t.Fatal("slot 101: want a persist failure, got nil")
 			}
-			slot, _ := g.LastSignedSlot()
+			slot, _ := lastSignedSlot(g)
 			other := g.AuthorizeHeader("vk", 5, 101, []byte("c"))
 			if tc.committed {
 				if slot != 101 {
