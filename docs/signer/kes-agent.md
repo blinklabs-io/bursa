@@ -111,7 +111,9 @@ again (a retry), but a different body for a signed slot or a lower slot is
 refused. Several producers can therefore share one agent for a pool, and the
 first header signed for a slot wins. The record survives restarts and key
 installs, since slots are absolute. A guard file from an earlier version loads
-with no slot record.
+with no slot record, so slots signed before the upgrade are not covered: until
+the first header after the upgrade is recorded, a header for a slot the earlier
+version already signed is accepted even with a different body.
 
 For restart recovery, preserve the guard on durable storage available only to
 the approved workload measurement, then stage and install a key whose current
