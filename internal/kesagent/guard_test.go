@@ -16,6 +16,7 @@ package kesagent
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -185,8 +186,17 @@ func TestPeriodGuardHeaderRetryAtHigherPeriodRaisesFloor(t *testing.T) {
 }
 
 // lastSignedSlot reads g's slot record for assertions.
-func lastSignedSlot(g *PeriodGuard) (uint64, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.slot, g.slotSet
+func lastSignedSlot(g slotGuard) (uint64, bool) {
+	switch g := g.(type) {
+	case *PeriodGuard:
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return g.slot, g.slotSet
+	case *sharedGuard:
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return g.slot, g.slotSet
+	default:
+		panic(fmt.Sprintf("lastSignedSlot: unexpected guard %T", g))
+	}
 }

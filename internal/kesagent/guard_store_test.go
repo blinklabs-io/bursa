@@ -115,7 +115,7 @@ func checkSharedGuardSemantics(t *testing.T, storeA, storeB SharedGuardStore) {
 	if err := a.AuthorizeHeader("k", 6, 53, []byte("D")); err != nil {
 		t.Fatalf("header D at 53: %v", err)
 	}
-	if slot, ok := a.LastSignedSlot(); !ok || slot != 53 {
+	if slot, ok := lastSignedSlot(a); !ok || slot != 53 {
 		t.Fatalf("last signed slot = %d %v, want 53 true", slot, ok)
 	}
 

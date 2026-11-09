@@ -34,8 +34,6 @@ type slotGuard interface {
 	Fresh() bool
 	// Floor returns the KES period floor and whether one is set.
 	Floor() (uint64, bool)
-	// LastSignedSlot returns the last slot signed and whether one was.
-	LastSignedSlot() (uint64, bool)
 	// Authorize refuses a period below the floor and raises the floor to it.
 	Authorize(vkeyHex string, period uint64) error
 	// AuthorizeHeader is Authorize for a header body at an absolute slot.
@@ -126,13 +124,6 @@ func (g *sharedGuard) Floor() (uint64, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.floor, g.set
-}
-
-// LastSignedSlot returns the last slot this replica signed a header for.
-func (g *sharedGuard) LastSignedSlot() (uint64, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.slot, g.slotSet
 }
 
 // Close does nothing: the store belongs to the caller that configured it.
