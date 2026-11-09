@@ -117,6 +117,12 @@ header request.
 ## Attested remote sign extension
 
 The remote server hello uses protocol `bursa-attested-kes/1` and mode `sign`.
+A connection must complete the TLS handshake with a verified client
+certificate within 10 seconds. Connections still in the handshake have their
+own budget, 64 in total and 4 per source (an IPv4 address or an IPv6 /64), and
+excess connections are closed at accept. They never occupy the slots that
+authenticated connections use, and one source cannot exhaust the handshake
+budget on its own.
 After TLS client-certificate authentication, Dingo sends one challenge before
 any sign request:
 

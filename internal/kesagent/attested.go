@@ -220,16 +220,22 @@ func (a *Agent) ServeAttestedService(
 			"kesagent: attested service requires provider and attester",
 		)
 	}
+	// Connections still in the TLS handshake are tracked apart from
+	// authenticated ones, so a peer without a client certificate can never
+	// hold a slot a block producer needs.
+	pending := newConnSet()
 	conns := newConnSet()
+	gate := newHandshakeGate()
 	srvCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
 		<-srvCtx.Done()
 		_ = ln.Close()
+		pending.closeAll()
 		conns.closeAll()
 	}()
 	var wg sync.WaitGroup
-	defer func() { conns.closeAll(); wg.Wait() }()
+	defer func() { pending.closeAll(); conns.closeAll(); wg.Wait() }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -240,22 +246,99 @@ func (a *Agent) ServeAttestedService(
 				return fmt.Errorf("kesagent: attested service accept: %w", err)
 			}
 		}
-		if !conns.add(conn) {
+		host, ok := gate.acquire(conn.RemoteAddr())
+		if !ok {
+			_ = conn.Close()
+			continue
+		}
+		if !pending.add(conn) {
+			gate.release(host)
 			_ = conn.Close()
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer conns.remove(conn)
 			defer conn.Close()
-			if err := authenticateRemotePeer(ctx, conn); err != nil {
+			err := authenticateRemotePeer(ctx, conn)
+			pending.remove(conn)
+			gate.release(host)
+			if err != nil {
 				a.logger.Warn("refusing unauthenticated KES peer", "error", err)
 				return
 			}
+			if !conns.add(conn) {
+				return
+			}
+			defer conns.remove(conn)
 			a.serveAttestedConn(ctx, conn, cfg)
 		}()
 	}
+}
+
+const (
+	// maxPendingHandshakes bounds connections that have not yet completed
+	// mutual TLS. Each one holds a slot for at most frameIOTimeout.
+	maxPendingHandshakes = 64
+	// maxPendingHandshakesPerHost keeps one remote address from taking the
+	// whole handshake budget. Block producers dial from a handful of hosts and
+	// hold one long-lived connection each, so a few concurrent handshakes per
+	// address is ample.
+	maxPendingHandshakesPerHost = 4
+)
+
+// handshakeGate admits a connection to the TLS handshake only while both the
+// global and the per-source budgets have room. A source is an IPv4 address or
+// an IPv6 /64. A non-IP transport has no source
+// address to separate peers by, so only the global budget applies to it.
+type handshakeGate struct {
+	mu      sync.Mutex
+	total   int
+	perHost map[string]int
+}
+
+func newHandshakeGate() *handshakeGate {
+	return &handshakeGate{perHost: make(map[string]int)}
+}
+
+// acquire reserves a handshake slot for addr and returns the key to release
+// it with.
+func (g *handshakeGate) acquire(addr net.Addr) (string, bool) {
+	host := ""
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		host = tcp.IP.String()
+		if tcp.IP.To4() == nil {
+			// One IPv6 subscriber is routinely delegated a whole /64.
+			host = tcp.IP.Mask(net.CIDRMask(64, 128)).String()
+		}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.total >= maxPendingHandshakes {
+		return "", false
+	}
+	if host != "" && g.perHost[host] >= maxPendingHandshakesPerHost {
+		return "", false
+	}
+	g.total++
+	if host != "" {
+		g.perHost[host]++
+	}
+	return host, true
+}
+
+func (g *handshakeGate) release(host string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.total--
+	if host == "" {
+		return
+	}
+	if g.perHost[host] <= 1 {
+		delete(g.perHost, host)
+		return
+	}
+	g.perHost[host]--
 }
 
 func authenticateRemotePeer(ctx context.Context, conn net.Conn) error {
