@@ -159,5 +159,5 @@ func readFrame(r deadlineReader, v any) (retErr error) {
 			retErr = fmt.Errorf("kesagent: clear frame read deadline: %w", err)
 		}
 	}()
-	return wire.ReadFrameLimit(r, maxFrameLen, v)
+	return wire.ReadFrameLimit(r, maxFrameLen, nil, v)
 }

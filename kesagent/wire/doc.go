@@ -25,7 +25,9 @@
 //	payload = JSON object (UTF-8)
 //
 // ReadFrameLimit and WriteFrameLimit take the maximum payload length from the
-// caller. A zero-length frame is a protocol error. []byte fields are
+// caller, capped at MaxFrameLen. ReadFrameLimit accepts an optional body guard
+// that runs between the header and the body, where a caller can bound the body
+// read. A zero-length frame is a protocol error. []byte fields are
 // base64-encoded by encoding/json. MaxFrameLen is the agent's own limit;
 // MaxHelloFrameLen, MaxKeyPushFrameLen and MaxSignFrameLen are suggested
 // per-message limits for clients.

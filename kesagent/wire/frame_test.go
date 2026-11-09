@@ -285,7 +285,7 @@ func TestReadFrameLimitWipesBody(t *testing.T) {
 			t.Parallel()
 			r := &retainingFrameReader{src: test.frame, chunk: 97, err: test.err}
 			var got KeyPush
-			err := ReadFrameLimit(r, MaxFrameLen, &got)
+			err := ReadFrameLimit(r, MaxFrameLen, nil, &got)
 			if test.wantErr != (err != nil) {
 				t.Fatalf("ReadFrameLimit() error = %v, wantErr %v", err, test.wantErr)
 			}
@@ -462,5 +462,116 @@ func TestWriteFrameLeavesNoSigningKeyInHeapWithFullSizeFields(t *testing.T) {
 			"base64 signing key found %d time(s) in process memory after WriteFrameLimit",
 			n,
 		)
+	}
+}
+
+// countingFrameReader counts the bytes it delivers.
+type countingFrameReader struct {
+	r    io.Reader
+	read int
+}
+
+func (c *countingFrameReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += n
+	return n, err
+}
+
+func TestReadFrameLimitBodyGuard(t *testing.T) {
+	t.Parallel()
+	var frame bytes.Buffer
+	if err := WriteFrameLimit(&frame, MaxFrameLen, Hello{Protocol: ProtocolID, Mode: ModeSign}); err != nil {
+		t.Fatal(err)
+	}
+	raw := frame.Bytes()
+	errGuard := errors.New("set body deadline")
+
+	t.Run("runs between header and body", func(t *testing.T) {
+		t.Parallel()
+		cr := &countingFrameReader{r: bytes.NewReader(raw)}
+		calls, readAtGuard := 0, -1
+		var h Hello
+		err := ReadFrameLimit(cr, MaxFrameLen, func() error {
+			calls++
+			readAtGuard = cr.read
+			return nil
+		}, &h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if calls != 1 || readAtGuard != 4 {
+			t.Fatalf("guard calls = %d, bytes read at guard = %d, want 1 and 4", calls, readAtGuard)
+		}
+		if h.Protocol != ProtocolID || h.Mode != ModeSign {
+			t.Fatalf("decoded %+v", h)
+		}
+	})
+
+	t.Run("error aborts before body", func(t *testing.T) {
+		t.Parallel()
+		cr := &countingFrameReader{r: bytes.NewReader(raw)}
+		var h Hello
+		err := ReadFrameLimit(cr, MaxFrameLen, func() error { return errGuard }, &h)
+		if !errors.Is(err, errGuard) {
+			t.Fatalf("error = %v, want guard error", err)
+		}
+		if errors.Is(err, ErrFrameBodyIncomplete) {
+			t.Fatalf("guard error wrapped ErrFrameBodyIncomplete: %v", err)
+		}
+		if cr.read != 4 {
+			t.Fatalf("read %d bytes, want only the 4-byte header", cr.read)
+		}
+	})
+
+	for _, test := range []struct {
+		name  string
+		frame []byte
+	}{
+		{name: "header eof", frame: nil},
+		{name: "zero length", frame: make([]byte, 4)},
+		{name: "too large", frame: binary.BigEndian.AppendUint32(nil, 9)},
+	} {
+		t.Run("not called on "+test.name, func(t *testing.T) {
+			t.Parallel()
+			var h Hello
+			err := ReadFrameLimit(bytes.NewReader(test.frame), 8, func() error {
+				t.Error("guard called")
+				return nil
+			}, &h)
+			if err == nil {
+				t.Fatal("ReadFrameLimit() succeeded, want error")
+			}
+		})
+	}
+
+	t.Run("stalled body", func(t *testing.T) {
+		t.Parallel()
+		var h Hello
+		err := ReadFrameLimit(bytes.NewReader(raw[:len(raw)-1]), MaxFrameLen, func() error { return nil }, &h)
+		if !errors.Is(err, ErrFrameBodyIncomplete) || !errors.Is(err, io.EOF) {
+			t.Fatalf("error = %v, want ErrFrameBodyIncomplete wrapping io.EOF", err)
+		}
+	})
+}
+
+func TestFrameLimitCapsAtMaxFrameLen(t *testing.T) {
+	t.Parallel()
+	hdr := binary.BigEndian.AppendUint32(nil, MaxFrameLen+1)
+	cr := &countingFrameReader{r: bytes.NewReader(hdr)}
+	var h Hello
+	if err := ReadFrameLimit(cr, 2*MaxFrameLen, nil, &h); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("ReadFrameLimit() error = %v, want ErrFrameTooLarge", err)
+	}
+	writer := &discardFrameWriter{}
+	big := Command{Command: CmdInstallKey, OpCert: make([]byte, MaxFrameLen)}
+	if err := WriteFrameLimit(writer, 2*MaxFrameLen, big); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("WriteFrameLimit() error = %v, want ErrFrameTooLarge", err)
+	}
+	if writer.bytes != 0 {
+		t.Fatalf("WriteFrameLimit() wrote %d bytes, want none", writer.bytes)
+	}
+	push := KeyPush{Type: "key_push", KESSignKey: make([]byte, MaxFrameLen*3/4)}
+	if err := WriteFrameLimit(writer, 2*MaxFrameLen, push); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("WriteFrameLimit(KeyPush) error = %v, want ErrFrameTooLarge", err)
 	}
 }

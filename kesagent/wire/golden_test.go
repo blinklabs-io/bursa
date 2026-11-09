@@ -148,7 +148,7 @@ func TestGoldenFrames(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := tc.fresh()
-			if err := ReadFrameLimit(bytes.NewReader(raw), MaxFrameLen, got); err != nil {
+			if err := ReadFrameLimit(bytes.NewReader(raw), MaxFrameLen, nil, got); err != nil {
 				t.Fatalf("ReadFrameLimit: %v", err)
 			}
 			if !reflect.DeepEqual(reflect.ValueOf(got).Elem().Interface(), tc.value) {
@@ -189,7 +189,7 @@ func TestFrameLimitRejectsOversizedRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	var h Hello
-	err := ReadFrameLimit(&frame, 8, &h)
+	err := ReadFrameLimit(&frame, 8, nil, &h)
 	if !errors.Is(err, ErrFrameTooLarge) {
 		t.Fatalf("ReadFrameLimit() error = %v, want ErrFrameTooLarge", err)
 	}
@@ -201,10 +201,10 @@ func TestFrameLimitRejectsOversizedRead(t *testing.T) {
 func TestFrameLimitHeaderErrorsUnwrapped(t *testing.T) {
 	t.Parallel()
 	var h Hello
-	if err := ReadFrameLimit(bytes.NewReader(nil), MaxFrameLen, &h); err != io.EOF {
+	if err := ReadFrameLimit(bytes.NewReader(nil), MaxFrameLen, nil, &h); err != io.EOF {
 		t.Fatalf("empty read error = %v, want io.EOF", err)
 	}
-	if err := ReadFrameLimit(bytes.NewReader(make([]byte, 4)), MaxFrameLen, &h); err == nil {
+	if err := ReadFrameLimit(bytes.NewReader(make([]byte, 4)), MaxFrameLen, nil, &h); err == nil {
 		t.Fatal("zero-length frame accepted")
 	}
 }
@@ -214,7 +214,7 @@ func TestReadFrameLimitBodyEOF(t *testing.T) {
 	// Header advertises 10 bytes; only 3 follow.
 	raw := []byte{0, 0, 0, 10, '{', '}', ' '}
 	var h Hello
-	err := ReadFrameLimit(bytes.NewReader(raw), MaxFrameLen, &h)
+	err := ReadFrameLimit(bytes.NewReader(raw), MaxFrameLen, nil, &h)
 	if !errors.Is(err, ErrFrameBodyIncomplete) {
 		t.Fatalf("error = %v, want ErrFrameBodyIncomplete", err)
 	}
@@ -237,7 +237,7 @@ func TestReadFrameLimitBodyDeadline(t *testing.T) {
 	if err := server.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	err := ReadFrameLimit(server, MaxFrameLen, &h)
+	err := ReadFrameLimit(server, MaxFrameLen, nil, &h)
 	if !errors.Is(err, ErrFrameBodyIncomplete) {
 		t.Fatalf("error = %v, want ErrFrameBodyIncomplete", err)
 	}

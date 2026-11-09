@@ -41,14 +41,16 @@ var (
 	// the caller's maximum, on read or write.
 	ErrFrameTooLarge = errors.New("kesagent: frame too large")
 	// ErrFrameBodyIncomplete is wrapped, together with the underlying error,
-	// when a frame header was read but the body could not be.
+	// when a frame header was read but the body could not be: the peer
+	// declared a length and then stalled or closed the connection.
 	ErrFrameBodyIncomplete = errors.New("kesagent: frame body incomplete")
 )
 
 // WriteFrameLimit writes a single length-prefixed JSON frame whose payload is
-// at most max bytes. It sets no deadline; the caller owns them. A payload from
-// a FrameMarshaler is wiped after the write.
+// at most max bytes, and never more than MaxFrameLen. It sets no deadline; the
+// caller owns them. A payload from a FrameMarshaler is wiped after the write.
 func WriteFrameLimit(w io.Writer, max int, v any) error {
+	max = min(max, MaxFrameLen)
 	var payload []byte
 	var err error
 	if m, ok := v.(FrameMarshaler); ok {
@@ -88,12 +90,24 @@ func WriteFrameLimit(w io.Writer, max int, v any) error {
 }
 
 // ReadFrameLimit reads a single length-prefixed JSON frame of at most max
-// payload bytes into v. It sets no deadline; the caller owns them. A header
-// read error is returned unwrapped so callers can distinguish io.EOF. Once the
-// header is read, a failure reading the body wraps ErrFrameBodyIncomplete and
-// the underlying error. The body buffer is wiped before ReadFrameLimit
-// returns.
-func ReadFrameLimit(r io.Reader, max int, v any) error {
+// payload bytes, and never more than MaxFrameLen, into v. It sets no deadline;
+// the caller owns them. A header read error is returned unwrapped so callers
+// can distinguish io.EOF.
+//
+// bodyGuard, if non-nil, runs once the header has been read and the declared
+// length accepted, before any of the body is read. A caller whose wait for the
+// header is legitimately unbounded can set a body deadline there. An error
+// from bodyGuard aborts the read and is returned unwrapped.
+//
+// A failure reading the body wraps ErrFrameBodyIncomplete and the underlying
+// error. The body buffer is wiped before ReadFrameLimit returns.
+func ReadFrameLimit(
+	r io.Reader,
+	max int,
+	bodyGuard func() error,
+	v any,
+) error {
+	max = min(max, MaxFrameLen)
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return err // may be io.EOF; callers distinguish
@@ -104,6 +118,11 @@ func ReadFrameLimit(r io.Reader, max int, v any) error {
 	}
 	if int64(n) > int64(max) {
 		return fmt.Errorf("%w (%d bytes)", ErrFrameTooLarge, n)
+	}
+	if bodyGuard != nil {
+		if err := bodyGuard(); err != nil {
+			return err
+		}
 	}
 	body, err := readFrameBody(r, int(n)) // #nosec G115 -- n <= max
 	// The body of a KeyPush carries the base64 signing key; wipe it on
