@@ -54,11 +54,12 @@ type SopsBackend struct {
 
 // NewProfiledSopsBackend builds a SOPS-backed backend. decrypt may be
 // sops.Decrypt. With a non-empty profile, the backend and its key references
-// implement Profiled, so the resolver and the watermark scope treat it as an
-// attested backend bound to that profile; an empty profile gives an
-// unprofiled backend. A sops backend signs in process, so there is no binding
-// signature: no proxy can move a request to another profile. The caller
-// validates the profile name.
+// implement Profiled: the resolver routes requests to it by that profile and
+// the coordinator keeps its watermark records under it. The profile routes;
+// it neither attests the backend nor authorizes a caller. An empty profile
+// gives an unprofiled backend. A sops backend signs in process, so there is
+// no binding signature: no proxy can move a request to another profile. The
+// caller validates the profile name.
 func NewProfiledSopsBackend(
 	name, profile string,
 	source SecretSource,
