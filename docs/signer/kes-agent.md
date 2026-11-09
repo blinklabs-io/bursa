@@ -39,7 +39,8 @@ profile in `kes_agent.profiles` with:
   by ASCII letters, digits, `.`, `_` or `-`, unique in the agent;
 - its own `cold_vkey_file` or `cold_vkey_hex`;
 - its network's `system_start`, `slot_length` (default 1),
-  `slots_per_kes_period` and `max_kes_evolutions` (default 62);
+  `slots_per_kes_period`, `max_kes_evolutions` (default 62) and
+  `max_clock_skew` (default `5s`);
 - its own `guard_file`. Two profiles may not share a guard file.
 
 Each profile has its own staged and active KES key, operational certificate,
@@ -138,7 +139,12 @@ The floor is persisted to `guard_file` via an atomic temp-file + rename write.
 Each profile has its own guard file and floor.
 `guard_file` is required; the daemon refuses to start without a durable path.
 In `sign` mode, requests for a period later than the agent's wall-clock current
-period are rejected before key evolution or guard persistence.
+period are rejected before key evolution or guard persistence. So is a header
+whose slot is ahead of the agent's current slot by more than `max_clock_skew`
+(a Go duration, default `5s`, five slots at a one-second `slot_length`):
+recording it would refuse every earlier slot until the clock reached it. Keep
+the agent's and the producers' clocks synchronised to well within that
+allowance.
 
 In `sign` mode the guard also records the slot and a SHA-256 of the body of the
 last header signed, in the same write as the floor. The agent signs at most one
