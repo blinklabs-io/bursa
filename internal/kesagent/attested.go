@@ -33,12 +33,13 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
 
 const (
 	// AttestedProtocolID is the protocol spoken by an attested KES workload.
-	AttestedProtocolID   = "bursa-attested-kes/1"
+	AttestedProtocolID   = wire.AttestedProtocolID
 	attestationNonceSize = 32
 	attesterMaxResponse  = 1 << 20
 )
@@ -54,27 +55,11 @@ var (
 	)
 )
 
-// AttestationRequest is the first client message after the attested protocol
-// hello. Nonce must be fresh and exactly 32 bytes.
-type AttestationRequest struct {
-	Type     string `json:"type"`
-	Protocol string `json:"protocol"`
-	Nonce    []byte `json:"nonce"`
-}
-
-// AttestationResponse binds the active KES state to measured-workload
-// evidence. The KES signing key is deliberately absent.
-type AttestationResponse struct {
-	Type        string `json:"type"`
-	Protocol    string `json:"protocol"`
-	Nonce       []byte `json:"nonce"`
-	Provider    string `json:"provider"`
-	KESVKey     []byte `json:"kes_vkey,omitempty"`
-	OpCert      []byte `json:"opcert,omitempty"`
-	Period      uint64 `json:"period,omitempty"`
-	Attestation []byte `json:"attestation,omitempty"`
-	Error       string `json:"error,omitempty"`
-}
+// AttestationRequest and AttestationResponse are defined in kesagent/wire.
+type (
+	AttestationRequest  = wire.AttestationRequest
+	AttestationResponse = wire.AttestationResponse
+)
 
 // Attester produces platform evidence that commits to binding. Implementations
 // live inside the protected workload and call the platform attestation API.

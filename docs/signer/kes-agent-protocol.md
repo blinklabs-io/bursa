@@ -2,8 +2,11 @@
 
 This document specifies the Unix-domain-socket protocol spoken by the bursa KES
 agent (`bursa kes-agent`) so a client (e.g. a dingo block producer) can
-implement it. It is transcribed from `internal/kesagent/protocol.go` and
-`internal/kesagent/control.go`.
+implement it. The frame types, constants and framing are defined in the public
+Go package `github.com/blinklabs-io/bursa/kesagent/wire` (`kesagent/wire`),
+which clients should import rather than copy; golden frames are in
+`kesagent/wire/testdata/frames`. Agent behavior is in
+`internal/kesagent/protocol.go` and `internal/kesagent/control.go`.
 
 The agent exposes two sockets:
 
