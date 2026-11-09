@@ -24,13 +24,14 @@ import (
 // subcommands accepts stray arguments unless it sets Args, so a misspelled
 // subcommand would run the parent instead (for a server command, start a
 // second service). Every command that both runs and has subcommands must set
-// Args.
+// an Args validator that rejects a stray argument.
 func TestRunnableParentsRejectStrayArgs(t *testing.T) {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if c.HasParent() && c.Runnable() && c.HasSubCommands() && c.Args == nil {
+		if c.HasParent() && c.Runnable() && c.HasSubCommands() &&
+			(c.Args == nil || c.Args(c, []string{"counter-rest"}) == nil) {
 			t.Errorf(
-				"%q runs and has subcommands but sets no Args, so a misspelled subcommand runs it",
+				"%q runs, has subcommands and accepts a stray argument, so a misspelled subcommand runs it",
 				c.CommandPath(),
 			)
 		}
