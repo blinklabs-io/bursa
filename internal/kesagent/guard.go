@@ -119,15 +119,16 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 		return g, nil
 	}
 	// Lock before reading, so the record loaded is the one this process
-	// alone will advance. The sidecar is named from the guard directory with
-	// symlinks resolved, so two spellings of one directory share one lock;
-	// resolving it also fails here, on every platform, when the directory
-	// is missing. A hard link to the guard file is not detected.
-	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	// alone will advance. The sidecar is named from the guard path with
+	// symlinks resolved, so a symlink to a guard file locks the same sidecar
+	// as the file itself; resolving it also fails here, on every platform,
+	// when the directory is missing. A hard link to the guard file is not
+	// detected.
+	lockBase, err := resolveGuardPath(path)
 	if err != nil {
-		return nil, fmt.Errorf("kesagent: guard directory: %w", err)
+		return nil, err
 	}
-	lock, err := lockGuardFile(filepath.Join(dir, filepath.Base(path)) + ".lock")
+	lock, err := lockGuardFile(lockBase + ".lock")
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +138,23 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 		return nil, err
 	}
 	return g, nil
+}
+
+// resolveGuardPath returns path with symlinks resolved: the file itself when
+// it exists, otherwise its directory joined with its base name.
+func resolveGuardPath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("kesagent: resolve guard file: %w", err)
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("kesagent: guard directory: %w", err)
+	}
+	return filepath.Join(dir, filepath.Base(path)), nil
 }
 
 // load reads the guard file into g. A missing or empty file leaves g empty
