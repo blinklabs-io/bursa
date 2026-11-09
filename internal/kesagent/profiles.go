@@ -96,7 +96,8 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			GuardPath:         cfg.GuardPath,
 		}}
 	} else if cfg.ColdVKey != nil || cfg.GuardPath != "" ||
-		!cfg.SystemStart.IsZero() {
+		!cfg.SystemStart.IsZero() || cfg.ShelleyStartSlot != 0 ||
+		!cfg.ShelleyStartTime.IsZero() {
 		return nil, errors.New(
 			"kesagent: set either profiles or the single-pool fields, not both",
 		)
