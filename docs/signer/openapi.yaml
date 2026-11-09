@@ -289,8 +289,9 @@ components:
       description: |
         JWT validated by either an HS256 shared secret (`signer.jwt_secret`,
         development) or JWKS (`signer.jwks_url`, RS256/ES256/EdDSA, production).
-        `iss`/`aud` are enforced when `signer.jwt_issuer`/`signer.jwt_audience`
-        are configured. The `sub` claim keys the caller ACL. Lowest precedence.
+        `aud` must match the required `signer.jwt_audience`; `iss` is enforced
+        when `signer.jwt_issuer` is configured. The `sub` claim keys the caller
+        ACL. Lowest precedence.
   schemas:
     SignRequest:
       type: object

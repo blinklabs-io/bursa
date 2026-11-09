@@ -27,6 +27,7 @@ Boot performs eager validation and exits non-zero on any of:
 
 - no authentication mode configured, or both `signer.jwt_secret` and
   `signer.jwks_url` set;
+- `signer.jwt_secret` or `signer.jwks_url` set without `signer.jwt_audience`;
 - `signer.jwt_secret` shorter than 32 bytes;
 - only one of `tls_cert_file` / `tls_key_file` set;
 - a non-loopback listen address without TLS;
@@ -54,8 +55,11 @@ Configure **at most one** validator:
 - **JWKS** (`signer.jwks_url`) - production. Verifies RS256/ES256/EdDSA against
   the identity provider's published keys.
 
-`signer.jwt_issuer` and `signer.jwt_audience` are enforced when set; leave them
-unset only if you intend to accept any issuer/audience (a warning is logged).
+`signer.jwt_audience` is required whenever either validator is configured, and
+every token must carry it in `aud`; boot fails without it. Otherwise a token the
+same identity provider or shared secret issued for another service would
+authenticate here. `signer.jwt_issuer` is enforced when set; leave it unset only
+if you intend to accept any issuer (a warning is logged).
 The caller identity is the token `sub` claim.
 
 ### mTLS client certificate

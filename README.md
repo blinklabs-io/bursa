@@ -109,8 +109,9 @@ private key, and exactly one of these API trust sources is configured:
 - `API_JWKS_URL` / `api.jwks_url`: an HTTPS JWKS endpoint (plain HTTP is only
   accepted for loopback development).
 
-`API_JWT_ISSUER` / `api.jwt_issuer` and `API_JWT_AUDIENCE` /
-`api.jwt_audience` optionally constrain accepted bearer tokens. The secret,
+`API_JWT_AUDIENCE` / `api.jwt_audience` is required with either trust source,
+and every bearer token must carry it in `aud`; startup fails without it.
+`API_JWT_ISSUER` / `api.jwt_issuer` optionally constrains the issuer. The secret,
 signing, and mnemonic/address-derivation endpoints require an
 `Authorization: Bearer <JWT>` header whenever API authentication is configured.
 When wallet persistence is enabled, the wallet `create`, `restore`, `list`,
@@ -194,8 +195,8 @@ api:
 
 Set `STORAGE_BACKEND`, `AWS_SECRET_PREFIX`, and `AWS_KMS_KEY_ARN` through the
 process environment when those values should stay outside the config file.
-Configure `API_JWT_SECRET` or `API_JWKS_URL` as the API trust source. Remote
-API listeners also require TLS.
+Configure `API_JWT_SECRET` or `API_JWKS_URL` as the API trust source, together
+with `API_JWT_AUDIENCE`. Remote API listeners also require TLS.
 
 ### Kubernetes and Helm deployment contract
 
@@ -206,7 +207,7 @@ dedicated loopback listener, which defaults to `127.0.0.1:8081`; scrape it with
 a collector in the same pod. When Google
 Secret Manager persistence is enabled, the deployment must inject
 `GOOGLE_PROJECT`, `GCP_KMS_RESOURCE_ID`, and `GCP_SECRET_PREFIX`, provide
-`API_JWT_SECRET` or `API_JWKS_URL`, provide at least one
+`API_JWT_SECRET` or `API_JWKS_URL` with `API_JWT_AUDIENCE`, provide at least one
 `API_JWT_ADMIN_SUBJECTS` value, and mount the matching TLS certificate and key
 as `API_TLS_CERT_FILE` and `API_TLS_KEY_FILE`. The API refuses a non-loopback
 listener without both TLS files and authentication. These values belong in
