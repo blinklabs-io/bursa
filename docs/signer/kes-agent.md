@@ -162,7 +162,8 @@ expected on a first start, so the agent still starts, but it logs a warning
 naming the file and sets `bursa_kesagent_guard_fresh` to 1 for that profile.
 On any later start it means the record of signed slots was lost (for example a
 wiped volume), and the agent could sign a second header for a slot it already
-signed; alert on this gauge.
+signed; alert on this gauge. Since the gauge is also 1 on a first start,
+silence that alert for a profile's first deployment.
 
 For restart recovery, preserve the guard on durable storage available only to
 the approved workload measurement, then stage and install a key whose current
