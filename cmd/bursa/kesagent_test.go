@@ -15,10 +15,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
-	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -267,34 +263,5 @@ func TestAttestedServiceConfigProviders(t *testing.T) {
 		if err != nil || cfg.Provider != provider || cfg.Attester == nil {
 			t.Fatalf("%s with attester refused: %v", provider, err)
 		}
-	}
-}
-
-func TestServerCertFingerprint(t *testing.T) {
-	t.Parallel()
-	certFile, _ := writeConfidentialSpaceTLSFixture(t)
-	data, err := os.ReadFile(certFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, _ := pem.Decode(data)
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(der)
-	got, err := serverCertFingerprint(certFile)
-	if err != nil {
-		t.Fatalf("serverCertFingerprint: %v", err)
-	}
-	if got != hex.EncodeToString(sum[:]) {
-		t.Fatalf("fingerprint = %q, want %q", got, hex.EncodeToString(sum[:]))
-	}
-	if _, err := serverCertFingerprint(filepath.Join(t.TempDir(), "none")); err == nil {
-		t.Fatal("missing certificate accepted")
 	}
 }

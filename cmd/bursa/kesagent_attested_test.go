@@ -15,8 +15,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -35,7 +39,7 @@ func TestAttestedListenerPlaintextRefusesTLSFiles(t *testing.T) {
 	for name, kc := range cases {
 		kc.AttestedListenAddress = "127.0.0.1:0"
 		kc.AttestedPlaintext = true
-		ln, err := attestedListener(kc)
+		ln, _, err := attestedListener(kc)
 		if err == nil {
 			_ = ln.Close()
 			t.Fatalf("%s: plaintext with a TLS file was accepted", name)
@@ -45,7 +49,7 @@ func TestAttestedListenerPlaintextRefusesTLSFiles(t *testing.T) {
 
 func TestAttestedListenerPlaintextServesPlainTCP(t *testing.T) {
 	t.Parallel()
-	ln, err := attestedListener(config.KESAgentConfig{
+	ln, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedPlaintext:     true,
 	})
@@ -79,7 +83,7 @@ func TestAttestedListenerPlaintextServesPlainTCP(t *testing.T) {
 func TestAttestedListenerTLSRequiresCertAndKey(t *testing.T) {
 	t.Parallel()
 	certFile, _ := writeConfidentialSpaceTLSFixture(t)
-	ln, err := attestedListener(config.KESAgentConfig{
+	ln, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 	})
@@ -132,7 +136,7 @@ func acceptHandshake(t *testing.T, ln net.Listener) (error, int) {
 func TestAttestedListenerTLSWithoutClientCAAcceptsNoCert(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
-	ln, err := attestedListener(config.KESAgentConfig{
+	ln, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 		AttestedTLSKeyFile:    keyFile,
@@ -149,7 +153,7 @@ func TestAttestedListenerTLSWithoutClientCAAcceptsNoCert(t *testing.T) {
 func TestAttestedListenerTLSWithClientCARefusesNoCert(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
-	ln, err := attestedListener(config.KESAgentConfig{
+	ln, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 		AttestedTLSKeyFile:    keyFile,
@@ -161,6 +165,74 @@ func TestAttestedListenerTLSWithClientCARefusesNoCert(t *testing.T) {
 	defer ln.Close()
 	if err, _ := acceptHandshake(t, ln); err == nil {
 		t.Fatal("handshake without a client cert succeeded with a client CA set")
+	}
+}
+
+// TestAttestedListenerPinMatchesServedCert checks that the reported pin is the
+// SHA-256 SPKI of the certificate the listener serves, even when the
+// certificate file changes after the listener has loaded it.
+func TestAttestedListenerPinMatchesServedCert(t *testing.T) {
+	t.Parallel()
+	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
+	ln, pin, err := attestedListener(config.KESAgentConfig{
+		AttestedListenAddress: "127.0.0.1:0",
+		AttestedTLSCertFile:   certFile,
+		AttestedTLSKeyFile:    keyFile,
+	})
+	if err != nil {
+		t.Fatalf("attestedListener: %v", err)
+	}
+	defer ln.Close()
+	otherCert, _ := writeConfidentialSpaceTLSFixture(t)
+	other, err := os.ReadFile(otherCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certFile, other, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_ = c.(*tls.Conn).Handshake()
+	}()
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{Timeout: 5 * time.Second}, "tcp", ln.Addr().String(),
+		&tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, //nolint:gosec // throwaway test certificate
+		},
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	served := conn.ConnectionState().PeerCertificates[0]
+	der, err := x509.MarshalPKIXPublicKey(served.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	if want := hex.EncodeToString(sum[:]); pin != want {
+		t.Fatalf("pin = %q, want served certificate SPKI %q", pin, want)
+	}
+}
+
+func TestAttestedListenerPlaintextHasNoPin(t *testing.T) {
+	t.Parallel()
+	ln, pin, err := attestedListener(config.KESAgentConfig{
+		AttestedListenAddress: "127.0.0.1:0",
+		AttestedPlaintext:     true,
+	})
+	if err != nil {
+		t.Fatalf("attestedListener: %v", err)
+	}
+	defer ln.Close()
+	if pin != "" {
+		t.Fatalf("plaintext listener reported pin %q", pin)
 	}
 }
 

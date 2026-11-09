@@ -32,7 +32,7 @@ func TestAttestedListenerRejectsPermissiveKey(t *testing.T) {
 			if err := os.Chmod(keyFile, mode); err != nil {
 				t.Fatal(err)
 			}
-			listener, err := attestedListener(config.KESAgentConfig{
+			listener, _, err := attestedListener(config.KESAgentConfig{
 				AttestedListenAddress: "127.0.0.1:0",
 				AttestedTLSCertFile:   certFile,
 				AttestedTLSKeyFile:    keyFile,
