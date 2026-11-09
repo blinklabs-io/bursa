@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -818,5 +819,56 @@ func TestWrongIdentityRefusesMultiProfile(t *testing.T) {
 	_, err := b.SignHeader(5, px.header.encode(t))
 	if !errors.Is(err, ErrNoActiveKey) || !errors.As(err, &noMatch) {
 		t.Fatalf("B SignHeader for pool-x: want ErrNoActiveKey naming the unseal failure, got %v", err)
+	}
+}
+
+// TestNewKeySealerRefusesASharedIdentityFile checks that an age identity file
+// group or other users can read is refused, as other secret key files are.
+func TestNewKeySealerRefusesASharedIdentityFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file mode bits are not enforced on windows")
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "age-identity.txt")
+	if err := os.WriteFile(path, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewKeySealer([]string{id.Recipient().String()}, path); err == nil {
+		t.Fatal("NewKeySealer accepted an identity file readable by others")
+	}
+}
+
+// TestInstallOfAnInstalledKeyClearsStaged checks that an install answered by
+// the record another replica already installed drops this replica's staged
+// key, as an install of the staged record does.
+func TestInstallOfAnInstalledKeyClearsStaged(t *testing.T) {
+	ra, rb := memReplicas()
+	cold := newColdKey(t)
+	sealer := testSealer(t)
+	a := sharedKeyAgent(t, cold, ra, sealer)
+	b := sharedKeyAgent(t, cold, rb, sealer)
+	vkey, err := a.GenStagedKey()
+	if err != nil {
+		t.Fatalf("A GenStagedKey: %v", err)
+	}
+	opcert := makeOpCert(t, vkey, 7, 3, cold)
+	if _, err := b.InstallKey(opcert); err != nil {
+		t.Fatalf("B InstallKey: %v", err)
+	}
+	if _, err := a.InstallKey(opcert); err != nil {
+		t.Fatalf("A InstallKey of the installed opcert: %v", err)
+	}
+	p := sole(t, a)
+	p.mu.Lock()
+	staged := p.staged
+	p.mu.Unlock()
+	if staged != nil {
+		t.Fatal("A kept its staged key after the install")
 	}
 }

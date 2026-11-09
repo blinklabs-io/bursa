@@ -224,7 +224,8 @@ kes_agent:
 ```
 
 `age_recipients` and `age_identity_file` are set together and only with
-`type: postgres`. The keys live in the `kes_agent_key` table, created on first
+`type: postgres`. Like other secret key files, `age_identity_file` is refused
+when group or other users can access it. The keys live in the `kes_agent_key` table, created on first
 use, with at most one staged and one installed key per pool cold key and
 network (the same identity the guard records use).
 

@@ -22,10 +22,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"filippo.io/age"
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/kesagent/securemem"
 	"github.com/blinklabs-io/gouroboros/kes"
 )
@@ -101,7 +101,9 @@ func NewKeySealer(recipients []string, identityFile string) (*KeySealer, error) 
 	if err != nil {
 		return nil, fmt.Errorf("kesagent: parse age recipients: %w", err)
 	}
-	raw, err := os.ReadFile(identityFile) // #nosec G304 -- operator-configured path
+	// Read as a secret key file: anyone who can read it can open the stored
+	// keys, so group or other access is refused as for other key files.
+	raw, err := bursa.ReadSecretKeyFile(identityFile)
 	if err != nil {
 		return nil, fmt.Errorf("kesagent: read age identity file: %w", err)
 	}
