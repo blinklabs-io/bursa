@@ -60,8 +60,8 @@ SIGNER_DEV_KEYS="$SIGNER_DEV_DIR/keys"
 # In "$SIGNER_DEV_CONFIG":
 #   - clear jwks_url (blank string) and leave jwt_secret blank. The helper
 #     generated SIGNER_JWT_SECRET in the owner-only auth.env file (exactly one
-#     of jwt_secret and jwks_url may be set). Keep jwt_audience: bearer
-#     tokens must carry it in their aud claim, and boot fails without it
+#     of jwt_secret and jwks_url may be set). Keep jwt_audience configured;
+#     bearer tokens must carry it in their aud claim, and boot fails without it
 #   - clear tls_cert_file and tls_key_file (loopback may run plaintext)
 #   - replace the `backends:` list with a single software entry:
 #       backends:

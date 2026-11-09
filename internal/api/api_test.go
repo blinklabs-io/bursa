@@ -620,12 +620,32 @@ func TestBuildAPIAuthValidatesTrustSource(t *testing.T) {
 	}})
 	assert.ErrorContains(t, err, "api.jwt_audience")
 
-	auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
-		JWTSecret:   strings.Repeat("s", 32),
-		JWTAudience: testAPIAudience,
-	}})
-	assert.NoError(t, err)
-	assert.NotNil(t, auth)
+	secret := strings.Repeat("s", 32)
+	for _, audience := range []string{"bursa-api", "wallet-service"} {
+		auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+			JWTSecret:   secret,
+			JWTAudience: audience,
+		}})
+		require.NoError(t, err)
+		require.NotNil(t, auth)
+		for _, tokenAudience := range []string{"bursa-api", "wallet-service"} {
+			token, err := jwt.NewWithClaims(
+				jwt.SigningMethodHS256,
+				jwt.RegisteredClaims{
+					Subject:   "caller",
+					Audience:  jwt.ClaimStrings{tokenAudience},
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+				},
+			).SignedString([]byte(secret))
+			require.NoError(t, err)
+			_, err = auth(token)
+			if tokenAudience == audience {
+				assert.NoError(t, err, "audience %q", audience)
+			} else {
+				assert.Error(t, err, "configured %q accepted %q", audience, tokenAudience)
+			}
+		}
+	}
 }
 
 func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {

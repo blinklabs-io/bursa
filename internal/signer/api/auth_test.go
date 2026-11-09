@@ -20,6 +20,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -356,10 +357,10 @@ func TestJWKSValidator_RejectsPlainHTTPNonLoopback(t *testing.T) {
 		context.Background(),
 		"http://idp.example.com/jwks.json",
 		"",
-		"",
+		testAudience,
 	)
-	if err == nil {
-		t.Fatal("expected error for plain http JWKS URL on non-loopback host")
+	if !errors.Is(err, errJWKSURLPolicy) {
+		t.Fatalf("expected the JWKS URL policy error, got %v", err)
 	}
 }
 
@@ -371,10 +372,10 @@ func TestJWKSValidator_FailsFastOnUnreachableJWKS(t *testing.T) {
 		context.Background(),
 		"http://127.0.0.1:1/jwks.json",
 		"",
-		"",
+		testAudience,
 	)
-	if err == nil {
-		t.Fatal("expected construction error for unreachable JWKS endpoint")
+	if err == nil || !strings.Contains(err.Error(), "fetch jwks") {
+		t.Fatalf("expected a JWKS fetch error, got %v", err)
 	}
 }
 
@@ -561,8 +562,8 @@ func TestValidatorsRequireAudience(t *testing.T) {
 		[]byte("0123456789abcdef0123456789abcdef"),
 		"https://issuer.example",
 		"",
-	); err == nil {
-		t.Fatal("HS256Validator accepted an empty audience")
+	); !errors.Is(err, ErrAudienceRequired) {
+		t.Fatalf("HS256Validator with empty audience: got %v", err)
 	}
 
 	fetched := false
@@ -579,8 +580,8 @@ func TestValidatorsRequireAudience(t *testing.T) {
 		ts.URL,
 		"https://issuer.example",
 		"",
-	); err == nil {
-		t.Fatal("JWKSValidator accepted an empty audience")
+	); !errors.Is(err, ErrAudienceRequired) {
+		t.Fatalf("JWKSValidator with empty audience: got %v", err)
 	}
 	if fetched {
 		t.Fatal("JWKSValidator fetched the key set before rejecting the config")
