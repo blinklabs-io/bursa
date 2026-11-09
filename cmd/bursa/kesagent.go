@@ -64,6 +64,9 @@ The pool cold signing key never touches the agent: it only holds the cold
 verification key and consumes the operational certificate the cold signer
 issued. Manage keys over the control socket: gen-staged-key, install-key,
 drop-key, info.`,
+		// A non-root command with subcommands accepts stray arguments by
+		// default, so a misspelled subcommand would start the daemon.
+		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			os.Exit(runKesAgent(configFile))
 		},

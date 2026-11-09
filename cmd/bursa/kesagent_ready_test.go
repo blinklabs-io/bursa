@@ -128,3 +128,11 @@ func TestCheckKesAgentReadyMetricsDisabled(t *testing.T) {
 		t.Fatalf("metrics disabled: want an error naming metrics.port, got %v", err)
 	}
 }
+
+// TestKesAgentRejectsUnknownSubcommand: a misspelled subcommand fails
+// instead of starting the daemon.
+func TestKesAgentRejectsUnknownSubcommand(t *testing.T) {
+	if err := kesAgentCommand().ValidateArgs([]string{"reday"}); err == nil {
+		t.Fatal("kes-agent reday: want an error, got nil")
+	}
+}
