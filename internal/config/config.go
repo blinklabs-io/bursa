@@ -100,6 +100,33 @@ type KESAgentConfig struct {
 	// be left unset, and slot_length and max_kes_evolutions at their
 	// defaults. Profiles are configured in YAML only.
 	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`
+	// Store optionally moves every profile's period floor and signed slot
+	// records from guard files into a database that several agent replicas
+	// share. Without it the agent uses guard files. YAML only.
+	Store KESAgentStoreConfig `yaml:"store"                   ignored:"true"`
+}
+
+// KESAgentStoreConfig selects where the KES agent keeps its slot guard.
+type KESAgentStoreConfig struct {
+	// Type is "file" (the default when empty: each profile's guard_file) or
+	// "postgres" (a shared PostgreSQL database; guard_file must be unset).
+	Type string `yaml:"type"`
+	// DSNEnv names an environment variable holding the PostgreSQL connection
+	// string, so credentials stay out of the config file. A non-loopback
+	// host requires sslmode=verify-full.
+	DSNEnv string `yaml:"dsn_env"`
+	// AgeRecipients and AgeIdentityFile, set together and only with type
+	// "postgres", make the replicas share each profile's KES key: a staged
+	// key is sealed with age to AgeRecipients and kept in the database, and
+	// every replica unseals the installed key with the identities in
+	// AgeIdentityFile. Without them each replica keeps its own key in
+	// memory only.
+	AgeRecipients   []string `yaml:"age_recipients"`
+	AgeIdentityFile string   `yaml:"age_identity_file"`
+	// KeyPollInterval is how often each replica checks the database for a
+	// newly installed key (a Go duration; default 10s). It needs the age
+	// settings.
+	KeyPollInterval string `yaml:"key_poll_interval"`
 }
 
 // KESAgentProfileConfig is one pool on one network served by the KES agent.
