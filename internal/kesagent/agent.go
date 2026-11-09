@@ -45,6 +45,12 @@ var (
 	ErrFuturePeriod = errors.New(
 		"kesagent: requested KES period is in the future",
 	)
+	// ErrFutureSlot is returned for a header whose slot is ahead of the
+	// profile's current slot by more than its clock-skew allowance.
+	// Recording such a slot would refuse every earlier slot until it.
+	ErrFutureSlot = errors.New(
+		"kesagent: header slot is ahead of the current slot",
+	)
 	ErrOpCertColdVK = errors.New(
 		"kesagent: opcert cold vkey does not match configured cold vkey",
 	)
@@ -80,6 +86,7 @@ type Config struct {
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	GuardPath         string        // durable monotonic period store path
+	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
 }
 
 // ProfileConfig configures one profile: a pool's cold verification key, the
@@ -100,6 +107,7 @@ type ProfileConfig struct {
 	MaxKESEvolutions  uint64        // max opcert evolutions (mainnet: 62)
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	GuardPath         string        // durable monotonic period store path
+	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
 }
 
 // keyState is the in-memory state of a KES key. The raw secret key bytes live
@@ -224,6 +232,12 @@ func newProfile(
 	if cfg.MaxKESEvolutions == 0 {
 		cfg.MaxKESEvolutions = 62
 	}
+	if cfg.MaxClockSkew < 0 {
+		return nil, errors.New("kesagent: max_clock_skew must not be negative")
+	}
+	if cfg.MaxClockSkew == 0 {
+		cfg.MaxClockSkew = DefaultMaxClockSkew
+	}
 	if len(cfg.ColdVKey) != ed25519.PublicKeySize {
 		return nil, ErrColdVKey
 	}
@@ -244,6 +258,10 @@ func newProfile(
 		subs:    make(map[int]chan KeyPush),
 	}, nil
 }
+
+// DefaultMaxClockSkew is the clock-skew allowance for a header's slot when a
+// profile sets none: five one-second slots.
+const DefaultMaxClockSkew = 5 * time.Second
 
 // currentSlot computes the current absolute slot from the profile's slot
 // clock anchor: the first Shelley slot and its time when configured,
@@ -480,6 +498,17 @@ func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		p.metrics.incSign("error")
 		return nil, fmt.Errorf("%w: requested %d, current %d",
 			ErrFuturePeriod, period, currentPeriod)
+	}
+	if typed {
+		// A slot recorded ahead of the clock would refuse every earlier
+		// slot until the clock reached it.
+		current := p.currentSlot()
+		ahead := uint64(p.cfg.MaxClockSkew / p.cfg.SlotLength) // #nosec G115 -- both positive
+		if slot > current && slot-current > ahead {
+			p.metrics.incSign("error")
+			return nil, fmt.Errorf("%w: slot %d, current %d, allowance %d slots",
+				ErrFutureSlot, slot, current, ahead)
+		}
 	}
 	if period < p.active.absPeriod() {
 		p.metrics.incSign("error")

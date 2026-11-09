@@ -339,6 +339,7 @@ func kesAgentProfiles(
 			SlotLength:        kc.SlotLength,
 			SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
 			MaxKESEvolutions:  kc.MaxKESEvolutions,
+			MaxClockSkew:      kc.MaxClockSkew,
 			GuardFile:         kc.GuardFile,
 		}, "kes_agent")
 		if err != nil {
@@ -349,9 +350,9 @@ func kesAgentProfiles(
 	if kc.ColdVKeyFile != "" || kc.ColdVKeyHex != "" ||
 		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
 		kc.GuardFile != "" || kc.ShelleyStartTime != "" ||
-		kc.ShelleyStartSlot != 0 {
+		kc.ShelleyStartSlot != 0 || kc.MaxClockSkew != "" {
 		return nil, errors.New(
-			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period and guard_file; set them in each profile",
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew and guard_file; set them in each profile",
 		)
 	}
 	// slot_length and max_kes_evolutions carry config defaults, so only a
@@ -419,6 +420,17 @@ func kesAgentProfile(
 			)
 		}
 	}
+	var maxClockSkew time.Duration
+	if pc.MaxClockSkew != "" {
+		maxClockSkew, err = time.ParseDuration(pc.MaxClockSkew)
+		if err != nil || maxClockSkew <= 0 {
+			return kesagent.ProfileConfig{}, fmt.Errorf(
+				"%s.max_clock_skew must be a positive duration, got %q",
+				field,
+				pc.MaxClockSkew,
+			)
+		}
+	}
 	coldVKey, err := loadColdVKey(pc.ColdVKeyHex, pc.ColdVKeyFile)
 	if err != nil {
 		return kesagent.ProfileConfig{}, fmt.Errorf(
@@ -435,6 +447,7 @@ func kesAgentProfile(
 		SlotLength:        time.Duration(pc.SlotLength * float64(time.Second)),
 		SlotsPerKESPeriod: pc.SlotsPerKESPeriod,
 		MaxKESEvolutions:  pc.MaxKESEvolutions,
+		MaxClockSkew:      maxClockSkew,
 		ColdVKey:          coldVKey,
 		GuardPath:         pc.GuardFile,
 	}, nil
