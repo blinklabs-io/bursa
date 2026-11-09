@@ -236,6 +236,15 @@ func newProfile(
 			"kesagent: shelley_start_time is before system_start",
 		)
 	}
+	// currentSlot adds at most math.MaxInt64 elapsed slots to the anchor
+	// slot, so an anchor at or below math.MaxInt64 cannot wrap the sum.
+	if cfg.ShelleyStartSlot > math.MaxInt64 {
+		return nil, fmt.Errorf(
+			"kesagent: shelley_start_slot %d exceeds %d",
+			cfg.ShelleyStartSlot,
+			int64(math.MaxInt64),
+		)
+	}
 	if cfg.SlotLength <= 0 {
 		return nil, errors.New("kesagent: slot_length must be positive")
 	}

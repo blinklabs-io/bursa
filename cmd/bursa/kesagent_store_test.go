@@ -23,6 +23,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/kesagent"
 )
 
 func TestKesAgentStoreDSN(t *testing.T) {
@@ -92,9 +93,10 @@ func TestKesAgentStoreDSN(t *testing.T) {
 	}
 }
 
-// TestOpenKesAgentStoreRefusesRemotePlaintext checks that a non-loopback
-// PostgreSQL host without sslmode=verify-full is refused before connecting.
-func TestOpenKesAgentStoreRefusesRemotePlaintext(t *testing.T) {
+// TestOpenKesAgentStoreRefusesUnverifiedRemote checks that a non-loopback
+// PostgreSQL host without hostname-verified TLS (sslmode=verify-full) is
+// refused before connecting.
+func TestOpenKesAgentStoreRefusesUnverifiedRemote(t *testing.T) {
 	t.Setenv(
 		"BURSA_TEST_KESAGENT_STORE_REMOTE",
 		"postgres://u:p@db.example.invalid/db?sslmode=require",
@@ -233,5 +235,23 @@ func TestKesAgentKeySealer(t *testing.T) {
 				t.Fatalf("sealer set = %v poll = %v, want %v %v", sealer != nil, poll, tc.want, tc.wantPoll)
 			}
 		})
+	}
+}
+
+// TestValidateKesAgentStoreGuards checks that a guard file next to the
+// PostgreSQL store is refused, and that the file store keeps it.
+func TestValidateKesAgentStoreGuards(t *testing.T) {
+	withFile := []kesagent.ProfileConfig{{Name: "pool", GuardPath: "/var/lib/bursa/pool.json"}}
+	withoutFile := []kesagent.ProfileConfig{{Name: "pool"}}
+	pg := config.KESAgentStoreConfig{Type: "postgres", DSNEnv: "X"}
+	if err := validateKesAgentStoreGuards(pg, withFile); err == nil ||
+		!strings.Contains(err.Error(), "replaces guard_file") {
+		t.Fatalf("postgres with guard_file: err = %v, want a refusal", err)
+	}
+	if err := validateKesAgentStoreGuards(pg, withoutFile); err != nil {
+		t.Fatalf("postgres without guard_file: %v", err)
+	}
+	if err := validateKesAgentStoreGuards(config.KESAgentStoreConfig{}, withFile); err != nil {
+		t.Fatalf("file store with guard_file: %v", err)
 	}
 }

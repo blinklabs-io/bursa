@@ -153,6 +153,12 @@ func runKesAgent(configFile string) int {
 		}
 	}
 
+	// Refuse a guard file next to the shared store before connecting, so a
+	// refused configuration does not touch the database.
+	if err := validateKesAgentStoreGuards(kc.Store, profiles); err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
 	sealer, keyPollInterval, err := kesAgentKeySealer(kc.Store)
 	if err != nil {
 		logger.Error("invalid kes_agent.store", "error", err)
@@ -447,6 +453,27 @@ func openKesAgentKeyStore(
 	return kesagent.NewPostgresKeyStore(ctx, store.Pool())
 }
 
+// validateKesAgentStoreGuards refuses a profile guard file when sc names the
+// shared PostgreSQL store, which replaces it. kesagent.New refuses the same
+// combination; checking it here does so before the store is opened.
+func validateKesAgentStoreGuards(
+	sc config.KESAgentStoreConfig,
+	profiles []kesagent.ProfileConfig,
+) error {
+	if sc.Type != "postgres" {
+		return nil
+	}
+	for _, p := range profiles {
+		if p.GuardPath != "" {
+			return fmt.Errorf(
+				"kes_agent.store \"postgres\" replaces guard_file; leave it unset for profile %q",
+				p.Name,
+			)
+		}
+	}
+	return nil
+}
+
 // kesAgentStoreDSN validates sc and returns the PostgreSQL connection string
 // it names, or "" for the file store.
 func kesAgentStoreDSN(sc config.KESAgentStoreConfig) (string, error) {
@@ -509,6 +536,16 @@ func kesAgentProfiles(
 		kc.ShelleyStartSlot != 0 {
 		return nil, errors.New(
 			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period and guard_file; set them in each profile",
+		)
+	}
+	// slot_length and max_kes_evolutions carry config defaults, so only a
+	// value other than the default (or unset) can have been set by the
+	// operator; it would otherwise be ignored in favour of each profile's
+	// own setting.
+	if (kc.SlotLength != 0 && kc.SlotLength != 1) ||
+		(kc.MaxKESEvolutions != 0 && kc.MaxKESEvolutions != 62) {
+		return nil, errors.New(
+			"kes_agent.profiles replaces slot_length and max_kes_evolutions; set them in each profile",
 		)
 	}
 	out := make([]kesagent.ProfileConfig, 0, len(kc.Profiles))
