@@ -254,10 +254,13 @@ func (a *Agent) selectProfile(name string, kesVKey []byte) (*profile, error) {
 	return match, nil
 }
 
+// hasActiveVKey reports whether vkey is the profile's active key. It reads
+// the routing snapshot, not the key under p.mu, so routing a request never
+// waits on another profile's signing; the routed profile re-checks the key
+// under its own lock before signing.
 func (p *profile) hasActiveVKey(vkey []byte) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.active != nil && bytes.Equal(p.active.vkey, vkey)
+	active := p.activeVKey.Load()
+	return active != nil && bytes.Equal(*active, vkey)
 }
 
 // routeHeader returns the profile a header body belongs to: the one whose cold
