@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
@@ -77,6 +78,19 @@ func newSopsProfileCoordinator(
 	backends ...backend.Backend,
 ) (*Coordinator, *watermark.MemWatermark, backend.KeyHash) {
 	t.Helper()
+	wm := watermark.NewMemWatermark()
+	c, hash := newSopsProfileCoordinatorOn(t, wm, backends...)
+	return c, wm, hash
+}
+
+// newSopsProfileCoordinatorOn builds a coordinator over backends that records
+// in wm, allowing opcert, tx and cip8 requests for the one pool cold key.
+func newSopsProfileCoordinatorOn(
+	t *testing.T,
+	wm *watermark.MemWatermark,
+	backends ...backend.Backend,
+) (*Coordinator, backend.KeyHash) {
+	t.Helper()
 	keys, err := backends[0].ListKeys(context.Background())
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("ListKeys: %v len=%d", err, len(keys))
@@ -84,19 +98,24 @@ func newSopsProfileCoordinator(
 	hash := keys[0].Hash()
 	eng, err := policy.NewEngine([]policy.KeyPolicy{{
 		Hash:            hash.String(),
-		AllowedRequests: []string{"opcert"},
+		AllowedRequests: []string{"opcert", "tx", "cip8"},
+		Tx:              &policy.TxPolicy{},
+		CIP8:            &policy.CIP8Policy{MaxPayloadBytes: 64},
 	}})
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	wm := watermark.NewMemWatermark()
 	return New(Deps{
 		Resolver:  backend.NewResolver(backends...),
 		Policy:    eng,
 		Watermark: wm,
 		WMMode:    watermark.ModeEnforce,
-		Metrics:   NewMetrics(),
-	}), wm, hash
+		Cardano: fakeCardano{
+			insp: &bursa.TxInspection{TxId: "abc", TTL: 10},
+			txid: make([]byte, 32),
+		},
+		Metrics: NewMetrics(),
+	}), hash
 }
 
 // Two sops backends holding one cold key under distinct profiles keep
@@ -216,6 +235,94 @@ func TestSopsProfile_UnprofiledUnchanged(t *testing.T) {
 	}
 	if _, ok, _ := wm.CounterFor(bg, hash, opcertChainFloorScope+"|"+profPreview); ok {
 		t.Fatal("unprofiled sops key wrote a profiled scope")
+	}
+}
+
+// A profiled sops key is the one profiled key whose private key is in
+// process, so it serves CIP-8: under its own profile, refused under another,
+// and a profile-less request is refused while two profiles hold the key.
+func TestSopsProfile_CIP8(t *testing.T) {
+	t.Parallel()
+	bg := context.Background()
+	preview := newSopsProfileBackend(t, "cold-preview", profPreview)
+	keys, err := preview.ListKeys(bg)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListKeys: %v len=%d", err, len(keys))
+	}
+	addr := addrForKey(t, keys[0].PublicKey())
+
+	c, _, hash := newSopsProfileCoordinator(t, preview)
+	res, code, err := c.SignCIP8(WithProfile(bg, profPreview), []byte("hello"), addr, hash.String())
+	// the COSE_Key carries the sops key's public key
+	if err != nil || res.SignatureHex == "" || !strings.Contains(res.KeyHex, fmt.Sprintf("%x", keys[0].PublicKey())) {
+		t.Fatalf("own profile: res=%v code=%s err=%v", res, code, err)
+	}
+	if _, code, err = c.SignCIP8(WithProfile(bg, profMusashi), []byte("hello"), addr, hash.String()); err == nil || code != CodeNotFound {
+		t.Fatalf("other profile: code=%s err=%v, want not found", code, err)
+	}
+
+	c2, _, _ := newSopsProfileCoordinator(t, preview,
+		newSopsProfileBackend(t, "cold-musashi", profMusashi))
+	if _, code, err = c2.SignCIP8(bg, []byte("hello"), addr, hash.String()); code != CodeBadRequest || !errors.Is(err, backend.ErrProfileRequired) {
+		t.Fatalf("no profile, two holders: code=%s err=%v", code, err)
+	}
+	if res, code, err = c2.SignCIP8(WithProfile(bg, profMusashi), []byte("hello"), addr, hash.String()); err != nil || res.SignatureHex == "" {
+		t.Fatalf("second profile: res=%v code=%s err=%v", res, code, err)
+	}
+}
+
+// A tx signed by a profiled sops key is recorded under the profile only.
+func TestSopsProfile_TxRecordScope(t *testing.T) {
+	t.Parallel()
+	bg := context.Background()
+	c, wm, hash := newSopsProfileCoordinator(t,
+		newSopsProfileBackend(t, "cold-preview", profPreview),
+		newSopsProfileBackend(t, "cold-musashi", profMusashi))
+	res, perr, err := c.SignTx(WithProfile(bg, profPreview), []byte(testTxCbor), testTxEra, []string{hash.String()})
+	if err != nil || len(perr) != 0 || len(res.Witnesses) != 1 {
+		t.Fatalf("tx: res=%v perr=%v err=%v", res, perr, err)
+	}
+	txScope := "tx:" + strings.Repeat("00", 32)
+	if err := wm.Check(bg, hash, txScope+"|"+profPreview, []byte("other")); !errors.Is(err, watermark.ErrConflict) {
+		t.Errorf("tx record under %s: want ErrConflict, got %v", profPreview, err)
+	}
+	for _, scope := range []string{txScope, txScope + "|" + profMusashi} {
+		if err := wm.Check(bg, hash, scope, []byte("other")); err != nil {
+			t.Errorf("tx record written under scope %q: %v", scope, err)
+		}
+	}
+}
+
+// Records written before a sops backend had a profile still bound its opcert
+// requests while that profiled backend is the key's only holder. Once a
+// second profile holds the key they are not read, so each profile starts
+// empty.
+func TestSopsProfile_UnprofiledRecordsWhileOnlyHolder(t *testing.T) {
+	t.Parallel()
+	bg := context.Background()
+	kes := make([]byte, kesVkeySize)
+	wm := watermark.NewMemWatermark()
+
+	before, hash := newSopsProfileCoordinatorOn(t, wm, newSopsProfileBackend(t, "cold", ""))
+	id := hash.String()
+	if _, code, err := before.SignOpCertFromChain(bg, kes, 6, 1, id); err != nil {
+		t.Fatalf("unprofiled chain 6: code=%s err=%v", code, err)
+	}
+
+	only, _ := newSopsProfileCoordinatorOn(t, wm, newSopsProfileBackend(t, "cold", profPreview))
+	if _, code, err := only.SignOpCertFromChain(WithProfile(bg, profPreview), kes, 0, 1, id); err == nil || code != CodeConflict {
+		t.Fatalf("only holder, chain 0 below the unprofiled floor: code=%s err=%v, want conflict", code, err)
+	}
+	if _, code, err := only.SignOpCert(WithProfile(bg, profPreview), kes, 7, 1, id); err == nil || code != CodeConflict {
+		t.Fatalf("only holder, issue 7 at the unprofiled issued record: code=%s err=%v, want conflict", code, err)
+	}
+
+	two, _ := newSopsProfileCoordinatorOn(t, wm,
+		newSopsProfileBackend(t, "cold-preview", profPreview),
+		newSopsProfileBackend(t, "cold-musashi", profMusashi))
+	res, code, err := two.SignOpCertFromChain(WithProfile(bg, profPreview), kes, 0, 1, id)
+	if err != nil || res.IssueCounter != 1 {
+		t.Fatalf("two holders, chain 0: res=%v code=%s err=%v, want issue 1", res, code, err)
 	}
 }
 
