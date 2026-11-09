@@ -39,7 +39,7 @@ require (
 	github.com/swaggo/swag v1.16.6
 	github.com/utxorpc/go-codegen v0.19.2
 	golang.org/x/crypto v0.58.0
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
