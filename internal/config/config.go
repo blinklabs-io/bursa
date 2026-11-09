@@ -63,6 +63,13 @@ type KESAgentConfig struct {
 	ColdVKeyHex string `yaml:"cold_vkey_hex"           envconfig:"KESAGENT_COLD_VKEY_HEX"`
 	// SystemStart is the Shelley genesis system start (RFC3339).
 	SystemStart string `yaml:"system_start"            envconfig:"KESAGENT_SYSTEM_START"`
+	// ShelleyStartSlot and ShelleyStartTime (RFC3339) are the first Shelley
+	// slot and its time. They are required on networks whose Byron era used
+	// longer slots (mainnet: 4492800 at 2020-07-29T21:44:51Z; preprod: 86400
+	// at 2022-06-21T00:00:00Z); without them slots are counted from
+	// system_start at slot_length.
+	ShelleyStartSlot uint64 `yaml:"shelley_start_slot"      envconfig:"KESAGENT_SHELLEY_START_SLOT"`
+	ShelleyStartTime string `yaml:"shelley_start_time"      envconfig:"KESAGENT_SHELLEY_START_TIME"`
 	// SlotLength is the wall-clock length of one slot in seconds (default 1).
 	SlotLength float64 `yaml:"slot_length"             envconfig:"KESAGENT_SLOT_LENGTH"`
 	// MaxClockSkew (Go duration, default 5s) is how far ahead of the agent's
@@ -93,6 +100,33 @@ type KESAgentConfig struct {
 	// be left unset, and slot_length and max_kes_evolutions at their
 	// defaults. Profiles are configured in YAML only.
 	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`
+	// Store optionally moves every profile's period floor and signed slot
+	// records from guard files into a database that several agent replicas
+	// share. Without it the agent uses guard files. YAML only.
+	Store KESAgentStoreConfig `yaml:"store"                   ignored:"true"`
+}
+
+// KESAgentStoreConfig selects where the KES agent keeps its slot guard.
+type KESAgentStoreConfig struct {
+	// Type is "file" (the default when empty: each profile's guard_file) or
+	// "postgres" (a shared PostgreSQL database; guard_file must be unset).
+	Type string `yaml:"type"`
+	// DSNEnv names an environment variable holding the PostgreSQL connection
+	// string, so credentials stay out of the config file. A non-loopback
+	// host requires sslmode=verify-full.
+	DSNEnv string `yaml:"dsn_env"`
+	// AgeRecipients and AgeIdentityFile, set together and only with type
+	// "postgres", make the replicas share each profile's KES key: a staged
+	// key is sealed with age to AgeRecipients and kept in the database, and
+	// every replica unseals the installed key with the identities in
+	// AgeIdentityFile. Without them each replica keeps its own key in
+	// memory only.
+	AgeRecipients   []string `yaml:"age_recipients"`
+	AgeIdentityFile string   `yaml:"age_identity_file"`
+	// KeyPollInterval is how often each replica checks the database for a
+	// newly installed key (a Go duration; default 10s). It needs the age
+	// settings.
+	KeyPollInterval string `yaml:"key_poll_interval"`
 }
 
 // KESAgentProfileConfig is one pool on one network served by the KES agent.
@@ -102,6 +136,8 @@ type KESAgentProfileConfig struct {
 	ColdVKeyFile      string  `yaml:"cold_vkey_file"`
 	ColdVKeyHex       string  `yaml:"cold_vkey_hex"`
 	SystemStart       string  `yaml:"system_start"`
+	ShelleyStartSlot  uint64  `yaml:"shelley_start_slot"`
+	ShelleyStartTime  string  `yaml:"shelley_start_time"`
 	SlotLength        float64 `yaml:"slot_length"`
 	SlotsPerKESPeriod uint64  `yaml:"slots_per_kes_period"`
 	MaxKESEvolutions  uint64  `yaml:"max_kes_evolutions"`

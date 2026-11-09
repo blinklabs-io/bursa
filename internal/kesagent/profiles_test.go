@@ -95,13 +95,13 @@ func install(
 	opcertPeriod, slot, period uint64,
 ) installedProfile {
 	t.Helper()
-	reply := a.dispatch(Command{Command: CmdGenStagedKey, Profile: name})
+	reply := a.dispatch(context.Background(), Command{Command: CmdGenStagedKey, Profile: name})
 	if !reply.Ok {
 		t.Fatalf("gen-staged-key %s: %s", name, reply.Error)
 	}
 	vkey := reply.KESVKey
 	opcert := makeOpCert(t, vkey, 1, opcertPeriod, cold)
-	reply = a.dispatch(Command{
+	reply = a.dispatch(context.Background(), Command{
 		Command: CmdInstallKey,
 		Profile: name,
 		OpCert:  opcert,
@@ -316,15 +316,15 @@ func TestControlCommandsTakeAProfile(t *testing.T) {
 	)
 	install(t, a, "pool-a", coldA, 3, 52, 5)
 
-	reply := a.dispatch(Command{Command: CmdGenStagedKey})
+	reply := a.dispatch(context.Background(), Command{Command: CmdGenStagedKey})
 	if reply.Ok || !strings.Contains(reply.Error, ErrAmbiguousProfile.Error()) {
 		t.Fatalf("gen-staged-key without a profile: %+v", reply)
 	}
-	reply = a.dispatch(Command{Command: CmdDropKey, Profile: "pool-c"})
+	reply = a.dispatch(context.Background(), Command{Command: CmdDropKey, Profile: "pool-c"})
 	if reply.Ok || !strings.Contains(reply.Error, ErrUnknownProfile.Error()) {
 		t.Fatalf("drop-key for an unknown profile: %+v", reply)
 	}
-	reply = a.dispatch(Command{Command: CmdInfo})
+	reply = a.dispatch(context.Background(), Command{Command: CmdInfo})
 	if !reply.Ok || reply.Info != nil || len(reply.Profiles) != 2 {
 		t.Fatalf("info without a profile: %+v", reply)
 	}
@@ -332,11 +332,11 @@ func TestControlCommandsTakeAProfile(t *testing.T) {
 		reply.Profiles[1].Profile != "pool-b" || reply.Profiles[1].HasActiveKey {
 		t.Fatalf("info lists %+v", reply.Profiles)
 	}
-	reply = a.dispatch(Command{Command: CmdInfo, Profile: "pool-b"})
+	reply = a.dispatch(context.Background(), Command{Command: CmdInfo, Profile: "pool-b"})
 	if !reply.Ok || reply.Info == nil || reply.Info.Profile != "pool-b" {
 		t.Fatalf("info for pool-b: %+v", reply)
 	}
-	reply = a.dispatch(Command{Command: CmdDropKey, Profile: "pool-a"})
+	reply = a.dispatch(context.Background(), Command{Command: CmdDropKey, Profile: "pool-a"})
 	if !reply.Ok || reply.Info.HasActiveKey {
 		t.Fatalf("drop-key pool-a: %+v", reply)
 	}

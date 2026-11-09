@@ -81,12 +81,29 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 	if cfg.EvolveInterval <= 0 {
 		cfg.EvolveInterval = time.Minute
 	}
+	if (cfg.KeyStore == nil) != (cfg.KeySealer == nil) {
+		return nil, errors.New(
+			"kesagent: a shared key store and its age sealer are set together",
+		)
+	}
+	// Replicas holding one key with separate guards could each sign a
+	// different header for one slot, so a shared key needs the shared guard.
+	if cfg.KeyStore != nil && cfg.SharedGuard == nil {
+		return nil, errors.New(
+			"kesagent: a shared key store requires the shared guard store",
+		)
+	}
+	if cfg.KeyPollInterval <= 0 {
+		cfg.KeyPollInterval = defaultKeyPollInterval
+	}
 	profileCfgs := cfg.Profiles
 	if len(profileCfgs) == 0 {
 		profileCfgs = []ProfileConfig{{
 			Name:              DefaultProfileName,
 			Depth:             cfg.Depth,
 			SystemStart:       cfg.SystemStart,
+			ShelleyStartSlot:  cfg.ShelleyStartSlot,
+			ShelleyStartTime:  cfg.ShelleyStartTime,
 			SlotLength:        cfg.SlotLength,
 			SlotsPerKESPeriod: cfg.SlotsPerKESPeriod,
 			MaxKESEvolutions:  cfg.MaxKESEvolutions,
@@ -95,7 +112,8 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			GuardPath:         cfg.GuardPath,
 		}}
 	} else if cfg.ColdVKey != nil || cfg.GuardPath != "" ||
-		!cfg.SystemStart.IsZero() || cfg.MaxClockSkew != 0 {
+		!cfg.SystemStart.IsZero() || cfg.ShelleyStartSlot != 0 ||
+		!cfg.ShelleyStartTime.IsZero() || cfg.MaxClockSkew != 0 {
 		return nil, errors.New(
 			"kesagent: set either profiles or the single-pool fields, not both",
 		)
@@ -187,7 +205,16 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 			)
 		}
 		pools[poolKey] = pc.Name
-		p, err := newProfile(pc, cfg.Mode, logger, metrics, &a.now)
+		p, err := newProfile(
+			pc,
+			cfg.Mode,
+			logger,
+			metrics,
+			&a.now,
+			cfg.SharedGuard,
+			cfg.KeyStore,
+			cfg.KeySealer,
+		)
 		if err != nil {
 			a.Close()
 			return nil, fmt.Errorf("profile %q: %w", pc.Name, err)
@@ -285,12 +312,34 @@ func (a *Agent) routeHeader(headerBody []byte) (*profile, error) {
 		match = p
 	}
 	if match == nil {
+		if err := a.loadFailureFor(hb.IssuerVkey[:]); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf(
 			"%w: header matches no profile's cold key and active KES key",
 			ErrUnknownProfile,
 		)
 	}
 	return match, nil
+}
+
+// loadFailureFor returns, when exactly one profile has the cold key issuer
+// and that profile holds no key because loading the shared key failed, the
+// error a sign request for it reports. Otherwise it returns nil.
+func (a *Agent) loadFailureFor(issuer []byte) error {
+	var failed []error
+	for _, p := range a.profiles {
+		if !bytes.Equal(issuer, p.cfg.ColdVKey) {
+			continue
+		}
+		if err := p.loadFailure(); err != nil {
+			failed = append(failed, err)
+		}
+	}
+	if len(failed) != 1 {
+		return nil
+	}
+	return failed[0]
 }
 
 // signHeaderFor signs a header body for the profile it routes to. bound, when
@@ -417,22 +466,34 @@ func (a *Agent) Tick() {
 	}
 }
 
-// Run drives the evolution scheduler until ctx is cancelled.
+// Run drives the evolution scheduler until ctx is cancelled. With a shared
+// key store it also checks the store for a newly installed key every
+// KeyPollInterval; the caller runs SyncKeys once before serving.
 func (a *Agent) Run(ctx context.Context) {
 	a.Tick() // evolve immediately on start
 	ticker := time.NewTicker(a.cfg.EvolveInterval)
 	defer ticker.Stop()
+	var poll <-chan time.Time
+	if a.cfg.KeyStore != nil {
+		pollTicker := time.NewTicker(a.cfg.KeyPollInterval)
+		defer pollTicker.Stop()
+		poll = pollTicker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			a.Tick()
+		case <-poll:
+			// Failures are logged per profile and retried on the next poll.
+			_ = a.SyncKeys(ctx)
 		}
 	}
 }
 
-// Close wipes all key material in every profile.
+// Close wipes all key material in every profile and releases the guard file
+// locks.
 func (a *Agent) Close() {
 	for _, p := range a.profiles {
 		p.close()

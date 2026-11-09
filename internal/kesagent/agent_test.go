@@ -428,6 +428,7 @@ func TestInstallRefusedByGuardFloor(t *testing.T) {
 	if err := g.Authorize("prev", 100); err != nil {
 		t.Fatalf("seed guard: %v", err)
 	}
+	g.Close() // release the guard file lock for the agent
 
 	cfg := Config{
 		Mode:              ModeServeKey,
@@ -553,8 +554,9 @@ func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
 	}
 
 	// Make the next guard write fail before it can replace the durable floor.
-	guardPath := sole(t, a).guard.path
-	sole(t, a).guard.path = filepath.Join(t.TempDir(), "missing", "guard.json")
+	fileGuard := sole(t, a).guard.(*PeriodGuard)
+	guardPath := fileGuard.path
+	fileGuard.path = filepath.Join(t.TempDir(), "missing", "guard.json")
 	a.now = func() time.Time { return atPeriod(2) }
 	a.Tick()
 
@@ -578,7 +580,7 @@ func TestSubscribeRequiresCurrentGuardAuthorization(t *testing.T) {
 
 	// Restoring persistence lets the next tick authorize the already-evolved
 	// key and makes that exact period available to a new subscriber.
-	sole(t, a).guard.path = guardPath
+	fileGuard.path = guardPath
 	a.Tick()
 	id, _, current = sole(t, a).subscribe()
 	defer sole(t, a).unsubscribe(id)

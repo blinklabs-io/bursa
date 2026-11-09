@@ -38,6 +38,15 @@ kes_agent:
   # values).
   system_start: "2017-09-23T21:44:51Z"   # env: KESAGENT_SYSTEM_START
 
+  # First Shelley slot and its time. Required on networks whose Byron era
+  # used 20-second slots (mainnet, preprod): without them slots are counted
+  # from system_start at slot_length, which runs ahead of the chain there and
+  # makes the agent refuse every header. Not needed on preview.
+  #   mainnet: 4492800 at 2020-07-29T21:44:51Z
+  #   preprod: 86400 at 2022-06-21T00:00:00Z
+  shelley_start_slot: 4492800                # env: KESAGENT_SHELLEY_START_SLOT
+  shelley_start_time: "2020-07-29T21:44:51Z" # env: KESAGENT_SHELLEY_START_TIME
+
   # Slot schedule. slot_length is wall-clock seconds per slot (default 1);
   # slots_per_kes_period is protocol-defined (129600 on mainnet and Preprod).
   slot_length: 1                   # env: KESAGENT_SLOT_LENGTH
@@ -57,6 +66,26 @@ kes_agent:
   # KES period below the highest already served, across restarts/clock jumps.
   guard_file: "/var/lib/bursa/kes-agent/guard.json"  # env: KESAGENT_GUARD_FILE
 
+  # Optional shared guard store, so several agent replicas share each
+  # profile's period floor and signed slot records. Default "file" uses
+  # guard_file above. With "postgres", comment out guard_file above (setting
+  # both is refused, here and in each profile); the DSN is read
+  # from the variable dsn_env names, and a non-loopback host requires
+  # sslmode=verify-full. YAML only.
+  # store:
+  #   type: "postgres"
+  #   dsn_env: "KESAGENT_PG_DSN"
+  #   # Optional: share each profile's KES key between the replicas. A staged
+  #   # key is sealed with age to age_recipients and kept in the database;
+  #   # every replica unseals the installed key with age_identity_file. Set
+  #   # both or neither. Anything holding the identity can read the stored key,
+  #   # and so can database backups. The key is not re-sealed as it evolves, so
+  #   # the stored copy has no KES forward security. The identity file must not
+  #   # be readable by group or other users.
+  #   age_recipients: ["age1..."]
+  #   age_identity_file: "/etc/bursa/kes-agent-age.txt"
+  #   key_poll_interval: "10s"  # how often to look for a newly installed key
+
   # Several pools, on one network or several, can be served by one agent in
   # sign mode. profiles replaces the single-pool settings above
   # (cold_vkey_file/cold_vkey_hex, system_start, slots_per_kes_period,
@@ -68,11 +97,15 @@ kes_agent:
   #   - name: "mainnet-pool"
   #     cold_vkey_file: "/etc/bursa/kes-agent/mainnet-cold.vkey"
   #     system_start: "2017-09-23T21:44:51Z"
+  #     shelley_start_slot: 4492800
+  #     shelley_start_time: "2020-07-29T21:44:51Z"
   #     slots_per_kes_period: 129600
   #     guard_file: "/var/lib/bursa/kes-agent/mainnet-pool.json"
   #   - name: "preprod-pool"
   #     cold_vkey_file: "/etc/bursa/kes-agent/preprod-cold.vkey"
   #     system_start: "2022-06-01T00:00:00Z"
+  #     shelley_start_slot: 86400
+  #     shelley_start_time: "2022-06-21T00:00:00Z"
   #     slot_length: 1               # default 1
   #     slots_per_kes_period: 129600
   #     max_kes_evolutions: 62       # default 62
@@ -91,9 +124,10 @@ kes_agent:
   # attestation_provider: "nitro"  # or "confidential-space"
   # attester_address: "unix:///run/bursa/attester.sock"
 
-# Optional Prometheus metrics endpoint on a dedicated loopback listener. Set
-# port to 0 to disable it. Non-loopback addresses and addresses that carry a
-# port are rejected.
+# Optional Prometheus metrics endpoint on a dedicated loopback listener, which
+# also serves /healthz and /readyz (`bursa kes-agent ready` queries /readyz for
+# an exec probe). Set port to 0 to disable all of them. Non-loopback addresses
+# and addresses that carry a port are rejected.
 metrics:
   address: "127.0.0.1"             # env: METRICS_LISTEN_ADDRESS
   port: 8082                       # env: METRICS_LISTEN_PORT
