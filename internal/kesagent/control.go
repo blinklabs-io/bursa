@@ -53,7 +53,10 @@ func (a *Agent) ServeControl(ctx context.Context, ln net.Listener) error {
 	// just the ctx-cancellation goroutine above: a listener closed externally
 	// (or any non-context Accept error) must also unblock handlers already
 	// parked in a blocking read, or wg.Wait() below hangs forever.
+	// Cancel srvCtx first, so a handler blocked in a shared key store call
+	// returns now instead of at its own timeout.
 	defer func() {
+		cancel()
 		conns.closeAll()
 		wg.Wait()
 	}()
