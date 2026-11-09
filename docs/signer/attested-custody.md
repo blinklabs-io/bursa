@@ -890,7 +890,8 @@ cloud boundary:
 | Cold-key custody (separate backend) | the pool cold key; the agent holds only the cold verification key |
 
 For a remote Dingo producer, `bursa-attested-kes/1` applies two independent
-checks: TLS client certificates authenticate Dingo to the workload, and fresh
+checks: TLS client certificates, when `attested_client_ca_file` is set,
+authenticate Dingo to the workload, and fresh
 nonce-bound platform evidence authenticates the measured workload and its
 active public KES state to Dingo. The AWS adapter places the protocol binding
 in Nitro `user_data`. The GCP adapter places its hex encoding in Confidential

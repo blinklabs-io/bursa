@@ -61,8 +61,9 @@ Dingo producer. This listener speaks `bursa-attested-kes/1`. It never
 offers serve-key mode or control commands. The local control socket remains the
 only route for staging, installing, or dropping keys.
 
-Before accepting a header request, Dingo sends a fresh 32-byte challenge. The
-agent asks its workload-local provider adapter for evidence that commits to the
+Before accepting a header request, Dingo sends a fresh 32-byte challenge. With
+the `nitro` or `confidential-space` provider, the agent asks its workload-local
+provider adapter for evidence that commits to the
 challenge, pool cold verification key, active KES verification key, installed
 operational certificate, and active period. Dingo verifies that evidence with
 the pinned Nitro PCR policy or Confidential Space image policy described in
@@ -110,7 +111,8 @@ openssl x509 -in server.pem -pubkey -noout | openssl pkey -pubin -outform der | 
 At startup the agent logs the same value as `server_spki_sha256` when it
 serves TLS (message "attested KES server certificate public key"). `nitro` and
 `confidential-space` are unchanged and still require `attester_address`. With
-no provider configured the agent refuses to start.
+`attested_listen_address` set and no provider configured, the agent refuses to
+start; without the attested listener no provider is needed.
 
 ## Key lifecycle (control socket)
 

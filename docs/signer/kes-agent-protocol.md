@@ -114,8 +114,10 @@ header request.
 ## Attested remote sign extension
 
 The remote server hello uses protocol `bursa-attested-kes/1` and mode `sign`.
-After TLS client-certificate authentication, Dingo sends one challenge before
-any sign request:
+The listener serves TLS 1.3 or, with `attested_plaintext`, plain TCP. It
+requires a TLS client certificate only when `attested_client_ca_file` is set.
+After the hello, and after client-certificate authentication where it is
+required, Dingo sends one challenge before any sign request:
 
 ```json
 { "type": "attestation_request", "protocol": "bursa-attested-kes/1",
@@ -144,10 +146,11 @@ sha256("bursa-attested-kes/1" ||
 
 Lengths are unsigned 64-bit big-endian values. Dingo admits the service only
 after the nonce and configured provider match, the operational certificate is
-the expected certificate, and the corresponding Nitro or Confidential Space
-verifier accepts the evidence and binding. A failure response sets `error`,
-omits evidence, and is followed by connection close. Successful attestation is
-valid only for that TLS connection.
+the expected certificate, and the evidence passes the provider check: for
+`nitro` or `confidential-space` the corresponding verifier accepts the evidence
+and binding, and for `none` the evidence is empty. A failure response sets
+`error`, omits evidence, and is followed by connection close. Successful
+attestation is valid only for that connection, whatever its transport.
 
 After admission, the connection accepts the ordinary typed `sign_request`
 frames above. KES private state, evolution, period authorization, operational
