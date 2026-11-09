@@ -815,6 +815,17 @@ func TestWrongIdentityRefusesMultiProfile(t *testing.T) {
 	if err := b.SyncKeys(context.Background()); !errors.As(err, &noMatch) {
 		t.Fatalf("B SyncKeys: want an age.NoIdentityMatchError, got %v", err)
 	}
+	// pool-y has no installed record, so only pool-x makes B unready, and A,
+	// which loads pool-x and has no record for pool-y, stays ready.
+	if err := b.Ready(); !errors.As(err, &noMatch) ||
+		!strings.Contains(err.Error(), `"pool-x"`) ||
+		strings.Contains(err.Error(), `"pool-y"`) {
+		t.Fatalf("B Ready: want the unseal failure for pool-x only, got %v", err)
+	}
+	syncKeys(t, "A", a)
+	if err := a.Ready(); err != nil {
+		t.Fatalf("A Ready: %v", err)
+	}
 	px.header.slot = 53
 	_, err := b.SignHeader(5, px.header.encode(t))
 	if !errors.Is(err, ErrNoActiveKey) || !errors.As(err, &noMatch) {

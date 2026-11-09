@@ -200,18 +200,18 @@ func (p *profile) syncInstalledKey(ctx context.Context) error {
 	defer p.mu.Unlock()
 	rec, ok, err := p.keys.Installed(ctx, p.keyPool, p.keyNetwork)
 	if err != nil {
-		p.loadErr = err
+		p.setLoadErrLocked(err)
 		p.noteKeyErrorLocked("read the installed KES key", err)
 		return err
 	}
 	if !ok || (p.seenSet && rec.Generation == p.seenGen &&
 		bytes.Equal(rec.OpCert, p.seenOpCert)) {
-		p.loadErr = nil
+		p.setLoadErrLocked(nil)
 		p.lastKeyErr = ""
 		return nil
 	}
 	if err := p.loadRecordLocked(rec); err != nil {
-		p.loadErr = err
+		p.setLoadErrLocked(err)
 		p.noteKeyErrorLocked(
 			fmt.Sprintf("load installed KES key generation %d", rec.Generation),
 			err,
@@ -276,12 +276,24 @@ func (p *profile) noKeyErrorLocked() error {
 	return ErrNoActiveKey
 }
 
+// setLoadErrLocked records why the installed record could not be read or
+// loaded (nil once it loads), and publishes it for Ready, which must not wait
+// on p.mu while a sync holds it across a key store call. Caller holds p.mu.
+func (p *profile) setLoadErrLocked(err error) {
+	p.loadErr = err
+	if err == nil {
+		p.loadErrPub.Store(nil)
+		return
+	}
+	p.loadErrPub.Store(&err)
+}
+
 // markSeenLocked records the installed record now active. Caller holds p.mu.
 func (p *profile) markSeenLocked(gen uint64, opcert []byte) {
 	p.seenGen = gen
 	p.seenOpCert = append([]byte(nil), opcert...)
 	p.seenSet = true
-	p.loadErr = nil
+	p.setLoadErrLocked(nil)
 	p.lastKeyErr = ""
 }
 
@@ -294,6 +306,21 @@ func (p *profile) noteKeyErrorLocked(what string, err error) {
 	}
 	p.lastKeyErr = msg
 	p.logger.Error("shared KES key store: "+what, "error", err)
+}
+
+// Ready reports whether every profile could read and load its installed key
+// on the latest sync. It returns nil without a shared key store. A profile
+// with no installed record yet does not make the agent unready, so a new
+// pool added to one agent does not stop it signing for the others. It never
+// blocks on a sync in progress.
+func (a *Agent) Ready() error {
+	var errs []error
+	for _, p := range a.profiles {
+		if e := p.loadErrPub.Load(); e != nil {
+			errs = append(errs, fmt.Errorf("profile %q: %w", p.cfg.Name, *e))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // SyncKeys loads, for every profile, the installed key from the shared key
