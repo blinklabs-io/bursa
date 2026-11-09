@@ -33,12 +33,13 @@ import (
 	"time"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/blinklabs-io/gouroboros/ledger"
 )
 
 const (
 	// AttestedProtocolID is the protocol spoken by an attested KES workload.
-	AttestedProtocolID   = "bursa-attested-kes/1"
+	AttestedProtocolID   = wire.AttestedProtocolID
 	attestationNonceSize = 32
 	attesterMaxResponse  = 1 << 20
 )
@@ -54,27 +55,11 @@ var (
 	)
 )
 
-// AttestationRequest is the first client message after the attested protocol
-// hello. Nonce must be fresh and exactly 32 bytes.
-type AttestationRequest struct {
-	Type     string `json:"type"`
-	Protocol string `json:"protocol"`
-	Nonce    []byte `json:"nonce"`
-}
-
-// AttestationResponse binds the active KES state to measured-workload
-// evidence. The KES signing key is deliberately absent.
-type AttestationResponse struct {
-	Type        string `json:"type"`
-	Protocol    string `json:"protocol"`
-	Nonce       []byte `json:"nonce"`
-	Provider    string `json:"provider"`
-	KESVKey     []byte `json:"kes_vkey,omitempty"`
-	OpCert      []byte `json:"opcert,omitempty"`
-	Period      uint64 `json:"period,omitempty"`
-	Attestation []byte `json:"attestation,omitempty"`
-	Error       string `json:"error,omitempty"`
-}
+// AttestationRequest and AttestationResponse are defined in kesagent/wire.
+type (
+	AttestationRequest  = wire.AttestationRequest
+	AttestationResponse = wire.AttestationResponse
+)
 
 // Attester produces platform evidence that commits to binding. Implementations
 // live inside the protected workload and call the platform attestation API.
@@ -221,16 +206,21 @@ func (a *Agent) ServeAttestedService(
 			"kesagent: attested service requires provider and attester",
 		)
 	}
+	// Connections still in the TLS handshake are tracked apart from
+	// authenticated ones, so a peer without a client certificate can never
+	// hold a slot a block producer needs.
+	pending := newHandshakeSet()
 	conns := newConnSet()
 	srvCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
 		<-srvCtx.Done()
 		_ = ln.Close()
+		pending.closeAll()
 		conns.closeAll()
 	}()
 	var wg sync.WaitGroup
-	defer func() { conns.closeAll(); wg.Wait() }()
+	defer func() { pending.closeAll(); conns.closeAll(); wg.Wait() }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -241,21 +231,172 @@ func (a *Agent) ServeAttestedService(
 				return fmt.Errorf("kesagent: attested service accept: %w", err)
 			}
 		}
-		if !conns.add(conn) {
+		if !pending.add(conn) {
 			_ = conn.Close()
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer conns.remove(conn)
 			defer conn.Close()
-			if err := authenticateRemotePeer(ctx, conn); err != nil {
+			err := authenticateRemotePeer(ctx, conn)
+			pending.remove(conn)
+			if err != nil {
 				a.logger.Warn("refusing unauthenticated KES peer", "error", err)
 				return
 			}
+			if !conns.add(conn) {
+				if srvCtx.Err() == nil {
+					a.logger.Warn(
+						"refusing authenticated KES peer: connection limit reached",
+						"limit", maxTrackedConns,
+						"remote", conn.RemoteAddr().String(),
+					)
+				}
+				return
+			}
+			defer conns.remove(conn)
 			a.serveAttestedConn(ctx, conn, cfg)
 		}()
+	}
+}
+
+const (
+	// maxPendingHandshakes bounds connections that have not yet completed
+	// mutual TLS. Each one holds a slot for at most frameIOTimeout.
+	maxPendingHandshakes = 64
+	// maxPendingHandshakesPerHost keeps one source from taking the whole
+	// handshake budget. Block producers dial from a handful of hosts and hold
+	// one long-lived connection each, so a few concurrent handshakes per
+	// source is ample.
+	maxPendingHandshakesPerHost = 4
+)
+
+// handshakeSet tracks connections still in the TLS handshake. When a budget is
+// full, a new connection evicts the oldest pending handshake from its own
+// source, or else the oldest overall, instead of being refused. A refusal
+// would let a peer that opens connections and never finishes the handshake
+// hold every slot for frameIOTimeout and lock out a producer's reconnect, even
+// from a shared address. With eviction, a stalled connection holds its slot
+// only until newer ones arrive, and a producer's handshake, which completes in
+// a round trip or two, is lost only to an attacker opening a full budget of
+// connections within that window.
+//
+// A source is an IPv4 address or an IPv6 /64. A non-IP transport has no
+// source address to separate peers by, so only the global budget applies.
+type handshakeSet struct {
+	mu      sync.Mutex
+	closed  bool
+	next    uint64
+	conns   map[net.Conn]pendingHandshake
+	perHost map[string]int
+}
+
+type pendingHandshake struct {
+	host string
+	seq  uint64
+}
+
+func newHandshakeSet() *handshakeSet {
+	return &handshakeSet{
+		conns:   make(map[net.Conn]pendingHandshake),
+		perHost: make(map[string]int),
+	}
+}
+
+func handshakeSource(addr net.Addr) string {
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return ""
+	}
+	if tcp.IP.To4() == nil {
+		// One IPv6 subscriber is routinely delegated a whole /64.
+		return tcp.IP.Mask(net.CIDRMask(64, 128)).String()
+	}
+	return tcp.IP.String()
+}
+
+// add admits c, closing the pending handshake it evicts if a budget was full.
+// It returns false only after closeAll, in which case the caller closes c.
+func (s *handshakeSet) add(c net.Conn) bool {
+	host := handshakeSource(c.RemoteAddr())
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
+	var evicted net.Conn
+	switch {
+	case host != "" && s.perHost[host] >= maxPendingHandshakesPerHost:
+		evicted = s.oldestLocked(host, true)
+	case len(s.conns) >= maxPendingHandshakes:
+		evicted = s.oldestLocked("", false)
+	}
+	if evicted != nil {
+		s.removeLocked(evicted)
+	}
+	s.next++
+	s.conns[c] = pendingHandshake{host: host, seq: s.next}
+	if host != "" {
+		s.perHost[host]++
+	}
+	s.mu.Unlock()
+	if evicted != nil {
+		_ = evicted.Close()
+	}
+	return true
+}
+
+func (s *handshakeSet) oldestLocked(host string, sameHost bool) net.Conn {
+	var oldest net.Conn
+	var seq uint64
+	for c, p := range s.conns {
+		if sameHost && p.host != host {
+			continue
+		}
+		if oldest == nil || p.seq < seq {
+			oldest, seq = c, p.seq
+		}
+	}
+	return oldest
+}
+
+// remove stops tracking c. It is a no-op for a connection already evicted.
+func (s *handshakeSet) remove(c net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.removeLocked(c)
+}
+
+func (s *handshakeSet) removeLocked(c net.Conn) {
+	p, ok := s.conns[c]
+	if !ok {
+		return
+	}
+	delete(s.conns, c)
+	if p.host == "" {
+		return
+	}
+	if s.perHost[p.host] <= 1 {
+		delete(s.perHost, p.host)
+		return
+	}
+	s.perHost[p.host]--
+}
+
+// closeAll closes every pending handshake and refuses later additions.
+func (s *handshakeSet) closeAll() {
+	s.mu.Lock()
+	s.closed = true
+	pending := make([]net.Conn, 0, len(s.conns))
+	for c := range s.conns {
+		pending = append(pending, c)
+	}
+	clear(s.conns)
+	clear(s.perHost)
+	s.mu.Unlock()
+	for _, c := range pending {
+		_ = c.Close()
 	}
 }
 

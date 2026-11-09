@@ -76,13 +76,13 @@ func main() {
 		&o.network,
 		"network",
 		"testnet",
-		"network the image serves: testnet or mainnet",
+		"network the image serves: testnet, mainnet or multi",
 	)
 	flag.StringVar(
 		&o.chain,
 		"chain",
 		"",
-		"chain of a mainnet image: cardano or prime",
+		"chain of a mainnet image: cardano or prime; not for multi",
 	)
 	flag.Uint64Var(
 		&o.cardBlocks,
@@ -127,9 +127,27 @@ func build(o options, logf func(string, ...any)) (http.Handler, error) {
 		return nil, errors.New("-state is required")
 	}
 
-	network, chain, err := scope(o.network, o.chain)
-	if err != nil {
-		return nil, err
+	// a multi image serves every scope of device.MultiScopes, as the
+	// firmware's NETWORK=multi build does
+	multi := o.network == "multi"
+
+	var (
+		network uint8
+		chain   string
+	)
+
+	if multi {
+		if o.chain != "" {
+			return nil, errors.New(
+				"-chain does not apply to -network multi; the image serves cardano-mainnet and prime-mainnet",
+			)
+		}
+	} else {
+		var err error
+
+		if network, chain, err = scope(o.network, o.chain); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := os.MkdirAll(o.state, 0o700); err != nil {
@@ -149,7 +167,18 @@ func build(o options, logf func(string, ...any)) (http.Handler, error) {
 
 	mu := &sync.Mutex{}
 	svc := device.New(mu, logf)
-	svc.SetNetwork(network, chain)
+
+	if multi {
+		svc.SetScopes(device.MultiScopes())
+	} else {
+		svc.SetNetwork(network, chain)
+	}
+
+	// the firmware's provisioning image calls this on every network; only a
+	// multi service uses it, to take the device's first host key unsigned
+	if o.image == "provision" {
+		svc.AllowFirstHostKey()
+	}
 
 	if err := svc.SetChip(chip); err != nil {
 		return nil, fmt.Errorf("chip: %w", err)
@@ -248,7 +277,7 @@ func scope(network, chain string) (uint8, string, error) {
 		return 1, chain + "-mainnet", nil
 	default:
 		return 0, "", fmt.Errorf(
-			"-network must be testnet or mainnet, got %q",
+			"-network must be testnet, mainnet or multi, got %q",
 			network,
 		)
 	}

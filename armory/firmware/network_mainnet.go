@@ -33,6 +33,10 @@ const (
 // chain's profiles per device.
 var chain string
 
+// multiScope is set only for a multi image, which authenticates inventory
+// requests too; this is a single-scope image.
+const multiScope = false
+
 // configureScope fixes the image to one mainnet chain.
 func configureScope(svc *device.Service, report *Report) {
 	if chain == "" {

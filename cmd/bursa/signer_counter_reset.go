@@ -60,7 +60,7 @@ commits after it is refused with a conflict and returns no signature. Pausing
 opcert requests for the key avoids those refusals but is not required for
 safety.
 
-A key served by a nitro, confidential-space or armory backend with a profile
+A key served by a nitro, confidential-space, armory or sops backend with a profile
 keeps its records under that profile. Pass --profile with that backend's
 profile to reset them; the same transaction also deletes the key's
 opcert-chain-issued record written before profile scoping, which the signer
@@ -178,6 +178,7 @@ var profiledBackendTypes = map[string]bool{
 	"nitro":              true,
 	"confidential-space": true,
 	"armory":             true,
+	"sops":               true,
 }
 
 // resetProfile returns the profile whose records counter-reset changes: the

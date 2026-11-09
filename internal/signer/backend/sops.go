@@ -43,25 +43,34 @@ type registered struct {
 // SopsBackend loads software keys from a SecretSource, decrypting each with SOPS.
 type SopsBackend struct {
 	name    string
+	profile string
 	source  SecretSource
 	decrypt DecryptFunc
 
 	mu         sync.RWMutex
 	registered []registered
-	keys       map[KeyHash]*softwareKey
+	keys       map[KeyHash]KeyRef
 }
 
-// NewSopsBackend builds a SOPS-backed backend. decrypt may be sops.Decrypt.
-func NewSopsBackend(
-	name string,
+// NewProfiledSopsBackend builds a SOPS-backed backend. decrypt may be
+// sops.Decrypt. With a non-empty profile, the backend and its key references
+// implement Profiled: the resolver routes requests to it by that profile and
+// the coordinator keeps its watermark records under it. The profile routes;
+// it neither attests the backend nor authorizes a caller. An empty profile
+// gives an unprofiled backend. A sops backend signs in process, so there is
+// no binding signature: no proxy can move a request to another profile. The
+// caller validates the profile name.
+func NewProfiledSopsBackend(
+	name, profile string,
 	source SecretSource,
 	decrypt DecryptFunc,
 ) *SopsBackend {
 	return &SopsBackend{
 		name:    name,
+		profile: profile,
 		source:  source,
 		decrypt: decrypt,
-		keys:    map[KeyHash]*softwareKey{},
+		keys:    map[KeyHash]KeyRef{},
 	}
 }
 
@@ -95,7 +104,7 @@ func (b *SopsBackend) Load(ctx context.Context) error {
 	b.mu.RUnlock()
 
 	// Build a fresh map with no lock held (I/O + crypto happens here).
-	newKeys := make(map[KeyHash]*softwareKey, len(snap))
+	newKeys := make(map[KeyHash]KeyRef, len(snap))
 	for _, r := range snap {
 		enc, err := b.source.Get(ctx, r.name)
 		if err != nil {
@@ -119,7 +128,7 @@ func (b *SopsBackend) Load(ctx context.Context) error {
 			typ = KeyTypeFromEnvelope(lk.Type, lk.Description)
 		}
 		hash := HashPublicKey(pub)
-		newKeys[hash] = &softwareKey{
+		var key KeyRef = &softwareKey{
 			lk:          lk,
 			pub:         ed25519.PublicKey(pub),
 			hash:        hash,
@@ -127,6 +136,13 @@ func (b *SopsBackend) Load(ctx context.Context) error {
 			extended:    len(lk.SKey) == 96,
 			backendName: b.name,
 		}
+		if b.profile != "" {
+			key = &profiledSoftwareKey{
+				softwareKey: key.(*softwareKey),
+				profile:     b.profile,
+			}
+		}
+		newKeys[hash] = key
 	}
 
 	// Publish atomically: all-or-nothing (on error above, b.keys is untouched).
@@ -138,6 +154,18 @@ func (b *SopsBackend) Load(ctx context.Context) error {
 
 // Name returns the configured backend name.
 func (b *SopsBackend) Name() string { return b.name }
+
+// Profile returns the profile the backend is bound to, or "".
+func (b *SopsBackend) Profile() string { return b.profile }
+
+// profiledSoftwareKey is a software key served under a profile, so the
+// coordinator scopes its watermark records by it.
+type profiledSoftwareKey struct {
+	*softwareKey
+	profile string
+}
+
+func (k *profiledSoftwareKey) Profile() string { return k.profile }
 
 // GetKey resolves a key by its blake2b-224 hash. Returns ErrKeyNotFound if absent.
 func (b *SopsBackend) GetKey(_ context.Context, hash KeyHash) (KeyRef, error) {

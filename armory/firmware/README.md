@@ -16,6 +16,46 @@ make imx TESTNET=1                        # bring-up image, unfiltered /sign
 
 The Makefile header documents each variable.
 
+### Host authentication and transport
+
+The device serves plain HTTP on `10.0.0.1:80` over USB CDC-ECM to the host at
+`10.0.0.2`, with no TLS and no peer filter: anything on that link reaches the
+routes. The firmware attempts to hold the Bluetooth module in reset; if that
+fails, startup continues and the bring-up report says so. Every route answers
+only requests naming Host `10.0.0.1` (port 80 optional), and a POST only with an
+`application/json` body (`device.Guard`), which keeps a browser page on the
+host out; it does not authenticate the caller.
+
+Host authentication depends on the image and on whether the device holds a
+host key. "Bootstrap" is a device with no host key of any scope; after a
+device wipe it is in bootstrap again.
+
+| Image | `NETWORK=testnet` | `NETWORK=mainnet` | `NETWORK=multi` |
+|-------|-------------------|-------------------|-----------------|
+| signing: `/v1/sign`, `/v1/signlog` | unsigned in bootstrap; then a host key of the image's scope | always a host key of the image's scope | always a host key of the profile's scope (`/v1/signlog`: of a mainnet scope) |
+| signing: `/v1/inventory` | unsigned | unsigned | a host key of the profile's scope |
+| provisioning: `/provision/*` | unsigned in bootstrap; then a host key of the image's scope | as testnet | the first host key unsigned in bootstrap; every other request a host key of the scope acted on (`/provision/identity`: of a mainnet scope) |
+| wipe: `/wipe/profile`, `/wipe/signlog`, `/wipe/cold` | unsigned in bootstrap; then a host key of the image's scope | as testnet | `/wipe/profile`: a host key of the profile's scope, or of a mainnet scope for a testnet profile; `/wipe/cold`: of the key's owner scope, or of a mainnet scope for a testnet or unowned key; `/wipe/signlog`: of a mainnet scope |
+
+With a host key of another scope on the device, a single-scope image is not
+in bootstrap: its signing, provisioning and wipe routes above take no
+unsigned request, and `/v1/inventory` stays unsigned.
+
+Some routes take no host key on any image, by design:
+
+- every image: `/` (the bring-up report) and `/v1/challenge`;
+- provisioning image: `/v1/identity` (the identity proof that encrypts key
+  imports), `/pubkey` and `/reset`;
+- wipe image: `/wipe/device`, confirmed by the identity public key, which is
+  public, and the way out when every host key is lost; `/wipe/objects`,
+  which lists object IDs; and `/reset`;
+- `TESTNET=1` image: `/sign` and `/pubkey`, with the bring-up raw key, never
+  a cold key.
+
+At boot the firmware logs one line for each: the host auth mode (logged
+again when the host keys change), the transport, the Host guard and the
+routes served without a host key.
+
 ### Multi image
 
 `NETWORK=multi` builds one image that serves three scopes: every testnet
@@ -25,9 +65,11 @@ names end in `@cardano-mainnet` or `@prime-mainnet`). It builds as
 not apply, and `TESTNET=1` is refused: a multi image serves mainnet scopes and
 no unfiltered `/sign`. The single-scope images build as before.
 
-- Every request needs a host key registered for the scope of the profile it
-  acts on, testnet profiles included: signing, inventory, floor, reward, pins,
-  profile provisioning and profile wipes. A testnet key never signs or
+- Signing, inventory, floor, reward, pins, profile provisioning and profile
+  wipes need a host key registered for the scope of the profile they act on,
+  testnet profiles included; a mainnet key also removes a testnet profile.
+  The routes listed above as taking no host key
+  take none here either. A testnet key never signs or
   provisions for a mainnet profile, nor a cardano-mainnet key for a
   prime-mainnet one. A key registered by an older, unscoped image counts as a
   testnet key. A new testnet profile may not take a name ending
@@ -36,7 +78,8 @@ no unfiltered `/sign`. The single-scope images build as before.
   only, while the device holds no host key, with `scope` naming a scope of
   the image; register a mainnet scope's key first. A key of a mainnet scope
   then adds the first key of each other scope. The signing and wipe images
-  never take an unsigned request. A signed host key add names the scope, and
+  take no unsigned host key, profile or signing request. A signed host key
+  add names the scope, and
   the key that signs it is of that scope, or of a mainnet scope while the
   scope has no key.
 - `/provision/identity`, `/wipe/signlog`, the signing log read, listing the

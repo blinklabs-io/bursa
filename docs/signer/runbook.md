@@ -27,6 +27,7 @@ Boot performs eager validation and exits non-zero on any of:
 
 - no authentication mode configured, or both `signer.jwt_secret` and
   `signer.jwks_url` set;
+- `signer.jwt_secret` or `signer.jwks_url` set without `signer.jwt_audience`;
 - `signer.jwt_secret` shorter than 32 bytes;
 - only one of `tls_cert_file` / `tls_key_file` set;
 - a non-loopback listen address without TLS;
@@ -54,8 +55,11 @@ Configure **at most one** validator:
 - **JWKS** (`signer.jwks_url`) - production. Verifies RS256/ES256/EdDSA against
   the identity provider's published keys.
 
-`signer.jwt_issuer` and `signer.jwt_audience` are enforced when set; leave them
-unset only if you intend to accept any issuer/audience (a warning is logged).
+`signer.jwt_audience` is required whenever either validator is configured, and
+every token must carry it in `aud`; boot fails without it. Otherwise a token the
+same identity provider or shared secret issued for another service would
+authenticate here. `signer.jwt_issuer` is enforced when set; leave it unset only
+if you intend to accept any issuer (a warning is logged).
 The caller identity is the token `sub` claim.
 
 ### mTLS client certificate
@@ -160,6 +164,34 @@ setting both `path` and `secret_prefix` is refused:
 Decryption uses the standard SOPS key sources, such as an age identity in
 `SOPS_AGE_KEY_FILE` or `SOPS_AGE_KEY`. Encrypt the key files to a recipient
 that unlocks nothing else.
+
+An optional `profile` binds the backend to one network, as an armory backend's
+`profile` does (see Profile routing). It is 1 to 32 characters from letters,
+digits and `._@-`; any other name fails boot. Several sops backends may read
+the same `path` under distinct profiles, each holding the same cold key:
+
+```yaml
+- name: "cold-preview"
+  type: "sops"
+  path: "/etc/bursa/signer/sops-keys"
+  profile: "pool@preview"
+- name: "cold-preprod"
+  type: "sops"
+  path: "/etc/bursa/signer/sops-keys"
+  profile: "pool@preprod"
+```
+
+A profiled sops backend refuses a request that names another profile; a
+request that names no profile is served while the backend is the key's only
+holder. Its opcert counter, chain floor and issued records are kept per
+profile. It adds no binding signature: the backend signs in process, so no
+proxy sits between the profile and the key. Opcert records written before the
+backend had a profile still bound its requests while it is the key's only
+holder; once a second profile holds the key they are not read
+and each profile starts empty, so migrate them first (see Profile routing). For
+a profile with no records and a pool already on chain, issue the first
+certificate with a `chain_counter` request carrying the on-chain counter. A
+sops backend without `profile` behaves as before.
 
 ### software / file (development only)
 
@@ -355,8 +387,8 @@ several holders it is not read, and those rows are migrated before a second
 profile is added. The floor written before profile scoping is left alone, as
 the new floor under the profile is read in its place.
 
-`--profile` must be the `profile` of a nitro, confidential-space or armory
-backend in the config. When the config has any such backend, the command
+`--profile` must be the `profile` of a nitro, confidential-space, armory or
+sops backend in the config. When the config has any such backend, the command
 refuses to run without `--profile`, since an unprofiled reset would neither
 clear the key's records nor fence its requests. For a key served by a backend
 without a profile in such a config, pass `--unprofiled` instead. Configs with
@@ -381,7 +413,7 @@ Order:
 
 ### Profile routing
 
-One cold key may be held by several armory backends, each with its own
+One cold key may be held by several armory or sops backends, each with its own
 `profile` (for example `otg@preview`, `otg@musashi`, `otg@preprod` on one
 device). Startup accepts a key hash in several backends only when every holder
 has a non-empty profile and the profiles are distinct. A hash in a profiled and
@@ -402,10 +434,10 @@ only routes: the caller is authorized by key hash.
 Records of a key served by a profiled backend carry the profile:
 `<hash>|<scope>|<profile>` for the opcert counter, floor and issued scopes and
 for tx records, so each network keeps its own history. Records of an
-unprofiled backend are unchanged. Opcert records an armory-backed key wrote
-before profile scoping are keyed without the profile. While one backend holds
-the key, they still bound its opcert requests until a record under its profile
-exists. Once several backends hold it they are not consulted, as they cannot
+unprofiled backend are unchanged. Opcert records an armory- or sops-backed
+key wrote before profile scoping are keyed without the profile. While one
+backend holds the key, they still bound its opcert requests until a record
+under its profile exists. Once several backends hold it they are not consulted, as they cannot
 be attributed to one profile. Before adding a second profile for a key, stop
 every signer instance that uses the store, then migrate each of the key's
 `opcert-counter`, `opcert-chain-floor` and `opcert-chain-issued` rows keyed

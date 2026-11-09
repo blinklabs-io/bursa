@@ -2,8 +2,11 @@
 
 This document specifies the Unix-domain-socket protocol spoken by the bursa KES
 agent (`bursa kes-agent`) so a client (e.g. a dingo block producer) can
-implement it. It is transcribed from `internal/kesagent/protocol.go` and
-`internal/kesagent/control.go`.
+implement it. The frame types, constants and framing are defined in the public
+Go package `github.com/blinklabs-io/bursa/kesagent/wire` (`kesagent/wire`),
+which clients should import rather than copy; golden frames are in
+`kesagent/wire/testdata/frames`. Agent behavior is in
+`internal/kesagent/protocol.go` and `internal/kesagent/control.go`.
 
 The agent exposes two sockets:
 
@@ -134,6 +137,14 @@ header request.
 ## Attested remote sign extension
 
 The remote server hello uses protocol `bursa-attested-kes/1` and mode `sign`.
+A connection must complete the TLS handshake with a verified client
+certificate within 10 seconds. Connections still in the handshake have their
+own budget, 64 in total and 4 per source (an IPv4 address or an IPv6 /64).
+When a budget is full, a new connection closes the oldest pending handshake
+from its source, or else the oldest overall, so a connection that stalls in
+the handshake cannot hold its slot against a reconnecting producer.
+Handshaking connections never occupy the slots that authenticated connections
+use.
 After TLS client-certificate authentication, Dingo sends one challenge before
 any sign request:
 

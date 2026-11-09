@@ -24,13 +24,15 @@ WIPE ?= 0
 #   multi    one image serving three scopes: every testnet (network id 0),
 #            cardano-mainnet and prime-mainnet (network id 1, profile names
 #            ending "@cardano-mainnet" or "@prime-mainnet"). CHAIN does not
-#            apply and TESTNET=1 is refused. Every request, testnet
-#            profiles included, needs a host key registered for the scope of
-#            the profile it acts on, so a testnet key never signs or
-#            provisions for a mainnet profile, nor a cardano key for a prime
-#            one. The first key of a scope is added unsigned, only by the
-#            PROVISION=1 image, and only for a scope without a key; the
-#            signing and wipe images never take an unsigned request.
+#            apply and TESTNET=1 is refused. Signing, inventory,
+#            provisioning and profile wipes, testnet profiles included, need
+#            a host key registered for the scope of the profile they act on,
+#            so a testnet key never signs or provisions for a mainnet
+#            profile, nor a cardano key for a prime one; a mainnet key also
+#            wipes a testnet profile. The device's first
+#            host key is added unsigned, only by the PROVISION=1 image, and
+#            only while the device holds no host key; the signing image
+#            takes no unsigned request but / and /v1/challenge.
 #            /provision/identity, /wipe/signlog, the signing log read and
 #            listing or revoking keys of another scope need a key of a
 #            mainnet scope. A device
@@ -38,6 +40,21 @@ WIPE ?= 0
 #            host key on this image.
 NETWORK ?= testnet
 CHAIN ?=
+# Host authentication differs per NETWORK; README.md has the table per image:
+#   testnet  while the device holds no host key, every authenticated route
+#            takes unsigned requests, signing included; after the first key,
+#            a key of the image's scope signs them.
+#   mainnet  signing always needs a host key of the image's scope; the
+#            provisioning and wipe images take unsigned requests while the
+#            device holds no host key, as a testnet image does.
+#   multi    see above.
+# On every image /, /v1/challenge and, on single-scope signing images,
+# /v1/inventory take no host key; the provisioning image also serves
+# /v1/identity, /pubkey and /reset without one, and the wipe image
+# /wipe/device (confirmed by the identity public key), /wipe/objects and
+# /reset; a TESTNET=1 image adds /sign and /pubkey. The link is plain HTTP
+# over USB CDC-ECM, with no TLS and no peer filter; the firmware logs its
+# host auth mode, transport and these routes at boot.
 
 # HAB_KEYS=<dir> also signs each image with high assurance boot (HABv4) into
 # <image>-signed.imx; unset, the build and its output are unchanged. The

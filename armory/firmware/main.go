@@ -22,6 +22,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,6 +80,45 @@ func startNetwork() (err error) {
 	return
 }
 
+// logLink reports how hosts reach the device: the transport, the request
+// guard and the routes served without host authentication by design. The
+// host authentication mode of the other routes is reported by the device
+// service once it reads the host keys.
+func logLink(r *Report, bleHeld bool) {
+	bt := "BLE held in reset"
+	if !bleHeld {
+		bt = "BLE not held in reset (see the bluetooth line)"
+	}
+
+	r.Logf(
+		"transport: plain HTTP on %s:80 over USB CDC-ECM, host %s; no TLS, no peer filter; %s",
+		device.Address,
+		hostIP,
+		bt,
+	)
+	r.Logf(
+		"guard: requests must name Host %s (port 80 optional) and POST bodies must be application/json",
+		device.Address,
+	)
+	r.Logf(
+		"routes served without host auth by design: %s",
+		strings.Join(openRoutes(), " "),
+	)
+}
+
+// openRoutes lists the routes this image serves without host
+// authentication, whatever host keys the device holds.
+func openRoutes() []string {
+	routes := append([]string{"/"}, imageOpenRoutes...)
+
+	// only a multi image authenticates inventory requests
+	if servesInventory && !multiScope {
+		routes = append(routes, "/v1/inventory")
+	}
+
+	return append(routes, testnetRoutes...)
+}
+
 func main() {
 	log.SetFlags(0)
 
@@ -86,7 +126,7 @@ func main() {
 
 	// first, before bring-up and the network: the module advertises until
 	// held in reset
-	holdBluetooth(report)
+	bleHeld := holdBluetooth(report)
 
 	// before the network and USB stack start: read the boot ROM's HAB status
 	reportHAB(report)
@@ -108,6 +148,8 @@ func main() {
 	if testnetSign != "" {
 		report.Logf("%s", testnetSign)
 	}
+
+	logLink(report, bleHeld)
 
 	go runBringup(report, s, svc)
 

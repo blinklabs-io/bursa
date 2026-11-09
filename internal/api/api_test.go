@@ -91,6 +91,7 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 			ListenAddress:    "127.0.0.1",
 			ListenPort:       uint(apiBase.Addr().(*net.TCPAddr).Port),
 			JWTSecret:        secret,
+			JWTAudience:      testAPIAudience,
 			JWTAdminSubjects: []string{"wallet-admin"},
 		},
 		Metrics: config.MetricsConfig{
@@ -131,6 +132,7 @@ func TestStartUsesConfiguredFileStorageForWalletCRUD(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-admin",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -254,6 +256,7 @@ func TestStartRejectsUnencryptedWalletStorage(t *testing.T) {
 				Api: config.ApiConfig{
 					ListenAddress:    "127.0.0.1",
 					JWTSecret:        "01234567890123456789012345678901",
+					JWTAudience:      testAPIAudience,
 					JWTAdminSubjects: []string{"wallet-admin"},
 				},
 				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
@@ -272,6 +275,7 @@ func TestStartRejectsUnencryptedWalletStorage(t *testing.T) {
 				Api: config.ApiConfig{
 					ListenAddress:    "127.0.0.1",
 					JWTSecret:        "01234567890123456789012345678901",
+					JWTAudience:      testAPIAudience,
 					JWTAdminSubjects: []string{"wallet-admin"},
 				},
 				Metrics: config.MetricsConfig{ListenAddress: "127.0.0.1"},
@@ -577,6 +581,15 @@ func TestDecodeAndValidateCapsRequestBody(t *testing.T) {
 	assert.JSONEq(t, `{"error":"request body too large"}`, w.Body.String())
 }
 
+const testAPIAudience = "bursa-api"
+
+func mustAPIHS256(t testing.TB, secret []byte) signerapi.Validator {
+	t.Helper()
+	v, err := signerapi.HS256Validator(secret, "", testAPIAudience)
+	require.NoError(t, err)
+	return v
+}
+
 func TestBuildAPIAuthValidatesTrustSource(t *testing.T) {
 	ctx := context.Background()
 
@@ -585,21 +598,54 @@ func TestBuildAPIAuthValidatesTrustSource(t *testing.T) {
 	assert.Nil(t, auth)
 
 	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
-		JWTSecret: "too-short",
+		JWTSecret:   "too-short",
+		JWTAudience: testAPIAudience,
 	}})
 	assert.ErrorContains(t, err, "at least 32 bytes")
 
 	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
-		JWTSecret: strings.Repeat("s", 32),
-		JWKSURL:   "https://issuer.example/jwks.json",
+		JWTSecret:   strings.Repeat("s", 32),
+		JWTAudience: testAPIAudience,
+		JWKSURL:     "https://issuer.example/jwks.json",
 	}})
 	assert.ErrorContains(t, err, "mutually exclusive")
 
-	auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
 		JWTSecret: strings.Repeat("s", 32),
 	}})
-	assert.NoError(t, err)
-	assert.NotNil(t, auth)
+	assert.ErrorContains(t, err, "api.jwt_audience")
+
+	_, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+		JWKSURL: "https://127.0.0.1:1/jwks.json",
+	}})
+	assert.ErrorContains(t, err, "api.jwt_audience")
+
+	secret := strings.Repeat("s", 32)
+	for _, audience := range []string{"bursa-api", "wallet-service"} {
+		auth, err = buildAPIAuth(ctx, &config.Config{Api: config.ApiConfig{
+			JWTSecret:   secret,
+			JWTAudience: audience,
+		}})
+		require.NoError(t, err)
+		require.NotNil(t, auth)
+		for _, tokenAudience := range []string{"bursa-api", "wallet-service"} {
+			token, err := jwt.NewWithClaims(
+				jwt.SigningMethodHS256,
+				jwt.RegisteredClaims{
+					Subject:   "caller",
+					Audience:  jwt.ClaimStrings{tokenAudience},
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+				},
+			).SignedString([]byte(secret))
+			require.NoError(t, err)
+			_, err = auth(token)
+			if tokenAudience == audience {
+				assert.NoError(t, err, "audience %q", audience)
+			} else {
+				assert.Error(t, err, "configured %q accepted %q", audience, tokenAudience)
+			}
+		}
+	}
 }
 
 func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
@@ -611,16 +657,12 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 	assert.NoError(t, validateAPIExposure(&config.Config{Api: config.ApiConfig{
 		ListenAddress: "127.0.0.1",
 	}}, nil))
-	err = validateAPIExposure(cfg, signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	))
+	err = validateAPIExposure(cfg, mustAPIHS256(t, []byte("01234567890123456789012345678901")))
 	assert.ErrorContains(t, err, "TLS")
 
 	cfg.Api.TLSCertFile = "/run/secrets/api-cert.pem"
 	cfg.Api.TLSKeyFile = "/run/secrets/api-key.pem"
-	assert.NoError(t, validateAPIExposure(cfg, signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)))
+	assert.NoError(t, validateAPIExposure(cfg, mustAPIHS256(t, []byte("01234567890123456789012345678901"))))
 
 	assert.ErrorContains(t, validateAPIExposure(&config.Config{
 		Google: config.GoogleConfig{Project: "test", ResourceId: "test"},
@@ -629,9 +671,7 @@ func TestValidateAPIExposureRejectsUnauthenticatedNonLoopback(t *testing.T) {
 			TLSCertFile:   "cert.pem",
 			TLSKeyFile:    "key.pem",
 		},
-	}, signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)), "jwt_admin_subjects")
+	}, mustAPIHS256(t, []byte("01234567890123456789012345678901"))), "jwt_admin_subjects")
 }
 
 func TestValidateAPIExposureRequiresAWSWalletAdministrator(t *testing.T) {
@@ -645,9 +685,7 @@ func TestValidateAPIExposureRequiresAWSWalletAdministrator(t *testing.T) {
 		"authentication is required",
 	)
 
-	auth := signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)
+	auth := mustAPIHS256(t, []byte("01234567890123456789012345678901"))
 	assert.ErrorContains(
 		t,
 		validateAPIExposure(cfg, auth),
@@ -658,9 +696,7 @@ func TestValidateAPIExposureRequiresAWSWalletAdministrator(t *testing.T) {
 }
 
 func TestValidateAPIExposureRejectsIncompleteTLSConfiguration(t *testing.T) {
-	auth := signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)
+	auth := mustAPIHS256(t, []byte("01234567890123456789012345678901"))
 
 	for _, cfg := range []*config.Config{
 		{Api: config.ApiConfig{ListenAddress: "127.0.0.1", TLSCertFile: "cert.pem"}},
@@ -682,9 +718,7 @@ func TestValidateAPIExposureRequiresGCPWalletAuthentication(t *testing.T) {
 		"authentication is required",
 	)
 
-	auth := signerapi.HS256Validator(
-		[]byte("01234567890123456789012345678901"), "", "",
-	)
+	auth := mustAPIHS256(t, []byte("01234567890123456789012345678901"))
 	assert.ErrorContains(
 		t,
 		validateAPIExposure(cfg, auth),
@@ -755,6 +789,7 @@ func TestStartServesTLSForAuthenticatedNonLoopbackAPI(t *testing.T) {
 		Api: config.ApiConfig{
 			ListenAddress: "0.0.0.0",
 			JWTSecret:     "01234567890123456789012345678901",
+			JWTAudience:   testAPIAudience,
 			TLSCertFile:   certFile,
 			TLSKeyFile:    keyFile,
 		},
@@ -799,7 +834,7 @@ func TestStartServesTLSForAuthenticatedNonLoopbackAPI(t *testing.T) {
 
 func TestProtectedAPIHandlerRequiresBearerToken(t *testing.T) {
 	const secret = "01234567890123456789012345678901"
-	auth := signerapi.HS256Validator([]byte(secret), "", "")
+	auth := mustAPIHS256(t, []byte(secret))
 	handler := protectAPIHandler(
 		auth,
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -816,6 +851,7 @@ func TestProtectedAPIHandlerRequiresBearerToken(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "test-caller",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -836,7 +872,7 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 	registerAPIHandlers(
 		mux,
 		cfg,
-		signerapi.HS256Validator([]byte(secret), "", ""),
+		mustAPIHS256(t, []byte(secret)),
 	)
 
 	sensitiveRoutes := []struct {
@@ -865,6 +901,7 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "test-caller",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -902,11 +939,12 @@ func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
 	registerAPIHandlers(
 		mux,
 		cfg,
-		signerapi.HS256Validator([]byte(secret), "", ""),
+		mustAPIHS256(t, []byte(secret)),
 		store,
 	)
 	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-user",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -942,10 +980,11 @@ func TestRegisterAPIHandlersKeepsEphemeralWalletRestoreAvailable(t *testing.T) {
 	registerAPIHandlers(
 		mux,
 		&config.Config{},
-		signerapi.HS256Validator([]byte(secret), "", ""),
+		mustAPIHS256(t, []byte(secret)),
 	)
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-user",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -968,7 +1007,7 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 	registerAPIHandlers(
 		mux,
 		cfg,
-		signerapi.HS256Validator([]byte(secret), "", ""),
+		mustAPIHS256(t, []byte(secret)),
 	)
 
 	routes := []struct {
@@ -1001,6 +1040,7 @@ func TestRegisterAPIHandlersProtectsGCPWalletRoutes(t *testing.T) {
 
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "test-caller",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -1078,11 +1118,12 @@ func TestConfiguredAWSStoreIsWiredToProtectedWalletRoutes(t *testing.T) {
 	registerAPIHandlers(
 		mux,
 		cfg,
-		signerapi.HS256Validator([]byte(secret), "", ""),
+		mustAPIHS256(t, []byte(secret)),
 		store,
 	)
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-admin",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -1168,11 +1209,12 @@ func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
 	registerAPIHandlers(
 		mux,
 		cfg,
-		signerapi.HS256Validator([]byte(secret), "", ""),
+		mustAPIHS256(t, []byte(secret)),
 		store,
 	)
 	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-admin",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))
@@ -1196,6 +1238,7 @@ func TestGCPWalletRoutesAuthorizedOperations(t *testing.T) {
 
 	nonAdminToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   "wallet-reader",
+		Audience:  jwt.ClaimStrings{testAPIAudience},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).
 		SignedString([]byte(secret))

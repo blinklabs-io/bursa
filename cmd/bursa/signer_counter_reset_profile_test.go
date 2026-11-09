@@ -72,6 +72,16 @@ func TestResetProfile(t *testing.T) {
 			backends: mixed, profile: "otg@musashi", want: "otg@musashi",
 		},
 		{
+			name:     "sops profile",
+			backends: []config.SignerBackendConfig{{Name: "s", Type: "sops", Profile: "pool-a"}},
+			profile:  "pool-a", want: "pool-a",
+		},
+		{
+			name:     "sops profiled config without a profile",
+			backends: []config.SignerBackendConfig{{Name: "s", Type: "sops", Profile: "pool-a"}},
+			wantErr:  "pass --profile",
+		},
+		{
 			name:     "nitro profile",
 			backends: []config.SignerBackendConfig{{Name: "n", Type: "nitro", Profile: "pool-a"}},
 			profile:  "pool-a", want: "pool-a",

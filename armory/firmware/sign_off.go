@@ -18,3 +18,6 @@ package main
 
 // testnetSign is empty: only a TESTNET=1 build serves the unauthenticated /sign.
 const testnetSign = ""
+
+// testnetRoutes is empty: only a TESTNET=1 build serves /sign and its /pubkey.
+var testnetRoutes []string
