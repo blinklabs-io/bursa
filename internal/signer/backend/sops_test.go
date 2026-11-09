@@ -280,7 +280,10 @@ func TestSopsBackend_UnprofiledKeysAreNotProfiled(t *testing.T) {
 	if got := profileOf(b); got != "" {
 		t.Fatalf("backend profile = %q, want none", got)
 	}
-	keys, _ := b.ListKeys(context.Background())
+	keys, err := b.ListKeys(context.Background())
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListKeys: %v len=%d", err, len(keys))
+	}
 	if _, ok := keys[0].(Profiled); ok {
 		t.Fatalf("unprofiled sops key must not implement Profiled")
 	}
@@ -291,7 +294,10 @@ func TestSopsBackend_ProfiledResolve(t *testing.T) {
 	ctx := context.Background()
 	_, priv, _ := ed25519.GenerateKey(nil)
 	preview := profiledSops(t, "cold-preview", "otg@preview", priv)
-	keys, _ := preview.ListKeys(ctx)
+	keys, err := preview.ListKeys(ctx)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListKeys: %v len=%d", err, len(keys))
+	}
 	hash := keys[0].Hash()
 
 	t.Run("refuses another profile", func(t *testing.T) {

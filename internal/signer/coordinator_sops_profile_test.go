@@ -75,23 +75,26 @@ func newSopsProfileBackend(t *testing.T, name, profile string) *backend.SopsBack
 
 func newSopsProfileCoordinator(
 	t *testing.T,
-	backends ...backend.Backend,
+	first backend.Backend,
+	more ...backend.Backend,
 ) (*Coordinator, *watermark.MemWatermark, backend.KeyHash) {
 	t.Helper()
 	wm := watermark.NewMemWatermark()
-	c, hash := newSopsProfileCoordinatorOn(t, wm, backends...)
+	c, hash := newSopsProfileCoordinatorOn(t, wm, first, more...)
 	return c, wm, hash
 }
 
-// newSopsProfileCoordinatorOn builds a coordinator over backends that records
-// in wm, allowing opcert, tx and cip8 requests for the one pool cold key.
+// newSopsProfileCoordinatorOn builds a coordinator over first and more that
+// records in wm, allowing opcert, tx and cip8 requests for the one pool cold
+// key that first holds.
 func newSopsProfileCoordinatorOn(
 	t *testing.T,
 	wm *watermark.MemWatermark,
-	backends ...backend.Backend,
+	first backend.Backend,
+	more ...backend.Backend,
 ) (*Coordinator, backend.KeyHash) {
 	t.Helper()
-	keys, err := backends[0].ListKeys(context.Background())
+	keys, err := first.ListKeys(context.Background())
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("ListKeys: %v len=%d", err, len(keys))
 	}
@@ -106,7 +109,7 @@ func newSopsProfileCoordinatorOn(
 		t.Fatalf("NewEngine: %v", err)
 	}
 	return New(Deps{
-		Resolver:  backend.NewResolver(backends...),
+		Resolver:  backend.NewResolver(append([]backend.Backend{first}, more...)...),
 		Policy:    eng,
 		Watermark: wm,
 		WMMode:    watermark.ModeEnforce,
@@ -364,7 +367,10 @@ func TestBuildBackends_SopsProfile(t *testing.T) {
 		if err := r.CheckAmbiguous(ctx); err != nil {
 			t.Fatalf("CheckAmbiguous: %v", err)
 		}
-		keys, _ := r.ListKeys(ctx)
+		keys, err := r.ListKeys(ctx)
+		if err != nil || len(keys) != 2 {
+			t.Fatalf("ListKeys: %v len=%d", err, len(keys))
+		}
 		for i, want := range []string{profPreview, profMusashi} {
 			p, ok := keys[i].(backend.Profiled)
 			if !ok || p.Profile() != want {
@@ -395,7 +401,13 @@ func TestBuildBackends_SopsProfile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildBackends: %v", err)
 		}
-		keys, _ := bs[0].ListKeys(ctx)
+		if len(bs) != 1 {
+			t.Fatalf("BuildBackends: %d backends, want 1", len(bs))
+		}
+		keys, err := bs[0].ListKeys(ctx)
+		if err != nil || len(keys) != 1 {
+			t.Fatalf("ListKeys: %v len=%d", err, len(keys))
+		}
 		if _, ok := keys[0].(backend.Profiled); ok {
 			t.Fatal("unprofiled sops key implements Profiled")
 		}
