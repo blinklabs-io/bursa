@@ -153,6 +153,12 @@ func runKesAgent(configFile string) int {
 		}
 	}
 
+	// Refuse a guard file next to the shared store before connecting, so a
+	// refused configuration does not touch the database.
+	if err := validateKesAgentStoreGuards(kc.Store, profiles); err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
 	var sharedGuard kesagent.SharedGuardStore
 	store, err := openKesAgentStore(kc.Store)
 	if err != nil {
@@ -358,6 +364,27 @@ func openKesAgentStore(
 	// NewPostgresWatermark refuses a non-loopback host without
 	// hostname-verified TLS (sslmode=verify-full).
 	return watermark.NewPostgresWatermark(ctx, dsn)
+}
+
+// validateKesAgentStoreGuards refuses a profile guard file when sc names the
+// shared PostgreSQL store, which replaces it. kesagent.New refuses the same
+// combination; checking it here does so before the store is opened.
+func validateKesAgentStoreGuards(
+	sc config.KESAgentStoreConfig,
+	profiles []kesagent.ProfileConfig,
+) error {
+	if sc.Type != "postgres" {
+		return nil
+	}
+	for _, p := range profiles {
+		if p.GuardPath != "" {
+			return fmt.Errorf(
+				"kes_agent.store \"postgres\" replaces guard_file; leave it unset for profile %q",
+				p.Name,
+			)
+		}
+	}
+	return nil
 }
 
 // kesAgentStoreDSN validates sc and returns the PostgreSQL connection string

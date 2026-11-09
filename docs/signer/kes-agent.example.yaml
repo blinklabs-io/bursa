@@ -64,7 +64,8 @@ kes_agent:
 
   # Optional shared guard store, so several agent replicas share each
   # profile's period floor and signed slot records. Default "file" uses
-  # guard_file above. With "postgres", leave guard_file unset; the DSN is read
+  # guard_file above. With "postgres", comment out guard_file above (setting
+  # both is refused, here and in each profile); the DSN is read
   # from the variable dsn_env names, and a non-loopback host requires
   # sslmode=verify-full. YAML only.
   # store:
