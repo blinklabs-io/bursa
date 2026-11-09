@@ -168,6 +168,18 @@ func runKesAgent(configFile string) int {
 			return 1
 		}
 	}
+	var maxClockSkew time.Duration
+	if kc.MaxClockSkew != "" {
+		maxClockSkew, err = time.ParseDuration(kc.MaxClockSkew)
+		if err != nil || maxClockSkew <= 0 {
+			logger.Error(
+				"kes_agent.max_clock_skew must be a positive duration",
+				"max_clock_skew",
+				kc.MaxClockSkew,
+			)
+			return 1
+		}
+	}
 
 	metrics := kesagent.NewMetrics()
 	metrics.Register(prometheus.DefaultRegisterer)
@@ -181,6 +193,7 @@ func runKesAgent(configFile string) int {
 		ColdVKey:          coldVKey,
 		EvolveInterval:    evolveInterval,
 		GuardPath:         kc.GuardFile,
+		MaxClockSkew:      maxClockSkew,
 		Version:           version.GetVersionString(),
 	}, logger, metrics)
 	if err != nil {
