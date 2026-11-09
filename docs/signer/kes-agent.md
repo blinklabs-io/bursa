@@ -147,9 +147,10 @@ again (a retry), but a different body for a signed slot or a lower slot is
 refused. Several producers can therefore share one agent for a pool, and the
 first header signed for a slot wins. The record survives restarts and key
 installs, since slots are absolute. A guard file from an earlier version loads
-with no slot record, so slots signed before the upgrade are not covered: until
-the first header after the upgrade is recorded, a header for a slot the earlier
-version already signed is accepted even with a different body. Each refusal is counted in
+with no slot record, so slots signed before the upgrade are not covered: a
+header for a slot the earlier version already signed is accepted even with a
+different body until a higher slot has been recorded after the upgrade.
+Each refusal is counted in
 `bursa_kesagent_slot_guard_refusals_total` with a `reason` of `equivocation`
 (a different body for a signed slot) or `rollback` (a lower slot); both
 series start at 0 for every profile.
