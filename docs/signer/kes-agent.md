@@ -269,12 +269,13 @@ locked memory as before.
 
 ### Running replicas
 
-1. Give every replica the same `store` settings, the same profiles and an
-   `age_identity_file` whose identity is among `age_recipients`. Replicas can
+1. Give every replica the same profiles and the same `store` settings, except
+   `age_identity_file`, which names that replica's own identity. Replicas can
    each have their own identity, as long as every one is listed in
    `age_recipients` on every replica, since a key is sealed on whichever
-   replica runs `gen-staged-key`. A replica whose identity a key was not sealed to cannot load it and
-   reports not ready (see [Health and metrics](#health-and-metrics)).
+   replica runs `gen-staged-key`. A replica whose identity a key was not
+   sealed to cannot load it and reports not ready (see
+   [Health and metrics](#health-and-metrics)).
 2. Start the replicas. With no installed key yet, each one starts, refuses
    signs for that profile and stays ready, so a pool added to a running set of
    replicas does not take them out of service for the pools they already sign
