@@ -866,6 +866,11 @@ func buildAPIAuth(
 			"api.jwt_secret and api.jwks_url are mutually exclusive",
 		)
 	}
+	if (hasSecret || hasJWKS) && cfg.Api.JWTAudience == "" {
+		return nil, errors.New(
+			"api.jwt_audience is required when api.jwt_secret or api.jwks_url is set",
+		)
+	}
 	if hasSecret {
 		if len(cfg.Api.JWTSecret) < 32 {
 			return nil, errors.New("api.jwt_secret must be at least 32 bytes")
@@ -874,7 +879,7 @@ func buildAPIAuth(
 			[]byte(cfg.Api.JWTSecret),
 			cfg.Api.JWTIssuer,
 			cfg.Api.JWTAudience,
-		), nil
+		)
 	}
 	if hasJWKS {
 		return signerapi.JWKSValidator(
