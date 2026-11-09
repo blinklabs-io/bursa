@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/gouroboros/kes"
 )
 
@@ -204,5 +205,63 @@ func TestServeControlListenerCloseUnblocksIdleHandler(t *testing.T) {
 		t.Fatal(
 			"ServeControl did not return within 2s of a direct listener close with an idle connection",
 		)
+	}
+}
+
+// blockingKeyStore blocks PutStaged until its context ends, standing in for
+// a shared key store that does not answer.
+type blockingKeyStore struct {
+	*memKeyStore
+	entered chan struct{}
+}
+
+func (b *blockingKeyStore) PutStaged(
+	ctx context.Context,
+	_, _ string,
+	_ SealedKey,
+) error {
+	close(b.entered)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestServeControlListenerCloseCancelsKeyStoreCall checks that a direct
+// listener close cancels a handler blocked in a key store call, so
+// ServeControl returns without waiting for that call's own timeout.
+func TestServeControlListenerCloseCancelsKeyStoreCall(t *testing.T) {
+	keys := &blockingKeyStore{
+		memKeyStore: newMemKeyStore(),
+		entered:     make(chan struct{}),
+	}
+	r := replica{guard: watermark.NewMemWatermark(), keys: keys}
+	a := sharedKeyAgent(t, newColdKey(t), r, testSealer(t))
+	sock := shortSocketPath(t, "ctrl-kscancel.sock")
+	ln, err := ListenUnix(sock, 0o600)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- a.ServeControl(context.Background(), ln) }()
+
+	conn := dial(t, sock)
+	var hello Hello
+	if err := readFrame(conn, &hello); err != nil {
+		t.Fatalf("read control hello: %v", err)
+	}
+	if err := writeFrame(conn, Command{Command: CmdGenStagedKey}); err != nil {
+		t.Fatalf("write gen-staged-key: %v", err)
+	}
+	select {
+	case <-keys.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("gen-staged-key never reached the key store")
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(keyStoreTimeout / 2):
+		t.Fatal("ServeControl waited on the blocked key store call after the listener closed")
 	}
 }

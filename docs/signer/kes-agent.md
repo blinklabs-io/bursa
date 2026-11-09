@@ -219,6 +219,84 @@ file. Moving from guard files to the store does not copy the file's floor.
 A database error refuses the signature; it is not counted as a slot-guard
 refusal.
 
+### Shared KES key (sealed with age)
+
+With the PostgreSQL store, the replicas can also share each profile's KES key,
+so any replica can sign for any profile. Without these settings each replica
+keeps its own key in memory only, as before.
+
+```yaml
+kes_agent:
+  store:
+    type: "postgres"
+    dsn_env: "KESAGENT_PG_DSN"
+    age_recipients: ["age1..."]             # seal staged keys to these
+    age_identity_file: "/etc/bursa/age.txt" # unseal installed keys with these
+    key_poll_interval: "10s"                # optional, default 10s
+```
+
+`age_recipients` and `age_identity_file` are set together and only with
+`type: postgres`. Like other secret key files, `age_identity_file` is refused
+when group or other users can access it. The keys live in the `kes_agent_key` table, created on first
+use, with at most one staged and one installed key per pool cold key and
+network (the same identity the guard records use).
+
+- `gen-staged-key` on any replica generates the key, seals it with age to
+  `age_recipients` and stores it as the staged key, replacing any staged
+  before. It refuses a key that this replica's own identity cannot open.
+- `install-key` on any replica checks the opcert against the stored staged key
+  and the cold key as before, unseals the key, and marks it installed in one
+  transaction. If two replicas install at once, one install wins; the other
+  gets an error unless it installed the very same opcert.
+- Every replica loads the installed key at startup, before its sockets open,
+  and checks for a newly installed one every `key_poll_interval`. It re-checks
+  the opcert against the cold key, unseals the key, evolves it to the current
+  KES period and signs with it. Until a replica has loaded the key it refuses
+  signs for that profile, and the error names why (for example, an identity
+  the key was not sealed to). A replica that misses an install keeps signing
+  with its previous key until its next poll.
+- `drop-key` stays local: it wipes this replica's copy and leaves the stored
+  records alone. The replica does not reload the dropped key until a new key
+  is installed or it restarts.
+
+The stored key is sealed at the period it was generated at and is not
+re-sealed as it evolves. It is at rest in the database and in every backup of
+it, and anything holding the age identity can read it. The stored copy can
+sign for every period the key covers, including periods the replicas have
+already evolved past, so it has no KES forward security. Unsealing goes through age's own buffers, which
+the agent cannot wipe; the agent wipes its own copies and keeps the key in
+locked memory as before.
+
+### Running replicas
+
+1. Give every replica the same profiles and the same `store` settings, except
+   `age_identity_file`, which names that replica's own identity. Replicas can
+   each have their own identity, as long as every one is listed in
+   `age_recipients` on every replica, since a key is sealed on whichever
+   replica runs `gen-staged-key`. A replica whose identity a key was not
+   sealed to cannot load it and reports not ready (see
+   [Health and metrics](#health-and-metrics)).
+2. Start the replicas. With no installed key yet, each one starts, refuses
+   signs for that profile and stays ready, so a pool added to a running set of
+   replicas does not take them out of service for the pools they already sign
+   for.
+3. Run `gen-staged-key` on any one replica, issue the opcert offline as in
+   [Key lifecycle](#key-lifecycle-control-socket), and run `install-key` with
+   it on any replica. The others load the key within `key_poll_interval`.
+4. Rotate the same way. Until a replica's next poll it keeps signing with the
+   previous key and opcert.
+
+Point every replica at one database. PostgreSQL replication and failover are
+outside Bursa: a failover must keep every committed row, and replicas must
+never be split across independent databases, or two of them could each sign a
+different header for the same slot.
+
+A replica that goes unready is only removed from new connections by whatever
+routes to it (a load balancer or a Kubernetes Service). Producer sessions that
+are already open stay on it until they reconnect. For a profile whose new key
+it cannot load, it keeps signing with the key it holds, or refuses signs with
+the reason when it holds none.
+
 ## Locked memory
 
 The agent attempts to lock the KES signing key buffer with `mlock` so that
@@ -240,15 +318,40 @@ network (e.g. mainnet `slots_per_kes_period: 129600`, `max_kes_evolutions: 62`).
 The scheduler ticks every `evolve_interval` (default `1m`) to evolve the key as
 periods advance.
 
-## Metrics
+## Health and metrics
+
+When `metrics.port` is non-zero the agent serves, on the dedicated metrics
+listener:
+
+- `GET /healthz` - liveness: 200 while the process runs.
+- `GET /readyz` - 200 when the agent is ready to sign, 503 when it is not.
+  Without a `store` it is always ready. With a PostgreSQL store it is not
+  ready while the database does not answer a test write within three seconds,
+  or while any profile has an installed key in the shared key store that the
+  replica could not read or load on its latest poll. A profile with no
+  installed key does not make it unready.
+- `GET /metrics` - Prometheus metrics.
+
+The configured address must be a loopback host without a port; it defaults to
+`127.0.0.1` so a local collector can scrape it without exposing KES activity
+on a network interface. Setting `metrics.port` to 0 also disables the health
+endpoints.
+
+Because the listener is loopback only, an HTTP probe from outside the host or
+pod cannot reach it. `bursa kes-agent ready --config <file>` reads the same
+config file, queries `/readyz` and exits 0 when the agent is ready and 1
+otherwise, so it can run as an exec readiness probe:
+
+```yaml
+readinessProbe:
+  exec:
+    command: ["bursa", "kes-agent", "ready", "--config", "/etc/bursa/config.yaml"]
+  periodSeconds: 10
+  timeoutSeconds: 6
+```
 
 Every metric except `bursa_kesagent_service_connections` carries a `profile`
 label, which is `default` for a single-pool configuration.
-
-When `metrics.port` is non-zero the agent serves Prometheus metrics at
-`/metrics` on the dedicated metrics listener. The configured address must be
-a loopback host without a port; it defaults to `127.0.0.1` so a local collector can scrape it without
-exposing KES activity on a network interface.
 
 | Metric | Meaning |
 |--------|---------|

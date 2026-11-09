@@ -177,6 +177,12 @@ const schemaAdvisoryLockID int64 = 0x62757273615f776d // "bursa_wm"
 // Close releases the underlying connection pool.
 func (s *PostgresWatermark) Close() { s.pool.Close() }
 
+// Pool returns the store's connection pool, for a caller that keeps its own
+// tables in the same database, such as the KES agent's sealed key store. The
+// pool already passed the connection checks NewPostgresWatermark applies. The
+// store still owns it: Close closes it.
+func (s *PostgresWatermark) Pool() *pgxpool.Pool { return s.pool }
+
 // Ping verifies the Postgres backend can write both watermark tables. The
 // readiness writes run in a transaction that is always rolled back.
 func (s *PostgresWatermark) Ping(ctx context.Context) error {
