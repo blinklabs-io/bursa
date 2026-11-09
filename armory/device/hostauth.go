@@ -107,7 +107,7 @@ func (s *Service) RequireHostAuth() {
 	s.requireHostAuth = true
 }
 
-// Host authentication modes, as HostAuthMode reports them.
+// Host authentication modes, as hostAuthMode reports them.
 const (
 	hostAuthRequired  = "host auth: required"
 	hostAuthBootstrap = "host auth: bootstrap, no host key registered, unsigned requests accepted"
@@ -119,17 +119,10 @@ const (
 	hostAuthBadList  = "host auth: host key list unreadable, authenticated requests refused until a restart reads a valid list or a device wipe"
 )
 
-// HostAuthMode reports, in one line, how the service authenticates requests
-// with the host keys it holds now. Routes that never take host
-// authentication, such as /v1/challenge and /wipe/device, are not covered.
-func (s *Service) HostAuthMode() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.hostAuthMode()
-}
-
-// hostAuthMode is HostAuthMode under the service lock.
+// hostAuthMode reports, in one line, how the service authenticates requests
+// with the host keys it holds now; the caller holds the service lock. Routes
+// that never take host authentication, such as /v1/challenge and
+// /wipe/device, are not covered.
 func (s *Service) hostAuthMode() string {
 	switch {
 	case s.hostKeysBad:

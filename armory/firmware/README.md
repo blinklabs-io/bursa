@@ -20,8 +20,9 @@ The Makefile header documents each variable.
 
 The device serves plain HTTP on `10.0.0.1:80` over USB CDC-ECM to the host at
 `10.0.0.2`, with no TLS and no peer filter: anything on that link reaches the
-routes. The Bluetooth module is held in reset. Every route answers only
-requests naming Host `10.0.0.1` (port 80 optional), and a POST only with an
+routes. The firmware attempts to hold the Bluetooth module in reset; if that
+fails, startup continues and the bring-up report says so. Every route answers
+only requests naming Host `10.0.0.1` (port 80 optional), and a POST only with an
 `application/json` body (`device.Guard`), which keeps a browser page on the
 host out; it does not authenticate the caller.
 
@@ -33,8 +34,8 @@ device wipe it is in bootstrap again.
 |-------|-------------------|-------------------|-----------------|
 | signing: `/v1/sign`, `/v1/signlog` | unsigned in bootstrap; then a host key of the image's scope | always a host key of the image's scope | always a host key of the profile's scope (`/v1/signlog`: of a mainnet scope) |
 | signing: `/v1/inventory` | unsigned | unsigned | a host key of the profile's scope |
-| provisioning: `/provision/*` | unsigned in bootstrap; then a host key of the image's scope | as testnet | the first host key unsigned in bootstrap; every other request a host key of the scope acted on |
-| wipe: `/wipe/profile`, `/wipe/signlog`, `/wipe/cold` | unsigned in bootstrap; then a host key of the image's scope | as testnet | always a host key of the scope acted on |
+| provisioning: `/provision/*` | unsigned in bootstrap; then a host key of the image's scope | as testnet | the first host key unsigned in bootstrap; every other request a host key of the scope acted on (`/provision/identity`: of a mainnet scope) |
+| wipe: `/wipe/profile`, `/wipe/signlog`, `/wipe/cold` | unsigned in bootstrap; then a host key of the image's scope | as testnet | `/wipe/profile`: a host key of the profile's scope, or of a mainnet scope for a testnet profile; `/wipe/cold`: of the key's owner scope, or of a mainnet scope for a testnet or unowned key; `/wipe/signlog`: of a mainnet scope |
 
 With a host key of another scope on the device, a single-scope image is not
 in bootstrap: its signing, provisioning and wipe routes above take no
@@ -66,7 +67,8 @@ no unfiltered `/sign`. The single-scope images build as before.
 
 - Signing, inventory, floor, reward, pins, profile provisioning and profile
   wipes need a host key registered for the scope of the profile they act on,
-  testnet profiles included. The routes listed above as taking no host key
+  testnet profiles included; a mainnet key also removes a testnet profile.
+  The routes listed above as taking no host key
   take none here either. A testnet key never signs or
   provisions for a mainnet profile, nor a cardano-mainnet key for a
   prime-mainnet one. A key registered by an older, unscoped image counts as a

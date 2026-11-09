@@ -28,7 +28,8 @@ WIPE ?= 0
 #            provisioning and profile wipes, testnet profiles included, need
 #            a host key registered for the scope of the profile they act on,
 #            so a testnet key never signs or provisions for a mainnet
-#            profile, nor a cardano key for a prime one. The device's first
+#            profile, nor a cardano key for a prime one; a mainnet key also
+#            wipes a testnet profile. The device's first
 #            host key is added unsigned, only by the PROVISION=1 image, and
 #            only while the device holds no host key; the signing image
 #            takes no unsigned request but / and /v1/challenge.

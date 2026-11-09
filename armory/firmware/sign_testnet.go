@@ -31,13 +31,25 @@ const maxSignable = 128
 // signing image fit for keys that matter.
 const testnetSign = "testnet bring-up build: /sign and /pubkey are served without host auth and use the bring-up raw key, not a cold key"
 
-// testnetRoutes are the bring-up routes this build serves without host
-// authentication.
-var testnetRoutes = []string{"/sign", "/pubkey"}
+// testnetHandlers are the bring-up routes this build serves without host
+// authentication. init registers each and lists it in testnetRoutes, so the
+// startup report names every route registered here.
+var testnetHandlers = []struct {
+	route   string
+	handler http.HandlerFunc
+}{
+	{"/sign", (&firmwareSigner).sign},
+	{"/pubkey", (&firmwareSigner).rawPublicKey},
+}
+
+// testnetRoutes are the routes of testnetHandlers, in order.
+var testnetRoutes []string
 
 func init() {
-	http.HandleFunc("/sign", (&firmwareSigner).sign)
-	http.HandleFunc("/pubkey", (&firmwareSigner).rawPublicKey)
+	for _, h := range testnetHandlers {
+		http.HandleFunc(h.route, h.handler)
+		testnetRoutes = append(testnetRoutes, h.route)
+	}
 }
 
 // rawPublicKey returns the public key of the key /sign signs with, which is

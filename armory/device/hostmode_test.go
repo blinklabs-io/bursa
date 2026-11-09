@@ -49,6 +49,14 @@ func (l *modeLog) has(line string) bool {
 	return slices.Contains(l.lines, line)
 }
 
+// HostAuthMode is hostAuthMode under the service lock.
+func (s *Service) HostAuthMode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.hostAuthMode()
+}
+
 // modeService returns a service of the given image on chip, logging to l.
 // chain is empty for a testnet image and "multi" for a multi image.
 func modeService(

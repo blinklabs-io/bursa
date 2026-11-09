@@ -33,6 +33,6 @@ func configureScope(svc *device.Service, report *Report) {
 	}
 
 	report.Logf(
-		"multi image: other profiles are refused; signing, inventory, provisioning and profile wipes take a host key of the profile's scope",
+		"multi image: other profiles are refused; signing, inventory, profile provisioning and profile wipes take a host key of the profile's scope; a mainnet key also wipes a testnet profile",
 	)
 }

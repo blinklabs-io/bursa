@@ -68,7 +68,7 @@ func (s *Service) SetScopes(scopes []Scope) {
 	s.scopes = append([]Scope(nil), scopes...)
 	s.networkFixed, s.requireHostAuth = true, true
 	s.logf(
-		"multi image: signing, inventory, provisioning and profile wipes take a host key of the scope acted on",
+		"multi image: signing, inventory, profile provisioning and profile wipes take a host key of the scope acted on; a mainnet key also wipes a testnet profile",
 	)
 }
 
