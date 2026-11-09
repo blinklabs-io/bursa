@@ -234,8 +234,9 @@ func (g *PeriodGuard) AuthorizeHeader(
 			)
 		case slot == g.slot && header != g.header:
 			return fmt.Errorf("%w: slot %d", ErrSlotEquivocation, slot)
-		case slot == g.slot && g.durable:
-			// The identical header again: already recorded durably.
+		case slot == g.slot && g.durable && period == g.floor:
+			// The identical header again at the floor: already recorded
+			// durably. A higher period falls through and raises the floor.
 			g.vkey = vkeyHex
 			return nil
 		}
