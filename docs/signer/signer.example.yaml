@@ -153,6 +153,7 @@ signer:
     # - name: "sops-dir"
     #   type: "sops"
     #   path: "/etc/bursa/signer/sops-keys"
+    #   profile: "pool@preview"                 # optional: bind to one network; keeps its own opcert records
 
     # Software/file backend: plaintext (or passphrase-encrypted) *.skey files
     # loaded into process memory. DEVELOPMENT ONLY (see allow_insecure_file_backend).

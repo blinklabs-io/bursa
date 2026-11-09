@@ -19,7 +19,9 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
@@ -210,5 +212,151 @@ func TestSopsBackend_DerivesTypeFromEnvelope(t *testing.T) {
 	}
 	if keys[0].Type() != KeyTypeStake {
 		t.Fatalf("expected derived type stake, got %q", keys[0].Type())
+	}
+}
+
+// profiledSops builds a loaded sops backend holding the key of priv under
+// profile ("" for an unprofiled backend).
+func profiledSops(
+	t *testing.T,
+	name, profile string,
+	priv ed25519.PrivateKey,
+) *SopsBackend {
+	t.Helper()
+	src := &fakeSecretSource{secrets: map[string][]byte{
+		"cold.skey.json": mkKeyEnvelope(t, priv),
+	}}
+	b := NewProfiledSopsBackend(
+		name,
+		profile,
+		src,
+		func(data []byte) ([]byte, error) { return data, nil },
+	)
+	b.Register("cold.skey.json", KeyTypePool)
+	if err := b.Load(context.Background()); err != nil {
+		t.Fatalf("Load %s: %v", name, err)
+	}
+	return b
+}
+
+func TestSopsBackend_ProfiledKeysImplementProfiled(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	b := profiledSops(t, "cold-preview", "otg@preview", priv)
+	if got := profileOf(b); got != "otg@preview" {
+		t.Fatalf("backend profile = %q, want otg@preview", got)
+	}
+	keys, err := b.ListKeys(context.Background())
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListKeys: %v len=%d", err, len(keys))
+	}
+	p, ok := keys[0].(Profiled)
+	if !ok || p.Profile() != "otg@preview" {
+		t.Fatalf("listed key is not Profiled under otg@preview: %v", keys[0])
+	}
+	ref, err := b.GetKey(context.Background(), keys[0].Hash())
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	if p, ok := ref.(Profiled); !ok || p.Profile() != "otg@preview" {
+		t.Fatalf("GetKey ref is not Profiled under otg@preview: %v", ref)
+	}
+	if _, ok := ref.(LoadedKeyProvider); !ok {
+		t.Fatalf("profiled sops key must keep LoadedKeyProvider for CIP-8")
+	}
+	if ref.Backend() != "cold-preview" {
+		t.Fatalf("Backend() = %q", ref.Backend())
+	}
+}
+
+func TestSopsBackend_UnprofiledKeysAreNotProfiled(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	b := profiledSops(t, "cold", "", priv)
+	if got := profileOf(b); got != "" {
+		t.Fatalf("backend profile = %q, want none", got)
+	}
+	keys, _ := b.ListKeys(context.Background())
+	if _, ok := keys[0].(Profiled); ok {
+		t.Fatalf("unprofiled sops key must not implement Profiled")
+	}
+}
+
+func TestSopsBackend_ProfiledResolve(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	preview := profiledSops(t, "cold-preview", "otg@preview", priv)
+	keys, _ := preview.ListKeys(ctx)
+	hash := keys[0].Hash()
+
+	t.Run("refuses another profile", func(t *testing.T) {
+		t.Parallel()
+		r := NewResolver(preview)
+		_, err := r.Resolve(ctx, hash, "otg@musashi")
+		if !errors.Is(err, ErrKeyNotFound) {
+			t.Fatalf("err = %v, want ErrKeyNotFound", err)
+		}
+	})
+	t.Run("serves its own profile", func(t *testing.T) {
+		t.Parallel()
+		ref, err := NewResolver(preview).Resolve(ctx, hash, "otg@preview")
+		if err != nil || ref.Backend() != "cold-preview" {
+			t.Fatalf("ref=%v err=%v", ref, err)
+		}
+	})
+	t.Run("serves a profile-less request as the only holder", func(t *testing.T) {
+		t.Parallel()
+		ref, err := NewResolver(preview).Resolve(ctx, hash, "")
+		if err != nil || ref.Backend() != "cold-preview" {
+			t.Fatalf("ref=%v err=%v", ref, err)
+		}
+	})
+	t.Run("selects the holder by profile", func(t *testing.T) {
+		t.Parallel()
+		musashi := profiledSops(t, "cold-musashi", "otg@musashi", priv)
+		r := NewResolver(preview, musashi)
+		ref, err := r.Resolve(ctx, hash, "otg@musashi")
+		if err != nil || ref.Backend() != "cold-musashi" {
+			t.Fatalf("ref=%v err=%v", ref, err)
+		}
+		if _, err = r.Resolve(ctx, hash, ""); !errors.Is(err, ErrProfileRequired) {
+			t.Fatalf("profile-less err = %v, want ErrProfileRequired", err)
+		}
+	})
+}
+
+func TestSopsBackend_CheckAmbiguousWithProfiles(t *testing.T) {
+	t.Parallel()
+	_, priv, _ := ed25519.GenerateKey(nil)
+	tests := []struct {
+		name     string
+		profiles [2]string
+		wantErr  string
+	}{
+		{"distinct profiles", [2]string{"otg@preview", "otg@musashi"}, ""},
+		{"same profile", [2]string{"otg@preview", "otg@preview"}, "under the same profile"},
+		{"profiled and unprofiled", [2]string{"otg@preview", ""}, "distinct profile"},
+		{"unprofiled and profiled", [2]string{"", "otg@preview"}, "distinct profile"},
+		{"both unprofiled", [2]string{"", ""}, "distinct profile"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := NewResolver(
+				profiledSops(t, "a", tc.profiles[0], priv),
+				profiledSops(t, "b", tc.profiles[1], priv),
+			)
+			err := r.CheckAmbiguous(context.Background())
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckAmbiguous: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
 	}
 }

@@ -161,6 +161,30 @@ Decryption uses the standard SOPS key sources, such as an age identity in
 `SOPS_AGE_KEY_FILE` or `SOPS_AGE_KEY`. Encrypt the key files to a recipient
 that unlocks nothing else.
 
+An optional `profile` binds the backend to one network, as an armory backend's
+`profile` does (see Profile routing). It is 1 to 32 characters from letters,
+digits and `._@-`; any other name fails boot. Several sops backends may read
+the same `path` under distinct profiles, each holding the same cold key:
+
+```yaml
+- name: "cold-preview"
+  type: "sops"
+  path: "/etc/bursa/signer/sops-keys"
+  profile: "otg@preview"
+- name: "cold-preprod"
+  type: "sops"
+  path: "/etc/bursa/signer/sops-keys"
+  profile: "otg@preprod"
+```
+
+A profiled sops backend serves a request only under its own profile and
+refuses one that names another. Its opcert counter, chain floor and issued
+records are kept per profile. It adds no binding signature: the backend signs
+in process, so no proxy sits between the profile and the key. A new profile
+does not adopt records written without one, so its counter starts empty; for a
+pool already on chain, the first certificate uses `opcert-next` with the
+on-chain counter. A sops backend without `profile` behaves as before.
+
 ### software / file (development only)
 
 Loads plaintext (or passphrase-encrypted) `*.skey` files from `path` directly
@@ -355,8 +379,8 @@ several holders it is not read, and those rows are migrated before a second
 profile is added. The floor written before profile scoping is left alone, as
 the new floor under the profile is read in its place.
 
-`--profile` must be the `profile` of a nitro, confidential-space or armory
-backend in the config. When the config has any such backend, the command
+`--profile` must be the `profile` of a nitro, confidential-space, armory or
+sops backend in the config. When the config has any such backend, the command
 refuses to run without `--profile`, since an unprofiled reset would neither
 clear the key's records nor fence its requests. For a key served by a backend
 without a profile in such a config, pass `--unprofiled` instead. Configs with
@@ -381,7 +405,7 @@ Order:
 
 ### Profile routing
 
-One cold key may be held by several armory backends, each with its own
+One cold key may be held by several armory or sops backends, each with its own
 `profile` (for example `otg@preview`, `otg@musashi`, `otg@preprod` on one
 device). Startup accepts a key hash in several backends only when every holder
 has a non-empty profile and the profiles are distinct. A hash in a profiled and

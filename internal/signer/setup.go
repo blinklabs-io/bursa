@@ -30,6 +30,7 @@ import (
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/internal/signer/confidentialspace"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	sops "github.com/blinklabs-io/bursa/internal/sops"
@@ -188,7 +189,17 @@ func BuildBackends(
 			if err != nil {
 				return nil, fmt.Errorf("sops backend %q: %w", c.Name, err)
 			}
-			b := backend.NewSopsBackend(c.Name, src, sopsDecrypt)
+			if c.Profile != "" {
+				if err := confidentialspace.ValidateProfile(c.Profile); err != nil {
+					return nil, fmt.Errorf("sops backend %q: %w", c.Name, err)
+				}
+			}
+			b := backend.NewProfiledSopsBackend(
+				c.Name,
+				c.Profile,
+				src,
+				sopsDecrypt,
+			)
 			names, err := src.List(ctx)
 			if err != nil {
 				return nil, fmt.Errorf(
