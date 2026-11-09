@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // TestMetricsRegisterAndNames pins the exported metric names and help text
@@ -86,4 +87,28 @@ func TestMetricsNilReceiverSafe(t *testing.T) {
 	m.setExhausted(false)
 	m.addConns(1)
 	m.addConns(-1)
+}
+
+// TestMetricsProfileSeriesExistBeforeFirstEvent verifies that a profile
+// exports its zero-valued per-key series from the moment its view is built,
+// so bursa_kesagent_exhausted reads 0 for a profile with no key installed.
+func TestMetricsProfileSeriesExistBeforeFirstEvent(t *testing.T) {
+	m := NewMetrics()
+	m.forProfile("pool-a")
+	for name, c := range map[string]prometheus.Collector{
+		"served_keys": m.servedKeys,
+		"evolutions":  m.evolutions,
+		"current":     m.currentPer,
+		"exhausted":   m.exhausted,
+	} {
+		if n := testutil.CollectAndCount(c); n != 1 {
+			t.Errorf("%s series = %d, want 1", name, n)
+		}
+	}
+	if n := testutil.CollectAndCount(m.signs); n != 2 {
+		t.Errorf("sign series = %d, want 2 (ok and error)", n)
+	}
+	if got := testutil.ToFloat64(m.exhausted.WithLabelValues("pool-a")); got != 0 {
+		t.Errorf("exhausted = %v, want 0", got)
+	}
 }

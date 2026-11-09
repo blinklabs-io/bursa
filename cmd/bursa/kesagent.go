@@ -354,6 +354,16 @@ func kesAgentProfiles(
 			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period and guard_file; set them in each profile",
 		)
 	}
+	// slot_length and max_kes_evolutions carry config defaults, so only a
+	// value other than the default (or unset) can have been set by the
+	// operator; it would otherwise be ignored in favour of each profile's
+	// own setting.
+	if (kc.SlotLength != 0 && kc.SlotLength != 1) ||
+		(kc.MaxKESEvolutions != 0 && kc.MaxKESEvolutions != 62) {
+		return nil, errors.New(
+			"kes_agent.profiles replaces slot_length and max_kes_evolutions; set them in each profile",
+		)
+	}
 	out := make([]kesagent.ProfileConfig, 0, len(kc.Profiles))
 	for i, pc := range kc.Profiles {
 		if pc.SlotLength == 0 {
