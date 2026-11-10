@@ -18,6 +18,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/blinklabs-io/bursa/internal/config"
+	"github.com/blinklabs-io/bursa/internal/kesagent"
 )
 
 func TestParseSocketMode(t *testing.T) {
@@ -221,5 +224,44 @@ func TestLoadColdVKeyMalformedTextFileOfLength32(t *testing.T) {
 		t.Fatal(
 			"expected loadColdVKey to reject malformed text-shaped 32-byte input",
 		)
+	}
+}
+
+func TestAttestedServiceConfigProviders(t *testing.T) {
+	t.Parallel()
+	const addr = "unix:///run/bursa/attester.sock"
+	cfg, err := attestedServiceConfig(config.KESAgentConfig{
+		AttestationProvider: kesagent.NoEvidenceProvider,
+	})
+	if err != nil || cfg.Provider != kesagent.NoEvidenceProvider || cfg.Attester != nil {
+		t.Fatalf("none config = %+v, %v", cfg, err)
+	}
+	if _, err := attestedServiceConfig(config.KESAgentConfig{
+		AttestationProvider: kesagent.NoEvidenceProvider,
+		AttesterAddress:     addr,
+	}); err == nil {
+		t.Fatal("none with attester_address accepted")
+	}
+	if _, err := attestedServiceConfig(config.KESAgentConfig{}); err == nil {
+		t.Fatal("no provider accepted")
+	}
+	if _, err := attestedServiceConfig(config.KESAgentConfig{
+		AttesterAddress: addr,
+	}); err == nil {
+		t.Fatal("attester without a provider accepted")
+	}
+	for _, provider := range []string{"nitro", "confidential-space"} {
+		if _, err := attestedServiceConfig(config.KESAgentConfig{
+			AttestationProvider: provider,
+		}); err == nil {
+			t.Fatalf("%s without attester_address accepted", provider)
+		}
+		cfg, err := attestedServiceConfig(config.KESAgentConfig{
+			AttestationProvider: provider,
+			AttesterAddress:     addr,
+		})
+		if err != nil || cfg.Provider != provider || cfg.Attester == nil {
+			t.Fatalf("%s with attester refused: %v", provider, err)
+		}
 	}
 }

@@ -22,27 +22,28 @@ import (
 	"testing"
 
 	"github.com/blinklabs-io/bursa"
+	"github.com/blinklabs-io/bursa/internal/config"
 )
 
-func TestListenAttestedKESRejectsPermissiveKey(t *testing.T) {
+func TestAttestedListenerRejectsPermissiveKey(t *testing.T) {
 	for _, mode := range []os.FileMode{0o640, 0o644} {
 		t.Run(mode.String(), func(t *testing.T) {
 			certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
 			if err := os.Chmod(keyFile, mode); err != nil {
 				t.Fatal(err)
 			}
-			listener, err := listenAttestedKES(
-				"127.0.0.1:0",
-				certFile,
-				keyFile,
-				certFile,
-			)
+			listener, _, err := attestedListener(config.KESAgentConfig{
+				AttestedListenAddress: "127.0.0.1:0",
+				AttestedTLSCertFile:   certFile,
+				AttestedTLSKeyFile:    keyFile,
+				AttestedClientCAFile:  certFile,
+			})
 			if listener != nil {
 				_ = listener.Close()
 			}
 			if !errors.Is(err, bursa.ErrInsecureFileMode) {
 				t.Fatalf(
-					"listenAttestedKES error = %v, want ErrInsecureFileMode",
+					"attestedListener error = %v, want ErrInsecureFileMode",
 					err,
 				)
 			}

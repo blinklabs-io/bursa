@@ -74,11 +74,15 @@ type KESAgentConfig struct {
 	// GuardFile is the required durable monotonic-period store path.
 	GuardFile string `yaml:"guard_file"              envconfig:"KESAGENT_GUARD_FILE"`
 	// AttestedListenAddress optionally exposes sign mode to a remote producer.
-	// The listener always requires a verified TLS client certificate.
+	// With TLS (the default) the listener requires TLS 1.3 and requests a client
+	// certificate only when attested_client_ca_file is set.
 	AttestedListenAddress string `yaml:"attested_listen_address" envconfig:"KESAGENT_ATTESTED_LISTEN_ADDRESS"`
 	AttestedTLSCertFile   string `yaml:"attested_tls_cert_file"  envconfig:"KESAGENT_ATTESTED_TLS_CERT_FILE"`
 	AttestedTLSKeyFile    string `yaml:"attested_tls_key_file"   envconfig:"KESAGENT_ATTESTED_TLS_KEY_FILE"`
 	AttestedClientCAFile  string `yaml:"attested_client_ca_file" envconfig:"KESAGENT_ATTESTED_CLIENT_CA_FILE"`
+	// AttestedPlaintext serves the attested protocol on plain TCP. The TLS
+	// certificate, key and client CA files must then be unset.
+	AttestedPlaintext bool `yaml:"attested_plaintext"      envconfig:"KESAGENT_ATTESTED_PLAINTEXT"`
 	// AttestationProvider identifies the verifier the producer must use.
 	AttestationProvider string `yaml:"attestation_provider"    envconfig:"KESAGENT_ATTESTATION_PROVIDER"`
 	// AttesterAddress is an HTTPS, loopback HTTP, or Unix-socket provider adapter
