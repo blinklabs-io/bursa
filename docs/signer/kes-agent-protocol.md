@@ -146,16 +146,18 @@ header request.
 ## Attested remote sign extension
 
 The remote server hello uses protocol `bursa-attested-kes/1` and mode `sign`.
-A connection must complete the TLS handshake with a verified client
-certificate within 10 seconds. Connections still in the handshake have their
-own budget, 64 in total and 4 per source (an IPv4 address or an IPv6 /64).
-When a budget is full, a new connection closes the oldest pending handshake
-from its source, or else the oldest overall, so a connection that stalls in
-the handshake cannot hold its slot against a reconnecting producer.
-Handshaking connections never occupy the slots that authenticated connections
-use.
-After TLS client-certificate authentication, Dingo sends one challenge before
-any sign request:
+The listener serves TLS 1.3 or, with `attested_plaintext`, plain TCP. It
+requires a TLS client certificate only when `attested_client_ca_file` is set.
+A TLS connection must complete the handshake, with a verified client
+certificate where one is required, within 10 seconds. Connections still in the
+handshake have their own budget, 64 in total and 4 per source (an IPv4 address
+or an IPv6 /64). When a budget is full, a new connection closes the oldest
+pending handshake from its source, or else the oldest overall, so a connection
+that stalls in the handshake cannot hold its slot against a reconnecting
+producer. Handshaking connections never occupy the slots that authenticated
+connections use.
+After the hello, and after client-certificate authentication where it is
+required, Dingo sends one challenge before any sign request:
 
 ```json
 { "type": "attestation_request", "protocol": "bursa-attested-kes/1",
@@ -184,10 +186,11 @@ sha256("bursa-attested-kes/1" ||
 
 Lengths are unsigned 64-bit big-endian values. Dingo admits the service only
 after the nonce and configured provider match, the operational certificate is
-the expected certificate, and the corresponding Nitro or Confidential Space
-verifier accepts the evidence and binding. A failure response sets `error`,
-omits evidence, and is followed by connection close. Successful attestation is
-valid only for that TLS connection.
+the expected certificate, and the evidence passes the provider check: for
+`nitro` or `confidential-space` the corresponding verifier accepts the evidence
+and binding, and for `none` the evidence is empty. A failure response sets
+`error`, omits evidence, and is followed by connection close. Successful
+attestation is valid only for that connection, whatever its transport.
 
 After admission, the connection accepts the ordinary typed `sign_request`
 frames above. KES private state, evolution, period authorization, operational
@@ -202,6 +205,14 @@ POST /v1/attest
 
 It returns the same protocol and binding plus `attestation`. Static or replayed
 evidence fails because each Dingo connection supplies a fresh nonce.
+
+With provider `none` there is no adapter and `attestation` is empty. The
+client accepts empty evidence only when it expects `none`, and refuses
+non-empty evidence for it; every other provider refuses empty evidence. The
+nonce, opcert and period checks still apply. The protocol itself measures
+nothing; transport authentication, such as a client pinning the SHA-256 SPKI
+fingerprint of the agent's TLS server certificate, is separate from the
+provider.
 
 ## Control socket
 
