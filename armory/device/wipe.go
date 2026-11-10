@@ -233,6 +233,7 @@ func (s *Service) wipeDevice(req WipeDeviceRequest) (WipeResponse, error) {
 	s.profiles, s.badSlots = map[string]profile.Profile{}, nil
 	s.hostKeys, s.hostEntries, s.hostKeysBad = nil, nil, false
 	s.logf("wipe: device wiped, %d objects deleted", len(deleted))
+	s.logf("%s", s.hostAuthMode())
 
 	return WipeResponse{Deleted: hexIDs(deleted)}, nil
 }

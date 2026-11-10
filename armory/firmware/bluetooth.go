@@ -82,14 +82,17 @@ func (b *btReset) ReadsHigh() bool {
 }
 
 // holdBluetooth holds the Bluetooth module in reset for the life of the
-// firmware and reports the outcome. The module's SWITCH pins are left alone:
-// they only select a boot mode as the module leaves reset.
-func holdBluetooth(r *Report) {
+// firmware, reports the outcome and returns whether the module is held. The
+// module's SWITCH pins are left alone: they only select a boot mode as the
+// module leaves reset.
+func holdBluetooth(r *Report) bool {
 	if err := ble.HoldInReset(&btReset{}); err != nil {
 		r.Logf("bluetooth: cannot hold module in reset: %v", err)
 		r.fail()
-		return
+		return false
 	}
 
 	r.Logf("bluetooth: module held in reset")
+
+	return true
 }

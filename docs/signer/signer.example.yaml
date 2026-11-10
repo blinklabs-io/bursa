@@ -19,8 +19,9 @@ signer:
   # JWKS URL for RS256/ES256/EdDSA verification (production).
   jwks_url: "https://idp.example.com/.well-known/jwks.json"  # env: SIGNER_JWKS_URL
 
-  # Enforced when set. Leave empty to accept any issuer/audience (a warning is
-  # logged). Production deployments SHOULD set both.
+  # jwt_audience is required with jwt_secret or jwks_url; tokens must carry it
+  # in aud. jwt_issuer is enforced when set; leave it empty to accept any issuer
+  # (a warning is logged). Production deployments SHOULD set it.
   jwt_issuer: "https://idp.example.com/"   # env: SIGNER_JWT_ISSUER
   jwt_audience: "bursa-signer"             # env: SIGNER_JWT_AUDIENCE
 
@@ -153,6 +154,7 @@ signer:
     # - name: "sops-dir"
     #   type: "sops"
     #   path: "/etc/bursa/signer/sops-keys"
+    #   profile: "pool@preview"                 # optional: bind to one network; keeps its own opcert records
 
     # Software/file backend: plaintext (or passphrase-encrypted) *.skey files
     # loaded into process memory. DEVELOPMENT ONLY (see allow_insecure_file_backend).

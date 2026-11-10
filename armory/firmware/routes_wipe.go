@@ -29,6 +29,19 @@ import (
 
 const buildMode = "wipe build: deletes profiles and keys on request; signing and provisioning endpoints are not served"
 
+// imageOpenRoutes are the routes of this image that never take host
+// authentication. /wipe/device is confirmed by the identity public key,
+// /wipe/objects only lists object IDs.
+var imageOpenRoutes = []string{
+	"/v1/challenge",
+	"/wipe/device",
+	"/wipe/objects",
+	"/reset",
+}
+
+// servesInventory is clear: this image does not serve /v1/inventory.
+const servesInventory = false
+
 // routes serves only the wipe endpoints and reset. Removing a profile,
 // resetting the signing log head or wiping the device needs this image,
 // loaded over USB recovery boot.

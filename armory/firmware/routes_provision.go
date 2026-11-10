@@ -29,6 +29,18 @@ import (
 
 const buildMode = "provisioning build: signing endpoints are not served"
 
+// imageOpenRoutes are the routes of this image that never take host
+// authentication.
+var imageOpenRoutes = []string{
+	"/v1/challenge",
+	device.RouteIdentityProof,
+	"/pubkey",
+	"/reset",
+}
+
+// servesInventory is clear: this image does not serve /v1/inventory.
+const servesInventory = false
+
 // routes serves provisioning only: key import, profiles, the reward account,
 // the opcert floor and reset. /pubkey returns the legacy cold-key object, not
 // the identity key.

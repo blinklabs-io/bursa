@@ -18,6 +18,10 @@ package main
 
 import "github.com/blinklabs-io/bursa/armory/device"
 
+// multiScope is set only for a multi image, which authenticates inventory
+// requests too; this is a multi image.
+const multiScope = true
+
 // configureScope makes the image serve the scopes of device.MultiScopes:
 // every testnet, the Cardano mainnet and the Prime mainnet. Every request
 // needs a host key of the scope it acts on.
@@ -29,6 +33,6 @@ func configureScope(svc *device.Service, report *Report) {
 	}
 
 	report.Logf(
-		"multi image: other profiles are refused; every request needs a host key of the profile's scope",
+		"multi image: other profiles are refused; signing, inventory, profile provisioning and profile wipes take a host key of the profile's scope; a mainnet key also wipes a testnet profile",
 	)
 }

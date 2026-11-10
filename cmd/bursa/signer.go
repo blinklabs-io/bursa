@@ -97,8 +97,9 @@ resolve to a single caller identity fed to the signer.callers ACL):
 
   JWT bearer          at most one of signer.jwt_secret (HS256, dev/simple) or
                       signer.jwks_url (RS256/ES256/EdDSA via JWKS, production);
-                      optional signer.jwt_issuer / signer.jwt_audience are
-                      enforced when set. Caller is the token subject.
+                      signer.jwt_audience is required and enforced; optional
+                      signer.jwt_issuer is enforced when set. Caller is the
+                      token subject.
   mTLS client cert    signer.client_ca_cert (PEM) + signer.require_client_cert.
                       Caller is derived from the verified client certificate
                       (first URI SAN, else first DNS SAN, else CN). Requires
@@ -111,6 +112,9 @@ resolve to a single caller identity fed to the signer.callers ACL):
 
 Without a signer.callers ACL, any authenticated caller may use any configured
 key.`,
+		// A non-root command with subcommands accepts stray arguments by
+		// default, so a misspelled subcommand would start the service.
+		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			logging.ConfigureJSON()
 
@@ -144,6 +148,12 @@ key.`,
 				os.Exit(1)
 			}
 			hasJWT := hasSecret || hasJWKS
+			if hasJWT && cfg.Signer.JWTAudience == "" {
+				logger.Error(
+					"signer.jwt_audience is required when signer.jwt_secret or signer.jwks_url is set",
+				)
+				os.Exit(1)
+			}
 			hasMTLS := cfg.Signer.ClientCACert != ""
 			hasReqSign := len(cfg.Signer.AuthorizedKeys) > 0
 			if hasReqSign {
@@ -316,23 +326,23 @@ key.`,
 					logger.Error("signer.jwt_secret must be at least 32 bytes")
 					os.Exit(1)
 				}
-				validate = api.HS256Validator(
+				validate, err = api.HS256Validator(
 					[]byte(cfg.Signer.JWTSecret),
 					cfg.Signer.JWTIssuer,
 					cfg.Signer.JWTAudience,
 				)
+				if err != nil {
+					logger.Error(
+						"failed to initialize HS256 validator",
+						"error",
+						err,
+					)
+					os.Exit(1)
+				}
 			}
-			// Both JWT modes enforce jwt_issuer/jwt_audience when set; warn when
-			// either is unset so operators know any-issuer / any-audience tokens
-			// are accepted.
 			if hasJWT && cfg.Signer.JWTIssuer == "" {
 				logger.Warn(
 					"signer.jwt_issuer is not set; tokens from any issuer signed by a trusted key will be accepted",
-				)
-			}
-			if hasJWT && cfg.Signer.JWTAudience == "" {
-				logger.Warn(
-					"signer.jwt_audience is not set; tokens for any audience signed by a trusted key will be accepted",
 				)
 			}
 			srv := api.NewServer(coord, resolver, eng, acl, validate)
