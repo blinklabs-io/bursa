@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // TestMetricsRegisterAndNames pins the exported metric names and help text
@@ -36,6 +37,8 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 	m.setCurrentPeriod(42)
 	m.setExhausted(true)
 	m.addConns(1)
+	m.incSlotGuardRefusal("equivocation")
+	m.setGuardFresh(true)
 
 	mfs, err := reg.Gather()
 	if err != nil {
@@ -53,6 +56,10 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 		"bursa_kesagent_current_period":      "Current absolute KES period of the active key.",
 		"bursa_kesagent_exhausted":           "1 when the active KES key has exhausted its evolutions, else 0.",
 		"bursa_kesagent_service_connections": "Currently connected service-socket clients.",
+		"bursa_kesagent_slot_guard_refusals_total": "Block headers the slot " +
+			"guard refused, by reason (equivocation|rollback).",
+		"bursa_kesagent_guard_fresh": "1 when the profile's guard file was " +
+			"missing or empty at startup, so no signed slot was known, else 0.",
 	}
 	for name, help := range want {
 		gotHelp, ok := got[name]
@@ -86,4 +93,31 @@ func TestMetricsNilReceiverSafe(t *testing.T) {
 	m.setExhausted(false)
 	m.addConns(1)
 	m.addConns(-1)
+	m.incSlotGuardRefusal("rollback")
+	m.initSlotGuardRefusals()
+	m.setGuardFresh(true)
+}
+
+// TestMetricsProfileSeriesExistBeforeFirstEvent verifies that a profile
+// exports its zero-valued per-key series from the moment its view is built,
+// so bursa_kesagent_exhausted reads 0 for a profile with no key installed.
+func TestMetricsProfileSeriesExistBeforeFirstEvent(t *testing.T) {
+	m := NewMetrics()
+	m.forProfile("pool-a")
+	for name, c := range map[string]prometheus.Collector{
+		"served_keys": m.servedKeys,
+		"evolutions":  m.evolutions,
+		"current":     m.currentPer,
+		"exhausted":   m.exhausted,
+	} {
+		if n := testutil.CollectAndCount(c); n != 1 {
+			t.Errorf("%s series = %d, want 1", name, n)
+		}
+	}
+	if n := testutil.CollectAndCount(m.signs); n != 2 {
+		t.Errorf("sign series = %d, want 2 (ok and error)", n)
+	}
+	if got := testutil.ToFloat64(m.exhausted.WithLabelValues("pool-a")); got != 0 {
+		t.Errorf("exhausted = %v, want 0", got)
+	}
 }

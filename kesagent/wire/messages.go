@@ -63,6 +63,10 @@ type SignRequest struct {
 	Type    string `json:"type"` // "sign_request"
 	Period  uint64 `json:"period"`
 	Message []byte `json:"message"`
+	// Profile optionally names the profile the header is for. The agent
+	// routes a header by its issuer key and operational certificate either
+	// way; when set, the routed profile must be this one.
+	Profile string `json:"profile,omitempty"`
 }
 
 // SignResponse is the server's reply to a SignRequest.
@@ -78,6 +82,9 @@ type Command struct {
 	Command string `json:"command"`
 	OpCert  []byte `json:"opcert,omitempty"`
 	Target  string `json:"target,omitempty"` // drop-key: active|staged|all
+	// Profile names the profile a key command acts on. It may be omitted
+	// when the agent has one profile. info without it lists every profile.
+	Profile string `json:"profile,omitempty"`
 }
 
 // Reply is a control-socket response.
@@ -86,12 +93,16 @@ type Reply struct {
 	Error   string     `json:"error,omitempty"`
 	KESVKey []byte     `json:"kes_vkey,omitempty"`
 	Info    *AgentInfo `json:"info,omitempty"`
+	// Profiles is the status of every profile, returned by info when the
+	// agent has several and no profile was named.
+	Profiles []AgentInfo `json:"profiles,omitempty"`
 }
 
 // AgentInfo is the status snapshot returned by the info command.
 type AgentInfo struct {
 	Version       string `json:"version"`
 	Mode          string `json:"mode"`
+	Profile       string `json:"profile,omitempty"`
 	HasActiveKey  bool   `json:"has_active_key"`
 	ActivePeriod  uint64 `json:"active_period"`   // current absolute KES period of the active key
 	ActiveStart   uint64 `json:"active_start"`    // absolute KES period the opcert was issued for

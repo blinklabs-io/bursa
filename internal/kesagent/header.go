@@ -31,18 +31,19 @@ var ErrInvalidHeader = errors.New(
 
 // checkHeaderLocked verifies that msg is a Babbage/Conway header body (the
 // Praos eras) for the requested KES period whose operational certificate
-// matches the active key. Caller must hold a.mu with a.active set.
-func (a *Agent) checkHeaderLocked(period uint64, msg []byte) error {
+// matches the active key, and returns the header's absolute slot. Caller must
+// hold p.mu with p.active set.
+func (p *profile) checkHeaderLocked(period uint64, msg []byte) (uint64, error) {
 	var hb babbage.BabbageBlockHeaderBody
 	n, err := cbor.Decode(msg, &hb)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidHeader, err)
+		return 0, fmt.Errorf("%w: %w", ErrInvalidHeader, err)
 	}
 	if n != len(msg) {
-		return fmt.Errorf("%w: %d trailing bytes", ErrInvalidHeader, len(msg)-n)
+		return 0, fmt.Errorf("%w: %d trailing bytes", ErrInvalidHeader, len(msg)-n)
 	}
-	if got := hb.Slot / a.cfg.SlotsPerKESPeriod; got != period {
-		return fmt.Errorf(
+	if got := hb.Slot / p.cfg.SlotsPerKESPeriod; got != period {
+		return 0, fmt.Errorf(
 			"%w: slot %d is in KES period %d, requested %d",
 			ErrInvalidHeader,
 			hb.Slot,
@@ -50,31 +51,31 @@ func (a *Agent) checkHeaderLocked(period uint64, msg []byte) error {
 			period,
 		)
 	}
-	if !bytes.Equal(hb.IssuerVkey[:], a.cfg.ColdVKey) {
-		return fmt.Errorf(
+	if !bytes.Equal(hb.IssuerVkey[:], p.cfg.ColdVKey) {
+		return 0, fmt.Errorf(
 			"%w: issuer key is not this pool's cold key",
 			ErrInvalidHeader,
 		)
 	}
 	oc := hb.OpCert
-	if !bytes.Equal(oc.HotVkey, a.active.vkey) {
-		return fmt.Errorf(
+	if !bytes.Equal(oc.HotVkey, p.active.vkey) {
+		return 0, fmt.Errorf(
 			"%w: operational certificate names a different KES key",
 			ErrInvalidHeader,
 		)
 	}
-	if oc.SequenceNumber != a.active.issueNumber ||
-		oc.KesPeriod != a.active.startPeriod {
-		return fmt.Errorf(
+	if oc.SequenceNumber != p.active.issueNumber ||
+		oc.KesPeriod != p.active.startPeriod {
+		return 0, fmt.Errorf(
 			"%w: operational certificate counter/period do not match the installed one",
 			ErrInvalidHeader,
 		)
 	}
-	if !bytes.Equal(oc.Signature, a.active.coldSig) {
-		return fmt.Errorf(
+	if !bytes.Equal(oc.Signature, p.active.coldSig) {
+		return 0, fmt.Errorf(
 			"%w: operational certificate cold signature is not the installed one",
 			ErrInvalidHeader,
 		)
 	}
-	return nil
+	return hb.Slot, nil
 }

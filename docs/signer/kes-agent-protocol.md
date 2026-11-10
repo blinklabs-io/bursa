@@ -86,8 +86,19 @@ one `SignResponse` per request. The KES key never leaves the agent.
 Client -> server:
 
 ```json
-{ "type": "sign_request", "period": 512, "message": "<b64>" }
+{ "type": "sign_request", "period": 512, "message": "<b64>", "profile": "pool-a" }
 ```
+
+`profile` is optional. The agent routes a header to the profile whose cold
+verification key is the header's issuer key and whose active KES vkey is the
+one its operational certificate names. When `profile` is present, that must be
+the profile the header routes to; otherwise the request is refused with `header
+belongs to a different profile`. A header that matches no profile is refused
+with `no such profile`, and one that matches more than one profile with
+`request does not select exactly one profile`. An agent with a single profile
+does not route: it checks the header against that profile, so a header for
+another pool is refused with that check's error, such as `issuer key is not
+this pool's cold key`.
 
 Server -> client:
 
@@ -101,14 +112,32 @@ the guard and key untouched, unless:
 
 - the message decodes as a header body with no trailing bytes;
 - the header's slot divided by `slots_per_kes_period` equals `period`;
-- the issuer verification key equals the configured cold verification key;
+- the issuer verification key equals the profile's cold verification key;
 - the header's operational certificate carries the active KES vkey, the
   installed issue counter, the installed certificate start period, and the
   installed cold-key signature.
 
+The agent then checks the header's slot against the last header it signed,
+which it keeps in `guard_file`, or in the shared store when `store.type` is
+`postgres`. A slot above it is recorded durably before the signature is
+returned. The same slot is signed again only for the identical header body. A
+producer that sends a header and gets no signature back, because the reply was
+lost or because signing returned an error other than a refusal below, keeps
+that body and retries it unchanged: the slot may already be recorded, and a
+different body for it is then refused. A different body for a recorded slot
+(`a different header was already signed for this slot`) is refused. A lower
+slot in the same KES period is refused with `header slot below the last signed
+slot refused`; a lower slot in an earlier period can be refused first with
+`requested KES period is in the past for the active key` or a period rollback.
+With a shared store, the per-slot record is shared by every replica, but the
+last signed slot is held per replica in memory and starts empty on each start.
+Producers that share an agent, or agents that share a store, therefore cannot
+publish two blocks for the pool in one slot: the first header recorded for a
+slot wins.
+
 `error` is non-empty (and `signature` absent) when signing is refused, e.g. a
-message that is not a matching header body, a period rollback, or an exhausted
-key. Header bodies of the pre-Babbage (TPraos) eras are refused.
+message that is not a matching header body, a second header for a signed slot,
+an older slot, a period rollback, or an exhausted key. Header bodies of the pre-Babbage (TPraos) eras are refused.
 
 The `type` field is mandatory and must equal `sign_request`. A frame with a
 different or missing type is refused even when its other fields form a valid
@@ -190,6 +219,11 @@ provider.
 Request/response. The client sends a `Command` frame; the server replies with a
 `Reply` frame.
 
+Every command takes an optional `profile` field naming the profile it acts on.
+It may be omitted when the agent has one profile. With several, a key command
+without it is refused with `request does not select exactly one profile`, and
+`info` without it returns every profile in `profiles`.
+
 ### Commands
 
 **gen-staged-key** - generate a fresh staged KES key pair, returning its vkey so
@@ -221,8 +255,10 @@ opcert.
 **info** - status snapshot.
 
 ```json
--> { "command": "info" }
+-> { "command": "info", "profile": "pool-a" }
 <- { "ok": true, "info": { ... } }
+-> { "command": "info" }                       // agent with several profiles
+<- { "ok": true, "profiles": [ { ... }, { ... } ] }
 ```
 
 Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
@@ -234,7 +270,8 @@ Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
   "ok": true,
   "error": "",
   "kes_vkey": "<b64, gen-staged-key only>",
-  "info": { ... }
+  "info": { ... },
+  "profiles": [ { ... } ]
 }
 ```
 
@@ -244,6 +281,7 @@ Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
 |-----------------------|---------------------------------------------------------------|
 | `version`             | Agent version string.                                         |
 | `mode`                | `serve-key` or `sign`.                                        |
+| `profile`             | Profile name (`default` for a single-pool configuration).     |
 | `has_active_key`      | Whether an active key is installed.                           |
 | `active_period`       | Current absolute KES period of the active key.                |
 | `active_start`        | Absolute KES period the opcert was issued for.                |

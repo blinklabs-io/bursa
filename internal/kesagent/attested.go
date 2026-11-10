@@ -101,25 +101,11 @@ type attestedKeyState struct {
 }
 
 func (a *Agent) attestedKeyState() (attestedKeyState, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.cfg.Mode != ModeSign {
-		return attestedKeyState{}, errors.New(
-			"kesagent: attested service requires sign mode",
-		)
+	p, err := a.selectProfile("", nil)
+	if err != nil {
+		return attestedKeyState{}, err
 	}
-	if a.active == nil || !a.activeAuthorizedLocked() {
-		return attestedKeyState{}, ErrNoActiveKey
-	}
-	if floor, set := a.guard.Floor(); set && a.active.absPeriod() < floor {
-		return attestedKeyState{}, ErrPeriodRollback
-	}
-	return attestedKeyState{
-		coldVKey: append([]byte(nil), a.cfg.ColdVKey...),
-		kesVKey:  append([]byte(nil), a.active.vkey...),
-		opcert:   append([]byte(nil), a.active.opcert...),
-		period:   a.active.absPeriod(),
-	}, nil
+	return p.attestedKeyState()
 }
 
 // AttestationBinding is the digest provider evidence must commit to. It binds
@@ -520,7 +506,7 @@ func (a *Agent) serveAttestedConn(
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
-		a.handleSign(ctx, conn)
+		a.handleSign(ctx, conn, nil)
 		return
 	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)
@@ -533,7 +519,7 @@ func (a *Agent) serveAttestedConn(
 	if err := writeFrame(conn, resp); err != nil {
 		return
 	}
-	a.handleSign(ctx, conn)
+	a.handleSign(ctx, conn, nil)
 }
 
 // HTTPAttester calls a workload-local provider adapter. The adapter receives

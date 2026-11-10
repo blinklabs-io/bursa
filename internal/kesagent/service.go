@@ -194,13 +194,13 @@ func (a *Agent) handleServiceConn(ctx context.Context, conn net.Conn) {
 	case ModeServeKey:
 		a.handleServeKey(ctx, conn)
 	case ModeSign:
-		a.handleSign(ctx, conn)
+		a.handleSign(ctx, conn, nil)
 	}
 }
 
 func (a *Agent) handleServeKey(ctx context.Context, conn net.Conn) {
-	id, ch, current := a.subscribe()
-	defer a.unsubscribe(id)
+	p, id, ch, current := a.subscribe()
+	defer p.unsubscribe(id)
 	a.metrics.addConns(1)
 	defer a.metrics.addConns(-1)
 
@@ -241,7 +241,10 @@ func (a *Agent) handleServeKey(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func (a *Agent) handleSign(ctx context.Context, conn net.Conn) {
+// handleSign serves sign requests on conn. bound, when set, is the profile
+// the session was admitted for: every header on it must route to that
+// profile.
+func (a *Agent) handleSign(ctx context.Context, conn net.Conn, bound *profile) {
 	for {
 		if ctx.Err() != nil {
 			return
@@ -256,10 +259,22 @@ func (a *Agent) handleSign(ctx context.Context, conn net.Conn) {
 		resp := SignResponse{Type: "sign_response", Period: req.Period}
 		var sig []byte
 		var err error
+		target := bound
 		if req.Type != "sign_request" {
 			err = errors.New("kesagent: invalid sign request type")
-		} else {
-			sig, err = a.SignHeader(req.Period, req.Message)
+		} else if req.Profile != "" {
+			target, err = a.profileByName(req.Profile)
+			if err == nil && bound != nil && target != bound {
+				err = fmt.Errorf(
+					"%w: request names %q, session is for %q",
+					ErrProfileMismatch,
+					req.Profile,
+					bound.cfg.Name,
+				)
+			}
+		}
+		if err == nil {
+			sig, err = a.signHeaderFor(target, req.Period, req.Message)
 		}
 		if err != nil {
 			resp.Error = err.Error()

@@ -60,7 +60,7 @@
 // After the Hello the client sends SignRequest frames and the server replies
 // with a SignResponse for each; the KES key never leaves the agent:
 //
-//	-> {"type":"sign_request","period":<abs KES period>,"message":<b64>}
+//	-> {"type":"sign_request","period":<abs KES period>,"message":<b64>,"profile":<name, optional>}
 //	<- {"type":"sign_response","period":<abs>,"signature":<b64>,"error":""}
 //
 // # Control socket
@@ -77,8 +77,11 @@
 //	-> {"command":"drop-key","target":"active"|"staged"|"all"}
 //	<- {"ok":true}
 //
-//	-> {"command":"info"}
+//	-> {"command":"info","profile":<name>}
 //	<- {"ok":true,"info":{...}}
+//
+//	-> {"command":"info"}  (agent with several profiles)
+//	<- {"ok":true,"profiles":[{...},...]}
 //
 // The agent validates an installed opcert against the configured cold
 // verification key (cold-signature check), confirms it commits to the

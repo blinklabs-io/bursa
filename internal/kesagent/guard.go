@@ -15,6 +15,8 @@
 package kesagent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +30,25 @@ import (
 var ErrPeriodRollback = errors.New(
 	"kesagent: KES period rollback refused (period below monotonic floor)",
 )
+
+// ErrSlotRollback is returned when a header is presented for a slot below the
+// last slot the agent signed a header for. A producer that asks for an older
+// slot is behind the chain the pool already extended.
+var ErrSlotRollback = errors.New(
+	"kesagent: header slot below the last signed slot refused",
+)
+
+// ErrSlotEquivocation is returned when a header body differs from the one the
+// agent already signed for the same slot. Signing it would publish a second
+// block for the pool in that slot.
+var ErrSlotEquivocation = errors.New(
+	"kesagent: a different header was already signed for this slot",
+)
+
+// ErrGuardLocked is returned when another agent process holds the lock on a
+// guard file. Two processes on one guard file would each keep their own slot
+// record and could each sign a header for the same slot.
+var ErrGuardLocked = errors.New("kesagent: guard file is locked")
 
 // PeriodGuard enforces a monotonic non-decreasing floor on the KES period the
 // agent will serve or sign for. It protects against re-serving an already
@@ -44,6 +65,12 @@ var ErrPeriodRollback = errors.New(
 // (temp-file + rename) so it survives restarts. This store is intentionally
 // self-contained; it can be migrated onto the shared signer watermark store
 // later.
+//
+// A durable guard holds an exclusive lock on a sidecar file (the guard path
+// plus ".lock") from NewPeriodGuard until Close, so a second agent process on
+// the same guard file fails to start. The sidecar, not the guard file, is
+// locked because every write replaces the guard file by a rename. The lock
+// uses flock and is not taken on platforms without it (Windows, AIX).
 type PeriodGuard struct {
 	mu    sync.Mutex
 	path  string // empty => in-memory only (non-durable)
@@ -54,17 +81,35 @@ type PeriodGuard struct {
 	// equal-period fast path must not skip persisting while it is false.
 	durable bool
 	vkey    string // hex of the active KES vkey at the current floor (informational)
+	// slot and header record the last block header signed for the pool: its
+	// absolute slot and the SHA-256 of its body. They are persisted with the
+	// floor so a restart or a key install cannot sign a second header for a
+	// signed slot.
+	slot    uint64
+	slotSet bool
+	header  string
+	// lock is the held lock on the sidecar file; nil in memory or off unix.
+	lock *os.File
+	// fresh is true when the guard file was missing or empty when opened, so
+	// no signed slot was known at startup.
+	fresh bool
 }
 
 type guardState struct {
 	Floor uint64 `json:"floor"`
 	Set   bool   `json:"set"`
 	Vkey  string `json:"kes_vkey,omitempty"`
+	// Slot, SlotSet and Header are absent from guard files written before the
+	// slot guard; such a file loads with no signed slot.
+	Slot    uint64 `json:"last_signed_slot,omitempty"`
+	SlotSet bool   `json:"last_signed_slot_set,omitempty"`
+	Header  string `json:"last_signed_header_sha256,omitempty"`
 }
 
-// NewPeriodGuard opens (or creates) a guard backed by the file at path. Direct
-// guard tests may use an empty path for an in-memory instance; Agent.New
-// requires a durable path.
+// NewPeriodGuard opens (or creates) a guard backed by the file at path and
+// locks it until Close; it returns ErrGuardLocked when another process holds
+// the lock. Direct guard tests may use an empty path for an in-memory
+// instance; Agent.New requires a durable path.
 func NewPeriodGuard(path string) (*PeriodGuard, error) {
 	// durable starts true: an in-memory guard has nothing to persist, an absent
 	// or empty file has no floor to lose, and a floor read back from the file was
@@ -73,24 +118,118 @@ func NewPeriodGuard(path string) (*PeriodGuard, error) {
 	if path == "" {
 		return g, nil
 	}
-	data, err := os.ReadFile(path)
+	// Lock before reading, so the record loaded is the one this process
+	// alone will advance. The guard works on the path with symlinks
+	// resolved: a symlink to a guard file locks the same sidecar as the file
+	// itself, and every write renames over the file it points to rather
+	// than replacing the symlink with a regular file. Resolving it also
+	// fails here, on every platform, when the directory is missing. A hard
+	// link to the guard file is not detected.
+	resolved, err := resolveGuardPath(path)
+	if err != nil {
+		return nil, err
+	}
+	g.path = resolved
+	lock, err := lockGuardFile(resolved + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	g.lock = lock
+	if err := g.load(); err != nil {
+		g.Close()
+		return nil, err
+	}
+	return g, nil
+}
+
+// resolveGuardPath returns path with symlinks resolved: the file itself when
+// it exists, otherwise its directory joined with its base name. A symlink
+// to a guard file not yet created resolves to the file it names, so the
+// first write creates that file instead of replacing the symlink.
+func resolveGuardPath(path string) (string, error) {
+	for range maxGuardLinkHops {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("kesagent: resolve guard file: %w", err)
+		}
+		fi, err := os.Lstat(path)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			break
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", fmt.Errorf("kesagent: resolve guard file: %w", err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("kesagent: guard directory: %w", err)
+	}
+	return filepath.Join(dir, filepath.Base(path)), nil
+}
+
+// maxGuardLinkHops bounds how many dangling symlinks resolveGuardPath
+// follows to reach a guard file that does not exist yet.
+const maxGuardLinkHops = 40
+
+// load reads the guard file into g. A missing or empty file leaves g empty
+// and marks it fresh.
+func (g *PeriodGuard) load() error {
+	data, err := os.ReadFile(g.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return g, nil
+			g.fresh = true
+			return nil
 		}
-		return nil, fmt.Errorf("kesagent: read guard file %q: %w", path, err)
+		return fmt.Errorf("kesagent: read guard file %q: %w", g.path, err)
 	}
 	if len(data) == 0 {
-		return g, nil
+		g.fresh = true
+		return nil
 	}
 	var st guardState
 	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("kesagent: parse guard file %q: %w", path, err)
+		return fmt.Errorf("kesagent: parse guard file %q: %w", g.path, err)
 	}
 	g.floor = st.Floor
 	g.set = st.Set
 	g.vkey = st.Vkey
-	return g, nil
+	g.slot = st.Slot
+	g.slotSet = st.SlotSet
+	g.header = st.Header
+	return nil
+}
+
+// Fresh reports whether the guard file was missing or empty when the guard
+// was opened. That is expected on a first start; on any later start it means
+// the record of the last signed slot was lost.
+func (g *PeriodGuard) Fresh() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.fresh
+}
+
+// Close releases the guard file lock. It is safe to call more than once and
+// on a nil guard. The lock file is left in place: removing it would let a
+// process that opened the old file and one that creates a new one both hold
+// a lock.
+func (g *PeriodGuard) Close() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.lock != nil {
+		_ = g.lock.Close()
+		g.lock = nil
+	}
 }
 
 // Floor returns the current monotonic floor and whether it has been set.
@@ -160,6 +299,76 @@ func (g *PeriodGuard) Authorize(vkeyHex string, period uint64) error {
 	return nil
 }
 
+// AuthorizeHeader is Authorize for a block header body at an absolute slot.
+// Besides the period floor it allows one header body per slot and never an
+// older slot: a slot above the last signed one is recorded durably before it
+// returns; the same slot is allowed again only for the identical body, so a
+// producer can retry after a lost reply; a different body for that slot
+// returns ErrSlotEquivocation and a lower slot returns ErrSlotRollback.
+func (g *PeriodGuard) AuthorizeHeader(
+	vkeyHex string,
+	period uint64,
+	slot uint64,
+	headerBody []byte,
+) error {
+	sum := sha256.Sum256(headerBody)
+	header := hex.EncodeToString(sum[:])
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.set && period < g.floor {
+		return fmt.Errorf(
+			"%w: period %d < floor %d",
+			ErrPeriodRollback,
+			period,
+			g.floor,
+		)
+	}
+	if g.slotSet {
+		switch {
+		case slot < g.slot:
+			return fmt.Errorf(
+				"%w: slot %d < last signed slot %d",
+				ErrSlotRollback,
+				slot,
+				g.slot,
+			)
+		case slot == g.slot && header != g.header:
+			return fmt.Errorf("%w: slot %d", ErrSlotEquivocation, slot)
+		case slot == g.slot && g.durable && period == g.floor:
+			// The identical header again at the floor: already recorded
+			// durably. A higher period falls through and raises the floor.
+			g.vkey = vkeyHex
+			return nil
+		}
+	}
+	// Record the new slot, or retry persisting a slot whose record is not yet
+	// durable. As in Authorize, roll back only when the write did not reach
+	// the guard file.
+	prevFloor, prevSet, prevVkey := g.floor, g.set, g.vkey
+	prevSlot, prevSlotSet, prevHeader := g.slot, g.slotSet, g.header
+	prevDurable := g.durable
+	if !g.set || period > g.floor {
+		g.floor = period
+	}
+	g.set = true
+	g.vkey = vkeyHex
+	g.slot = slot
+	g.slotSet = true
+	g.header = header
+	g.durable = false
+	committed, err := g.persistLocked()
+	if err != nil {
+		if !committed {
+			g.floor, g.set, g.vkey = prevFloor, prevSet, prevVkey
+			g.slot, g.slotSet, g.header = prevSlot, prevSlotSet, prevHeader
+			g.durable = prevDurable
+		}
+		return err
+	}
+	g.durable = true
+	return nil
+}
+
 // persistLocked writes the guard state durably. It reports whether the new
 // state reached the guard file: once the rename commits, the on-disk floor has
 // advanced even if a later step (the parent-directory sync) fails, and the
@@ -168,7 +377,14 @@ func (g *PeriodGuard) persistLocked() (committed bool, err error) {
 	if g.path == "" {
 		return true, nil
 	}
-	st := guardState{Floor: g.floor, Set: g.set, Vkey: g.vkey}
+	st := guardState{
+		Floor:   g.floor,
+		Set:     g.set,
+		Vkey:    g.vkey,
+		Slot:    g.slot,
+		SlotSet: g.slotSet,
+		Header:  g.header,
+	}
 	data, err := json.Marshal(st)
 	if err != nil {
 		return false, fmt.Errorf("kesagent: marshal guard state: %w", err)

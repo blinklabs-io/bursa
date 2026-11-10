@@ -15,6 +15,7 @@
 package kesagent
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -34,6 +35,9 @@ type headerSpec struct {
 	sequence  uint64
 	kesPeriod uint64
 	coldSig   []byte
+	// blockNumber defaults to 1; a different value gives another header body
+	// for the same slot.
+	blockNumber uint64
 }
 
 // newHeaderAgent returns a sign-mode agent at KES period 5 (slot 50..59) with
@@ -75,6 +79,9 @@ func (s headerSpec) encode(t *testing.T) []byte {
 	t.Helper()
 	var hb babbage.BabbageBlockHeaderBody
 	hb.BlockNumber = 1
+	if s.blockNumber != 0 {
+		hb.BlockNumber = s.blockNumber
+	}
 	hb.Slot = s.slot
 	copy(hb.IssuerVkey[:], s.issuer)
 	hb.VrfKey = make([]byte, 32)
@@ -177,5 +184,53 @@ func TestSignHeaderStillEnforcesPeriodRules(t *testing.T) {
 		ErrPastPeriod,
 	) {
 		t.Fatalf("past period: got %v, want ErrPastPeriod", err)
+	}
+}
+
+// TestSignHeaderOneHeaderPerSlot guards the slot record: producers sharing an
+// agent get one header body per slot, the identical body again for a retry,
+// and nothing for an older slot.
+func TestSignHeaderOneHeaderPerSlot(t *testing.T) {
+	t.Parallel()
+	a, _, spec := newHeaderAgent(t)
+	first := spec.encode(t)
+	sig, err := a.SignHeader(5, first)
+	if err != nil {
+		t.Fatalf("SignHeader: %v", err)
+	}
+	retry, err := a.SignHeader(5, first)
+	if err != nil {
+		t.Fatalf("SignHeader retry of the same body: %v", err)
+	}
+	if !bytes.Equal(sig, retry) {
+		t.Fatal("retry of the same body returned a different signature")
+	}
+
+	other := spec
+	other.blockNumber = 2
+	if _, err := a.SignHeader(5, other.encode(t)); !errors.Is(
+		err,
+		ErrSlotEquivocation,
+	) {
+		t.Fatalf("second body for slot 52: want ErrSlotEquivocation, got %v", err)
+	}
+
+	older := spec
+	older.slot = 51
+	if _, err := a.SignHeader(5, older.encode(t)); !errors.Is(
+		err,
+		ErrSlotRollback,
+	) {
+		t.Fatalf("slot 51 after 52: want ErrSlotRollback, got %v", err)
+	}
+
+	later := spec
+	later.slot = 53
+	later.blockNumber = 2
+	if _, err := a.SignHeader(5, later.encode(t)); err != nil {
+		t.Fatalf("slot 53: %v", err)
+	}
+	if slot, ok := lastSignedSlot(sole(t, a).guard); !ok || slot != 53 {
+		t.Fatalf("last signed slot = %d %v, want 53 true", slot, ok)
 	}
 }

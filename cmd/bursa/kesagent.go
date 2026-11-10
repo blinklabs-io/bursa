@@ -34,6 +34,9 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/kesagent"
 	"github.com/blinklabs-io/bursa/internal/logging"
+	"github.com/blinklabs-io/bursa/internal/signer"
+	"github.com/blinklabs-io/bursa/internal/signer/api"
+	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/bursa/internal/version"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/prometheus/client_golang/prometheus"
@@ -61,13 +64,112 @@ The pool cold signing key never touches the agent: it only holds the cold
 verification key and consumes the operational certificate the cold signer
 issued. Manage keys over the control socket: gen-staged-key, install-key,
 drop-key, info.`,
+		// A non-root command with subcommands accepts stray arguments by
+		// default, so a misspelled subcommand would start the daemon.
+		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			os.Exit(runKesAgent(configFile))
 		},
 	}
 	cmd.Flags().
 		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
+	cmd.AddCommand(kesAgentReadyCommand())
 	return cmd
+}
+
+// kesAgentReadyCommand checks a running agent's readiness for an exec probe.
+// The health endpoints share the metrics listener, which binds only
+// loopback, so an HTTP probe from outside the host or pod cannot reach them.
+func kesAgentReadyCommand() *cobra.Command {
+	var configFile string
+	cmd := &cobra.Command{
+		Use:   "ready",
+		Short: "Exit 0 when the local KES agent reports ready",
+		Long: `Query /readyz on the local KES agent's metrics listener and exit 0 when
+it reports ready, 1 otherwise. It reads the same config file as the agent to
+find the listener. Use it as an exec readiness probe.`,
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := checkKesAgentReady(configFile); err != nil {
+				fmt.Fprintln(os.Stderr, "kes-agent not ready:", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().
+		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
+	return cmd
+}
+
+// kesAgentReadyClientTimeout bounds the ready command's request. It exceeds
+// the agent's own readiness timeout so a slow store reports 503, not a
+// client timeout.
+const kesAgentReadyClientTimeout = 5 * time.Second
+
+func checkKesAgentReady(configFile string) error {
+	if configFile == "" {
+		configFile = os.Getenv("BURSA_CONFIG")
+	}
+	cfg, err := config.LoadConfigFile(configFile)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if cfg.Metrics.ListenPort == 0 {
+		return errors.New(
+			"metrics.port is 0, so the agent serves no readiness endpoint",
+		)
+	}
+	addr, err := signer.LoopbackBindAddress(
+		cfg.Metrics.ListenAddress,
+		cfg.Metrics.ListenPort,
+	)
+	if err != nil {
+		return err
+	}
+	return getKesAgentReadyz("http://" + addr + "/readyz")
+}
+
+func getKesAgentReadyz(url string) error {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		kesAgentReadyClientTimeout,
+	)
+	defer cancel()
+	// url is the agent's own loopback metrics address from the local config.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // loopback only, see above
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // loopback only, see above
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readyz returned %s", resp.Status)
+	}
+	return nil
+}
+
+// kesAgentHealthMux serves the metrics handler alongside /healthz and
+// /readyz. Readiness fails while the shared store does not answer or a
+// profile cannot load its installed key; without a store it always passes.
+func kesAgentHealthMux(
+	metricsHandler http.Handler,
+	store watermark.Pinger,
+	agent interface{ Ready() error },
+) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metricsHandler)
+	mux.Handle("/", api.HealthHandler(func(ctx context.Context) error {
+		if store != nil {
+			if err := store.Ping(ctx); err != nil {
+				return fmt.Errorf("shared store: %w", err)
+			}
+		}
+		return agent.Ready()
+	}))
+	return mux
 }
 
 // runKesAgent runs the KES agent daemon to completion and returns the process
@@ -120,26 +222,9 @@ func runKesAgent(configFile string) int {
 		)
 		return 1
 	}
-	if kc.SlotsPerKESPeriod == 0 {
-		logger.Error("kes_agent.slots_per_kes_period must be set")
-		return 1
-	}
-	if kc.SlotLength <= 0 {
-		logger.Error(
-			"kes_agent.slot_length must be positive",
-			"slot_length",
-			kc.SlotLength,
-		)
-		return 1
-	}
-	systemStart, err := time.Parse(time.RFC3339, kc.SystemStart)
+	profiles, err := kesAgentProfiles(kc)
 	if err != nil {
-		logger.Error("kes_agent.system_start must be RFC3339", "error", err)
-		return 1
-	}
-	coldVKey, err := loadColdVKey(kc.ColdVKeyHex, kc.ColdVKeyFile)
-	if err != nil {
-		logger.Error("failed to load cold verification key", "error", err)
+		logger.Error("invalid kes_agent profile configuration", "error", err)
 		return 1
 	}
 	serviceSocketMode, err := parseSocketMode(kc.ServiceSocketMode)
@@ -169,25 +254,74 @@ func runKesAgent(configFile string) int {
 		}
 	}
 
+	// Refuse a guard file next to the shared store before connecting, so a
+	// refused configuration does not touch the database.
+	if err := validateKesAgentStoreGuards(kc.Store, profiles); err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
+	sealer, keyPollInterval, err := kesAgentKeySealer(kc.Store)
+	if err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
+	var sharedGuard kesagent.SharedGuardStore
+	store, err := openKesAgentStore(kc.Store)
+	if err != nil {
+		logger.Error("invalid kes_agent.store", "error", err)
+		return 1
+	}
+	var keyStore kesagent.KeyStore
+	if store != nil {
+		// Deferred before agent.Close, so it runs after it.
+		defer store.Close()
+		sharedGuard = store
+		if sealer != nil {
+			ks, err := openKesAgentKeyStore(store)
+			if err != nil {
+				logger.Error("failed to open the shared KES key store", "error", err)
+				return 1
+			}
+			keyStore = ks
+		}
+	}
+
 	metrics := kesagent.NewMetrics()
 	metrics.Register(prometheus.DefaultRegisterer)
 
 	agent, err := kesagent.New(kesagent.Config{
-		Mode:              kc.Mode,
-		SystemStart:       systemStart,
-		SlotLength:        time.Duration(kc.SlotLength * float64(time.Second)),
-		SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
-		MaxKESEvolutions:  kc.MaxKESEvolutions,
-		ColdVKey:          coldVKey,
-		EvolveInterval:    evolveInterval,
-		GuardPath:         kc.GuardFile,
-		Version:           version.GetVersionString(),
+		Mode:            kc.Mode,
+		EvolveInterval:  evolveInterval,
+		Version:         version.GetVersionString(),
+		Profiles:        profiles,
+		SharedGuard:     sharedGuard,
+		KeyStore:        keyStore,
+		KeySealer:       sealer,
+		KeyPollInterval: keyPollInterval,
 	}, logger, metrics)
 	if err != nil {
 		logger.Error("failed to create KES agent", "error", err)
 		return 1
 	}
 	defer agent.Close()
+	if metricsSrv != nil {
+		// A nil *PostgresWatermark in the interface would not compare nil.
+		var pinger watermark.Pinger
+		if store != nil {
+			pinger = store
+		}
+		metricsSrv.Handler = kesAgentHealthMux(metricsSrv.Handler, pinger, agent)
+	}
+	if keyStore != nil {
+		// Load the installed keys before the sockets open. A profile that
+		// fails is logged, refuses signs, and is retried on every poll.
+		syncCtx, cancel := context.WithTimeout(
+			context.Background(),
+			kesAgentStoreOpenTimeout,
+		)
+		_ = agent.SyncKeys(syncCtx)
+		cancel()
+	}
 
 	serviceLn, err := kesagent.ListenUnix(kc.ServiceSocket, serviceSocketMode)
 	if err != nil {
@@ -208,6 +342,15 @@ func runKesAgent(configFile string) int {
 	if kc.AttestedListenAddress != "" {
 		if kc.Mode != kesagent.ModeSign {
 			logger.Error("kes_agent.attested_listen_address requires sign mode")
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
+		if err := validateKesAgentAttestedProfiles(
+			kc.AttestedListenAddress,
+			profiles,
+		); err != nil {
+			logger.Error("invalid attested KES configuration", "error", err)
 			_ = serviceLn.Close()
 			_ = controlLn.Close()
 			return 1
@@ -275,8 +418,14 @@ func runKesAgent(configFile string) int {
 		"mode", kc.Mode,
 		"service_socket", kc.ServiceSocket,
 		"control_socket", kc.ControlSocket,
-		"cold_vkey", hex.EncodeToString(coldVKey),
 	)
+	for _, p := range profiles {
+		logger.Info("serving KES agent profile",
+			"profile", p.Name,
+			"cold_vkey", hex.EncodeToString(p.ColdVKey),
+			"guard_file", p.GuardPath,
+		)
+	}
 
 	exitCode := 0
 	select {
@@ -405,6 +554,289 @@ func attestedListener(kc config.KESAgentConfig) (net.Listener, string, error) {
 		return nil, "", err
 	}
 	return tls.NewListener(ln, tlsCfg), fingerprint, nil
+}
+
+// kesAgentStoreOpenTimeout bounds connecting to the shared guard store and
+// creating its tables at startup.
+const kesAgentStoreOpenTimeout = 30 * time.Second
+
+// openKesAgentStore opens the shared guard store sc selects. It returns nil
+// for the file store, the default, where each profile keeps a guard file.
+func openKesAgentStore(
+	sc config.KESAgentStoreConfig,
+) (*watermark.PostgresWatermark, error) {
+	dsn, err := kesAgentStoreDSN(sc)
+	if err != nil || dsn == "" {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		kesAgentStoreOpenTimeout,
+	)
+	defer cancel()
+	// NewPostgresWatermark refuses a non-loopback host without
+	// hostname-verified TLS (sslmode=verify-full).
+	return watermark.NewPostgresWatermark(ctx, dsn)
+}
+
+// defaultKesAgentKeyPollInterval is kes_agent.store.key_poll_interval when
+// unset.
+const defaultKesAgentKeyPollInterval = 10 * time.Second
+
+// kesAgentKeySealer validates the shared key settings in sc and returns the
+// age sealer and poll interval, or a nil sealer when the key is not shared.
+func kesAgentKeySealer(
+	sc config.KESAgentStoreConfig,
+) (*kesagent.KeySealer, time.Duration, error) {
+	if len(sc.AgeRecipients) == 0 && sc.AgeIdentityFile == "" {
+		if sc.KeyPollInterval != "" {
+			return nil, 0, errors.New(
+				"kes_agent.store.key_poll_interval needs age_recipients and age_identity_file",
+			)
+		}
+		return nil, 0, nil
+	}
+	if sc.Type != "postgres" {
+		return nil, 0, errors.New(
+			"kes_agent.store.age_recipients and age_identity_file need kes_agent.store.type \"postgres\"",
+		)
+	}
+	if len(sc.AgeRecipients) == 0 || sc.AgeIdentityFile == "" {
+		return nil, 0, errors.New(
+			"kes_agent.store.age_recipients and age_identity_file must be set together",
+		)
+	}
+	poll := defaultKesAgentKeyPollInterval
+	if sc.KeyPollInterval != "" {
+		d, err := time.ParseDuration(sc.KeyPollInterval)
+		if err != nil {
+			return nil, 0, fmt.Errorf("kes_agent.store.key_poll_interval: %w", err)
+		}
+		if d <= 0 {
+			return nil, 0, errors.New(
+				"kes_agent.store.key_poll_interval must be positive",
+			)
+		}
+		poll = d
+	}
+	sealer, err := kesagent.NewKeySealer(sc.AgeRecipients, sc.AgeIdentityFile)
+	if err != nil {
+		return nil, 0, err
+	}
+	return sealer, poll, nil
+}
+
+// openKesAgentKeyStore creates the sealed key table in the shared guard
+// store's database and returns the key store over the same connection pool.
+func openKesAgentKeyStore(
+	store *watermark.PostgresWatermark,
+) (*kesagent.PostgresKeyStore, error) {
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		kesAgentStoreOpenTimeout,
+	)
+	defer cancel()
+	return kesagent.NewPostgresKeyStore(ctx, store.Pool())
+}
+
+// validateKesAgentStoreGuards refuses a profile guard file when sc names the
+// shared PostgreSQL store, which replaces it. kesagent.New refuses the same
+// combination; checking it here does so before the store is opened.
+func validateKesAgentStoreGuards(
+	sc config.KESAgentStoreConfig,
+	profiles []kesagent.ProfileConfig,
+) error {
+	if sc.Type != "postgres" {
+		return nil
+	}
+	for _, p := range profiles {
+		if p.GuardPath != "" {
+			return fmt.Errorf(
+				"kes_agent.store \"postgres\" replaces guard_file; leave it unset for profile %q",
+				p.Name,
+			)
+		}
+	}
+	return nil
+}
+
+// kesAgentStoreDSN validates sc and returns the PostgreSQL connection string
+// it names, or "" for the file store.
+func kesAgentStoreDSN(sc config.KESAgentStoreConfig) (string, error) {
+	switch sc.Type {
+	case "", "file":
+		if sc.DSNEnv != "" {
+			return "", errors.New(
+				"kes_agent.store.dsn_env is set but kes_agent.store.type is not \"postgres\"",
+			)
+		}
+		return "", nil
+	case "postgres":
+		if sc.DSNEnv == "" {
+			return "", errors.New(
+				"kes_agent.store.type \"postgres\" requires kes_agent.store.dsn_env",
+			)
+		}
+		dsn := os.Getenv(sc.DSNEnv)
+		if dsn == "" {
+			return "", fmt.Errorf(
+				"kes_agent.store.dsn_env %q is set but the environment variable is empty",
+				sc.DSNEnv,
+			)
+		}
+		return dsn, nil
+	default:
+		return "", fmt.Errorf(
+			"kes_agent.store.type must be \"file\" or \"postgres\", got %q",
+			sc.Type,
+		)
+	}
+}
+
+// validateKesAgentAttestedProfiles refuses the attested listener with more
+// than one profile: the attestation exchange selects the sole profile, so with
+// several every handshake would fail with ErrAmbiguousProfile.
+func validateKesAgentAttestedProfiles(
+	attestedListenAddress string,
+	profiles []kesagent.ProfileConfig,
+) error {
+	if attestedListenAddress != "" && len(profiles) > 1 {
+		return fmt.Errorf(
+			"kes_agent.attested_listen_address requires exactly one profile, got %d",
+			len(profiles),
+		)
+	}
+	return nil
+}
+
+// kesAgentProfiles builds the agent's profiles from kc: the profiles list, or
+// one profile named kesagent.DefaultProfileName from the single-pool fields.
+func kesAgentProfiles(
+	kc config.KESAgentConfig,
+) ([]kesagent.ProfileConfig, error) {
+	if len(kc.Profiles) == 0 {
+		p, err := kesAgentProfile(config.KESAgentProfileConfig{
+			Name:              kesagent.DefaultProfileName,
+			ColdVKeyFile:      kc.ColdVKeyFile,
+			ColdVKeyHex:       kc.ColdVKeyHex,
+			SystemStart:       kc.SystemStart,
+			ShelleyStartSlot:  kc.ShelleyStartSlot,
+			ShelleyStartTime:  kc.ShelleyStartTime,
+			SlotLength:        kc.SlotLength,
+			SlotsPerKESPeriod: kc.SlotsPerKESPeriod,
+			MaxKESEvolutions:  kc.MaxKESEvolutions,
+			MaxClockSkew:      kc.MaxClockSkew,
+			GuardFile:         kc.GuardFile,
+		}, "kes_agent")
+		if err != nil {
+			return nil, err
+		}
+		return []kesagent.ProfileConfig{p}, nil
+	}
+	if kc.ColdVKeyFile != "" || kc.ColdVKeyHex != "" ||
+		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
+		kc.GuardFile != "" || kc.ShelleyStartTime != "" ||
+		kc.ShelleyStartSlot != 0 || kc.MaxClockSkew != "" {
+		return nil, errors.New(
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew and guard_file; set them in each profile",
+		)
+	}
+	// slot_length and max_kes_evolutions carry config defaults, so only a
+	// value other than the default (or unset) can have been set by the
+	// operator; it would otherwise be ignored in favour of each profile's
+	// own setting.
+	if (kc.SlotLength != 0 && kc.SlotLength != 1) ||
+		(kc.MaxKESEvolutions != 0 && kc.MaxKESEvolutions != 62) {
+		return nil, errors.New(
+			"kes_agent.profiles replaces slot_length and max_kes_evolutions; set them in each profile",
+		)
+	}
+	out := make([]kesagent.ProfileConfig, 0, len(kc.Profiles))
+	for i, pc := range kc.Profiles {
+		if pc.SlotLength == 0 {
+			pc.SlotLength = 1
+		}
+		p, err := kesAgentProfile(
+			pc,
+			fmt.Sprintf("kes_agent.profiles[%d]", i),
+		)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// kesAgentProfile validates one profile's settings; field names errors with
+// the config path the setting came from.
+func kesAgentProfile(
+	pc config.KESAgentProfileConfig,
+	field string,
+) (kesagent.ProfileConfig, error) {
+	if pc.SlotsPerKESPeriod == 0 {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s.slots_per_kes_period must be set",
+			field,
+		)
+	}
+	if pc.SlotLength <= 0 {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s.slot_length must be positive, got %v",
+			field,
+			pc.SlotLength,
+		)
+	}
+	systemStart, err := time.Parse(time.RFC3339, pc.SystemStart)
+	if err != nil {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s.system_start must be RFC3339: %w",
+			field,
+			err,
+		)
+	}
+	var shelleyStart time.Time
+	if pc.ShelleyStartTime != "" {
+		shelleyStart, err = time.Parse(time.RFC3339, pc.ShelleyStartTime)
+		if err != nil {
+			return kesagent.ProfileConfig{}, fmt.Errorf(
+				"%s.shelley_start_time must be RFC3339: %w",
+				field,
+				err,
+			)
+		}
+	}
+	var maxClockSkew time.Duration
+	if pc.MaxClockSkew != "" {
+		maxClockSkew, err = time.ParseDuration(pc.MaxClockSkew)
+		if err != nil || maxClockSkew <= 0 {
+			return kesagent.ProfileConfig{}, fmt.Errorf(
+				"%s.max_clock_skew must be a positive duration, got %q",
+				field,
+				pc.MaxClockSkew,
+			)
+		}
+	}
+	coldVKey, err := loadColdVKey(pc.ColdVKeyHex, pc.ColdVKeyFile)
+	if err != nil {
+		return kesagent.ProfileConfig{}, fmt.Errorf(
+			"%s: load cold verification key: %w",
+			field,
+			err,
+		)
+	}
+	return kesagent.ProfileConfig{
+		Name:              pc.Name,
+		SystemStart:       systemStart,
+		ShelleyStartSlot:  pc.ShelleyStartSlot,
+		ShelleyStartTime:  shelleyStart,
+		SlotLength:        time.Duration(pc.SlotLength * float64(time.Second)),
+		SlotsPerKESPeriod: pc.SlotsPerKESPeriod,
+		MaxKESEvolutions:  pc.MaxKESEvolutions,
+		MaxClockSkew:      maxClockSkew,
+		ColdVKey:          coldVKey,
+		GuardPath:         pc.GuardFile,
+	}, nil
 }
 
 // loadColdVKey resolves the pool cold verification key from an inline hex value
