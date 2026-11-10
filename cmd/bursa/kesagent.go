@@ -346,6 +346,15 @@ func runKesAgent(configFile string) int {
 			_ = controlLn.Close()
 			return 1
 		}
+		if err := validateKesAgentAttestedProfiles(
+			kc.AttestedListenAddress,
+			profiles,
+		); err != nil {
+			logger.Error("invalid attested KES configuration", "error", err)
+			_ = serviceLn.Close()
+			_ = controlLn.Close()
+			return 1
+		}
 		attestedLn, err = listenAttestedKES(
 			kc.AttestedListenAddress,
 			kc.AttestedTLSCertFile,
@@ -614,6 +623,22 @@ func kesAgentStoreDSN(sc config.KESAgentStoreConfig) (string, error) {
 			sc.Type,
 		)
 	}
+}
+
+// validateKesAgentAttestedProfiles refuses the attested listener with more
+// than one profile: the attestation exchange selects the sole profile, so with
+// several every handshake would fail with ErrAmbiguousProfile.
+func validateKesAgentAttestedProfiles(
+	attestedListenAddress string,
+	profiles []kesagent.ProfileConfig,
+) error {
+	if attestedListenAddress != "" && len(profiles) > 1 {
+		return fmt.Errorf(
+			"kes_agent.attested_listen_address requires exactly one profile, got %d",
+			len(profiles),
+		)
+	}
+	return nil
 }
 
 // kesAgentProfiles builds the agent's profiles from kc: the profiles list, or

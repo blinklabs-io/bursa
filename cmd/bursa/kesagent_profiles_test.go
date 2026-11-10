@@ -202,3 +202,32 @@ func TestKESAgentProfilesParsesMaxClockSkew(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateKesAgentAttestedProfiles(t *testing.T) {
+	one := []kesagent.ProfileConfig{{Name: "a"}}
+	two := []kesagent.ProfileConfig{{Name: "a"}, {Name: "b"}}
+	for _, tc := range []struct {
+		name     string
+		addr     string
+		profiles []kesagent.ProfileConfig
+		refused  bool
+	}{
+		{name: "listener with two profiles", addr: ":9443", profiles: two, refused: true},
+		{name: "listener with one profile", addr: ":9443", profiles: one},
+		{name: "no listener with two profiles", profiles: two},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateKesAgentAttestedProfiles(tc.addr, tc.profiles)
+			if tc.refused {
+				if err == nil ||
+					!strings.Contains(err.Error(), "attested_listen_address requires exactly one profile") {
+					t.Fatalf("err = %v, want a refusal", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+		})
+	}
+}

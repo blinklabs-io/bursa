@@ -114,7 +114,8 @@ kes_agent:
   #     guard_file: "/var/lib/bursa/kes-agent/preprod-pool.json"
 
   # Optional remote sign service for Dingo. This is available only in sign
-  # mode and always requires a client certificate issued by the configured CA.
+  # mode with exactly one profile, and always requires a client certificate
+  # issued by the configured CA.
   # attested_listen_address: ":9443"
   # attested_tls_cert_file: "/run/secrets/kes-agent/tls.crt"
   # attested_tls_key_file: "/run/secrets/kes-agent/tls.key"
