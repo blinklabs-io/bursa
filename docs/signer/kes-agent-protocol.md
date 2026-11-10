@@ -118,13 +118,22 @@ the guard and key untouched, unless:
   installed cold-key signature.
 
 The agent then checks the header's slot against the last header it signed,
-which it keeps in `guard_file`. A slot above it is recorded durably before the
-signature is returned. The same slot is signed again only for the identical
-header body, so a producer can retry after a lost reply. A different body for
-that slot (`a different header was already signed for this slot`) or a lower
-slot (`header slot below the last signed slot refused`) is refused. Producers
-that share an agent therefore cannot publish two blocks for the pool in one
-slot: the first header the agent signs for a slot wins.
+which it keeps in `guard_file`, or in the shared store when `store.type` is
+`postgres`. A slot above it is recorded durably before the signature is
+returned. The same slot is signed again only for the identical header body. A
+producer that sends a header and gets no signature back, because the reply was
+lost or because signing returned an error other than a refusal below, keeps
+that body and retries it unchanged: the slot may already be recorded, and a
+different body for it is then refused. A different body for a recorded slot
+(`a different header was already signed for this slot`) is refused. A lower
+slot in the same KES period is refused with `header slot below the last signed
+slot refused`; a lower slot in an earlier period can be refused first with
+`requested KES period is in the past for the active key` or a period rollback.
+With a shared store, the per-slot record is shared by every replica, but the
+last signed slot is held per replica in memory and starts empty on each start.
+Producers that share an agent, or agents that share a store, therefore cannot
+publish two blocks for the pool in one slot: the first header recorded for a
+slot wins.
 
 `error` is non-empty (and `signature` absent) when signing is refused, e.g. a
 message that is not a matching header body, a second header for a signed slot,
