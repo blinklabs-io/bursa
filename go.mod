@@ -16,7 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.8
 	github.com/blinklabs-io/go-bip39 v0.2.1
 	github.com/blinklabs-io/gouroboros v0.218.0
-	github.com/blinklabs-io/plutigo v0.11.4
+	github.com/blinklabs-io/plutigo v0.11.5
 	github.com/btcsuite/btcd/btcutil v1.2.0
 	github.com/consensys/gnark-crypto v0.22.0
 	github.com/fxamacker/cbor/v2 v2.10.0
