@@ -265,7 +265,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
-          go-version: 1.26.10
+          go-version-file: go.mod
       # Each target's binary is kept at build/<os>-<arch>/bursa. The make target
       # depends on the Go sources, not on GOOS/GOARCH, so the previous target's
       # output is removed first or make would skip the rebuild.
@@ -508,7 +508,7 @@ jobs:
           node-version: 22
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 https://github.com/actions/setup-go/releases/tag/v7.0.0
         with:
-          go-version: 1.26.10
+          go-version-file: go.mod
 
       # ---- Per-OS webview build dependencies -------------------------------
       - name: Set up MSYS2 MinGW64 for Windows amd64 CGO
