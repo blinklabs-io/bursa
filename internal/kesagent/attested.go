@@ -116,6 +116,14 @@ func (a *Agent) attestedKeyState(
 	if err != nil {
 		return nil, attestedKeyState{}, err
 	}
+	// selectProfile read the routing snapshot; st was read under the
+	// profile lock. A rotation between the two must not attest another key.
+	if len(kesVKey) != 0 && !bytes.Equal(st.kesVKey, kesVKey) {
+		return nil, attestedKeyState{}, fmt.Errorf(
+			"%w: no active key matches",
+			ErrUnknownProfile,
+		)
+	}
 	return p, st, nil
 }
 

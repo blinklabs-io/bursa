@@ -128,6 +128,26 @@ func TestAttestedAdmissionRefusesNameThatMismatchesKESVKey(t *testing.T) {
 	}
 }
 
+// TestAttestedAdmissionRefusesKeyRotatedAfterSelection covers a rotation
+// between selection, which reads the routing snapshot, and the key state read
+// under the profile lock: the response must not attest another key than the
+// requested kes_vkey.
+func TestAttestedAdmissionRefusesKeyRotatedAfterSelection(t *testing.T) {
+	t.Parallel()
+	a, _, _ := twoAttestedProfiles(t)
+	p, err := a.profileByName("pool-a")
+	if err != nil {
+		t.Fatalf("profileByName: %v", err)
+	}
+	stale := bytes.Repeat([]byte{0x01}, 32)
+	p.activeVKey.Store(&stale)
+	resp, _ := attestWith(t, a, "", stale)
+	if !strings.Contains(resp.Error, ErrUnknownProfile.Error()) ||
+		len(resp.KESVKey) != 0 {
+		t.Fatalf("attested a key other than the requested kes_vkey: %+v", resp)
+	}
+}
+
 func TestAttestedAdmissionWithoutSelectorIsAmbiguousForTwoProfiles(t *testing.T) {
 	t.Parallel()
 	a, _, _ := twoAttestedProfiles(t)
