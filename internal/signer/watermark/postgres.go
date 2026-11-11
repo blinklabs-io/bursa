@@ -16,6 +16,7 @@ package watermark
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
@@ -184,8 +185,15 @@ func (s *PostgresWatermark) Close() { s.pool.Close() }
 func (s *PostgresWatermark) Pool() *pgxpool.Pool { return s.pool }
 
 // Ping verifies the Postgres backend can write both watermark tables. The
-// readiness writes run in a transaction that is always rolled back.
+// readiness writes run in a transaction that is always rolled back. Each probe
+// writes its own record key, so a probe transaction another replica leaves
+// open does not hold this one's row lock.
 func (s *PostgresWatermark) Ping(ctx context.Context) error {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Errorf("generate readiness probe key: %w", err)
+	}
+	probeKey := readinessProbeRecordKey + hex.EncodeToString(suffix[:])
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin watermark readiness transaction: %w", err)
@@ -205,7 +213,7 @@ func (s *PostgresWatermark) Ping(ctx context.Context) error {
 		VALUES ($1, $2)
 		ON CONFLICT (record_key) DO UPDATE
 		SET payload_hash = signer_watermark.payload_hash
-	`, readinessProbeRecordKey, readinessProbePayloadHash); err != nil {
+	`, probeKey, readinessProbePayloadHash); err != nil {
 		return fmt.Errorf("write payload watermark readiness probe: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -213,7 +221,7 @@ func (s *PostgresWatermark) Ping(ctx context.Context) error {
 		VALUES ($1, $2)
 		ON CONFLICT (record_key) DO UPDATE
 		SET counter = signer_counter_watermark.counter
-	`, readinessProbeRecordKey, readinessProbeCounter); err != nil {
+	`, probeKey, readinessProbeCounter); err != nil {
 		return fmt.Errorf("write counter watermark readiness probe: %w", err)
 	}
 	if err := tx.Rollback(ctx); err != nil {

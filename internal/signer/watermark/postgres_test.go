@@ -416,8 +416,8 @@ func TestPostgres_PingWritableDoesNotPersistProbe(t *testing.T) {
 	var payloadRows, counterRows int
 	if err := wm.pool.QueryRow(ctx, `
 		SELECT
-			(SELECT count(*) FROM signer_watermark WHERE record_key = $1),
-			(SELECT count(*) FROM signer_counter_watermark WHERE record_key = $1)
+			(SELECT count(*) FROM signer_watermark WHERE starts_with(record_key, $1)),
+			(SELECT count(*) FROM signer_counter_watermark WHERE starts_with(record_key, $1))
 	`, readinessProbeRecordKey).Scan(&payloadRows, &counterRows); err != nil {
 		t.Fatalf("count readiness probe rows: %v", err)
 	}
@@ -427,6 +427,35 @@ func TestPostgres_PingWritableDoesNotPersistProbe(t *testing.T) {
 			payloadRows,
 			counterRows,
 		)
+	}
+}
+
+// A probe transaction one replica leaves open must not hold another
+// replica's probe on its row lock (bursa #1303).
+func TestPostgres_PingNotBlockedByOpenProbeTransaction(t *testing.T) {
+	dsn := testPGDSN(t)
+	stuck := newTestPG(t, dsn)
+	wm := newTestPG(t, dsn)
+	ctx := context.Background()
+
+	tx, err := stuck.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin stuck probe transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO signer_watermark (record_key, payload_hash)
+		VALUES ($1, $2)
+		ON CONFLICT (record_key) DO UPDATE
+		SET payload_hash = signer_watermark.payload_hash
+	`, readinessProbeRecordKey, readinessProbePayloadHash); err != nil {
+		t.Fatalf("hold readiness probe row: %v", err)
+	}
+
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := wm.Ping(pingCtx); err != nil {
+		t.Fatalf("Ping behind an open probe transaction: %v", err)
 	}
 }
 
