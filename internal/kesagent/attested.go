@@ -100,8 +100,14 @@ type attestedKeyState struct {
 	period   uint64
 }
 
-func (a *Agent) attestedKeyState() (attestedKeyState, error) {
-	p, err := a.selectProfile("", nil)
+// attestedKeyState returns the key state of the profile an attestation
+// request selects (see selectProfile). The selection does not bind the
+// session: sign requests still route by header across every profile.
+func (a *Agent) attestedKeyState(
+	name string,
+	kesVKey []byte,
+) (attestedKeyState, error) {
+	p, err := a.selectProfile(name, kesVKey)
 	if err != nil {
 		return attestedKeyState{}, err
 	}
@@ -488,7 +494,7 @@ func (a *Agent) serveAttestedConn(
 		_ = writeFrame(conn, resp)
 		return
 	}
-	state, err := a.attestedKeyState()
+	state, err := a.attestedKeyState(req.Profile, req.KESVKey)
 	if err != nil {
 		resp.Error = err.Error()
 		_ = writeFrame(conn, resp)

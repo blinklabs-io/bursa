@@ -65,6 +65,10 @@ func goldenCases() []goldenCase {
 		{"attestation_request", AttestationRequest{
 			Type: "attestation_request", Protocol: AttestedProtocolID, Nonce: nonce,
 		}, func() any { return new(AttestationRequest) }},
+		{"attestation_request_selector", AttestationRequest{
+			Type: "attestation_request", Protocol: AttestedProtocolID, Nonce: nonce,
+			KESVKey: kesVKey, Profile: "pool-a",
+		}, func() any { return new(AttestationRequest) }},
 		{"attestation_response", AttestationResponse{
 			Type: "attestation_response", Protocol: AttestedProtocolID,
 			Nonce: nonce, Provider: "nitro",

@@ -164,6 +164,22 @@ required, Dingo sends one challenge before any sign request:
   "nonce": "<32 fresh random bytes>" }
 ```
 
+The request may also carry two optional fields that select which profile the
+response attests: `kes_vkey` (the 32-byte KES verification key) and `profile`
+(a profile name). Old clients send neither, and agents ignore fields they do
+not know. Selection:
+
+- with `kes_vkey`, the profile whose active key has that verification key; if
+  `profile` is also set it must name that profile, otherwise the response
+  carries an `error`;
+- with only `profile`, the named profile;
+- with neither, the sole profile. With several profiles this is ambiguous and
+  the response carries an `error`.
+
+An unknown profile or a `kes_vkey` that matches no active key also sets
+`error`. Selection picks only the key state in the response. It does not bind
+the connection: sign requests keep routing by header across all profiles.
+
 The workload answers:
 
 ```json

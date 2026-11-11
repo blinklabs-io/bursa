@@ -124,11 +124,16 @@ type AgentInfo struct {
 }
 
 // AttestationRequest is the first client message after the attested protocol
-// hello. Nonce must be fresh and exactly 32 bytes.
+// hello. Nonce must be fresh and exactly 32 bytes. KESVKey and Profile are
+// optional and select which profile's key state the server attests: KESVKey
+// matches the profile whose active key it is, and Profile, when also set, must
+// name that profile. With neither, the server uses its sole profile.
 type AttestationRequest struct {
 	Type     string `json:"type"`
 	Protocol string `json:"protocol"`
 	Nonce    []byte `json:"nonce"`
+	KESVKey  []byte `json:"kes_vkey,omitempty"`
+	Profile  string `json:"profile,omitempty"`
 }
 
 // AttestationResponse binds the active KES state to measured-workload
