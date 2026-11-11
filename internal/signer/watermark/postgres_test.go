@@ -430,8 +430,8 @@ func TestPostgres_PingWritableDoesNotPersistProbe(t *testing.T) {
 	}
 }
 
-// A probe transaction one replica leaves open must not hold another
-// replica's probe on its row lock (bursa #1303).
+// A probe transaction left open by one replica must not hold another
+// replica's probe on its row lock.
 func TestPostgres_PingNotBlockedByOpenProbeTransaction(t *testing.T) {
 	dsn := testPGDSN(t)
 	stuck := newTestPG(t, dsn)
