@@ -171,7 +171,9 @@ not know. Selection:
 
 - with `kes_vkey`, the profile whose active key has that verification key; if
   `profile` is also set it must name that profile, otherwise the response
-  carries an `error`;
+  carries an `error`. If several profiles have that active key, the response
+  carries an `error` whether or not `profile` is set; select such a profile
+  by `profile` alone;
 - with only `profile`, the named profile;
 - with neither, the sole profile. With several profiles this is ambiguous and
   the response carries an `error`.
