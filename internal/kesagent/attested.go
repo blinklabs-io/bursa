@@ -100,18 +100,23 @@ type attestedKeyState struct {
 	period   uint64
 }
 
-// attestedKeyState returns the key state of the profile an attestation
-// request selects (see selectProfile). The selection does not bind the
-// session: sign requests still route by header across every profile.
+// attestedKeyState returns the profile an attestation request selects (see
+// selectProfile) and its key state. The session is bound to that profile:
+// its sign requests are refused with ErrProfileMismatch when their header
+// routes to another one.
 func (a *Agent) attestedKeyState(
 	name string,
 	kesVKey []byte,
-) (attestedKeyState, error) {
+) (*profile, attestedKeyState, error) {
 	p, err := a.selectProfile(name, kesVKey)
 	if err != nil {
-		return attestedKeyState{}, err
+		return nil, attestedKeyState{}, err
 	}
-	return p.attestedKeyState()
+	st, err := p.attestedKeyState()
+	if err != nil {
+		return nil, attestedKeyState{}, err
+	}
+	return p, st, nil
 }
 
 // AttestationBinding is the digest provider evidence must commit to. It binds
@@ -494,7 +499,7 @@ func (a *Agent) serveAttestedConn(
 		_ = writeFrame(conn, resp)
 		return
 	}
-	state, err := a.attestedKeyState(req.Profile, req.KESVKey)
+	bound, state, err := a.attestedKeyState(req.Profile, req.KESVKey)
 	if err != nil {
 		resp.Error = err.Error()
 		_ = writeFrame(conn, resp)
@@ -512,7 +517,7 @@ func (a *Agent) serveAttestedConn(
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
-		a.handleSign(ctx, conn, nil)
+		a.handleSign(ctx, conn, bound)
 		return
 	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)
@@ -525,7 +530,7 @@ func (a *Agent) serveAttestedConn(
 	if err := writeFrame(conn, resp); err != nil {
 		return
 	}
-	a.handleSign(ctx, conn, nil)
+	a.handleSign(ctx, conn, bound)
 }
 
 // HTTPAttester calls a workload-local provider adapter. The adapter receives

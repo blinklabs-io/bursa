@@ -177,8 +177,10 @@ not know. Selection:
   the response carries an `error`.
 
 An unknown profile or a `kes_vkey` that matches no active key also sets
-`error`. Selection picks only the key state in the response. It does not bind
-the connection: sign requests keep routing by header across all profiles.
+`error`. Selection binds the connection to the selected profile: a sign
+request whose header routes to another profile, or that names another
+profile, gets an `error` and no signature. A producer that forges for several
+pools opens one connection per pool.
 
 The workload answers:
 

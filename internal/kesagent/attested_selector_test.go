@@ -147,16 +147,14 @@ func TestAttestedAdmissionWithoutSelectorUsesTheSoleProfile(t *testing.T) {
 	}
 }
 
-func TestAttestedSessionAdmittedForOneProfileStillSignsForAnother(t *testing.T) {
-	t.Parallel()
-	a, pa, pb := twoAttestedProfiles(t)
-	resp, client := attestWith(t, a, "", pa.vkey)
-	if resp.Error != "" || !bytes.Equal(resp.KESVKey, pa.vkey) {
-		t.Fatalf("admission for pool-a: %+v", resp)
-	}
-	body := pb.header.encode(t)
+// signOver sends a sign request for header on an admitted session and returns
+// the response.
+func signOver(t *testing.T, client net.Conn, ip installedProfile) SignResponse {
+	t.Helper()
 	if err := writeFrame(client, SignRequest{
-		Type: "sign_request", Period: pb.period, Message: body,
+		Type:    "sign_request",
+		Period:  ip.period,
+		Message: ip.header.encode(t),
 	}); err != nil {
 		t.Fatalf("write sign request: %v", err)
 	}
@@ -164,8 +162,24 @@ func TestAttestedSessionAdmittedForOneProfileStillSignsForAnother(t *testing.T) 
 	if err := readFrame(client, &signed); err != nil {
 		t.Fatalf("read sign response: %v", err)
 	}
-	if signed.Error != "" ||
-		!kes.VerifySignedKES(pb.vkey, pb.period-pb.header.kesPeriod, body, signed.Signature) {
-		t.Fatalf("session admitted for pool-a refused pool-b header: %+v", signed)
+	return signed
+}
+
+func TestAttestedSessionIsBoundToItsAdmittedProfile(t *testing.T) {
+	t.Parallel()
+	a, pa, pb := twoAttestedProfiles(t)
+	resp, client := attestWith(t, a, "", pa.vkey)
+	if resp.Error != "" || !bytes.Equal(resp.KESVKey, pa.vkey) {
+		t.Fatalf("admission for pool-a: %+v", resp)
+	}
+	other := signOver(t, client, pb)
+	if !strings.Contains(other.Error, ErrProfileMismatch.Error()) ||
+		len(other.Signature) != 0 {
+		t.Fatalf("session admitted for pool-a signed a pool-b header: %+v", other)
+	}
+	own := signOver(t, client, pa)
+	if own.Error != "" ||
+		!kes.VerifySignedKES(pa.vkey, pa.period-pa.header.kesPeriod, pa.header.encode(t), own.Signature) {
+		t.Fatalf("session admitted for pool-a refused its own header: %+v", own)
 	}
 }
