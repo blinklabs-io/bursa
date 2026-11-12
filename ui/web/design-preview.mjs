@@ -85,6 +85,7 @@ createServer(async (req, res) => {
   }
   if (req.method !== 'GET') return json({ error: 'Design preview: transactions and persistent changes are disabled.' }, 403);
   if (path === '/wallet/settings/nft-media') return json({ available: true, enabled: mediaEnabled });
+  if (path === '/wallet/settings/external-handle-lookup') return json({ available: true, enabled: false });
   if (path === '/wallet/nft') return json(nfts);
   const nftIndex = nfts.findIndex(n => path === `/wallet/nft/${n.unit}/image`);
   if (nftIndex >= 0) {
