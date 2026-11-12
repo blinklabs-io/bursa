@@ -52,10 +52,12 @@ The `sign` service routes each header to a profile by its issuer key (the
 pool's cold key) and the KES key named by its operational certificate. One
 cold key may be used on several networks; the KES key tells those profiles
 apart. A header that matches no profile is refused. `serve-key` mode takes
-exactly one profile, since a producer subscribes to one key. The attested
-listener also takes exactly one profile, since the attestation request does
-not name a profile: `attested_listen_address` with more than one profile is
-refused at startup.
+exactly one profile, since a producer subscribes to one key. On the attested
+listener, each session is bound to one profile. With more than one profile,
+the attestation request selects it with its optional `kes_vkey` and `profile`
+fields (see the protocol document), and the session then signs only headers
+that route to that profile. The local socket still routes by header across
+every profile.
 
 Control commands take the profile name. With one profile it may be omitted,
 and `info` without a name lists every profile.
