@@ -199,7 +199,7 @@ const LEDGER_CAPABILITIES: HardwareCapabilities = {
 /**
  * Open a connection to a Ledger device via WebHID and return a HardwareSigner.
  *
- * @throws Error — "WebHID not available — open this in a Chromium browser"
+ * @throws Error — "WebHID not available. Open this in a Chromium browser."
  *   if the browser does not support the WebHID API.
  */
 export async function connectLedger(): Promise<HardwareSigner> {
@@ -207,7 +207,7 @@ export async function connectLedger(): Promise<HardwareSigner> {
     typeof navigator === "undefined" ||
     (navigator as Navigator & { hid?: unknown }).hid === undefined
   ) {
-    throw new Error("WebHID not available — open this in a Chromium browser");
+    throw new Error("WebHID not available. Open this in a Chromium browser.");
   }
 
   // Loaded on demand, as trezor.ts and keystone.ts load their transports: this

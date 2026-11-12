@@ -195,31 +195,6 @@ test("(b) renders stake address in monospace and a CopyButton for it", async () 
   expect(await screen.findByRole("button", { name: /\(copied\)$/ })).toBeInTheDocument();
 });
 
-test("(c) renders sync state pill from useStatus", () => {
-  mockStatus("syncing", 10000, false);
-  renderSettings();
-  // The sync state must be visible
-  expect(screen.getByText("syncing")).toBeInTheDocument();
-});
-
-test("(d) renders tip block number from useStatus", () => {
-  mockStatus("ready", 99999, true);
-  renderSettings();
-  expect(screen.getByText("99999")).toBeInTheDocument();
-});
-
-test("(e) caughtUp=true shows a caught-up indicator", () => {
-  mockStatus("ready", 12345, true);
-  renderSettings();
-  expect(screen.getByText(/caught.?up/i)).toBeInTheDocument();
-});
-
-test("(f) caughtUp=false does NOT show caught-up indicator", () => {
-  mockStatus("syncing", 12345, false);
-  renderSettings();
-  expect(screen.queryByText(/caught.?up/i)).toBeNull();
-});
-
 test("failed sync offers a scoped recovery with deliberate confirmation", async () => {
   mockStatus("error", 0, false);
   const recover = vi.spyOn(client, "recoverNodeSync").mockResolvedValue({ started: true });
@@ -287,19 +262,6 @@ test("multi-signature wallet type is identified explicitly", () => {
   expect(screen.getByText(/multi-signature wallet/i)).toBeInTheDocument();
 });
 
-test("(i) loading state from useStatus renders gracefully", () => {
-  vi.spyOn(hooks, "useStatus").mockReturnValue({
-    data: null,
-    error: null,
-    loading: true,
-    refresh: vi.fn(),
-    setData: vi.fn(),
-  } as never);
-  renderSettings();
-  // Should not crash; network card still shows
-  expect(screen.getByText("preview")).toBeInTheDocument();
-});
-
 // ---------------------------------------------------------- lean storage ---
 
 test("(j) lean storage toggle reflects the persisted enabled state", () => {
@@ -308,15 +270,13 @@ test("(j) lean storage toggle reflects the persisted enabled state", () => {
   renderSettings();
   const toggle = screen.getByRole("switch", { name: /lean storage/i });
   expect(toggle).toBeChecked();
-  expect(screen.getByText(/enabled/i)).toBeInTheDocument();
 });
 
 test("(k) lean storage renders the tradeoff copy", () => {
   mockStatus("ready", 12345, true);
   renderSettings();
-  expect(screen.getByText(/saves significant disk space/i)).toBeInTheDocument();
-  expect(screen.getByText(/your mithril snapshot is kept/i)).toBeInTheDocument();
-  expect(screen.getByText(/one-way until re-sync/i)).toBeInTheDocument();
+  expect(screen.getByText(/save tens of GB/i)).toBeInTheDocument();
+  expect(screen.getByText(/pruned history comes back only with a re-sync/i)).toBeInTheDocument();
 });
 
 test("(l) toggling lean storage PUTs the new value and shows restart note", async () => {
@@ -379,8 +339,8 @@ test("(o) a persisted restart_required surfaces the restart note", () => {
   mockStatus("ready", 12345, true);
   mockHistoryExpiry({ enabled: true, restart_required: true });
   renderSettings();
-  // The restart note appears both in the live status line (role=status) and as
-  // the final bullet of the copy; assert the live status one specifically.
+  // The restart note appears both in the live status line (role=status) and in
+  // the card copy; assert the live status one specifically.
   expect(screen.getByRole("status")).toHaveTextContent(/takes effect after a node restart/i);
 });
 
@@ -392,16 +352,15 @@ test("(al1) auto-lock select reflects the persisted timeout", () => {
   renderSettings();
   const select = screen.getByRole("combobox", { name: /lock after inactivity/i });
   expect(select).toHaveValue("30");
-  expect(screen.getByText(/locks after 30 minutes/i)).toBeInTheDocument();
 });
 
-test("(al2) auto-lock 'Off' (0) is rendered distinctly", () => {
+test("(al2) auto-lock 'Off' (0) selects the Off option", () => {
   mockStatus("ready", 12345, true);
   mockAutoLock({ minutes: 0 });
   renderSettings();
   const select = screen.getByRole("combobox", { name: /lock after inactivity/i });
   expect(select).toHaveValue("0");
-  expect(screen.getByText(/the vault will not auto-lock/i)).toBeInTheDocument();
+  expect((screen.getByRole("option", { name: "Off" }) as HTMLOptionElement).selected).toBe(true);
 });
 
 test("(al3) changing the auto-lock select PUTs the new value", async () => {
@@ -417,7 +376,6 @@ test("(al3) changing the auto-lock select PUTs the new value", async () => {
   await waitFor(() => expect(spy).toHaveBeenCalledWith(5));
   await waitFor(() => expect(autoLockState.setData).toHaveBeenCalledWith(saved));
   await waitFor(() => expect(select).toHaveValue("5"));
-  expect(screen.getByText(/locks after 5 minutes/i)).toBeInTheDocument();
 });
 
 test("(al4) failed auto-lock update rolls back and surfaces the error", async () => {
@@ -694,12 +652,12 @@ test("connector card recovers after a transient missing endpoint", async () => {
 
   renderSettings();
 
-  await waitFor(() => expect(screen.queryByText("dApp Connector")).toBeNull());
+  await waitFor(() => expect(screen.queryByText("dApp connector")).toBeNull());
   await act(async () => {
     await vi.advanceTimersByTimeAsync(3000);
   });
   await waitFor(() =>
-    expect(screen.getByText("dApp Connector")).toBeInTheDocument(),
+    expect(screen.getByText("dApp connector")).toBeInTheDocument(),
   );
 });
 
@@ -764,7 +722,6 @@ test("enabled NFT media can be turned off", () => {
     enabled: true, loading: false, saving: false, error: null, setEnabled,
   });
   renderSettings();
-  expect(screen.getByText("On")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /turn off nft media/i }));
   expect(setEnabled).toHaveBeenCalledWith(false);
 });

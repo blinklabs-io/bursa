@@ -37,6 +37,12 @@
   --content-width: 1180px;
   --form-width: 760px;
 
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-press: 120ms;
+  --dur-pop: 200ms;
+  --dur-modal: 280ms;
+
   --gold-metal:
     repeating-linear-gradient(0deg, #f4e6c004 0px, #f4e6c004 1px, transparent 1px, transparent 3px),
     linear-gradient(115deg, #b29a6b, #c2ad82 42%, #b7a073 76%, #bda77c);

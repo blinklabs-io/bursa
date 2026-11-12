@@ -78,10 +78,10 @@ export function Governance({ network }: GovernanceProps) {
 
   return (
     <div className="send-form">
-      <Card title="Governance Actions">
+      <Card title="Governance actions">
         <p className="helper-text">
           Browse and search the on-chain governance actions (Conway proposals)
-          your embedded node has recorded — read directly from the node, no
+          your embedded node has recorded. Everything is read from the node, and no
           external service is contacted. This is a read-only viewer with each
           action's type, status, and vote tallies.
         </p>

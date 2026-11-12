@@ -59,7 +59,7 @@ a:hover {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   padding: var(--space-3) var(--space-3) var(--space-4);
 }
 
@@ -109,11 +109,8 @@ a:hover {
 }
 .brand-motto {
   display: block;
-  margin-top: 6px;
-  font-family: var(--mono);
+  margin-top: var(--space-2);
   font-size: var(--text-caption);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
   color: var(--text-faint);
 }
 
@@ -136,8 +133,8 @@ a:hover {
   line-height: 1.4;
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background var(--dur-press) var(--ease-out),
+    color var(--dur-press) var(--ease-out);
 }
 .nav-item:hover:not(:disabled) {
   background: var(--inset);
@@ -196,11 +193,8 @@ a:hover {
   border-bottom: 1px solid var(--border);
 }
 .wallet-switcher-label {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
   color: var(--text-faint);
   padding: var(--space-1) var(--space-2);
 }
@@ -208,7 +202,7 @@ a:hover {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .wallet-item {
   appearance: none;
@@ -227,9 +221,9 @@ a:hover {
   font-family: var(--font);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
+    background var(--dur-press) var(--ease-out),
+    color var(--dur-press) var(--ease-out),
+    border-color var(--dur-press) var(--ease-out);
 }
 .wallet-item:hover:not(:disabled) {
   background: var(--inset);
@@ -253,16 +247,13 @@ a:hover {
   font-weight: 600;
 }
 .wallet-net {
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--text-faint);
 }
 .wallet-switcher-actions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   margin-top: var(--space-1);
 }
 .wallet-action {
@@ -274,11 +265,9 @@ a:hover {
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-muted);
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.06em;
   cursor: pointer;
-  transition: color 0.12s ease;
+  transition: color var(--dur-press) var(--ease-out);
 }
 .wallet-action:hover {
   color: var(--accent);
@@ -292,17 +281,14 @@ a:hover {
 .account-switcher {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   margin-top: var(--space-1);
   padding-left: var(--space-2);
   border-left: 2px solid var(--border);
 }
 .account-switcher-label {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--text-faint);
   padding: var(--space-1) var(--space-2);
 }
@@ -310,7 +296,7 @@ a:hover {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .account-item {
   appearance: none;
@@ -329,9 +315,9 @@ a:hover {
   font-family: var(--font);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
+    background var(--dur-press) var(--ease-out),
+    color var(--dur-press) var(--ease-out),
+    border-color var(--dur-press) var(--ease-out);
 }
 .account-item:hover:not(:disabled) {
   background: var(--inset);
@@ -368,7 +354,7 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--text-caption);
   color: var(--text-faint);
   white-space: nowrap;
@@ -380,9 +366,7 @@ a:hover {
   padding: var(--space-1) var(--space-2);
 }
 .account-add-label {
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
 .account-add-input {
@@ -412,9 +396,7 @@ a:hover {
   border-radius: var(--radius);
   background: var(--accent-dim);
   color: var(--accent);
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.06em;
   cursor: pointer;
 }
 .account-add-submit:disabled {
@@ -465,13 +447,9 @@ a:hover {
   border-radius: var(--radius-lg);
   padding: var(--space-4);
 }
-/* Panel label — a small monospace instrument caption. */
 .card h2 {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: var(--space-3);
 }
@@ -484,9 +462,8 @@ a:hover {
   margin-top: var(--space-4);
 }
 
-/* Hero readout — the balance, in big gold monospace. */
 .balance-ada {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: clamp(2rem, 5vw, 2.75rem);
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -505,11 +482,8 @@ a:hover {
 .preview-details > label,
 .field-label {
   display: block;
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: var(--space-2);
 }
@@ -517,10 +491,9 @@ a:hover {
 .field {
   display: block;
   width: 100%;
-  padding: 10px var(--space-3);
+  padding: var(--space-compact) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-family: var(--mono);
   font-size: 0.875rem;
   color: var(--text);
   background: var(--inset);
@@ -584,7 +557,6 @@ a:hover {
 /* Affirmative verdict (verification valid). Mirrors .error-text but positive. */
 .success-text {
   color: var(--ok);
-  font-family: var(--mono);
   font-weight: 600;
   font-size: 0.875rem;
   margin: var(--space-1) 0;
@@ -598,7 +570,7 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 10px var(--space-4);
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--radius);
   border: 1px solid transparent;
   font-family: var(--font);
@@ -607,9 +579,9 @@ a:hover {
   cursor: pointer;
   line-height: 1.2;
   transition:
-    background 0.14s ease,
-    border-color 0.14s ease,
-    opacity 0.14s ease;
+    background var(--dur-press) var(--ease-out),
+    border-color var(--dur-press) var(--ease-out),
+    opacity var(--dur-press) var(--ease-out);
 }
 .btn:disabled {
   opacity: 0.45;
@@ -664,9 +636,10 @@ a:hover {
   cursor: pointer;
   vertical-align: middle;
   transition:
-    color 0.14s ease,
-    background 0.14s ease,
-    border-color 0.14s ease;
+    color var(--dur-press) var(--ease-out),
+    background var(--dur-press) var(--ease-out),
+    border-color var(--dur-press) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
 }
 .btn-icon:hover:not(:disabled) {
   color: var(--accent);
@@ -678,6 +651,12 @@ a:hover {
 .btn-icon.copied,
 .btn-icon.copied:hover:not(:disabled) {
   color: var(--ok);
+}
+.btn-icon.copied {
+  animation: pulse-once 300ms var(--ease-out);
+}
+@keyframes pulse-once {
+  50% { transform: scale(1.05); }
 }
 .btn-icon:focus-visible {
   outline: 2px solid var(--accent);
@@ -760,15 +739,12 @@ a:hover {
 }
 .dl-row dt,
 .stat-list dt {
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .dl-row dd,
 .stat-list dd {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--text);
   /* Values here are addresses, pool IDs and hashes. In a flex row they would
@@ -901,10 +877,7 @@ a:hover {
   font-weight: 500;
 }
 .palette-group {
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -999,15 +972,13 @@ a:hover {
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.8125rem;
 }
 .table th {
   text-align: left;
   font-weight: 600;
   font-size: var(--text-caption);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
@@ -1064,7 +1035,6 @@ a:hover {
     );
 }
 .nft-name {
-  font-family: var(--mono);
   font-size: 0.75rem;
   color: var(--text-muted);
   overflow: hidden;
@@ -1104,18 +1074,14 @@ a:hover {
   }
 }
 
-/* Status pill — monospace tag with a leading dot. */
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   border-radius: 999px;
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   line-height: 1.4;
   border: 1px solid transparent;
 }
@@ -1152,16 +1118,14 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 10px var(--space-4);
+  padding: var(--space-2) var(--space-4);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.75rem;
 }
 .sync-state {
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--text);
 }
 .sync-detail {
@@ -1222,19 +1186,15 @@ a:hover {
   gap: var(--space-3);
 }
 .sync-phase-label {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .sync-percent {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 1.15rem;
   font-weight: 600;
   color: var(--accent);
-  font-variant-numeric: tabular-nums;
 }
 
 /* One row per phase the node is reporting. Several phases can be in flight at
@@ -1268,31 +1228,29 @@ a:hover {
   height: 100%;
   background: var(--warn);
   border-radius: inherit;
-  transition: width 0.4s ease;
+  transform-origin: left;
+  transition: transform 400ms var(--ease-out);
 }
 .sync-bar-indeterminate {
   width: 35%;
-  animation: sync-slide 1.5s ease-in-out infinite;
+  animation: sync-slide 1.5s var(--ease-in-out) infinite;
 }
+/* translateX percentages are of the 35%-wide segment: -100% starts it just
+   off the left edge, 286% (100 / 35) carries it past the right edge. */
 @keyframes sync-slide {
-  0% {
-    margin-left: -35%;
-  }
-  100% {
-    margin-left: 100%;
-  }
+  from { transform: translateX(-100%); }
+  to { transform: translateX(286%); }
 }
 
 .sync-readout {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.8125rem;
   color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* The "X behind" headline for chain sync — a big gold readout. */
 .sync-behind {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: clamp(1.5rem, 4vw, 2rem);
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -1315,18 +1273,14 @@ a:hover {
   border-bottom: none;
 }
 .sync-stats dt {
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .sync-stats dd {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.8125rem;
   text-align: right;
   color: var(--text);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Phase stepper — a vertical track of the bootstrap stages. */
@@ -1341,9 +1295,8 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.75rem;
-  letter-spacing: 0.02em;
 }
 .sync-step-dot {
   width: 8px;
@@ -1408,11 +1361,8 @@ a:hover {
   gap: var(--space-3);
 }
 .setting-toggle-label {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text);
 }
 
@@ -1438,19 +1388,28 @@ a:hover {
   background: var(--inset);
   border: 1px solid var(--border);
   transition:
-    background 0.14s ease,
-    border-color 0.14s ease;
+    background var(--dur-press) var(--ease-out),
+    border-color var(--dur-press) var(--ease-out);
 }
 .switch-thumb {
   display: block;
   width: 18px;
   height: 18px;
   margin: 2px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: var(--text-muted);
   transition:
-    transform 0.14s ease,
-    background 0.14s ease;
+    transform var(--dur-pop) var(--ease-in-out),
+    width var(--dur-press) var(--ease-out),
+    background var(--dur-press) var(--ease-out);
+}
+/* Stretch 12% toward the direction of travel while pressed; a checked thumb
+   grows left, so its offset shrinks by the added width. */
+.switch:active input:not(:disabled) + .switch-track .switch-thumb {
+  width: 20.16px;
+}
+.switch:active input:checked:not(:disabled) + .switch-track .switch-thumb {
+  transform: translateX(15.84px);
 }
 .switch input:checked + .switch-track {
   background: var(--accent-dim);
@@ -1471,7 +1430,6 @@ a:hover {
 
 .setting-state {
   margin-top: var(--space-2);
-  font-family: var(--mono);
   font-size: 0.8125rem;
   color: var(--text-muted);
 }
@@ -1479,9 +1437,7 @@ a:hover {
    working/warning hue. */
 .setting-restart-note {
   margin-top: var(--space-2);
-  font-family: var(--mono);
   font-size: 0.75rem;
-  letter-spacing: 0.04em;
   color: var(--warn);
 }
 
@@ -1545,11 +1501,8 @@ a:hover {
   border: none;
   border-bottom: 2px solid transparent;
   padding: var(--space-2) var(--space-3);
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
   cursor: pointer;
   margin-bottom: -1px;
@@ -1595,7 +1548,7 @@ a:hover {
 }
 .staking-form .vote-opt-label {
   display: flex;
-  gap: 11px;
+  gap: var(--space-compact);
   align-items: flex-start;
   cursor: pointer;
   /* Override the instrument-caption label styling for the option title row. */
@@ -1615,7 +1568,7 @@ a:hover {
 .vote-opt-main {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
 }
 .vote-opt-title {
   font-weight: 600;
@@ -1626,7 +1579,7 @@ a:hover {
 }
 .vote-opt-extra {
   margin-top: var(--space-3);
-  padding-left: 26px;
+  padding-left: 28px;
   display: flex;
   flex-direction: column;
 }
@@ -1639,7 +1592,7 @@ a:hover {
   background: color-mix(in srgb, var(--warn) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
   border-radius: var(--radius);
-  padding: 9px 12px;
+  padding: var(--space-2) var(--space-compact);
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-top: var(--space-1);
@@ -1673,11 +1626,8 @@ a:hover {
 }
 .survey-question label[for] {
   display: block;
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .survey-prompt {
@@ -1707,7 +1657,7 @@ a:hover {
 }
 .cert-row {
   display: flex;
-  gap: 11px;
+  gap: var(--space-compact);
   align-items: baseline;
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
@@ -1726,7 +1676,7 @@ a:hover {
   font-size: 0.9rem;
 }
 .cert-amt {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.82rem;
   white-space: nowrap;
   color: var(--text);
@@ -1751,11 +1701,8 @@ a:hover {
 .operate-form label,
 .operate-subform label {
   display: block;
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: var(--space-1);
 }
@@ -1779,11 +1726,8 @@ a:hover {
 }
 .operate-tab,
 .tabset-tab {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
   background: var(--inset);
   border: 1px solid var(--border);
@@ -1894,7 +1838,7 @@ a:hover {
 .tx-direction {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   font-size: 0.8125rem;
   white-space: nowrap;
 }
@@ -1914,17 +1858,17 @@ a:hover {
 /* Signed net amount — colored the same as its direction. */
 .tx-amount-in {
   color: var(--ok);
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .tx-amount-out {
   color: var(--error);
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .tx-amount-self {
   color: var(--text-muted);
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
@@ -1936,6 +1880,29 @@ a:hover {
   display: flex;
   justify-content: flex-end;
   z-index: 50;
+}
+/* Entrances only: these unmount on close, and leaving at once is the
+   point of closing. */
+.drawer-overlay,
+.qr-modal-overlay,
+.connector-approval-overlay {
+  animation: fade-in var(--dur-pop) var(--ease-out);
+}
+.drawer {
+  animation: drawer-in var(--dur-modal) var(--ease-out);
+}
+.qr-modal,
+.connector-approval-overlay > div {
+  animation: pop-in var(--dur-modal) var(--ease-out);
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.95); }
+}
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
 }
 .drawer {
   width: min(480px, 100%);
@@ -1955,11 +1922,8 @@ a:hover {
   gap: var(--space-3);
 }
 .drawer-title {
-  font-family: var(--mono);
   font-size: 0.75rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .drawer-close {
@@ -1968,10 +1932,9 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text-muted);
-  font-family: var(--mono);
   font-size: 0.75rem;
   cursor: pointer;
-  padding: 4px 10px;
+  padding: var(--space-1) var(--space-compact);
 }
 .drawer-close:hover {
   color: var(--text);
@@ -1987,11 +1950,8 @@ a:hover {
   gap: var(--space-2);
 }
 .drawer-section h3 {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .io-row {
@@ -2012,7 +1972,7 @@ a:hover {
   flex: 1;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .io-address {
   font-family: var(--mono);
@@ -2022,17 +1982,15 @@ a:hover {
   min-width: 0;
 }
 .io-owner {
-  font-family: var(--mono);
   font-size: var(--text-caption);
   font-weight: 600;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .io-row.is-mine .io-owner {
   color: var(--accent);
 }
 .io-amount {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.8125rem;
   text-align: right;
   white-space: nowrap;
@@ -2077,7 +2035,7 @@ a:hover {
   background: color-mix(in srgb, var(--error) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
   border-radius: var(--radius);
-  padding: 10px 14px;
+  padding: var(--space-compact) var(--space-3);
   font-size: 0.8125rem;
   color: var(--error);
   margin-top: var(--space-3);
@@ -2171,7 +2129,7 @@ a:hover {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: var(--space-1);
   width: 100%;
   padding: var(--space-2);
   border: none;
@@ -2262,14 +2220,11 @@ a:hover {
   .mobile-sync-chip {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 2px 8px;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
     border-radius: 999px;
-    font-family: var(--mono);
     font-size: var(--text-caption);
     font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
     flex-shrink: 0;
     border: 1px solid transparent;
   }
@@ -2329,7 +2284,7 @@ a:hover {
     font-size: 1.1rem;
     cursor: pointer;
     flex-shrink: 0;
-    transition: background 0.12s ease;
+    transition: background var(--dur-press) var(--ease-out);
   }
   .mobile-hamburger:hover {
     background: var(--inset);
@@ -2361,8 +2316,8 @@ a:hover {
     visibility: hidden;
     pointer-events: none;
     transition:
-      transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
-      visibility 0s linear 0.22s;
+      transform 176ms var(--ease-out),
+      visibility 0s linear 176ms;
     overflow-y: auto;
     /* Account for safe area at the top / bottom. */
     padding-top: env(safe-area-inset-top, 0px);
@@ -2373,7 +2328,7 @@ a:hover {
     visibility: visible;
     pointer-events: auto;
     transition:
-      transform 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 220ms var(--ease-out),
       visibility 0s linear 0s;
   }
 
@@ -2405,9 +2360,9 @@ a:hover {
     font-size: 1rem;
     cursor: pointer;
     transition:
-      border-color 0.12s ease,
-      color 0.12s ease,
-      background 0.12s ease;
+      border-color var(--dur-press) var(--ease-out),
+      color var(--dur-press) var(--ease-out),
+      background var(--dur-press) var(--ease-out);
   }
   .mobile-drawer-close:hover {
     background: var(--inset);
@@ -2438,9 +2393,9 @@ a:hover {
     text-align: left;
     cursor: pointer;
     transition:
-      border-color 0.12s ease,
-      color 0.12s ease,
-      background 0.12s ease;
+      border-color var(--dur-press) var(--ease-out),
+      color var(--dur-press) var(--ease-out),
+      background var(--dur-press) var(--ease-out);
   }
   .mobile-drawer-search:hover {
     background: var(--inset);
@@ -2456,7 +2411,7 @@ a:hover {
   .mobile-nav-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space-1);
     border-top: 1px solid var(--border);
     padding-top: var(--space-2);
     margin-top: var(--space-2);
@@ -2536,17 +2491,26 @@ a:hover {
 }
 
 /* ========================================================= reduced-motion = */
+/* Drop movement and scale; keep colour and opacity changes. */
 @media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-property: color, background-color, border-color, opacity !important;
+  }
   .dot-warn,
   .sync-bar-indeterminate,
-  .sync-step-active .sync-step-dot {
+  .sync-step-active .sync-step-dot,
+  .btn-icon.copied {
     animation: none;
   }
-  .mobile-drawer {
-    transition: none;
+  .drawer,
+  .qr-modal,
+  .connector-approval-overlay > div {
+    animation-name: fade-in;
   }
-  * {
-    transition: none !important;
+  .btn:active:not(:disabled),
+  .btn-icon:active:not(:disabled) {
+    transform: none;
   }
 }
 
@@ -2585,10 +2549,7 @@ a:hover {
   font-weight: 600;
 }
 .ms-account-policy {
-  font-family: var(--mono);
   font-size: var(--text-caption);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 .ms-account-addr {
@@ -2617,7 +2578,7 @@ a:hover {
   gap: var(--space-4);
 }
 .ms-progress {
-  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
   font-size: 0.75rem;
   color: var(--accent);
   margin: var(--space-2) 0;

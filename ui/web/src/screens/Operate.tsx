@@ -48,10 +48,10 @@ export function Operate({ account }: OperateProps) {
 
   return (
     <div className="operate">
-      <Card title="Stake Pool Operations">
+      <Card title="Stake pool operations">
         <p className="helper-text">
           Operate a stake pool from this wallet&rsquo;s seed, or air-gap the cold
-          key. All data comes from your own node — nothing is fetched externally.
+          key. All data comes from your own node. Nothing is fetched externally.
         </p>
       </Card>
 

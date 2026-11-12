@@ -232,7 +232,7 @@ export async function decodeUR(parts: string[]): Promise<ScannedUR> {
     throw new Error(assembler.error() || "UR decode failed");
   }
   if (!assembler.isComplete() || !assembler.isSuccess()) {
-    throw new Error(assembler.error() || "UR is incomplete — not all parts were received");
+    throw new Error(assembler.error() || "UR is incomplete: not all parts were received");
   }
   return assembler.result();
 }

@@ -191,7 +191,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
     let resolvedTo = trimmedTo;
     if (handleInput) {
       if (resolvingHandle || resolvingExternally) {
-        setError("Still resolving the handle — try again in a moment.");
+        setError("Still resolving the handle. Try again in a moment.");
         return;
       }
       if (!resolvedHandle) {
@@ -203,7 +203,7 @@ function Compose({ to, setTo, adaAmount, setAdaAmount, assetRows, setAssetRows, 
       // trust resolvedHandle when it matches the current input.
       const normalizedHandle = trimmedTo.replace(/^\$/, "").trim().toLowerCase();
       if (resolvedHandle.handle.toLowerCase() !== normalizedHandle) {
-        setError("Still resolving the handle — try again in a moment.");
+        setError("Still resolving the handle. Try again in a moment.");
         return;
       }
       resolvedTo = resolvedHandle.address;
@@ -645,7 +645,7 @@ function PreviewPhase({
   }
 
   return (
-    <Card title="Review Transaction">
+    <Card title="Review transaction">
       <div className="preview-details">
         <p>
           <strong>{preview.inputs.length} inputs</strong>
@@ -840,7 +840,7 @@ interface DonePhaseProps {
 
 function DonePhase({ result, onReset }: DonePhaseProps) {
   return (
-    <Card title="Transaction Submitted">
+    <Card title="Transaction submitted">
       <div className="done-details">
         <p>Your transaction has been submitted successfully.</p>
         <p className="field-label">Transaction hash</p>

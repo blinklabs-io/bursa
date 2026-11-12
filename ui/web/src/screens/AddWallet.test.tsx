@@ -377,7 +377,7 @@ test("Connect hardware: closes the session when reading the account xpub fails",
 
 test("Connect hardware: WebHID unavailable error message is shown", async () => {
   mockConnectDevice.mockRejectedValueOnce(
-    new Error("WebHID not available — open this in a Chromium browser"),
+    new Error("WebHID not available. Open this in a Chromium browser."),
   );
   const onAdded = vi.fn();
 

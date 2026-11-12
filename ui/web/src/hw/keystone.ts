@@ -447,7 +447,7 @@ export async function connectKeystoneUSB(): Promise<HardwareSigner> {
     typeof navigator === "undefined" ||
     (navigator as Navigator & { usb?: unknown }).usb === undefined
   ) {
-    throw new Error("WebUSB not available — open this in a Chromium browser to use Keystone over USB");
+    throw new Error("WebUSB not available. Open this in a Chromium browser to use Keystone over USB.");
   }
 
   const { TransportWebUSB } = await import("@keystonehq/hw-transport-webusb");

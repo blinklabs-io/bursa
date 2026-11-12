@@ -38,7 +38,7 @@ function NetworkDisplay({ network }: { network: string }) {
     <div className="field-group">
       <label>Network</label>
       <p className="helper-text" data-testid="wallet-network">
-        {networkLabel(network)} — set by the connected node
+        {networkLabel(network)}, set by the connected node
       </p>
     </div>
   );
@@ -372,7 +372,7 @@ export function AddWallet({
   if (mode === "create") {
     const words = generatedMnemonic.split(" ");
     return (
-      <Card title="Save Your Recovery Phrase">
+      <Card title="Save your recovery phrase">
         <p className="helper-text" style={{ marginBottom: "var(--space-2)" }}>
           This is the <strong>only</strong> way to recover your wallet. Write it
           down and store it somewhere safe. Never share it with anyone.
@@ -440,7 +440,7 @@ export function AddWallet({
 
   if (mode === "create-confirm") {
     return (
-      <Card title="Set Up Your New Wallet">
+      <Card title="Set up your new wallet">
         <p className="helper-text" style={{ marginBottom: "var(--space-3)" }}>
           Your recovery phrase has been generated. Give your wallet a name and
           set a spending password to protect it.
@@ -595,7 +595,7 @@ export function AddWallet({
 
           {isAirGapQR && (
             <p className="helper-text">
-              {deviceLabel} connects air-gapped over QR — no cable, nothing leaves your node.
+              {deviceLabel} connects air-gapped over QR. No cable, and nothing leaves your node.
             </p>
           )}
 
@@ -656,10 +656,10 @@ export function AddWallet({
 
           <p className="helper-text">
             {isKeystone
-              ? "On your Keystone, open the Cardano account and choose Sync / Connect Software Wallet, then scan the account QR it shows. No spending password is needed — the device signs every transaction."
+              ? "On your Keystone, open the Cardano account and choose Sync / Connect Software Wallet, then scan the account QR it shows. No spending password is needed. The device signs every transaction."
               : isSeedSigner
-                ? "On your SeedSigner, load your seed and choose Export account, then scan the account QR it shows. No spending password is needed — the device signs every transaction."
-                : `Connect your ${deviceLabel} device, open the Cardano app, then click Connect. No spending password is needed — the device signs every transaction.`}
+                ? "On your SeedSigner, load your seed and choose Export account, then scan the account QR it shows. No spending password is needed. The device signs every transaction."
+                : `Connect your ${deviceLabel} device, open the Cardano app, then click Connect. No spending password is needed. The device signs every transaction.`}
           </p>
 
           {error && (
@@ -699,7 +699,7 @@ export function AddWallet({
   // --- Mode: restore (original form) --------------------------------------
 
   return (
-    <Card title="Restore Wallet">
+    <Card title="Restore wallet">
       <form onSubmit={handleSubmit}>
         <div className="field-group">
           <label htmlFor="add-name">Wallet Name</label>

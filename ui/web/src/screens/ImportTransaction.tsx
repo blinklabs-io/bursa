@@ -94,7 +94,7 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
 
   if (result) {
     return (
-      <Card title="Transaction Submitted">
+      <Card title="Transaction submitted">
         <p>Your transaction has been submitted.</p>
         <p className="field-label">Transaction hash</p>
         <div className="tx-hash-row">
@@ -134,9 +134,9 @@ export function ImportTransaction({ canSubmit }: { canSubmit: boolean }) {
     : (summary?.is_complete ?? false);
 
   return (
-    <Card title="Import Transaction">
+    <Card title="Import transaction">
       <p className="helper-text">
-        Paste a transaction (CBOR hex) built elsewhere — unsigned, partially signed,
+        Paste a transaction (CBOR hex) built elsewhere: unsigned, partially signed,
         or complete. Review it, add your signature, then hand the updated CBOR to the
         next co-signer or submit it.
       </p>

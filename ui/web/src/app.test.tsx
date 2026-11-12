@@ -958,7 +958,7 @@ test("the palette and the balance agree on why Send is off", async () => {
 
   const main = document.querySelector("main") as HTMLElement;
   expect(await within(main).findByRole("button", { name: "Send" })).toBeDisabled();
-  expect(within(main).getByText(/send is unavailable — needs a synced node/i)).toBeInTheDocument();
+  expect(within(main).getByText(/send is unavailable: needs a synced node/i)).toBeInTheDocument();
 
   fireEvent.click(within(sidebar).getByRole("button", { name: /search/i }));
   const palette = await screen.findByRole("dialog", { name: /command palette/i });

@@ -130,7 +130,7 @@ function SurveyList({ canSubmit, onOpen, onCreate }: SurveyListProps) {
     <div className="send-form">
       <Card title="Surveys">
         <p className="helper-text">
-          On-chain surveys and polls (CIP-179) read from your embedded node — no external service is contacted.
+          On-chain surveys and polls (CIP-179) read from your embedded node. No external service is contacted.
           Anyone can publish one, so check who is asking before you respond.
         </p>
         {data?.partial && (
