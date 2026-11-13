@@ -117,6 +117,8 @@ func TestDecodeTx_CertificateDetails(t *testing.T) {
 	cold := `"committee_cold_credential":{"type":"key_hash","hash":"` + testHex28(
 		0x99,
 	) + `"}`
+	anchor := `"anchor":{"url":"https://drep.example/meta.json","hash":"` +
+		strings.Repeat("ab", 32) + `"}`
 
 	cases := []struct {
 		name string
@@ -324,6 +326,36 @@ func TestDecodeTx_CertificateDetails(t *testing.T) {
 			},
 			want: `{"kind":"update_drep",` + drepCred + `}`,
 		},
+		{
+			name: "DRep registration shows its anchor",
+			typ:  lcommon.CertificateTypeRegistrationDrep,
+			cert: &lcommon.RegistrationDrepCertificate{
+				CertType: uint(
+					lcommon.CertificateTypeRegistrationDrep,
+				), DrepCredential: testScriptCred(0x88), Amount: 500_000_000, Anchor: testAnchor(),
+			},
+			want: `{"kind":"registration_drep",` + drepCred + `,"deposit_lovelace":"500000000",` + anchor + `}`,
+		},
+		{
+			name: "DRep update shows its anchor",
+			typ:  lcommon.CertificateTypeUpdateDrep,
+			cert: &lcommon.UpdateDrepCertificate{
+				CertType: uint(
+					lcommon.CertificateTypeUpdateDrep,
+				), DrepCredential: testScriptCred(0x88), Anchor: testAnchor(),
+			},
+			want: `{"kind":"update_drep",` + drepCred + `,` + anchor + `}`,
+		},
+		{
+			name: "committee resignation shows its anchor",
+			typ:  lcommon.CertificateTypeResignCommitteeCold,
+			cert: &lcommon.ResignCommitteeColdCertificate{
+				CertType: uint(
+					lcommon.CertificateTypeResignCommitteeCold,
+				), ColdCredential: testKeyCred(0x99), Anchor: testAnchor(),
+			},
+			want: `{"kind":"resign_committee_cold",` + cold + `,` + anchor + `}`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -343,6 +375,14 @@ func TestDecodeTx_CertificateDetails(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testAnchor() *lcommon.GovAnchor {
+	var hash [32]byte
+	for i := range hash {
+		hash[i] = 0xab
+	}
+	return &lcommon.GovAnchor{Url: "https://drep.example/meta.json", DataHash: hash}
 }
 
 func poolRegistrationFixture(relays []lcommon.PoolRelay, meta *lcommon.PoolMetadata) *lcommon.PoolRegistrationCertificate {

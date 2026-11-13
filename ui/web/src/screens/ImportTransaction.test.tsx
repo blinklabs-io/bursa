@@ -231,6 +231,38 @@ test("multisig: cosign affordance shows and submit stays gated on threshold, the
   );
 });
 
+test("renders the governance anchors certificates commit to", async () => {
+  vi.spyOn(client, "decodeTx").mockResolvedValue({
+    ...vkeySummary,
+    certificates: [
+      {
+        kind: "registration_drep",
+        drep_credential: { type: "key_hash", hash: "88".repeat(28) },
+        deposit_lovelace: "500000000",
+        anchor: { url: "https://drep.example/meta.json", hash: "ab".repeat(32) },
+      },
+      { kind: "update_drep", drep_credential: { type: "key_hash", hash: "88".repeat(28) } },
+      {
+        kind: "resign_committee_cold",
+        committee_cold_credential: { type: "key_hash", hash: "99".repeat(28) },
+        anchor: { url: "https://cc.example/resign.json", hash: "cd".repeat(32) },
+      },
+    ],
+  });
+
+  render(<ImportTransaction canSubmit={true} />);
+  fireEvent.change(screen.getByLabelText(/transaction cbor/i), { target: { value: "84a4" } });
+  fireEvent.click(screen.getByRole("button", { name: /decode/i }));
+
+  const registration = (await screen.findByText("registration_drep")).closest("li")!;
+  expect(registration).toHaveTextContent(`anchor https://drep.example/meta.json ${"ab".repeat(32)}`);
+  // An update without an anchor removes the DRep's metadata, so say so.
+  expect(screen.getByText("update_drep").closest("li")!).toHaveTextContent("anchor none");
+  expect(screen.getByText("resign_committee_cold").closest("li")!).toHaveTextContent(
+    `anchor https://cc.example/resign.json ${"cd".repeat(32)}`,
+  );
+});
+
 test("renders imported certificate details", async () => {
   vi.spyOn(client, "decodeTx").mockResolvedValue({
     ...vkeySummary,

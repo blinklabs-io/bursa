@@ -74,6 +74,10 @@ function PoolParamsEffects({ params }: { params: TxSummaryPoolParams }) {
   );
 }
 
+// Certificates whose body carries an optional metadata anchor. A missing one
+// is a real choice (an update without one clears the DRep's metadata).
+const ANCHORED_KINDS = new Set(["registration_drep", "update_drep", "resign_committee_cold"]);
+
 function CertificateEffects({ certificates }: { certificates: TxSummaryCertificate[] }) {
   return (
     <ul className="signer-list">
@@ -89,6 +93,11 @@ function CertificateEffects({ certificates }: { certificates: TxSummaryCertifica
           ) : null}
           {cert.drep_credential ? (
             <> · DRep {cert.drep_credential.type.replace("_", " ")} <code className="tx-hash">{cert.drep_credential.hash}</code></>
+          ) : null}
+          {cert.anchor ? (
+            <> · anchor {cert.anchor.url} <code className="tx-hash">{cert.anchor.hash}</code></>
+          ) : ANCHORED_KINDS.has(cert.kind) ? (
+            <> · anchor none</>
           ) : null}
           {cert.deposit_lovelace !== undefined ? (
             <> · {formatAda(cert.deposit_lovelace)} ADA deposit</>
