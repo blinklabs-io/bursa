@@ -1008,6 +1008,7 @@ export interface TxSummaryCertificate {
   retirement_epoch?: number;
   committee_cold_credential?: TxSummaryCredential;
   committee_hot_credential?: TxSummaryCredential;
+  anchor?: { url: string; hash: string };
 }
 
 // multisig.TxInfo

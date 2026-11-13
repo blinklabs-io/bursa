@@ -182,6 +182,13 @@ type TxSummaryPoolParams struct {
 	Metadata          *TxSummaryPoolMetadata `json:"metadata"`
 }
 
+// TxSummaryAnchor is a governance metadata anchor: a URL and the hash of the
+// document it should serve.
+type TxSummaryAnchor struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash"`
+}
+
 // TxSummaryCertificate describes the public ledger identities and value
 // affected by a transaction certificate.
 type TxSummaryCertificate struct {
@@ -203,6 +210,9 @@ type TxSummaryCertificate struct {
 	RetirementEpoch         *uint64              `json:"retirement_epoch,omitempty"`
 	CommitteeColdCredential *TxSummaryCredential `json:"committee_cold_credential,omitempty"`
 	CommitteeHotCredential  *TxSummaryCredential `json:"committee_hot_credential,omitempty"`
+	// Anchor is the off-chain metadata a DRep registration, DRep update or
+	// committee resignation points to. The body commits to it, so it is shown.
+	Anchor *TxSummaryAnchor `json:"anchor,omitempty"`
 }
 
 // TxSummary is a no-password, human-readable preview of a pasted transaction,
@@ -2954,6 +2964,7 @@ func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
 		ret.CommitteeHotCredential = credentialSummary(cert.HotCredential)
 	case *lcommon.ResignCommitteeColdCertificate:
 		ret.CommitteeColdCredential = credentialSummary(cert.ColdCredential)
+		ret.Anchor = anchorSummary(cert.Anchor)
 	case *lcommon.RegistrationCertificate:
 		setStake(cert.StakeCredential)
 		setDeposit(cert.Amount)
@@ -2983,13 +2994,22 @@ func certificateSummary(c lcommon.Certificate) TxSummaryCertificate {
 	case *lcommon.RegistrationDrepCertificate:
 		ret.DRepCredential = credentialSummary(cert.DrepCredential)
 		setDeposit(cert.Amount)
+		ret.Anchor = anchorSummary(cert.Anchor)
 	case *lcommon.DeregistrationDrepCertificate:
 		ret.DRepCredential = credentialSummary(cert.DrepCredential)
 		setRefund(cert.Amount)
 	case *lcommon.UpdateDrepCertificate:
 		ret.DRepCredential = credentialSummary(cert.DrepCredential)
+		ret.Anchor = anchorSummary(cert.Anchor)
 	}
 	return ret
+}
+
+func anchorSummary(anchor *lcommon.GovAnchor) *TxSummaryAnchor {
+	if anchor == nil {
+		return nil
+	}
+	return &TxSummaryAnchor{URL: anchor.Url, Hash: hex.EncodeToString(anchor.DataHash[:])}
 }
 
 func poolParamsSummary(cert *lcommon.PoolRegistrationCertificate) *TxSummaryPoolParams {
