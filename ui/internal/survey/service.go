@@ -15,8 +15,8 @@
 package survey
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -40,8 +40,22 @@ var ErrNotFound = errors.New("survey: not found")
 // a partial result; Get waits until the scan is complete.
 var ErrIndexing = errors.New("survey: label history is still being read")
 
+// ErrHistoryTooLarge means label 17 holds more history than the service keeps,
+// so surveys cannot be read completely.
+var ErrHistoryTooLarge = errors.New(
+	"survey: label history is larger than this wallet reads",
+)
+
 // maxLabelPages bounds the label-17 pages one request reads.
 const maxLabelPages = 50
+
+// maxLabelRows bounds the label-17 rows the service keeps. Anyone can publish
+// label-17 metadata, so history past this is refused rather than kept.
+const maxLabelRows = 20_000
+
+// maxLabelPayloadBytes bounds the CBOR of label-17 rows kept as decoded
+// CIP-179 payloads.
+const maxLabelPayloadBytes = 32 << 20
 
 // maxCachedTxs bounds the per-transaction fact cache.
 const maxCachedTxs = 20000
@@ -90,9 +104,11 @@ type Service struct {
 	beaconOrder []uint64          // least recently used round first
 
 	// labelMu serialises label reads and guards labelRows, the label-17 history
-	// read so far in whole pages.
-	labelMu   sync.Mutex
-	labelRows []chain.LabelMetadata
+	// read so far in whole pages, and labelBytes, the CBOR size of the rows
+	// kept as decoded payloads.
+	labelMu    sync.Mutex
+	labelRows  []labelRow
+	labelBytes int
 }
 
 // NewService builds a service over the node for the named Cardano network.
@@ -258,32 +274,52 @@ func parseID(id string) (Ref, bool) {
 	return r, true
 }
 
-// scan reads label 17 and returns the decoded transactions, skipping anything
-// that does not decode as a CIP-179 payload.
-func (s *Service) scan(ctx context.Context) ([]entry, error) {
-	rows, err := s.labelHistory(ctx)
-	if err != nil && !errors.Is(err, ErrIndexing) {
-		return nil, err
-	}
-	out := make([]entry, 0, len(rows))
-	for _, r := range rows {
-		p, err := Decode(r.CBOR)
-		if err != nil {
-			continue
-		}
-		out = append(out, entry{hash: r.TxHash, payload: p})
-	}
-	return out, err
+// labelRow is one cached label-17 transaction: its hash and CBOR digest, to
+// detect a changed page, and its decoded payload. Rows that are not CIP-179
+// payloads keep no CBOR, and no view decodes a row twice. Payloads are shared
+// between views and must be treated as read-only.
+type labelRow struct {
+	hash   string
+	digest [sha256.Size]byte
+	entry  *entry
+	size   int // CBOR bytes held as the decoded payload
 }
 
-// labelHistory returns the whole label-17 history, reading only what changed
-// since the last call. The node lists the label oldest first, so new
+func newLabelRow(m chain.LabelMetadata) labelRow {
+	r := labelRow{hash: m.TxHash, digest: sha256.Sum256(m.CBOR)}
+	if p, err := Decode(m.CBOR); err == nil {
+		r.entry = &entry{hash: m.TxHash, payload: p}
+		r.size = len(m.CBOR)
+	}
+	return r
+}
+
+func samePage(cached []labelRow, rows []chain.LabelMetadata) bool {
+	return slices.EqualFunc(cached, rows, func(c labelRow, r chain.LabelMetadata) bool {
+		return c.hash == r.TxHash && c.digest == sha256.Sum256(r.CBOR)
+	})
+}
+
+// labelEntries returns the decoded payloads of rows, oldest first.
+func labelEntries(rows ...[]labelRow) []entry {
+	var out []entry
+	for _, rs := range rows {
+		for _, r := range rs {
+			if r.entry != nil {
+				out = append(out, *r.entry)
+			}
+		}
+	}
+	return out
+}
+
+// labelHistory returns the decoded label-17 history, reading only what
+// changed since the last call. The node lists the label oldest first, so new
 // transactions land on the last page and a rollback removes a suffix: the last
 // cached page is re-read every time, and a page that no longer matches is
-// dropped together with everything after it.
-func (s *Service) labelHistory(
-	ctx context.Context,
-) ([]chain.LabelMetadata, error) {
+// dropped together with everything after it. History past maxLabelRows or
+// maxLabelPayloadBytes is refused with ErrHistoryTooLarge.
+func (s *Service) labelHistory(ctx context.Context) ([]entry, error) {
 	s.labelMu.Lock()
 	defer s.labelMu.Unlock()
 	const size = chain.LabelPageSize
@@ -309,30 +345,42 @@ func (s *Service) labelHistory(
 				continue
 			}
 			s.labelRows = s.labelRows[:start]
+			s.labelBytes = 0
+			for _, r := range s.labelRows {
+				s.labelBytes += r.size
+			}
 			if page > 1 {
 				page--
 				continue
 			}
 		}
-		if len(rows) < size {
-			return append(slices.Clip(s.labelRows), rows...), nil
+		decoded := make([]labelRow, len(rows))
+		payloadBytes := 0
+		for i, r := range rows {
+			decoded[i] = newLabelRow(r)
+			payloadBytes += decoded[i].size
 		}
-		s.labelRows = append(s.labelRows, rows...)
+		if len(s.labelRows)+len(decoded) > maxLabelRows ||
+			s.labelBytes+payloadBytes > maxLabelPayloadBytes {
+			return nil, fmt.Errorf(
+				"%w: more than %d transactions or %d bytes",
+				ErrHistoryTooLarge,
+				maxLabelRows,
+				maxLabelPayloadBytes,
+			)
+		}
+		if len(rows) < size {
+			return labelEntries(s.labelRows, decoded), nil
+		}
+		s.labelRows = append(s.labelRows, decoded...)
+		s.labelBytes += payloadBytes
 		page++
 	}
-	return slices.Clone(
-			s.labelRows,
-		), fmt.Errorf(
-			"%w: %d transactions scanned",
-			ErrIndexing,
-			len(s.labelRows),
-		)
-}
-
-func samePage(a, b []chain.LabelMetadata) bool {
-	return slices.EqualFunc(a, b, func(x, y chain.LabelMetadata) bool {
-		return x.TxHash == y.TxHash && bytes.Equal(x.CBOR, y.CBOR)
-	})
+	return labelEntries(s.labelRows), fmt.Errorf(
+		"%w: %d transactions scanned",
+		ErrIndexing,
+		len(s.labelRows),
+	)
 }
 
 // definitions returns every verified definition, oldest first, with
@@ -463,7 +511,7 @@ type snapshot struct {
 }
 
 func (s *Service) snapshot(ctx context.Context) (snapshot, error) {
-	entries, err := s.scan(ctx)
+	entries, err := s.labelHistory(ctx)
 	if err != nil && !errors.Is(err, ErrIndexing) {
 		return snapshot{}, err
 	}
