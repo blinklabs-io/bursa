@@ -878,6 +878,14 @@ func NewHandler(
 		if acct == nil {
 			return
 		}
+		// Connector operations call the wallet and spend services, so the
+		// connector drops the old identity before they switch and takes the new
+		// one after. Otherwise a grant for the previous wallet authorizes reads
+		// and signatures against the next one in between. Clearing waits for
+		// in-flight connector operations, which hold the identity read lock.
+		if cfg.connector != nil {
+			cfg.connector.SetActiveAccount("", nil)
+		}
 		_ = wl.SetAccount(acct)
 		sp.SetAccount(w.ID, acct)
 		// Pool operations run on the same active wallet; attach both the wallet
@@ -896,13 +904,13 @@ func NewHandler(
 		}
 	}
 	clearActive := func() {
+		if cfg.connector != nil {
+			cfg.connector.SetActiveAccount("", nil)
+		}
 		_ = wl.SetAccount(nil)
 		sp.SetAccount("", nil)
 		if po != nil {
 			po.SetAccount("", nil)
-		}
-		if cfg.connector != nil {
-			cfg.connector.SetActiveAccount("", nil)
 		}
 		if cfg.activity != nil {
 			cfg.activity.SetActive("")
