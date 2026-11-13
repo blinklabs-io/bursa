@@ -168,6 +168,24 @@ start; without the attested listener no provider is needed.
 5. **`info`** - status snapshot (active period/start/end, current period,
    guard floor, exhaustion, staged/active vkeys).
 
+`bursa kes-agent control` sends one of these commands to a running agent's
+control socket and prints the reply as JSON, with keys in hex. It finds the
+socket from the agent's config file (`--config` or `BURSA_CONFIG`) or from
+`--socket`; `--profile` names the profile when the agent has several. A
+rotation, run where the socket is (in a pod, through `kubectl exec`):
+
+```sh
+bursa kes-agent control --config /etc/bursa/kes-agent/config.yaml gen-staged-key --out kes.vkey
+# issue node.cert for kes.vkey with the pool cold key, offline
+bursa kes-agent control --config /etc/bursa/kes-agent/config.yaml install-key --opcert node.cert
+bursa kes-agent control --config /etc/bursa/kes-agent/config.yaml info
+```
+
+`--out` writes the verification key as a cardano-cli envelope and refuses to
+replace an existing file. `install-key` reads a cardano-cli
+`NodeOperationalCertificate` envelope. The command exits non-zero when the
+agent refuses a command.
+
 ## Period guard
 
 The agent enforces a monotonic non-decreasing floor on the KES period it will
