@@ -4,6 +4,7 @@
 package spend
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -215,6 +216,13 @@ type TxSummaryCertificate struct {
 	Anchor *TxSummaryAnchor `json:"anchor,omitempty"`
 }
 
+// TxSummaryMetadatum is one transaction metadata label and its value in CBOR
+// diagnostic notation. Label is a string because labels range to 2^64-1.
+type TxSummaryMetadatum struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 // TxSummary is a no-password, human-readable preview of a pasted transaction,
 // produced by DecodeTx. It classifies the transaction (vkey vs. native
 // multisig vs. already complete) and reports which of the wallet's own keys
@@ -230,6 +238,7 @@ type TxSummary struct {
 	Withdrawals        []TxSummaryOutput      `json:"withdrawals,omitempty"` // Address=reward addr
 	Mint               []Asset                `json:"mint,omitempty"`
 	AuxiliaryDataHash  string                 `json:"auxiliary_data_hash,omitempty"`
+	Metadata           []TxSummaryMetadatum   `json:"metadata,omitempty"`
 	ScriptDataHash     string                 `json:"script_data_hash,omitempty"`
 	CollateralInputs   []TxSummaryInput       `json:"collateral_inputs,omitempty"`
 	CollateralReturn   *TxSummaryOutput       `json:"collateral_return,omitempty"`
@@ -2357,6 +2366,16 @@ func (s *Service) DecodeTx(
 		out.AuxiliaryDataHash = hex.EncodeToString(
 			tx.Body.TxAuxDataHash.Bytes(),
 		)
+		metadata, unsupported := auxiliaryDataSummary(txBytes, *tx.Body.TxAuxDataHash)
+		out.Metadata = metadata
+		if unsupported != "" {
+			out.UnsupportedEffects = append(out.UnsupportedEffects, unsupported)
+		}
+	} else if hasUnhashedAuxiliaryData(txBytes) {
+		out.UnsupportedEffects = append(
+			out.UnsupportedEffects,
+			"auxiliary data without a body hash",
+		)
 	}
 	if tx.Body.TxScriptDataHash != nil {
 		out.ScriptDataHash = hex.EncodeToString(
@@ -2545,6 +2564,91 @@ func (s *Service) resolveSummaryInputs(
 		}
 	}
 	return ret, resolvedAll
+}
+
+// diagnosticTruncated is the suffix gouroboros appends to a diagnostic
+// rendering that exceeded its output cap.
+const diagnosticTruncated = "... (output truncated)"
+
+// hasUnhashedAuxiliaryData reports whether the transaction carries auxiliary
+// data although its body commits to none, so the data is unsigned and unshown.
+func hasUnhashedAuxiliaryData(txBytes []byte) bool {
+	var parts []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &parts); err != nil || len(parts) < 4 {
+		return false
+	}
+	return !bytes.Equal(parts[3], []byte{0xf6})
+}
+
+// auxiliaryDataSummary renders the metadata a witness commits to. The body
+// carries only the auxiliary data hash, so the bytes must be present and match
+// it: otherwise a dApp could display one payload and later submit another
+// under the same signature. Anything other than plain metadata (scripts) is
+// reported as unsupported rather than shown partially.
+func auxiliaryDataSummary(
+	txBytes []byte,
+	hash lcommon.Blake2b256,
+) ([]TxSummaryMetadatum, string) {
+	var parts []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &parts); err != nil ||
+		len(parts) < 4 || bytes.Equal(parts[3], []byte{0xf6}) {
+		return nil, "auxiliary data not included"
+	}
+	raw := []byte(parts[3])
+	if lcommon.Blake2b256Hash(raw) != hash {
+		return nil, "auxiliary data does not match its hash"
+	}
+	aux, err := lcommon.DecodeAuxiliaryData(raw)
+	if err != nil {
+		return nil, "undecodable auxiliary data"
+	}
+	native, err1 := aux.NativeScripts()
+	v1, err2 := aux.PlutusV1Scripts()
+	v2, err3 := aux.PlutusV2Scripts()
+	v3, err4 := aux.PlutusV3Scripts()
+	v4, err5 := aux.PlutusV4Scripts()
+	if errors.Join(err1, err2, err3, err4, err5) != nil ||
+		len(native)+len(v1)+len(v2)+len(v3)+len(v4) != 0 {
+		return nil, "auxiliary scripts"
+	}
+	md, err := aux.Metadata()
+	if err != nil {
+		return nil, "undecodable auxiliary data"
+	}
+	labels, ok := md.(lcommon.MetaMap)
+	if !ok {
+		if md == nil {
+			return nil, ""
+		}
+		return nil, "undecodable auxiliary data"
+	}
+	out := make([]TxSummaryMetadatum, 0, len(labels.Pairs))
+	for _, pair := range labels.Pairs {
+		label, ok := pair.Key.(lcommon.MetaInt)
+		if !ok || label.Value == nil {
+			return nil, "undecodable auxiliary data"
+		}
+		node, err := cbor.ParseDiagnostic(pair.Value.Cbor())
+		if err != nil {
+			return nil, "undecodable auxiliary data"
+		}
+		// Both renderers cut off at their output cap with a marker instead
+		// of failing, so a deeply nested value would be shown only in part.
+		// Compact notation has no per-level indentation and fits where the
+		// indented form does not.
+		value := node.FormatDiagnosticPretty(cbor.DiagnosticOptions{IndentString: "  "})
+		if strings.HasSuffix(value, diagnosticTruncated) {
+			value = node.FormatDiagnostic(cbor.DiagnosticOptions{})
+		}
+		if strings.HasSuffix(value, diagnosticTruncated) {
+			return nil, "auxiliary metadata too large to display"
+		}
+		out = append(out, TxSummaryMetadatum{
+			Label: label.Value.String(),
+			Value: value,
+		})
+	}
+	return out, ""
 }
 
 func summaryInputRefs(inputs []lcommon.TransactionInput) []TxSummaryInput {

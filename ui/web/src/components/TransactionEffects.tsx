@@ -222,6 +222,17 @@ export function TransactionEffects({
 
 	  {summary.reference_inputs?.length ? <><p className="field-label">Reference inputs</p><InputEffects inputs={summary.reference_inputs} /></> : null}
 
+	  {summary.metadata?.length ? (
+		<section aria-label="Metadata">
+		  <p className="field-label">Metadata</p>
+		  {summary.metadata.map((entry, index) => (
+			<div key={`${entry.label}-${index}`}>
+			  <p className="helper-text">Label {entry.label}</p>
+			  <pre className="tx-metadata">{entry.value}</pre>
+			</div>
+		  ))}
+		</section>
+	  ) : null}
 	  {summary.auxiliary_data_hash ? <p>Metadata hash: <code className="tx-hash">{summary.auxiliary_data_hash}</code></p> : null}
 	  {summary.script_data_hash ? <p>Script data hash: <code className="tx-hash">{summary.script_data_hash}</code></p> : null}
 	  {summary.required_signers?.length ? <><p className="field-label">Required signer key hashes</p><ul className="signer-list">{summary.required_signers.map((keyHash) => <li key={keyHash}><code className="tx-hash">{keyHash}</code></li>)}</ul></> : null}

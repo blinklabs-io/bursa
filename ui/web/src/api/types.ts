@@ -1034,6 +1034,9 @@ export interface TxSummary {
   withdrawals?: TxSummaryOutput[];
   mint?: { unit: string; quantity: string }[];
   auxiliary_data_hash?: string;
+  // Present only when the auxiliary data matched its hash; value is CBOR
+  // diagnostic notation.
+  metadata?: { label: string; value: string }[];
   script_data_hash?: string;
   collateral_inputs?: TxSummaryInput[];
   collateral_return?: TxSummaryOutput;
