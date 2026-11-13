@@ -2556,6 +2556,10 @@ func (s *Service) resolveSummaryInputs(
 	return ret, resolvedAll
 }
 
+// diagnosticTruncated is the suffix gouroboros appends to a diagnostic
+// rendering that exceeded its output cap.
+const diagnosticTruncated = "... (output truncated)"
+
 // hasUnhashedAuxiliaryData reports whether the transaction carries auxiliary
 // data although its body commits to none, so the data is unsigned and unshown.
 func hasUnhashedAuxiliaryData(txBytes []byte) bool {
@@ -2618,9 +2622,20 @@ func auxiliaryDataSummary(
 		if err != nil {
 			return nil, "undecodable auxiliary data"
 		}
+		// Both renderers cut off at their output cap with a marker instead
+		// of failing, so a deeply nested value would be shown only in part.
+		// Compact notation has no per-level indentation and fits where the
+		// indented form does not.
+		value := node.FormatDiagnosticPretty(cbor.DiagnosticOptions{IndentString: "  "})
+		if strings.HasSuffix(value, diagnosticTruncated) {
+			value = node.FormatDiagnostic(cbor.DiagnosticOptions{})
+		}
+		if strings.HasSuffix(value, diagnosticTruncated) {
+			return nil, "auxiliary metadata too large to display"
+		}
 		out = append(out, TxSummaryMetadatum{
 			Label: label.Value.String(),
-			Value: node.FormatDiagnosticPretty(cbor.DiagnosticOptions{IndentString: "  "}),
+			Value: value,
 		})
 	}
 	return out, ""

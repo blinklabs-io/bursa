@@ -1,6 +1,7 @@
 package spend
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"strings"
@@ -147,5 +148,30 @@ func TestDecodeTxRejectsUnknownAuxiliaryField(t *testing.T) {
 	if _, err := s.DecodeTx(context.Background(), txHex); err == nil ||
 		!strings.Contains(err.Error(), "unknown auxiliary-data field 6") {
 		t.Fatalf("DecodeTx error = %v, want unknown auxiliary-data field 6", err)
+	}
+}
+
+// Indented diagnostic rendering truncates silently at its output cap, which
+// deeply nested metadata reaches. The wallet must show the whole value, not a
+// prefix the witness covers in full.
+func TestDecodeTxShowsDeeplyNestedMetadataInFull(t *testing.T) {
+	const depth = 3000
+	// Shelley auxiliary data: {674: [[[...0]]]}.
+	aux := append([]byte{0xa1, 0x19, 0x02, 0xa2}, bytes.Repeat([]byte{0x81}, depth)...)
+	aux = append(aux, 0x00)
+	s, txHex := buildMessageTx(t, "swap 125 ADA")
+	hash := lcommon.Blake2b256Hash(aux)
+	txHex = mutateConwayBody(t, txHex, func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash })
+	txHex = setAuxData(t, txHex, aux)
+	got, err := s.DecodeTx(context.Background(), txHex)
+	if err != nil {
+		t.Fatalf("DecodeTx: %v", err)
+	}
+	if len(got.Metadata) != 1 {
+		t.Fatalf("metadata = %d entries, want one", len(got.Metadata))
+	}
+	v := got.Metadata[0].Value
+	if strings.HasSuffix(v, diagnosticTruncated) || strings.Count(v, "[") != depth {
+		t.Fatalf("metadata value truncated: %d levels shown, want %d", strings.Count(v, "["), depth)
 	}
 }
