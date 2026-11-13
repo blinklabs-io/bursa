@@ -374,6 +374,24 @@ test("shows verified signTx effects before approval", async () => {
   expect(screen.queryByText(/contents unverified/i)).toBeNull();
 });
 
+test("shows the metadata a signTx commits to before approval", async () => {
+  render(<ConnectorApproval />);
+  emitRequest(makeReq({
+    id: "sign-metadata",
+    method: "signTx",
+    params: { tx: "deadbeef", partialSign: false },
+    effects: {
+      ...signTxEffects,
+      auxiliary_data_hash: "dd".repeat(32),
+      metadata: [{ label: "674", value: '{\n  "msg": ["swap 125 ADA"]\n}' }],
+    },
+  }));
+
+  const metadata = await screen.findByRole("region", { name: /metadata/i });
+  expect(metadata).toHaveTextContent("674");
+  expect(metadata).toHaveTextContent('"swap 125 ADA"');
+});
+
 test("refuses approval when a signTx snapshot has no verified effects", async () => {
   const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
   render(<ConnectorApproval />);

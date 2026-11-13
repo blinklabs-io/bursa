@@ -954,6 +954,21 @@ a:hover {
 .error-boundary h2 {
   color: var(--error);
 }
+.tx-metadata {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  max-height: 240px;
+  overflow: auto;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .error-detail {
   font-family: var(--mono);
   font-size: 0.75rem;
