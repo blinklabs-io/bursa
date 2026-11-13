@@ -87,33 +87,40 @@ func TestDecodeTxRefusesMetadataItCannotShow(t *testing.T) {
 
 	tests := []struct {
 		name string
-		tx   func(string) string
+		tx   func(*testing.T, string) string
 		want string
 	}{
 		{
 			name: "missing",
-			tx:   func(tx string) string { return setAuxData(t, tx, []byte{0xf6}) },
+			tx:   func(t *testing.T, tx string) string { return setAuxData(t, tx, []byte{0xf6}) },
 			want: "auxiliary data not included",
 		},
 		{
 			name: "different from the signed hash",
-			tx:   func(tx string) string { return setAuxData(t, tx, otherParts[3]) },
+			tx:   func(t *testing.T, tx string) string { return setAuxData(t, tx, otherParts[3]) },
 			want: "auxiliary data does not match its hash",
 		},
 		{
 			name: "carrying scripts",
-			tx: func(tx string) string {
+			tx: func(t *testing.T, tx string) string {
 				hash := lcommon.Blake2b256Hash(withScript)
 				tx = mutateConwayBody(t, tx, func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash })
 				return setAuxData(t, tx, withScript)
 			},
 			want: "auxiliary scripts",
 		},
+		{
+			name: "present but not committed to by the body",
+			tx: func(t *testing.T, tx string) string {
+				return mutateConwayBody(t, tx, func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = nil })
+			},
+			want: "auxiliary data without a body hash",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s, txHex := buildMessageTx(t, "swap 125 ADA")
-			got, err := s.DecodeTx(context.Background(), tc.tx(txHex))
+			got, err := s.DecodeTx(context.Background(), tc.tx(t, txHex))
 			if err != nil {
 				t.Fatalf("DecodeTx: %v", err)
 			}
@@ -125,5 +132,20 @@ func TestDecodeTxRefusesMetadataItCannotShow(t *testing.T) {
 				t.Fatalf("ValidateForSigning = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The decoder refuses auxiliary data with fields it does not know, so an
+// extension cannot reach the signing gate unseen.
+func TestDecodeTxRejectsUnknownAuxiliaryField(t *testing.T) {
+	// Tag 259 auxiliary data: {0: {674: "x"}, 6: []}.
+	withUnknownField, _ := hex.DecodeString("d90103a200a11902a2617806" + "80")
+	s, txHex := buildMessageTx(t, "swap 125 ADA")
+	hash := lcommon.Blake2b256Hash(withUnknownField)
+	txHex = mutateConwayBody(t, txHex, func(b *conway.ConwayTransactionBody) { b.TxAuxDataHash = &hash })
+	txHex = setAuxData(t, txHex, withUnknownField)
+	if _, err := s.DecodeTx(context.Background(), txHex); err == nil ||
+		!strings.Contains(err.Error(), "unknown auxiliary-data field 6") {
+		t.Fatalf("DecodeTx error = %v, want unknown auxiliary-data field 6", err)
 	}
 }

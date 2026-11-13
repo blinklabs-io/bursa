@@ -2361,6 +2361,11 @@ func (s *Service) DecodeTx(
 		if unsupported != "" {
 			out.UnsupportedEffects = append(out.UnsupportedEffects, unsupported)
 		}
+	} else if hasUnhashedAuxiliaryData(txBytes) {
+		out.UnsupportedEffects = append(
+			out.UnsupportedEffects,
+			"auxiliary data without a body hash",
+		)
 	}
 	if tx.Body.TxScriptDataHash != nil {
 		out.ScriptDataHash = hex.EncodeToString(
@@ -2549,6 +2554,16 @@ func (s *Service) resolveSummaryInputs(
 		}
 	}
 	return ret, resolvedAll
+}
+
+// hasUnhashedAuxiliaryData reports whether the transaction carries auxiliary
+// data although its body commits to none, so the data is unsigned and unshown.
+func hasUnhashedAuxiliaryData(txBytes []byte) bool {
+	var parts []cbor.RawMessage
+	if _, err := cbor.Decode(txBytes, &parts); err != nil || len(parts) < 4 {
+		return false
+	}
+	return !bytes.Equal(parts[3], []byte{0xf6})
 }
 
 // auxiliaryDataSummary renders the metadata a witness commits to. The body
