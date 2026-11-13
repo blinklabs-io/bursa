@@ -16,6 +16,7 @@ package kesagent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -119,5 +120,37 @@ func TestControlRequestReportsAMissingSocket(t *testing.T) {
 	_, err := ControlRequest(context.Background(), sock, Command{Command: CmdInfo})
 	if err == nil || !strings.Contains(err.Error(), sock) {
 		t.Fatalf("expected a dial error naming the socket, got %v", err)
+	}
+}
+
+func TestControlRequestStopsWhenTheContextIsCancelled(t *testing.T) {
+	sock := shortSocketPath(t, "silent.sock")
+	ln, err := ListenUnix(sock, 0o600)
+	if err != nil {
+		t.Fatalf("ListenUnix: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		// A hello, then no reply to the command.
+		_ = writeFrame(conn, Hello{Protocol: ProtocolID})
+		<-release
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err = ControlRequest(ctx, sock, Command{Command: CmdInfo})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the request returned %v after the cancel", elapsed)
 	}
 }

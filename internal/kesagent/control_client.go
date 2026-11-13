@@ -46,6 +46,20 @@ func ControlRequest(
 			return Reply{}, err
 		}
 	}
+	// The deadline above does not follow a cancellation, so a cancelled ctx
+	// expires the connection's deadline to end a blocked read or write.
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+	})
+	defer stop()
+	reply, err := controlExchange(conn, path, cmd)
+	if err != nil && ctx.Err() != nil {
+		return Reply{}, fmt.Errorf("%s: %w", cmd.Command, ctx.Err())
+	}
+	return reply, err
+}
+
+func controlExchange(conn net.Conn, path string, cmd Command) (Reply, error) {
 	var hello Hello
 	if err := readFrame(conn, &hello); err != nil {
 		return Reply{}, fmt.Errorf("read control hello: %w", err)
