@@ -16,6 +16,7 @@ package kesagent
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -33,6 +34,7 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 	m.incServedKeys()
 	m.incSign("ok")
 	m.incSign("error")
+	m.observeSign("ok", time.Millisecond)
 	m.incEvolutions()
 	m.setCurrentPeriod(42)
 	m.setExhausted(true)
@@ -50,8 +52,11 @@ func TestMetricsRegisterAndNames(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"bursa_kesagent_served_keys_total":   "KES key pushes delivered to producers (serve-key mode).",
-		"bursa_kesagent_sign_total":          "KES signing operations by result (ok|error).",
+		"bursa_kesagent_served_keys_total": "KES key pushes delivered to producers (serve-key mode).",
+		"bursa_kesagent_sign_total":        "KES signing operations by result (ok|error).",
+		"bursa_kesagent_sign_duration_seconds": "Time from a sign request " +
+			"reaching its profile to the result, including the slot guard " +
+			"write, by result (ok|error).",
 		"bursa_kesagent_evolutions_total":    "KES key forward-evolutions performed.",
 		"bursa_kesagent_current_period":      "Current absolute KES period of the active key.",
 		"bursa_kesagent_exhausted":           "1 when the active KES key has exhausted its evolutions, else 0.",
@@ -87,6 +92,7 @@ func TestMetricsNilReceiverSafe(t *testing.T) {
 	var m *Metrics
 	m.incServedKeys()
 	m.incSign("ok")
+	m.observeSign("ok", time.Millisecond)
 	m.incEvolutions()
 	m.setCurrentPeriod(1)
 	m.setExhausted(true)
@@ -116,6 +122,9 @@ func TestMetricsProfileSeriesExistBeforeFirstEvent(t *testing.T) {
 	}
 	if n := testutil.CollectAndCount(m.signs); n != 2 {
 		t.Errorf("sign series = %d, want 2 (ok and error)", n)
+	}
+	if n := testutil.CollectAndCount(m.signDur); n != 2 {
+		t.Errorf("sign duration series = %d, want 2 (ok and error)", n)
 	}
 	if got := testutil.ToFloat64(m.exhausted.WithLabelValues("pool-a")); got != 0 {
 		t.Errorf("exhausted = %v, want 0", got)

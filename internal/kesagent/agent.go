@@ -645,7 +645,20 @@ func (p *profile) SignHeader(period uint64, headerBody []byte) ([]byte, error) {
 	return p.sign(period, headerBody, true)
 }
 
-func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
+func (p *profile) sign(
+	period uint64,
+	msg []byte,
+	typed bool,
+) (sig []byte, err error) {
+	// Timed from before the lock: a producer waits for it too.
+	start := time.Now()
+	defer func() {
+		result := "ok"
+		if err != nil {
+			result = "error"
+		}
+		p.metrics.observeSign(result, time.Since(start))
+	}()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.active == nil {
@@ -720,7 +733,7 @@ func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		Period: p.active.period,
 		Data:   p.active.buf.Bytes(),
 	}
-	sig, err := kes.Sign(sk, p.active.period, msg)
+	sig, err = kes.Sign(sk, p.active.period, msg)
 	if err != nil {
 		p.metrics.incSign("error")
 		return nil, fmt.Errorf("kesagent: sign: %w", err)
