@@ -216,6 +216,9 @@ func (p *profile) setActiveLocked(ks *keyState) {
 	p.active = ks
 	if ks == nil {
 		p.activeVKey.Store(nil)
+		// No active key: clear its gauges back to their pre-install value.
+		p.metrics.setLastPeriod(0)
+		p.metrics.setIssueNumber(0)
 		return
 	}
 	vkey := append([]byte(nil), ks.vkey...)

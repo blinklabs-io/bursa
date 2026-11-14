@@ -351,6 +351,30 @@ func TestKeyInstallSetsLastPeriodAndIssueNumber(t *testing.T) {
 	}
 }
 
+func TestDropKeyClearsActiveKeyGauges(t *testing.T) {
+	t.Parallel()
+	reg := prometheus.NewRegistry()
+	a, _ := metricsHeaderAgent(
+		t, &faultyStore{MemWatermark: watermark.NewMemWatermark()}, reg,
+	)
+	gauges := func() (float64, float64) {
+		return metricOf(t, reg, "bursa_kesagent_last_period").value,
+			metricOf(t, reg, "bursa_kesagent_opcert_issue_number").value
+	}
+	if err := a.DropKey("staged"); err != nil {
+		t.Fatalf("DropKey(staged): %v", err)
+	}
+	if last, issue := gauges(); last != 64 || issue != 7 {
+		t.Fatalf("after dropping the staged key: last period %v, issue %v; want 64, 7", last, issue)
+	}
+	if err := a.DropKey("active"); err != nil {
+		t.Fatalf("DropKey(active): %v", err)
+	}
+	if last, issue := gauges(); last != 0 || issue != 0 {
+		t.Fatalf("after dropping the active key: last period %v, issue %v; want 0, 0", last, issue)
+	}
+}
+
 func TestLastSignTimestampSetBySuccessfulSignOnly(t *testing.T) {
 	t.Parallel()
 	store := &faultyStore{MemWatermark: watermark.NewMemWatermark()}
