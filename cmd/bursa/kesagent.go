@@ -79,8 +79,9 @@ drop-key, info.`,
 }
 
 // kesAgentReadyCommand checks a running agent's readiness for an exec probe.
-// The health endpoints share the metrics listener, which binds only
-// loopback, so an HTTP probe from outside the host or pod cannot reach them.
+// The health endpoints share the metrics listener, which binds loopback
+// unless metrics.address says otherwise; the probe runs in the pod and
+// queries that listener locally.
 func kesAgentReadyCommand() *cobra.Command {
 	var configFile string
 	cmd := &cobra.Command{
@@ -120,7 +121,7 @@ func checkKesAgentReady(configFile string) error {
 			"metrics.port is 0, so the agent serves no readiness endpoint",
 		)
 	}
-	addr, err := signer.LoopbackBindAddress(
+	addr, err := signer.MetricsLocalAddress(
 		cfg.Metrics.ListenAddress,
 		cfg.Metrics.ListenPort,
 	)
@@ -136,12 +137,12 @@ func getKesAgentReadyz(url string) error {
 		kesAgentReadyClientTimeout,
 	)
 	defer cancel()
-	// url is the agent's own loopback metrics address from the local config.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // loopback only, see above
+	// url is the agent's own metrics address from the local config.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // the agent's own listener, see above
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // loopback only, see above
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // the agent's own listener, see above
 	if err != nil {
 		return err
 	}

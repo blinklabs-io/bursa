@@ -82,8 +82,13 @@ func TestKesAgentHealthMux(t *testing.T) {
 
 func writeReadyConfig(t *testing.T, port int) string {
 	t.Helper()
+	return writeReadyConfigAt(t, "127.0.0.1", port)
+}
+
+func writeReadyConfigAt(t *testing.T, address string, port int) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "bursa.yaml")
-	body := fmt.Sprintf("metrics:\n  address: \"127.0.0.1\"\n  port: %d\n", port)
+	body := fmt.Sprintf("metrics:\n  address: %q\n  port: %d\n", address, port)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +124,28 @@ func TestCheckKesAgentReady(t *testing.T) {
 	if err := checkKesAgentReady(cfg); err == nil ||
 		!strings.Contains(err.Error(), "503") {
 		t.Fatalf("unready agent: want a 503 error, got %v", err)
+	}
+}
+
+// TestCheckKesAgentReadyWildcardBind: an agent whose metrics listener binds
+// every interface is queried on loopback.
+func TestCheckKesAgentReadyWildcardBind(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	_ = srv.Listener.Close()
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	cfg := writeReadyConfigAt(t, "0.0.0.0", ln.Addr().(*net.TCPAddr).Port)
+	if err := checkKesAgentReady(cfg); err != nil {
+		t.Fatalf("ready agent bound to 0.0.0.0: %v", err)
 	}
 }
 
