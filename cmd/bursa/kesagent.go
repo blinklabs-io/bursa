@@ -74,6 +74,7 @@ drop-key, info.`,
 	cmd.Flags().
 		StringVar(&configFile, "config", "", "path to YAML config file (env: BURSA_CONFIG)")
 	cmd.AddCommand(kesAgentReadyCommand())
+	cmd.AddCommand(kesAgentControlCommand())
 	return cmd
 }
 
