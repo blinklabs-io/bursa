@@ -30,6 +30,13 @@ var ErrInvalid = errors.New("survey: invalid")
 // bound is treated as invalid.
 const MaxOptions = 1024
 
+// MaxTallyEntries bounds a whole definition: the sum over its questions of
+// their option count, with custom and numeric questions counting one. Tallies and the detail response hold
+// one entry per option per question for every role, so MaxOptions alone still
+// lets thousands of compact external-content questions expand into millions
+// of entries. A definition over the bound is treated as invalid.
+const MaxTallyEntries = 4 * MaxOptions
+
 func invalidf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, fmt.Sprintf(format, args...))
 }
@@ -50,9 +57,20 @@ func (d Definition) Validate() error {
 	if d.Mode.Sealed && (d.Mode.Round == 0 || d.Mode.PaddingSize == 0) {
 		return invalidf("sealed mode needs a positive round and padding size")
 	}
+	var entries uint64
 	for i, q := range d.Questions {
 		if err := q.Validate(); err != nil {
 			return fmt.Errorf("question %d: %w", i, err)
+		}
+		// Custom and numeric questions allocate no options; any other kind
+		// has at most MaxOptions after Validate, so the sum cannot wrap.
+		if q.Kind == KindCustom || q.Kind == KindNumericRange {
+			entries++
+		} else {
+			entries += q.NumOptions()
+		}
+		if entries > MaxTallyEntries {
+			return invalidf("more than %d tally entries across questions", MaxTallyEntries)
 		}
 	}
 	return nil
