@@ -421,6 +421,11 @@ label, which is `default` for a single-pool configuration.
 | `bursa_kesagent_service_connections` | Active service-socket connections |
 | `bursa_kesagent_slot_guard_refusals_total` | Headers refused by the slot guard, by `reason` (`equivocation`, `rollback`) |
 | `bursa_kesagent_guard_fresh` | Guard file was missing or empty at startup (1/0) |
+| `bursa_kesagent_slot_guard_write_duration_seconds` | Histogram of shared guard store write durations |
+| `bursa_kesagent_slot_guard_store_errors_total` | Shared guard store calls that failed (timeout, unreachable); refusals are not counted |
+| `bursa_kesagent_last_period` | Last absolute KES period the active key can sign in |
+| `bursa_kesagent_opcert_issue_number` | Issue number of the active operational certificate |
+| `bursa_kesagent_last_sign_timestamp_seconds` | Unix time of the last successful sign (0 before the first) |
 
 ## Shutdown
 

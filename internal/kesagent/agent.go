@@ -216,6 +216,9 @@ func (p *profile) setActiveLocked(ks *keyState) {
 	p.active = ks
 	if ks == nil {
 		p.activeVKey.Store(nil)
+		// No active key: clear its gauges back to their pre-install value.
+		p.metrics.setLastPeriod(0)
+		p.metrics.setIssueNumber(0)
 		return
 	}
 	vkey := append([]byte(nil), ks.vkey...)
@@ -359,6 +362,14 @@ func newProfile(
 	}
 	p.metrics.setGuardFresh(fresh)
 	p.metrics.initSlotGuardRefusals()
+	if sg, ok := guard.(*sharedGuard); ok {
+		sg.onWrite = func(d time.Duration, failed bool) {
+			p.metrics.observeGuardWrite(d)
+			if failed {
+				p.metrics.incGuardStoreError()
+			}
+		}
+	}
 	return p, nil
 }
 
@@ -585,6 +596,8 @@ func (p *profile) activateLocked(
 	p.guardedSet = true
 	p.metrics.setCurrentPeriod(p.active.absPeriod())
 	p.metrics.setExhausted(p.active.exhausted)
+	p.metrics.setLastPeriod(p.active.endPeriod())
+	p.metrics.setIssueNumber(p.active.issueNumber)
 	p.broadcastLocked()
 	p.logger.Info(msg,
 		"kes_vkey", hex.EncodeToString(ks.vkey),
@@ -726,6 +739,7 @@ func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		return nil, fmt.Errorf("kesagent: sign: %w", err)
 	}
 	p.metrics.incSign("ok")
+	p.metrics.setLastSign(p.now())
 	p.metrics.setCurrentPeriod(p.active.absPeriod())
 	return sig, nil
 }

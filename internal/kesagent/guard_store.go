@@ -80,6 +80,11 @@ type sharedGuard struct {
 	floorScope string
 	slotPrefix string
 
+	// onWrite, when set before the guard is used, is told how long each store
+	// write took and whether the store itself failed, as opposed to refusing
+	// the write.
+	onWrite func(d time.Duration, failed bool)
+
 	mu      sync.Mutex
 	floor   uint64
 	set     bool
@@ -176,9 +181,11 @@ func (g *sharedGuard) AuthorizeHeader(
 	var err error
 	if fc, ok := g.store.(watermark.FloorCommitWatermark); ok {
 		// One store write raises the floor and records the slot.
-		err = fc.CheckAndRaiseFloorAndCommit(
-			ctx, g.key, g.floorScope, period, scope, headerBody,
-		)
+		err = g.timedWrite(func() error {
+			return fc.CheckAndRaiseFloorAndCommit(
+				ctx, g.key, g.floorScope, period, scope, headerBody,
+			)
+		})
 		if errors.Is(err, watermark.ErrCounterRegression) {
 			return g.floorRefusedLocked(ctx, period)
 		}
@@ -189,7 +196,9 @@ func (g *sharedGuard) AuthorizeHeader(
 		if err := g.raiseFloorLocked(ctx, period); err != nil {
 			return err
 		}
-		err = g.store.CheckAndCommit(ctx, g.key, scope, headerBody)
+		err = g.timedWrite(func() error {
+			return g.store.CheckAndCommit(ctx, g.key, scope, headerBody)
+		})
 	}
 	if errors.Is(err, watermark.ErrConflict) {
 		return fmt.Errorf("%w: slot %d", ErrSlotEquivocation, slot)
@@ -206,7 +215,9 @@ func (g *sharedGuard) AuthorizeHeader(
 // raiseFloorLocked raises the shared floor to period. On a refusal it reloads
 // the floor so Floor reports the value that refused it. Caller holds g.mu.
 func (g *sharedGuard) raiseFloorLocked(ctx context.Context, period uint64) error {
-	err := g.store.CheckAndRaiseFloor(ctx, g.key, g.floorScope, period)
+	err := g.timedWrite(func() error {
+		return g.store.CheckAndRaiseFloor(ctx, g.key, g.floorScope, period)
+	})
 	if errors.Is(err, watermark.ErrCounterRegression) {
 		return g.floorRefusedLocked(ctx, period)
 	}
@@ -215,6 +226,20 @@ func (g *sharedGuard) raiseFloorLocked(ctx context.Context, period uint64) error
 	}
 	g.raiseLocalFloorLocked(period)
 	return nil
+}
+
+// timedWrite runs one store write and reports it to onWrite. A refusal
+// (ErrConflict, ErrCounterRegression) is the store answering, not failing.
+func (g *sharedGuard) timedWrite(write func() error) error {
+	start := time.Now()
+	err := write()
+	if g.onWrite != nil {
+		failed := err != nil &&
+			!errors.Is(err, watermark.ErrConflict) &&
+			!errors.Is(err, watermark.ErrCounterRegression)
+		g.onWrite(time.Since(start), failed)
+	}
+	return err
 }
 
 // floorRefusedLocked reloads the shared floor after the store refused period,

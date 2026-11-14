@@ -14,7 +14,11 @@
 
 package kesagent
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Metrics holds Prometheus collectors for the KES agent. Construct one per
 // process and call Register to publish it. Every series about a key carries a
@@ -29,6 +33,12 @@ type Metrics struct {
 
 	slotGuardRefusals *prometheus.CounterVec
 	guardFresh        *prometheus.GaugeVec
+
+	guardWrite       *prometheus.HistogramVec
+	guardStoreErrors *prometheus.CounterVec
+	lastPeriod       *prometheus.GaugeVec
+	issueNumber      *prometheus.GaugeVec
+	lastSign         *prometheus.GaugeVec
 
 	profile string
 }
@@ -70,6 +80,32 @@ func NewMetrics() *Metrics {
 			Help: "1 when the profile's guard file was missing or " +
 				"empty at startup, so no signed slot was known, else 0.",
 		}, []string{"profile"}),
+		guardWrite: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "bursa_kesagent_slot_guard_write_duration_seconds",
+			Help: "Duration of slot guard writes to the shared guard store.",
+			// A database round trip: a millisecond up to the store call
+			// timeout.
+			Buckets: []float64{
+				0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5,
+			},
+		}, []string{"profile"}),
+		guardStoreErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "bursa_kesagent_slot_guard_store_errors_total",
+			Help: "Shared guard store calls that failed (timeout or " +
+				"unreachable), not counting refusals.",
+		}, []string{"profile"}),
+		lastPeriod: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "bursa_kesagent_last_period",
+			Help: "Last absolute KES period the active key can sign in.",
+		}, []string{"profile"}),
+		issueNumber: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "bursa_kesagent_opcert_issue_number",
+			Help: "Issue number of the active key's operational certificate.",
+		}, []string{"profile"}),
+		lastSign: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "bursa_kesagent_last_sign_timestamp_seconds",
+			Help: "Unix time of the last successful sign, 0 before the first.",
+		}, []string{"profile"}),
 	}
 }
 
@@ -84,6 +120,11 @@ func (m *Metrics) Register(r prometheus.Registerer) {
 		m.activeConns,
 		m.slotGuardRefusals,
 		m.guardFresh,
+		m.guardWrite,
+		m.guardStoreErrors,
+		m.lastPeriod,
+		m.issueNumber,
+		m.lastSign,
 	)
 }
 
@@ -103,6 +144,11 @@ func (m *Metrics) forProfile(name string) *Metrics {
 	m.evolutions.WithLabelValues(name)
 	m.currentPer.WithLabelValues(name)
 	m.exhausted.WithLabelValues(name)
+	m.guardWrite.WithLabelValues(name)
+	m.guardStoreErrors.WithLabelValues(name)
+	m.lastPeriod.WithLabelValues(name)
+	m.issueNumber.WithLabelValues(name)
+	m.lastSign.WithLabelValues(name)
 	return &v
 }
 
@@ -176,5 +222,43 @@ func (m *Metrics) setGuardFresh(v bool) {
 		m.guardFresh.WithLabelValues(m.profile).Set(1)
 	} else {
 		m.guardFresh.WithLabelValues(m.profile).Set(0)
+	}
+}
+
+// observeGuardWrite records the duration of one write to the shared guard
+// store.
+func (m *Metrics) observeGuardWrite(d time.Duration) {
+	if m != nil {
+		m.guardWrite.WithLabelValues(m.profile).Observe(d.Seconds())
+	}
+}
+
+// incGuardStoreError counts a shared guard store call that failed, as
+// opposed to one the guard refused.
+func (m *Metrics) incGuardStoreError() {
+	if m != nil {
+		m.guardStoreErrors.WithLabelValues(m.profile).Inc()
+	}
+}
+
+// setLastPeriod records the last absolute KES period the active key can sign
+// in.
+func (m *Metrics) setLastPeriod(p uint64) {
+	if m != nil {
+		m.lastPeriod.WithLabelValues(m.profile).Set(float64(p))
+	}
+}
+
+// setIssueNumber records the active operational certificate's issue number.
+func (m *Metrics) setIssueNumber(n uint64) {
+	if m != nil {
+		m.issueNumber.WithLabelValues(m.profile).Set(float64(n))
+	}
+}
+
+// setLastSign records the time of a successful sign.
+func (m *Metrics) setLastSign(t time.Time) {
+	if m != nil {
+		m.lastSign.WithLabelValues(m.profile).Set(float64(t.Unix()))
 	}
 }
