@@ -102,6 +102,8 @@ anything that can read the process memory or the key directory.
   connections; configure failover so every acknowledged watermark row survives
   promotion.
 - Restrict the config file, TLS key, and any key files to the service user.
-- Scrape `/metrics` from the dedicated loopback listener; alert on
+- Scrape `/metrics` from its dedicated listener. It binds loopback unless
+  `metrics.address` is set; bind it only where your scraper can reach it and
+  nothing untrusted can. Alert on
   `bursa_signer_watermark_conflicts_total` and
   `bursa_signer_backend_errors_total`.

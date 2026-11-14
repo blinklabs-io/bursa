@@ -1406,8 +1406,13 @@ func TestRegisterAPIHandlersDoesNotExposeMetrics(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, response.Code)
 }
 
-func TestValidateMetricsExposureRejectsNonLoopback(t *testing.T) {
-	for _, address := range []string{"", "0.0.0.0", "::", "192.0.2.1"} {
+func TestValidateMetricsExposureAcceptsExplicitAddress(t *testing.T) {
+	for address, want := range map[string]string{
+		"":          "127.0.0.1:8081",
+		"0.0.0.0":   "0.0.0.0:8081",
+		"::":        "[::]:8081",
+		"192.0.2.1": "192.0.2.1:8081",
+	} {
 		t.Run(address, func(t *testing.T) {
 			cfg := &config.Config{
 				Metrics: config.MetricsConfig{
@@ -1415,7 +1420,8 @@ func TestValidateMetricsExposureRejectsNonLoopback(t *testing.T) {
 					ListenPort:    8081,
 				},
 			}
-			require.Error(t, validateMetricsExposure(cfg, nil))
+			require.NoError(t, validateMetricsExposure(cfg, nil))
+			require.Equal(t, want, metricsListenAddress(cfg))
 		})
 	}
 }
@@ -1441,7 +1447,7 @@ type addrOnlyListener struct {
 
 func (l addrOnlyListener) Addr() net.Addr { return l.addr }
 
-func TestValidateMetricsExposureChecksSuppliedListener(t *testing.T) {
+func TestValidateMetricsExposureAcceptsSuppliedListener(t *testing.T) {
 	cfg := &config.Config{
 		Metrics: config.MetricsConfig{
 			ListenAddress: "127.0.0.1",
@@ -1451,7 +1457,7 @@ func TestValidateMetricsExposureChecksSuppliedListener(t *testing.T) {
 	listener := addrOnlyListener{
 		addr: &net.TCPAddr{IP: net.IPv4zero, Port: 8081},
 	}
-	require.Error(t, validateMetricsExposure(cfg, listener))
+	require.NoError(t, validateMetricsExposure(cfg, listener))
 }
 
 func TestMetricsListenAddressFormatsIPv6(t *testing.T) {

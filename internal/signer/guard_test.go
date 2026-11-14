@@ -116,28 +116,57 @@ func TestCheckFileBackendGuard_NoFileBackend_Silent(t *testing.T) {
 	}
 }
 
-func TestLoopbackBindAddress(t *testing.T) {
+func TestMetricsBindAddress(t *testing.T) {
 	valid := map[string]string{
+		"":            "127.0.0.1:8081",
+		"  ":          "127.0.0.1:8081",
 		"127.0.0.1":   "127.0.0.1:8081",
 		" localhost ": "localhost:8081",
 		"::1":         "[::1]:8081",
 		"[::1]":       "[::1]:8081",
+		"0.0.0.0":     "0.0.0.0:8081",
+		"::":          "[::]:8081",
+		"192.0.2.1":   "192.0.2.1:8081",
 	}
 	for host, want := range valid {
-		got, err := LoopbackBindAddress(host, 8081)
+		got, err := MetricsBindAddress(host, 8081)
 		if err != nil {
-			t.Fatalf("LoopbackBindAddress(%q): %v", host, err)
+			t.Fatalf("MetricsBindAddress(%q): %v", host, err)
 		}
 		if got != want {
-			t.Fatalf("LoopbackBindAddress(%q) = %q, want %q", host, got, want)
+			t.Fatalf("MetricsBindAddress(%q) = %q, want %q", host, got, want)
 		}
 	}
 	for _, host := range []string{
-		"", "0.0.0.0", "::", "192.0.2.1",
-		"127.0.0.1:9000", "[::1]:9000", "localhost:9000",
+		"127.0.0.1:9000",
+		"[::1]:9000",
+		"0.0.0.0:9000",
 	} {
-		if got, err := LoopbackBindAddress(host, 8081); err == nil {
-			t.Fatalf("LoopbackBindAddress(%q) = %q, want an error", host, got)
+		if got, err := MetricsBindAddress(host, 8081); err == nil {
+			t.Fatalf("MetricsBindAddress(%q) = %q, want an error", host, got)
 		}
+	}
+}
+
+func TestMetricsLocalAddress(t *testing.T) {
+	for host, want := range map[string]string{
+		"":          "127.0.0.1:8081",
+		"127.0.0.1": "127.0.0.1:8081",
+		"0.0.0.0":   "127.0.0.1:8081",
+		"::":        "[::1]:8081",
+		"[::]":      "[::1]:8081",
+		"::1":       "[::1]:8081",
+		"192.0.2.1": "192.0.2.1:8081",
+	} {
+		got, err := MetricsLocalAddress(host, 8081)
+		if err != nil {
+			t.Fatalf("MetricsLocalAddress(%q): %v", host, err)
+		}
+		if got != want {
+			t.Fatalf("MetricsLocalAddress(%q) = %q, want %q", host, got, want)
+		}
+	}
+	if got, err := MetricsLocalAddress("127.0.0.1:9000", 8081); err == nil {
+		t.Fatalf("MetricsLocalAddress with a port = %q, want an error", got)
 	}
 }
