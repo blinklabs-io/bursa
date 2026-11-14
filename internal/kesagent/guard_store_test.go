@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/gouroboros/kes"
 )
@@ -149,11 +150,35 @@ func checkSharedGuardSemantics(t *testing.T, storeA, storeB SharedGuardStore) {
 	if err := b.Authorize("k", 8); err != nil {
 		t.Fatalf("replica B Authorize 8: %v", err)
 	}
+	// Replica A still holds floor 6, so only the store refuses period 7,
+	// and the refused header leaves slot 70 unrecorded.
+	if err := a.AuthorizeHeader(
+		"k", 7, 70, []byte("Y"),
+	); !errors.Is(err, ErrPeriodRollback) {
+		t.Fatalf("replica A header at period 7 under shared floor 8: got %v", err)
+	}
+	if err := b.AuthorizeHeader("k", 8, 70, []byte("Z")); err != nil {
+		t.Fatalf("replica B header Z at 70 after A was refused: %v", err)
+	}
 	if err := a.Authorize("k", 7); !errors.Is(err, ErrPeriodRollback) {
 		t.Fatalf("replica A Authorize 7 under shared floor 8: got %v", err)
 	}
 	if floor, _ := a.Floor(); floor != 8 {
 		t.Fatalf("replica A floor after refusal = %d, want 8", floor)
+	}
+
+	// An equivocation refusal still raises the floor to its period, as the
+	// store recorded it.
+	if err := a.AuthorizeHeader(
+		"k", 9, 70, []byte("G"),
+	); !errors.Is(err, ErrSlotEquivocation) {
+		t.Fatalf("replica A header G at 70: want ErrSlotEquivocation, got %v", err)
+	}
+	if floor, _ := a.Floor(); floor != 9 {
+		t.Fatalf("replica A floor after equivocation = %d, want 9", floor)
+	}
+	if err := b.Authorize("k", 8); !errors.Is(err, ErrPeriodRollback) {
+		t.Fatalf("replica B Authorize 8 under shared floor 9: got %v", err)
 	}
 
 	// The same cold key on another network has its own records: slot
@@ -176,6 +201,93 @@ func TestSharedGuardSemanticsMem(t *testing.T) {
 func TestPostgresGuardSemantics(t *testing.T) {
 	t.Parallel()
 	checkSharedGuardSemantics(t, testPGStore(t), testPGStore(t))
+}
+
+// countingStore counts the store writes the guard makes on the signing path.
+// Each write is one database round trip in PostgresWatermark.
+type countingStore struct {
+	*watermark.MemWatermark
+
+	mu     sync.Mutex
+	writes int
+}
+
+func (c *countingStore) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.writes
+}
+
+func (c *countingStore) add() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.writes++
+}
+
+func (c *countingStore) CheckAndRaiseFloor(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	value uint64,
+) error {
+	c.add()
+	return c.MemWatermark.CheckAndRaiseFloor(ctx, key, scope, value)
+}
+
+func (c *countingStore) CheckAndCommit(
+	ctx context.Context,
+	key backend.KeyHash,
+	scope string,
+	payload []byte,
+) error {
+	c.add()
+	return c.MemWatermark.CheckAndCommit(ctx, key, scope, payload)
+}
+
+func (c *countingStore) CheckAndRaiseFloorAndCommit(
+	ctx context.Context,
+	key backend.KeyHash,
+	floorScope string,
+	floor uint64,
+	scope string,
+	payload []byte,
+) error {
+	c.add()
+	return c.MemWatermark.CheckAndRaiseFloorAndCommit(
+		ctx, key, floorScope, floor, scope, payload,
+	)
+}
+
+func TestSharedGuardHeaderIsOneStoreWrite(t *testing.T) {
+	t.Parallel()
+	store := &countingStore{MemWatermark: watermark.NewMemWatermark()}
+	g := openSharedGuard(t, store, newColdKey(t), epoch)
+	for i, slot := range []uint64{52, 52, 53} {
+		before := store.count()
+		if err := g.AuthorizeHeader("k", 5, slot, []byte{byte(slot)}); err != nil {
+			t.Fatalf("header %d at slot %d: %v", i, slot, err)
+		}
+		if n := store.count() - before; n != 1 {
+			t.Fatalf("header %d at slot %d made %d store writes, want 1", i, slot, n)
+		}
+	}
+}
+
+// splitStore is a SharedGuardStore without the combined floor and payload
+// write, so the guard falls back to two writes.
+type splitStore struct {
+	watermark.Watermark
+	watermark.CounterWatermark
+}
+
+func TestSharedGuardSemanticsWithoutCombinedWrite(t *testing.T) {
+	t.Parallel()
+	mem := watermark.NewMemWatermark()
+	store := splitStore{Watermark: mem, CounterWatermark: mem}
+	if _, ok := SharedGuardStore(store).(watermark.FloorCommitWatermark); ok {
+		t.Fatal("splitStore has the combined write")
+	}
+	checkSharedGuardSemantics(t, store, store)
 }
 
 // checkSharedGuardRace has two replicas offer different headers for the same

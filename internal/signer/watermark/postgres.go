@@ -400,6 +400,54 @@ func (s *PostgresWatermark) CheckAndRaiseFloor(
 	return nil
 }
 
+// CheckAndRaiseFloorAndCommit is CheckAndRaiseFloor then CheckAndCommit in
+// one statement, so one round trip. Postgres runs every data-modifying CTE
+// whether or not the outer query reads it, so the payload upsert selects its
+// row only when the floor upsert returned one: a refused floor writes
+// nothing. Both upserts keep the guards and "C" collation of the
+// single-scope methods.
+func (s *PostgresWatermark) CheckAndRaiseFloorAndCommit(
+	ctx context.Context,
+	key backend.KeyHash,
+	floorScope string,
+	floor uint64,
+	scope string,
+	payload []byte,
+) error {
+	d := digest(payload)
+	var floorRows, payloadRows int
+	err := s.pool.QueryRow(
+		ctx,
+		`WITH f AS (
+		   INSERT INTO signer_counter_watermark (record_key, counter) VALUES ($1, $2)
+		   ON CONFLICT (record_key) DO UPDATE SET counter = EXCLUDED.counter, updated_at = extract(epoch from now())::bigint
+		   WHERE (EXCLUDED.counter COLLATE "C") >= (signer_counter_watermark.counter COLLATE "C")
+		   RETURNING counter
+		 ), p AS (
+		   INSERT INTO signer_watermark (record_key, payload_hash)
+		   SELECT $3::text, $4::text WHERE EXISTS (SELECT 1 FROM f)
+		   ON CONFLICT (record_key) DO UPDATE SET payload_hash = EXCLUDED.payload_hash
+		   WHERE signer_watermark.payload_hash = EXCLUDED.payload_hash
+		   RETURNING payload_hash
+		 )
+		 SELECT (SELECT count(*) FROM f), (SELECT count(*) FROM p)`,
+		recordKey(key, floorScope),
+		counterEncode(floor),
+		recordKey(key, scope),
+		hex.EncodeToString(d[:]),
+	).Scan(&floorRows, &payloadRows)
+	if err != nil {
+		return fmt.Errorf("watermark raise floor and commit: %w", err)
+	}
+	if floorRows == 0 {
+		return ErrCounterRegression
+	}
+	if payloadRows == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
 // postgresCounterUpsert returns the guarded upsert for op and its extra
 // arguments. The guards and "C" collation match the single-scope methods.
 func postgresCounterUpsert(op CounterOp) (string, []any) {

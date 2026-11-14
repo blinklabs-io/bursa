@@ -66,7 +66,9 @@ const sharedGuardTimeout = 5 * time.Second
 //
 //   - The period floor is one non-decreasing counter, raised with
 //     CheckAndRaiseFloor: a period below it is refused on every replica.
-//   - Each signed slot is one payload record, written with CheckAndCommit:
+//   - Each signed slot is one payload record, written with CheckAndCommit,
+//     or together with the floor in one write when the store implements
+//     watermark.FloorCommitWatermark:
 //     the first header body recorded for a slot wins on every replica, an
 //     identical body passes again (a retry), and a different body is refused
 //     as ErrSlotEquivocation.
@@ -170,11 +172,25 @@ func (g *sharedGuard) AuthorizeHeader(
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), sharedGuardTimeout)
 	defer cancel()
-	if err := g.raiseFloorLocked(ctx, period); err != nil {
-		return err
-	}
 	scope := g.slotPrefix + strconv.FormatUint(slot, 10)
-	err := g.store.CheckAndCommit(ctx, g.key, scope, headerBody)
+	var err error
+	if fc, ok := g.store.(watermark.FloorCommitWatermark); ok {
+		// One store write raises the floor and records the slot.
+		err = fc.CheckAndRaiseFloorAndCommit(
+			ctx, g.key, g.floorScope, period, scope, headerBody,
+		)
+		if errors.Is(err, watermark.ErrCounterRegression) {
+			return g.floorRefusedLocked(ctx, period)
+		}
+		if err == nil || errors.Is(err, watermark.ErrConflict) {
+			g.raiseLocalFloorLocked(period)
+		}
+	} else {
+		if err := g.raiseFloorLocked(ctx, period); err != nil {
+			return err
+		}
+		err = g.store.CheckAndCommit(ctx, g.key, scope, headerBody)
+	}
 	if errors.Is(err, watermark.ErrConflict) {
 		return fmt.Errorf("%w: slot %d", ErrSlotEquivocation, slot)
 	}
@@ -192,25 +208,38 @@ func (g *sharedGuard) AuthorizeHeader(
 func (g *sharedGuard) raiseFloorLocked(ctx context.Context, period uint64) error {
 	err := g.store.CheckAndRaiseFloor(ctx, g.key, g.floorScope, period)
 	if errors.Is(err, watermark.ErrCounterRegression) {
-		floor, set, rerr := g.store.CounterFor(ctx, g.key, g.floorScope)
-		if rerr == nil && set && (!g.set || floor > g.floor) {
-			g.floor, g.set = floor, true
-		}
-		if rerr == nil && set {
-			return fmt.Errorf(
-				"%w: period %d < floor %d",
-				ErrPeriodRollback,
-				period,
-				floor,
-			)
-		}
-		return fmt.Errorf("%w: period %d", ErrPeriodRollback, period)
+		return g.floorRefusedLocked(ctx, period)
 	}
 	if err != nil {
 		return fmt.Errorf("kesagent: raise shared period floor: %w", err)
 	}
+	g.raiseLocalFloorLocked(period)
+	return nil
+}
+
+// floorRefusedLocked reloads the shared floor after the store refused period,
+// so Floor reports the value that refused it, and returns ErrPeriodRollback.
+// Caller holds g.mu.
+func (g *sharedGuard) floorRefusedLocked(ctx context.Context, period uint64) error {
+	floor, set, rerr := g.store.CounterFor(ctx, g.key, g.floorScope)
+	if rerr == nil && set && (!g.set || floor > g.floor) {
+		g.floor, g.set = floor, true
+	}
+	if rerr == nil && set {
+		return fmt.Errorf(
+			"%w: period %d < floor %d",
+			ErrPeriodRollback,
+			period,
+			floor,
+		)
+	}
+	return fmt.Errorf("%w: period %d", ErrPeriodRollback, period)
+}
+
+// raiseLocalFloorLocked records that the store accepted period as the floor.
+// Caller holds g.mu.
+func (g *sharedGuard) raiseLocalFloorLocked(period uint64) {
 	if !g.set || period > g.floor {
 		g.floor, g.set = period, true
 	}
-	return nil
 }
