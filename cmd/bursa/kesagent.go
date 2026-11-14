@@ -142,7 +142,10 @@ func getKesAgentReadyz(url string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // the agent's own listener, see above
+	// No proxy: Go skips the proxy only for loopback, and an explicit
+	// metrics.address can be the pod's own IP.
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	resp, err := client.Do(req) //nolint:gosec // the agent's own listener, see above
 	if err != nil {
 		return err
 	}
