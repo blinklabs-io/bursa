@@ -16,12 +16,14 @@ package kesagent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // slowGuardStore delays the header guard write, standing in for a shared
@@ -107,11 +109,19 @@ func TestSignDurationCoversTheGuardWrite(t *testing.T) {
 		t.Fatalf("error samples after one good sign = %d, want 0", count)
 	}
 
-	// A different body for the signed slot is refused and observed as an
-	// error.
-	spec.sequence++
-	if _, err := a.SignHeader(5, spec.encode(t)); err == nil {
-		t.Fatal("SignHeader of a second body for slot 52 succeeded")
+	// An earlier slot in the same KES period passes header validation and
+	// is refused by the slot guard, which is observed as an error.
+	spec.slot = 51
+	if _, err := a.SignHeader(5, spec.encode(t)); !errors.Is(
+		err,
+		ErrSlotRollback,
+	) {
+		t.Fatalf("SignHeader of slot 51 after 52: want ErrSlotRollback, got %v", err)
+	}
+	if got := testutil.ToFloat64(
+		m.slotGuardRefusals.WithLabelValues(p.cfg.Name, "rollback"),
+	); got != 1 {
+		t.Fatalf("slot guard rollback refusals = %v, want 1", got)
 	}
 	if count, _ := signDurationSamples(t, m, p.cfg.Name, "error"); count != 1 {
 		t.Fatalf("error samples = %d, want 1", count)
