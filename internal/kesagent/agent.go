@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -127,6 +128,10 @@ type ProfileConfig struct {
 	ColdVKey          []byte        // 32-byte pool cold verification key
 	GuardPath         string        // durable monotonic period store path
 	MaxClockSkew      time.Duration // header slot lead allowed (default DefaultMaxClockSkew)
+	// ControlClientSPKI lists the client certificate public keys (SHA-256 of
+	// the DER SubjectPublicKeyInfo) that may open a control session for this
+	// profile on the attested listener. Empty means none may.
+	ControlClientSPKI [][sha256.Size]byte
 }
 
 // keyState is the in-memory state of a KES key. The raw secret key bytes live

@@ -234,6 +234,36 @@ nothing; transport authentication, such as a client pinning the SHA-256 SPKI
 fingerprint of the agent's TLS server certificate, is separate from the
 provider.
 
+## Remote control role
+
+The attested listener serves `gen-staged-key`, `install-key` and `info` to a
+client whose verified TLS client certificate is pinned in a profile's
+`control_client_spki_sha256`. It requires mutual TLS: no control role is
+offered on plain TCP or on TLS without client certificate verification. The
+client declares the role in the attestation request; `role` is `"sign"` or
+`"control"`, and an absent role means `sign`:
+
+```json
+{ "type": "attestation_request", "protocol": "bursa-attested-kes/1",
+  "nonce": "<32 fresh random bytes>", "role": "control" }
+```
+
+The server hello precedes the request and always has `mode` `sign`. The
+`attestation_response` carries `role` with the admitted role, or an `error`
+with no key state or evidence when the client is not listed for the requested
+role or profile. Attestation is the same exchange as for sign sessions:
+`profile` and `kes_vkey` select the attested profile, which must be one the
+client may control.
+
+After admission the connection carries `Command` and `Reply` frames as on the
+[control socket](#control-socket), for `gen-staged-key`, `install-key` and
+`info`. `drop-key` is refused on a remote control session. The `profile` field
+selects the profile and must name one the client is listed for; it may be
+omitted when the agent has one profile. A command naming an unknown or unlisted
+profile, or no profile with several, returns `{ "ok": false, "error": "..." }`.
+Sign frames on a control session and control frames on a sign session are
+refused.
+
 ## Control socket
 
 Request/response. The client sends a `Command` frame; the server replies with a

@@ -108,6 +108,9 @@ type KESAgentConfig struct {
 	// records from guard files into a database that several agent replicas
 	// share. Without it the agent uses guard files. YAML only.
 	Store KESAgentStoreConfig `yaml:"store"                   ignored:"true"`
+	// ControlClientSPKISHA256 is control_client_spki_sha256 for the single
+	// profile built from the fields above; with profiles, set it in each.
+	ControlClientSPKISHA256 []string `yaml:"control_client_spki_sha256" envconfig:"KESAGENT_CONTROL_CLIENT_SPKI_SHA256"`
 }
 
 // KESAgentStoreConfig selects where the KES agent keeps its slot guard.
@@ -147,6 +150,12 @@ type KESAgentProfileConfig struct {
 	MaxKESEvolutions  uint64  `yaml:"max_kes_evolutions"`
 	MaxClockSkew      string  `yaml:"max_clock_skew"`
 	GuardFile         string  `yaml:"guard_file"`
+	// ControlClientSPKISHA256 lists the SHA-256 SPKI digests (64 hex
+	// characters each) of the client certificates that may open a remote
+	// control session for this profile, to stage and install keys. It needs
+	// the attested listener with attested_client_ca_file and is refused with
+	// attested_plaintext.
+	ControlClientSPKISHA256 []string `yaml:"control_client_spki_sha256"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.

@@ -202,3 +202,92 @@ func TestKESAgentProfilesParsesMaxClockSkew(t *testing.T) {
 		}
 	}
 }
+
+const testControlSPKI = "0a0b0c0d0e0f0a0b0c0d0e0f0a0b0c0d0e0f0a0b0c0d0e0f0a0b0c0d0e0f0a0b"
+
+func controlConfig() config.KESAgentConfig {
+	return config.KESAgentConfig{
+		ColdVKeyHex:             testColdVKeyHex,
+		SystemStart:             "2022-10-25T00:00:00Z",
+		SlotLength:              1,
+		SlotsPerKESPeriod:       129600,
+		MaxKESEvolutions:        62,
+		GuardFile:               "/var/lib/bursa/guard.json",
+		ControlClientSPKISHA256: []string{testControlSPKI},
+		AttestedListenAddress:   "127.0.0.1:0",
+		AttestedClientCAFile:    "/etc/bursa/clients.pem",
+	}
+}
+
+func TestKESAgentProfilesControlListNeedsClientCertVerification(t *testing.T) {
+	t.Parallel()
+	ok, err := kesAgentProfiles(controlConfig())
+	if err != nil {
+		t.Fatalf("control list with a client CA: %v", err)
+	}
+	if len(ok) != 1 || len(ok[0].ControlClientSPKI) != 1 {
+		t.Fatalf("control list not carried to the profile: %+v", ok)
+	}
+	for name, mutate := range map[string]func(*config.KESAgentConfig){
+		"plaintext": func(kc *config.KESAgentConfig) {
+			kc.AttestedPlaintext = true
+			kc.AttestedClientCAFile = ""
+		},
+		"no client CA": func(kc *config.KESAgentConfig) {
+			kc.AttestedClientCAFile = ""
+		},
+		"no attested listener": func(kc *config.KESAgentConfig) {
+			kc.AttestedListenAddress = ""
+		},
+		"profile list without client CA": func(kc *config.KESAgentConfig) {
+			kc.ControlClientSPKISHA256 = nil
+			kc.AttestedClientCAFile = ""
+			kc.Profiles = []config.KESAgentProfileConfig{{
+				Name:                    "pool",
+				ColdVKeyHex:             testColdVKeyHex,
+				SystemStart:             "2022-10-25T00:00:00Z",
+				SlotsPerKESPeriod:       129600,
+				GuardFile:               "/var/lib/bursa/guard.json",
+				ControlClientSPKISHA256: []string{testControlSPKI},
+			}}
+			kc.ColdVKeyHex, kc.SystemStart, kc.SlotsPerKESPeriod, kc.GuardFile = "", "", 0, ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			kc := controlConfig()
+			mutate(&kc)
+			_, err := kesAgentProfiles(kc)
+			if err == nil || !strings.Contains(err.Error(), "control_client_spki_sha256") {
+				t.Fatalf("err = %v, want a control_client_spki_sha256 refusal", err)
+			}
+		})
+	}
+}
+
+func TestKESAgentProfilesRefusesMalformedControlSPKI(t *testing.T) {
+	t.Parallel()
+	kc := controlConfig()
+	kc.ControlClientSPKISHA256 = []string{"abcd"}
+	_, err := kesAgentProfiles(kc)
+	if err == nil || !strings.Contains(err.Error(), "must be 64 hex characters") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestKESAgentProfilesRefusesTopLevelControlListWithProfiles(t *testing.T) {
+	t.Parallel()
+	kc := controlConfig()
+	kc.ColdVKeyHex, kc.SystemStart, kc.SlotsPerKESPeriod, kc.GuardFile = "", "", 0, ""
+	kc.Profiles = []config.KESAgentProfileConfig{{
+		Name:              "pool",
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-10-25T00:00:00Z",
+		SlotsPerKESPeriod: 129600,
+		GuardFile:         "/var/lib/bursa/guard.json",
+	}}
+	_, err := kesAgentProfiles(kc)
+	if err == nil || !strings.Contains(err.Error(), "control_client_spki_sha256; set them in each profile") {
+		t.Fatalf("err = %v", err)
+	}
+}

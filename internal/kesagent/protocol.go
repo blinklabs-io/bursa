@@ -115,6 +115,10 @@ const (
 const (
 	ModeServeKey = wire.ModeServeKey
 	ModeSign     = wire.ModeSign
+
+	// Roles an attestation request may declare.
+	RoleSign    = wire.RoleSign
+	RoleControl = wire.RoleControl
 )
 
 // Frame types, defined in kesagent/wire.
