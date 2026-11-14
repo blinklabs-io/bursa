@@ -359,6 +359,14 @@ func newProfile(
 	}
 	p.metrics.setGuardFresh(fresh)
 	p.metrics.initSlotGuardRefusals()
+	if sg, ok := guard.(*sharedGuard); ok {
+		sg.onWrite = func(d time.Duration, failed bool) {
+			p.metrics.observeGuardWrite(d)
+			if failed {
+				p.metrics.incGuardStoreError()
+			}
+		}
+	}
 	return p, nil
 }
 
@@ -585,6 +593,8 @@ func (p *profile) activateLocked(
 	p.guardedSet = true
 	p.metrics.setCurrentPeriod(p.active.absPeriod())
 	p.metrics.setExhausted(p.active.exhausted)
+	p.metrics.setLastPeriod(p.active.endPeriod())
+	p.metrics.setIssueNumber(p.active.issueNumber)
 	p.broadcastLocked()
 	p.logger.Info(msg,
 		"kes_vkey", hex.EncodeToString(ks.vkey),
@@ -726,6 +736,7 @@ func (p *profile) sign(period uint64, msg []byte, typed bool) ([]byte, error) {
 		return nil, fmt.Errorf("kesagent: sign: %w", err)
 	}
 	p.metrics.incSign("ok")
+	p.metrics.setLastSign(p.now())
 	p.metrics.setCurrentPeriod(p.active.absPeriod())
 	return sig, nil
 }
