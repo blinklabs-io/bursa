@@ -44,7 +44,7 @@ function status(d: DRepListItem): { label: string; title?: string } {
   if (PREDEFINED_DREP_IDS.has(d.drep_id)) {
     return {
       label: "Predefined",
-      title: "A predefined voting target — choose it directly in Staking.",
+      title: "A predefined voting target. Choose it directly in Staking.",
     };
   }
   if (d.retired) {
@@ -169,10 +169,10 @@ export function DRepDirectory({ network, canDelegate = true }: DRepDirectoryProp
 
   return (
     <div className="send-form">
-      <Card title="DRep Directory">
+      <Card title="DRep directory">
         <p className="helper-text">
           Browse and search the delegated representatives your embedded node has
-          indexed — read directly from the node, no external service is
+          indexed. Everything is read from the node, and no external service is
           contacted. To delegate your voting power, copy a DRep ID and paste it
           into <strong>Staking</strong>
           {canDelegate && (

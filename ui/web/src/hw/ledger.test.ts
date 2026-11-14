@@ -163,7 +163,7 @@ describe("connectLedger", () => {
   test("throws clear error when navigator.hid is undefined", async () => {
     setWebHID(false);
     await expect(connectLedger()).rejects.toThrow(
-      "WebHID not available — open this in a Chromium browser",
+      "WebHID not available. Open this in a Chromium browser.",
     );
   });
 

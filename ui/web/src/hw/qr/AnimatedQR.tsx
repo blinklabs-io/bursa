@@ -60,7 +60,7 @@ export function AnimatedQR({
       </div>
       {fragments.length > 1 && (
         <p className="helper-text" aria-live="off">
-          Frame {frame + 1} of {fragments.length} — hold the animation steady in front of the device.
+          Frame {frame + 1} of {fragments.length}. Hold the animation steady in front of the device.
         </p>
       )}
     </div>

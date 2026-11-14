@@ -17,8 +17,8 @@ import { Button } from "../components/Button";
 import { Input } from "../components/Input";
 import { Select } from "../components/Select";
 import {
-  useStatus,
   useHistoryExpiry,
+  useStatus,
   useTPMStatus,
   useNftMedia,
   useExternalHandleLookup,
@@ -43,7 +43,6 @@ import {
 import type {
   Account,
   AutoLockSetting,
-  NodeState,
   RemoteSubmissionStatus,
   TPMStatus,
   WalletType,
@@ -65,13 +64,6 @@ interface SettingsProps {
   // app.tsx) so a toggle here immediately drives App's activity poller — no
   // reload, no second independent hook instance.
   notifications: NotificationsState;
-}
-
-function syncTone(state: NodeState): "ok" | "warn" | "error" | "muted" {
-  if (state === "ready") return "ok";
-  if (state === "error") return "error";
-  if (state === "stopped") return "muted";
-  return "warn";
 }
 
 function walletTypeStatus(walletType: WalletType): string {
@@ -215,7 +207,7 @@ function LeanStorageCard() {
   const cardError = error ?? loadError;
 
   return (
-    <Card title="Lean Storage">
+    <Card title="Lean storage">
       <div className="setting-toggle-row">
         <label htmlFor="lean-storage" className="setting-toggle-label">
           Lean storage (history expiry)
@@ -241,10 +233,7 @@ function LeanStorageCard() {
       ) : unavailable ? (
         <p className="muted">Unavailable</p>
       ) : (
-        <p className="setting-state">
-          {checked ? "Enabled" : "Disabled"}
-          {saving && " · saving…"}
-        </p>
+        saving && <p className="setting-state">Saving…</p>
       )}
 
       {cardError && (
@@ -261,37 +250,13 @@ function LeanStorageCard() {
 
       <div className="setting-copy">
         <p>
-          Prune old blockchain history from local storage. Your node keeps the
-          current ledger state, your wallet&apos;s data, and recent blocks — and
-          drops older block history it no longer needs.
+          Drops old block history to save tens of GB. Balances, sending, staking
+          and governance keep working.
         </p>
-        <ul>
-          <li>
-            <strong>Saves significant disk space</strong> — typically tens of GB
-            down to a few GB.
-          </li>
-          <li>
-            <strong>The wallet stays fully functional</strong> — balances,
-            sending, staking, and governance all rely on current ledger state and
-            your own transaction history, not deep chain history.
-          </li>
-          <li>
-            <strong>Tradeoff:</strong> historical chain data beyond the recent
-            window is removed locally; recovering it requires a re-sync.
-          </li>
-          <li>
-            <strong>Your Mithril snapshot is kept</strong>, so re-syncing stays
-            fast — it won&apos;t re-download.
-          </li>
-          <li>
-            <strong>One-way until re-sync:</strong> turning this on starts
-            pruning; turning it back off stops further pruning but doesn&apos;t
-            restore already-pruned history without a re-sync.
-          </li>
-          <li>
-            <strong>Takes effect after a node restart.</strong>
-          </li>
-        </ul>
+        <p>
+          Pruned history comes back only with a re-sync. Takes effect after a
+          node restart.
+        </p>
       </div>
     </Card>
   );
@@ -364,7 +329,7 @@ function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
   const cardError = error ?? loadError;
 
   return (
-    <Card title="Auto-Lock">
+    <Card title="Auto-lock">
       <div className="setting-toggle-row">
         <label htmlFor="auto-lock" className="setting-toggle-label">
           Lock after inactivity
@@ -384,12 +349,7 @@ function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
       ) : unavailable ? (
         <p className="muted">Unavailable</p>
       ) : (
-        <p className="setting-state">
-          {minutes === 0
-            ? "Off — the vault will not auto-lock"
-            : `Locks after ${minutes} minute${minutes === 1 ? "" : "s"} of inactivity`}
-          {saving && " · saving…"}
-        </p>
+        saving && <p className="setting-state">Saving…</p>
       )}
 
       {cardError && (
@@ -400,9 +360,8 @@ function AutoLockCard({ setting }: { setting: AsyncState<AutoLockSetting> }) {
 
       <div className="setting-copy">
         <p>
-          Automatically re-locks the vault after a period with no pointer,
-          keyboard, or tab activity — so a wallet left open and unattended
-          doesn&apos;t stay unlocked indefinitely.
+          Locks the vault when there is no pointer, keyboard or tab activity,
+          so an unattended wallet does not stay open.
         </p>
       </div>
     </Card>
@@ -625,10 +584,7 @@ function NotificationsCard({ notifications }: { notifications: NotificationsStat
       {notifications.loading ? (
         <p className="muted">Loading…</p>
       ) : (
-        <p className="setting-state">
-          {checked ? "On" : "Off"}
-          {notifications.saving && " · saving…"}
-        </p>
+        notifications.saving && <p className="setting-state">Saving…</p>
       )}
 
       {notifications.error && (
@@ -645,7 +601,7 @@ function NotificationsCard({ notifications }: { notifications: NotificationsStat
 
       {permissionDenied && (
         <p role="status" className="setting-restart-note">
-          Notification permission is blocked in your browser — allow it to receive alerts.
+          Notification permission is blocked in your browser. Allow it to receive alerts.
         </p>
       )}
 
@@ -666,8 +622,8 @@ function NotificationsCard({ notifications }: { notifications: NotificationsStat
       <div className="setting-copy">
         <p>
           Get a desktop notification when your active wallet receives ADA or a
-          staking reward. Detection is entirely node-local — your wallet watches
-          its own node&apos;s data and nothing leaves this machine.
+          staking reward. Detection runs on your node, and nothing leaves this
+          machine.
         </p>
       </div>
     </Card>
@@ -819,36 +775,11 @@ function GeneralSettings({
         <p>{account.network}</p>
       </Card>
 
-      <Card title="Stake Address">
+      <Card title="Stake address">
         <div className="row-copy">
           <code className="mono">{account.stake_address}</code>
           <CopyButton value={account.stake_address} ariaLabel="Copy stake address" />
         </div>
-      </Card>
-
-      <Card title="Sync">
-        {status.data ? (
-          <dl className="stat-list">
-            <dt>State</dt>
-            <dd>
-              <StatusPill tone={syncTone(status.data.state)}>
-                {status.data.state}
-              </StatusPill>
-            </dd>
-            <dt>Tip</dt>
-            <dd>{status.data.tip}</dd>
-            {status.data.caughtUp && (
-              <>
-                <dt>Caught up</dt>
-                <dd>Yes</dd>
-              </>
-            )}
-          </dl>
-        ) : status.loading ? (
-          <p>Loading…</p>
-        ) : (
-          <p className="muted">Unavailable</p>
-        )}
       </Card>
 
       </div>
@@ -868,9 +799,6 @@ function GeneralSettings({
           The service is never contacted automatically: every Handle name requires a separate
           approval before it is disclosed.
         </p>
-        <StatusPill tone={externalHandles.enabled ? "ok" : "muted"}>
-          {externalHandles.enabled ? "On" : "Off"}
-        </StatusPill>
         {externalHandles.error && (
           <p role="alert" className="error-text">{externalHandles.error.message}</p>
         )}
@@ -890,15 +818,12 @@ function GeneralSettings({
         </div>
       </Card>
 
-      <Card title="NFT Media">
+      <Card title="NFT media">
         {nftMedia.available === false && <p className="helper-text">This build does not include NFT images. Install a Bursa build with NFT media support to enable them.</p>}
         <p className="helper-text">
           Runs an embedded IPFS client to fetch NFT images without a third-party gateway.
           It is off by default and only starts after you enable it.
         </p>
-        <StatusPill tone={nftMedia.enabled ? "ok" : "muted"}>
-          {nftMedia.enabled ? "On" : "Off"}
-        </StatusPill>
         {nftMedia.error && <p role="alert" className="error-text">{nftMedia.error.message}</p>}
         <div className="preview-actions">
           <Button
@@ -912,15 +837,12 @@ function GeneralSettings({
         </div>
       </Card>
 
-      <Card title="Stake Pool Operations">
+      <Card title="Stake pool operations">
         <p className="helper-text">
-          Shows the pool operator toolkit — cold, VRF and KES credentials,
-          operational certificates, registration and retirement — in the
-          navigation. Off by default, because most people do not run a pool.
+          Adds the pool operator toolkit to the navigation: cold, VRF and KES
+          credentials, operational certificates, registration and retirement.
+          Off by default, because most people do not run a pool.
         </p>
-        <StatusPill tone={operatorMode ? "ok" : "muted"}>
-          {operatorMode ? "Shown" : "Hidden"}
-        </StatusPill>
         <div className="preview-actions">
           <Button
             variant={operatorMode ? "ghost" : "primary"}
@@ -1015,7 +937,7 @@ function GeneralSettings({
       )}
 
       {!connectorMissing && (
-        <Card title="dApp Connector">
+        <Card title="dApp connector">
           {connectorState.loading && !connectorState.data ? (
             <p>Loading…</p>
           ) : connectorState.data ? (

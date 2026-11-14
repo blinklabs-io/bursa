@@ -95,7 +95,7 @@ test("constructs a Notification when permission is granted", async () => {
   installMockNotification("granted");
   await notifyPending(makeReq("n1"));
   expect(MockNotification.instances).toHaveLength(1);
-  expect(MockNotification.instances[0].title).toBe("Bursa — dApp request");
+  expect(MockNotification.instances[0].title).toBe("Bursa: dApp request");
   expect(MockNotification.instances[0].options?.body).toMatch(/app\.minswap\.org/);
 });
 

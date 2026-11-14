@@ -52,7 +52,7 @@ export function CliButton({ onOpen, className, inactive }: CliButtonProps) {
       onClick={onOpen}
       aria-haspopup="dialog"
       aria-label="Open the command line"
-      title="Command line — search and run anything"
+      title="Command line: search and run anything"
       aria-hidden={inactive}
       tabIndex={inactive ? -1 : undefined}
     >

@@ -141,7 +141,7 @@ export function SignMessage({ account, isHardware = false, walletId }: SignMessa
   }
 
   return (
-    <Card title="Sign Message">
+    <Card title="Sign message">
       <div className="sign-form">
         <p className="helper-text">
           Prove you control an address by signing a message with its key. The

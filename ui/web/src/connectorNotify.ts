@@ -51,7 +51,7 @@ export async function notifyPending(req: ConnectorRequest): Promise<void> {
     if (typeof Notification === "undefined") return;
     if (Notification.permission !== "granted") return;
 
-    const title = "Bursa — dApp request";
+    const title = "Bursa: dApp request";
     const body = `${req.origin} is requesting: ${req.method}`;
     // eslint-disable-next-line no-new
     new Notification(title, {

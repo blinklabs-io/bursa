@@ -69,7 +69,7 @@ function Bar({
       aria-valuemin={0}
       aria-valuemax={100}
     >
-      <div className="sync-bar-fill" style={{ width: `${p}%` }} />
+      <div className="sync-bar-fill" style={{ transform: `scaleX(${p / 100})` }} />
     </div>
   );
 }
@@ -263,7 +263,7 @@ export function Syncing({ status, onLoadAnyway }: SyncingProps) {
           {status.error || "The node reported an error."}
         </p>
         <p className="helper-text">
-          Restarting the wallet will try again from where it left off — a
+          Restarting the wallet will try again from where it left off. A
           bootstrap already downloaded is not thrown away. If it keeps failing,
           the node&rsquo;s own log is the next place to look; your keys are in
           the vault either way and are not affected by this.
