@@ -134,6 +134,26 @@ type CounterWatermark interface {
 	) error
 }
 
+// FloorCommitWatermark is implemented by stores that can raise a counter
+// floor and record a payload in one atomic operation, which for a database
+// store is one round trip instead of two.
+type FloorCommitWatermark interface {
+	// CheckAndRaiseFloorAndCommit applies CheckAndRaiseFloor to (key,
+	// floorScope) with floor and, only when that succeeds, CheckAndCommit to
+	// (key, scope) with payload. A refused floor returns
+	// ErrCounterRegression and writes nothing. A payload that differs from
+	// the one recorded for scope returns ErrConflict and leaves the floor
+	// raised, as the two calls made one after the other would.
+	CheckAndRaiseFloorAndCommit(
+		ctx context.Context,
+		key backend.KeyHash,
+		floorScope string,
+		floor uint64,
+		scope string,
+		payload []byte,
+	) error
+}
+
 // CounterOpKind selects the check a CounterOp applies to its scope.
 type CounterOpKind int
 
@@ -428,5 +448,32 @@ func (m *MemWatermark) CheckAndRaiseFloor(
 		return ErrCounterRegression
 	}
 	m.counters[k] = value
+	return nil
+}
+
+func (m *MemWatermark) CheckAndRaiseFloorAndCommit(
+	_ context.Context,
+	key backend.KeyHash,
+	floorScope string,
+	floor uint64,
+	scope string,
+	payload []byte,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fk := recordKey(key, floorScope)
+	if prev, ok := m.counters[fk]; ok && floor < prev {
+		return ErrCounterRegression
+	}
+	m.counters[fk] = floor
+	k := recordKey(key, scope)
+	d := digest(payload)
+	if prev, ok := m.records[k]; ok {
+		if prev != d {
+			return ErrConflict
+		}
+		return nil
+	}
+	m.commitRecord(k, d)
 	return nil
 }
