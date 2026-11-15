@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -694,6 +695,9 @@ func kesAgentStoreDSN(sc config.KESAgentStoreConfig) (string, error) {
 func kesAgentProfiles(
 	kc config.KESAgentConfig,
 ) ([]kesagent.ProfileConfig, error) {
+	if err := validateControlTransport(kc); err != nil {
+		return nil, err
+	}
 	if len(kc.Profiles) == 0 {
 		p, err := kesAgentProfile(config.KESAgentProfileConfig{
 			Name:              kesagent.DefaultProfileName,
@@ -707,6 +711,8 @@ func kesAgentProfiles(
 			MaxKESEvolutions:  kc.MaxKESEvolutions,
 			MaxClockSkew:      kc.MaxClockSkew,
 			GuardFile:         kc.GuardFile,
+
+			ControlClientSPKISHA256: kc.ControlClientSPKISHA256,
 		}, "kes_agent")
 		if err != nil {
 			return nil, err
@@ -716,9 +722,10 @@ func kesAgentProfiles(
 	if kc.ColdVKeyFile != "" || kc.ColdVKeyHex != "" ||
 		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
 		kc.GuardFile != "" || kc.ShelleyStartTime != "" ||
-		kc.ShelleyStartSlot != 0 || kc.MaxClockSkew != "" {
+		kc.ShelleyStartSlot != 0 || kc.MaxClockSkew != "" ||
+		len(kc.ControlClientSPKISHA256) > 0 {
 		return nil, errors.New(
-			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew and guard_file; set them in each profile",
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew, guard_file and control_client_spki_sha256; set them in each profile",
 		)
 	}
 	// slot_length and max_kes_evolutions carry config defaults, so only a
@@ -805,8 +812,16 @@ func kesAgentProfile(
 			err,
 		)
 	}
+	control, err := parseSPKIList(
+		field+".control_client_spki_sha256",
+		pc.ControlClientSPKISHA256,
+	)
+	if err != nil {
+		return kesagent.ProfileConfig{}, err
+	}
 	return kesagent.ProfileConfig{
 		Name:              pc.Name,
+		ControlClientSPKI: control,
 		SystemStart:       systemStart,
 		ShelleyStartSlot:  pc.ShelleyStartSlot,
 		ShelleyStartTime:  shelleyStart,
@@ -934,4 +949,51 @@ func validateControlSocketMode(mode os.FileMode) error {
 		)
 	}
 	return nil
+}
+
+// validateControlTransport refuses a control client list unless the attested
+// listener is TLS with client certificate verification, the only transport on
+// which a client can be pinned.
+func validateControlTransport(kc config.KESAgentConfig) error {
+	field := ""
+	switch {
+	case len(kc.ControlClientSPKISHA256) > 0:
+		field = "kes_agent.control_client_spki_sha256"
+	default:
+		for i, pc := range kc.Profiles {
+			if len(pc.ControlClientSPKISHA256) > 0 {
+				field = fmt.Sprintf(
+					"kes_agent.profiles[%d].control_client_spki_sha256", i,
+				)
+				break
+			}
+		}
+	}
+	if field == "" {
+		return nil
+	}
+	if kc.AttestedListenAddress == "" || kc.AttestedPlaintext ||
+		kc.AttestedClientCAFile == "" {
+		return fmt.Errorf(
+			"%s requires attested_listen_address with attested_client_ca_file and cannot be combined with attested_plaintext",
+			field,
+		)
+	}
+	return nil
+}
+
+// parseSPKIList decodes SHA-256 SubjectPublicKeyInfo digests, each exactly 32
+// bytes as hex. Case is ignored; field names errors with the config path.
+func parseSPKIList(field string, entries []string) ([][sha256.Size]byte, error) {
+	out := make([][sha256.Size]byte, 0, len(entries))
+	for i, entry := range entries {
+		raw, err := hex.DecodeString(strings.TrimSpace(entry))
+		if err != nil || len(raw) != sha256.Size {
+			return nil, fmt.Errorf(
+				"%s[%d] must be 64 hex characters (32 bytes)", field, i,
+			)
+		}
+		out = append(out, [sha256.Size]byte(raw))
+	}
+	return out, nil
 }

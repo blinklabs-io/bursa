@@ -96,8 +96,10 @@ default `0600` regardless of how `service_socket_mode` is configured.
 
 Sign mode can additionally listen on `attested_listen_address` for a remote
 Dingo producer. This listener speaks `bursa-attested-kes/1`. It never
-offers serve-key mode or control commands. The local control socket remains the
-only route for staging, installing, or dropping keys.
+offers serve-key mode. By default it serves sign sessions only; a client whose
+certificate is pinned in a profile's `control_client_spki_sha256` can also open
+a control session (see [Remote control role](#remote-control-role)). Dropping
+keys stays on the local control socket.
 
 Before accepting a header request, Dingo sends a fresh 32-byte challenge. With
 the `nitro` or `confidential-space` provider, the agent asks its workload-local
@@ -151,6 +153,59 @@ serves TLS (message "attested KES server certificate public key"). `nitro` and
 `confidential-space` are unchanged and still require `attester_address`. With
 `attested_listen_address` set and no provider configured, the agent refuses to
 start; without the attested listener no provider is needed.
+
+## Remote control role
+
+A rotation controller outside the agent's pod can stage a key and install an
+operational certificate over the attested listener. List the controller's
+client certificate in `control_client_spki_sha256` (SHA-256 of the DER
+SubjectPublicKeyInfo, 64 hex characters each) in each profile it may control:
+
+```yaml
+kes_agent:
+  attested_listen_address: "0.0.0.0:3001"
+  attested_tls_cert_file: /etc/bursa/server.pem
+  attested_tls_key_file: /etc/bursa/server.key
+  attested_client_ca_file: /etc/bursa/client-ca.pem
+  profiles:
+    - name: pool-a
+      # ...
+      control_client_spki_sha256:
+        - "<hex sha256 of the controller certificate SPKI>"
+```
+
+With a single pool, set `control_client_spki_sha256` (or
+`KESAGENT_CONTROL_CLIENT_SPKI_SHA256`, comma-separated) at the `kes_agent`
+level.
+
+The control role requires the TLS listener with client certificate
+verification. A control list is refused at startup when
+`attested_listen_address` or `attested_client_ca_file` is unset or
+`attested_plaintext` is set, and malformed entries are refused too. A client
+is admitted to the control role only when its verified client certificate is
+pinned in the list of the profile it is attested for; there is no setting that
+admits a control client without a pinned certificate.
+
+The client chooses the session with the `role` field of its attestation
+request: `"control"` opens a control session, and `"sign"` or no role opens a
+sign session as before. The role is checked before any key state or evidence
+is produced, so a client that is not listed receives an error and no evidence,
+and the connection closes. The attestation response carries `role` with the
+admitted role. The server hello is sent before the request and always names
+mode `sign`. The control session answers the same attestation exchange as a
+sign session, for the profile chosen by the request's `profile` and
+`kes_vkey`, which must be one the client is listed for. The profile needs an
+installed key to be attested, so a first key is installed on the local control
+socket.
+
+The session serves `gen-staged-key`, `install-key` and `info`, each on a
+profile the client is listed for. Each command names its `profile` when the
+agent has several; `info` without a profile is refused on a multi-profile agent
+rather than listing every profile. A command naming an unknown profile or a
+profile the client is not listed for is refused. `drop-key` is not served and
+is refused on a remote control session; it stays on the local control socket.
+Sign frames on a control session and control frames on a sign session are
+refused. The local control socket is unchanged.
 
 ## Key lifecycle (control socket)
 

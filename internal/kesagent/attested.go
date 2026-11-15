@@ -31,6 +31,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -52,6 +53,16 @@ var (
 	// ErrAttestation is returned when workload evidence cannot be produced or
 	// verified. The connection is closed without admitting sign requests.
 	ErrAttestation = errors.New("kesagent: attestation failed")
+	// ErrRoleNotPermitted is returned when a client asks for a session role
+	// it may not open.
+	ErrRoleNotPermitted = errors.New(
+		"kesagent: client is not permitted the requested role",
+	)
+	// ErrControlNeedsClientCert is returned when a profile lists control
+	// clients but the listener does not verify client certificates.
+	ErrControlNeedsClientCert = errors.New(
+		"kesagent: control clients require verified client certificates",
+	)
 	// ErrUnauthenticatedPeer is returned when the remote service connection is
 	// not protected by mutually authenticated TLS.
 	ErrUnauthenticatedPeer = errors.New(
@@ -123,6 +134,51 @@ func (a *Agent) attestedKeyState(
 			"%w: no active key matches",
 			ErrUnknownProfile,
 		)
+	}
+	return p, st, nil
+}
+
+// controlKeyState resolves a control session's profile among the profiles the
+// client may control, and only those. A name or key that resolves anywhere
+// else, or nowhere, is ErrRoleNotPermitted, so a refused request tells the
+// client nothing about profiles outside its list.
+func controlKeyState(
+	permitted []*profile,
+	name string,
+	kesVKey []byte,
+) (*profile, attestedKeyState, error) {
+	var p *profile
+	switch {
+	case len(kesVKey) != 0:
+		for _, c := range permitted {
+			if c.hasActiveVKey(kesVKey) {
+				p = c
+				break
+			}
+		}
+	case name != "":
+		for _, c := range permitted {
+			if c.cfg.Name == name {
+				p = c
+				break
+			}
+		}
+	case len(permitted) == 1:
+		p = permitted[0]
+	default:
+		return nil, attestedKeyState{}, ErrAmbiguousProfile
+	}
+	if p == nil || (name != "" && name != p.cfg.Name) {
+		return nil, attestedKeyState{}, ErrRoleNotPermitted
+	}
+	st, err := p.attestedKeyState()
+	if err != nil {
+		return nil, attestedKeyState{}, err
+	}
+	// As in attestedKeyState: a rotation between the routing read and the
+	// locked read must not attest another key.
+	if len(kesVKey) != 0 && !bytes.Equal(st.kesVKey, kesVKey) {
+		return nil, attestedKeyState{}, ErrRoleNotPermitted
 	}
 	return p, st, nil
 }
@@ -231,7 +287,8 @@ func NewAttestationRequest() (AttestationRequest, error) {
 	return req, nil
 }
 
-// ServeAttestedService serves sign mode. The listener may be TCP or another
+// ServeAttestedService serves sign sessions, and control sessions to clients
+// pinned in a profile's control list. The listener may be TCP or another
 // stream transport. By default every accepted connection must be a TLS
 // connection with a verified client certificate; cfg.ClientCertOptional
 // relaxes the certificate requirement and cfg.Plaintext serves plain
@@ -257,6 +314,9 @@ func (a *Agent) ServeAttestedService(
 	// authentication can never hold a slot a block producer needs.
 	pending := newHandshakeSet()
 	conns := newConnSet()
+	if (cfg.Plaintext || cfg.ClientCertOptional) && a.hasControlClients() {
+		return ErrControlNeedsClientCert
+	}
 	srvCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -507,11 +567,54 @@ func (a *Agent) serveAttestedConn(
 		_ = writeFrame(conn, resp)
 		return
 	}
-	bound, state, err := a.attestedKeyState(req.Profile, req.KESVKey)
+	// The role is settled before any key state or evidence is produced, so
+	// a refused client learns nothing about the agent.
+	role := req.Role
+	if role == "" {
+		role = RoleSign
+	}
+	var permitted []*profile
+	switch role {
+	case RoleSign:
+	case RoleControl:
+		permitted = a.controlProfilesFor(peerSPKIFingerprint(conn))
+		if len(permitted) == 0 {
+			resp.Error = ErrRoleNotPermitted.Error()
+			_ = writeFrame(conn, resp)
+			return
+		}
+	default:
+		resp.Error = ErrRoleNotPermitted.Error()
+		_ = writeFrame(conn, resp)
+		return
+	}
+	var (
+		bound *profile
+		state attestedKeyState
+		err   error
+	)
+	if role == RoleControl {
+		bound, state, err = controlKeyState(permitted, req.Profile, req.KESVKey)
+	} else {
+		bound, state, err = a.attestedKeyState(req.Profile, req.KESVKey)
+	}
 	if err != nil {
 		resp.Error = err.Error()
 		_ = writeFrame(conn, resp)
 		return
+	}
+	if role == RoleControl && !slices.Contains(permitted, bound) {
+		resp.Error = ErrRoleNotPermitted.Error()
+		_ = writeFrame(conn, resp)
+		return
+	}
+	resp.Role = role
+	serve := func() {
+		if role == RoleControl {
+			a.handleRemoteControl(ctx, conn, permitted)
+			return
+		}
+		a.handleSign(ctx, conn, bound)
 	}
 	resp.KESVKey, resp.OpCert, resp.Period = state.kesVKey, state.opcert, state.period
 	binding := AttestationBinding(
@@ -525,7 +628,7 @@ func (a *Agent) serveAttestedConn(
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
-		a.handleSign(ctx, conn, bound)
+		serve()
 		return
 	}
 	resp.Attestation, err = cfg.Attester.Evidence(ctx, binding)
@@ -538,7 +641,7 @@ func (a *Agent) serveAttestedConn(
 	if err := writeFrame(conn, resp); err != nil {
 		return
 	}
-	a.handleSign(ctx, conn, bound)
+	serve()
 }
 
 // HTTPAttester calls a workload-local provider adapter. The adapter receives

@@ -32,6 +32,15 @@ const (
 	ModeSign     = "sign"
 )
 
+// Roles an attestation request may declare on the attested listener.
+const (
+	// RoleSign serves sign requests.
+	RoleSign = "sign"
+	// RoleControl serves gen-staged-key, install-key and info to a client
+	// whose certificate is pinned in a profile's control list.
+	RoleControl = "control"
+)
+
 // Control-socket command names.
 const (
 	CmdGenStagedKey = "gen-staged-key"
@@ -134,15 +143,20 @@ type AttestationRequest struct {
 	Nonce    []byte `json:"nonce"`
 	KESVKey  []byte `json:"kes_vkey,omitempty"`
 	Profile  string `json:"profile,omitempty"`
+	// Role is the session the client asks for: RoleSign or RoleControl.
+	// Absent means RoleSign.
+	Role string `json:"role,omitempty"`
 }
 
 // AttestationResponse binds the active KES state to measured-workload
 // evidence. The KES signing key is deliberately absent.
 type AttestationResponse struct {
-	Type        string `json:"type"`
-	Protocol    string `json:"protocol"`
-	Nonce       []byte `json:"nonce"`
-	Provider    string `json:"provider"`
+	Type     string `json:"type"`
+	Protocol string `json:"protocol"`
+	Nonce    []byte `json:"nonce"`
+	Provider string `json:"provider"`
+	// Role is the session the agent admitted the client for.
+	Role        string `json:"role,omitempty"`
 	KESVKey     []byte `json:"kes_vkey,omitempty"`
 	OpCert      []byte `json:"opcert,omitempty"`
 	Period      uint64 `json:"period,omitempty"`
