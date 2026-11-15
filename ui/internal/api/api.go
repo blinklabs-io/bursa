@@ -3881,7 +3881,8 @@ func serveSurvey[T any](w http.ResponseWriter, v T, err error) {
 		writeJSON(w, http.StatusBadRequest, errBody(err))
 	case errors.Is(err, survey.ErrConsentRequired):
 		writeJSON(w, http.StatusForbidden, errBody(err))
-	case errors.Is(err, survey.ErrIndexing):
+	case errors.Is(err, survey.ErrIndexing),
+		errors.Is(err, survey.ErrHistoryTooLarge):
 		writeJSON(w, http.StatusServiceUnavailable, errBody(err))
 	default:
 		serve(w, v, err)

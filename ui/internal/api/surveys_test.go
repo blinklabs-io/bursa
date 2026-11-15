@@ -218,6 +218,20 @@ func TestSurveyListWhileStillIndexing(t *testing.T) {
 	}
 }
 
+// Label 17 is public, so its history can outgrow what the service keeps. The
+// list says so with a 503 and the reason rather than an opaque server error.
+func TestSurveyListWhenHistoryIsTooLarge(t *testing.T) {
+	t.Parallel()
+	h := surveyHandler(readyStatuser(), &fakeSurveys{
+		err: fmt.Errorf("%w: more than 20000 transactions", survey.ErrHistoryTooLarge),
+	})
+	rec := serveSurveyReq(h, http.MethodGet, "/wallet/surveys", "")
+	if rec.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(rec.Body.String(), "larger than this wallet reads") {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSurveyGet(t *testing.T) {
 	t.Parallel()
 	fs := &fakeSurveys{
