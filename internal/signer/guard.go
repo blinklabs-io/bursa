@@ -24,21 +24,22 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 )
 
-// LoopbackBindAddress joins host and port into a listen address that binds
-// only the loopback interface. host must be a bare host name or IP literal,
-// optionally bracketed. A host that already carries a port is rejected rather
-// than combined with port into an address that cannot bind.
-func LoopbackBindAddress(host string, port uint) (string, error) {
+// DefaultMetricsListenAddress is the metrics bind host when none is set.
+const DefaultMetricsListenAddress = "127.0.0.1"
+
+// MetricsBindAddress joins host and port into the metrics listen address.
+// An empty host binds DefaultMetricsListenAddress, so a missing setting never
+// exposes every interface; any explicit host, including a wildcard, is the
+// operator's choice. host must be a bare host name or IP literal, optionally
+// bracketed: a host that already carries a port is rejected.
+func MetricsBindAddress(host string, port uint) (string, error) {
 	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		trimmed = DefaultMetricsListenAddress
+	}
 	if _, _, err := net.SplitHostPort(trimmed); err == nil {
 		return "", fmt.Errorf(
 			"listen address %q must be a host without a port; set the port separately",
-			host,
-		)
-	}
-	if !IsLoopbackListenAddress(trimmed) {
-		return "", fmt.Errorf(
-			"refusing listener on non-loopback address %q",
 			host,
 		)
 	}
@@ -46,6 +47,28 @@ func LoopbackBindAddress(host string, port uint) (string, error) {
 		trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
 	}
 	return net.JoinHostPort(trimmed, strconv.FormatUint(uint64(port), 10)), nil
+}
+
+// MetricsLocalAddress returns the address a client on the same host or pod
+// uses to reach the metrics listener that MetricsBindAddress(host, port)
+// binds: loopback for a wildcard bind, the bound host otherwise.
+func MetricsLocalAddress(host string, port uint) (string, error) {
+	addr, err := MetricsBindAddress(host, port)
+	if err != nil {
+		return "", err
+	}
+	bound, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+	if ip, err := netip.ParseAddr(bound); err == nil && ip.IsUnspecified() {
+		if ip.Is4() {
+			bound = "127.0.0.1"
+		} else {
+			bound = "::1"
+		}
+	}
+	return net.JoinHostPort(bound, p), nil
 }
 
 // IsLoopbackListenAddress reports whether addr binds only the loopback

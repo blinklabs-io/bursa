@@ -22,19 +22,23 @@ import (
 	"github.com/blinklabs-io/bursa/internal/config"
 )
 
-func TestNewMetricsHTTPServerRequiresLoopback(t *testing.T) {
-	for _, address := range []string{"", "0.0.0.0", "::", "192.0.2.1"} {
+func TestNewMetricsHTTPServerAcceptsExplicitAddress(t *testing.T) {
+	for address, want := range map[string]string{
+		"":          "127.0.0.1:8081",
+		"0.0.0.0":   "0.0.0.0:8081",
+		"::":        "[::]:8081",
+		"192.0.2.1": "192.0.2.1:8081",
+	} {
 		t.Run(address, func(t *testing.T) {
 			server, err := newMetricsHTTPServer(config.MetricsConfig{
 				ListenAddress: address,
 				ListenPort:    8081,
 			})
-			if err == nil {
-				t.Fatalf(
-					"newMetricsHTTPServer(%q) returned server %v without an error",
-					address,
-					server,
-				)
+			if err != nil {
+				t.Fatalf("newMetricsHTTPServer(%q): %v", address, err)
+			}
+			if server == nil || server.Addr != want {
+				t.Fatalf("newMetricsHTTPServer(%q) = %v, want Addr %q", address, server, want)
 			}
 		})
 	}

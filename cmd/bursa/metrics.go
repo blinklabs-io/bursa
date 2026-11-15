@@ -28,7 +28,7 @@ func newMetricsHTTPServer(cfg config.MetricsConfig) (*http.Server, error) {
 	if cfg.ListenPort == 0 {
 		return nil, nil
 	}
-	addr, err := signer.LoopbackBindAddress(cfg.ListenAddress, cfg.ListenPort)
+	addr, err := signer.MetricsBindAddress(cfg.ListenAddress, cfg.ListenPort)
 	if err != nil {
 		return nil, fmt.Errorf("metrics listener: %w", err)
 	}

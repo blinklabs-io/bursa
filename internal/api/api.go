@@ -996,23 +996,18 @@ func validateAPIExposure(cfg *config.Config, auth signerapi.Validator) error {
 	return nil
 }
 
+// validateMetricsExposure checks the configured metrics address. A supplied
+// listener is already bound where its caller chose, so it is accepted as is.
 func validateMetricsExposure(cfg *config.Config, listener net.Listener) error {
-	if listener == nil {
-		_, err := metricsBindAddress(cfg)
-		return err
+	if listener != nil {
+		return nil
 	}
-	address := listener.Addr().String()
-	if !signer.IsLoopbackListenAddress(address) {
-		return fmt.Errorf(
-			"refusing metrics listener on non-loopback address %q",
-			address,
-		)
-	}
-	return nil
+	_, err := metricsBindAddress(cfg)
+	return err
 }
 
 func metricsBindAddress(cfg *config.Config) (string, error) {
-	addr, err := signer.LoopbackBindAddress(
+	addr, err := signer.MetricsBindAddress(
 		cfg.Metrics.ListenAddress,
 		cfg.Metrics.ListenPort,
 	)

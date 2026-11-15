@@ -133,10 +133,11 @@ kes_agent:
   # attester_address). A client may pin the server certificate public key; the
   # agent logs its SHA-256 SPKI fingerprint at startup as server_spki_sha256.
 
-# Optional Prometheus metrics endpoint on a dedicated loopback listener, which
-# also serves /healthz and /readyz (`bursa kes-agent ready` queries /readyz for
-# an exec probe). Set port to 0 to disable all of them. Non-loopback addresses
-# and addresses that carry a port are rejected.
+# Optional Prometheus metrics endpoint on a dedicated listener, which also
+# serves /healthz and /readyz (`bursa kes-agent ready` queries /readyz for an
+# exec probe). It binds loopback by default; set address to 0.0.0.0 or a pod IP
+# to let Prometheus scrape it. An empty address means 127.0.0.1. Set port to 0
+# to disable all of them. Addresses that carry a port are rejected.
 metrics:
   address: "127.0.0.1"             # env: METRICS_LISTEN_ADDRESS
   port: 8082                       # env: METRICS_LISTEN_PORT
