@@ -14,7 +14,11 @@
 
 package kesagent
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Metrics holds Prometheus collectors for the KES agent. Construct one per
 // process and call Register to publish it. Every series about a key carries a
@@ -22,6 +26,7 @@ import "github.com/prometheus/client_golang/prometheus"
 type Metrics struct {
 	servedKeys  *prometheus.CounterVec
 	signs       *prometheus.CounterVec
+	signDur     *prometheus.HistogramVec
 	evolutions  *prometheus.CounterVec
 	currentPer  *prometheus.GaugeVec
 	exhausted   *prometheus.GaugeVec
@@ -43,6 +48,14 @@ func NewMetrics() *Metrics {
 		signs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bursa_kesagent_sign_total",
 			Help: "KES signing operations by result (ok|error).",
+		}, []string{"profile", "result"}),
+		signDur: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "bursa_kesagent_sign_duration_seconds",
+			Help: "Time from a sign request reaching its profile to the " +
+				"result, including the slot guard write, by result (ok|error).",
+			// 1 ms to about 2 s: a local guard, a remote database round
+			// trip, and a producer's sign timeout all fall inside.
+			Buckets: prometheus.ExponentialBuckets(0.001, 2, 12),
 		}, []string{"profile", "result"}),
 		evolutions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bursa_kesagent_evolutions_total",
@@ -78,6 +91,7 @@ func (m *Metrics) Register(r prometheus.Registerer) {
 	r.MustRegister(
 		m.servedKeys,
 		m.signs,
+		m.signDur,
 		m.evolutions,
 		m.currentPer,
 		m.exhausted,
@@ -100,6 +114,8 @@ func (m *Metrics) forProfile(name string) *Metrics {
 	m.servedKeys.WithLabelValues(name)
 	m.signs.WithLabelValues(name, "ok")
 	m.signs.WithLabelValues(name, "error")
+	m.signDur.WithLabelValues(name, "ok")
+	m.signDur.WithLabelValues(name, "error")
 	m.evolutions.WithLabelValues(name)
 	m.currentPer.WithLabelValues(name)
 	m.exhausted.WithLabelValues(name)
@@ -115,6 +131,13 @@ func (m *Metrics) incServedKeys() {
 func (m *Metrics) incSign(result string) {
 	if m != nil {
 		m.signs.WithLabelValues(m.profile, result).Inc()
+	}
+}
+
+// observeSign records how long a sign took; result is "ok" or "error".
+func (m *Metrics) observeSign(result string, d time.Duration) {
+	if m != nil {
+		m.signDur.WithLabelValues(m.profile, result).Observe(d.Seconds())
 	}
 }
 
