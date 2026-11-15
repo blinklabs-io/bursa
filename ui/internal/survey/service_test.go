@@ -1220,3 +1220,25 @@ func TestSnapshotRoleClaimRejectsRolesOutsideTheSnapshotRange(t *testing.T) {
 		t.Fatalf("role 256 mapped to snapshot role %d", claim.Role)
 	}
 }
+
+func TestLabelHistoryReusesDecodedFinalPage(t *testing.T) {
+	t.Parallel()
+	f := newFakeChain()
+	f.add(t, 0xa1, 100, 0, 40, defPayload(simple(1, 60)), credHex(1))
+	s := NewService(f, "preview")
+	titles(t, s)
+	if len(s.labelTail) != 1 || s.labelTail[0].entry == nil {
+		t.Fatalf("final page not retained: %+v", s.labelTail)
+	}
+	first := s.labelTail[0].entry
+
+	titles(t, s)
+	if s.labelTail[0].entry != first {
+		t.Fatal("unchanged final page was decoded again")
+	}
+
+	// A rollback of the final page is still detected.
+	f.labels = nil
+	equal(t, 0, len(titles(t, s)))
+	equal(t, 0, len(s.labelTail))
+}

@@ -109,6 +109,10 @@ type Service struct {
 	labelMu    sync.Mutex
 	labelRows  []labelRow
 	labelBytes int
+	// labelTail holds the decoded rows of the short final page that follows
+	// labelRows. It is re-read every call to catch a rollback, but its decoded
+	// payloads are reused while the page is unchanged.
+	labelTail []labelRow
 }
 
 // NewService builds a service over the node for the named Cardano network.
@@ -345,6 +349,7 @@ func (s *Service) labelHistory(ctx context.Context) ([]entry, error) {
 				continue
 			}
 			s.labelRows = s.labelRows[:start]
+			s.labelTail = nil
 			s.labelBytes = 0
 			for _, r := range s.labelRows {
 				s.labelBytes += r.size
@@ -354,11 +359,16 @@ func (s *Service) labelHistory(ctx context.Context) ([]entry, error) {
 				continue
 			}
 		}
-		decoded := make([]labelRow, len(rows))
+		decoded := s.labelTail
+		if !samePage(decoded, rows) {
+			decoded = make([]labelRow, len(rows))
+			for i, r := range rows {
+				decoded[i] = newLabelRow(r)
+			}
+		}
 		payloadBytes := 0
-		for i, r := range rows {
-			decoded[i] = newLabelRow(r)
-			payloadBytes += decoded[i].size
+		for _, r := range decoded {
+			payloadBytes += r.size
 		}
 		if len(s.labelRows)+len(decoded) > maxLabelRows ||
 			s.labelBytes+payloadBytes > maxLabelPayloadBytes {
@@ -370,8 +380,10 @@ func (s *Service) labelHistory(ctx context.Context) ([]entry, error) {
 			)
 		}
 		if len(rows) < size {
+			s.labelTail = decoded
 			return labelEntries(s.labelRows, decoded), nil
 		}
+		s.labelTail = nil
 		s.labelRows = append(s.labelRows, decoded...)
 		s.labelBytes += payloadBytes
 		page++
