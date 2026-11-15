@@ -138,6 +138,51 @@ func (a *Agent) attestedKeyState(
 	return p, st, nil
 }
 
+// controlKeyState resolves a control session's profile among the profiles the
+// client may control, and only those. A name or key that resolves anywhere
+// else, or nowhere, is ErrRoleNotPermitted, so a refused request tells the
+// client nothing about profiles outside its list.
+func controlKeyState(
+	permitted []*profile,
+	name string,
+	kesVKey []byte,
+) (*profile, attestedKeyState, error) {
+	var p *profile
+	switch {
+	case len(kesVKey) != 0:
+		for _, c := range permitted {
+			if c.hasActiveVKey(kesVKey) {
+				p = c
+				break
+			}
+		}
+	case name != "":
+		for _, c := range permitted {
+			if c.cfg.Name == name {
+				p = c
+				break
+			}
+		}
+	case len(permitted) == 1:
+		p = permitted[0]
+	default:
+		return nil, attestedKeyState{}, ErrAmbiguousProfile
+	}
+	if p == nil || (name != "" && name != p.cfg.Name) {
+		return nil, attestedKeyState{}, ErrRoleNotPermitted
+	}
+	st, err := p.attestedKeyState()
+	if err != nil {
+		return nil, attestedKeyState{}, err
+	}
+	// As in attestedKeyState: a rotation between the routing read and the
+	// locked read must not attest another key.
+	if len(kesVKey) != 0 && !bytes.Equal(st.kesVKey, kesVKey) {
+		return nil, attestedKeyState{}, ErrRoleNotPermitted
+	}
+	return p, st, nil
+}
+
 // AttestationBinding is the digest provider evidence must commit to. It binds
 // a caller nonce to the active public KES state and the pool identity.
 func AttestationBinding(
@@ -543,7 +588,16 @@ func (a *Agent) serveAttestedConn(
 		_ = writeFrame(conn, resp)
 		return
 	}
-	bound, state, err := a.attestedKeyState(req.Profile, req.KESVKey)
+	var (
+		bound *profile
+		state attestedKeyState
+		err   error
+	)
+	if role == RoleControl {
+		bound, state, err = controlKeyState(permitted, req.Profile, req.KESVKey)
+	} else {
+		bound, state, err = a.attestedKeyState(req.Profile, req.KESVKey)
+	}
 	if err != nil {
 		resp.Error = err.Error()
 		_ = writeFrame(conn, resp)

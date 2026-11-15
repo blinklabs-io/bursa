@@ -435,3 +435,54 @@ func TestServeAttestedServiceRefusesControlWithoutClientCertVerification(t *test
 		})
 	}
 }
+
+// A control client learns nothing about profiles outside its list: a key or
+// name that resolves outside the list, an unlisted profile with no key and an
+// unknown name all get the same refusal, before any evidence.
+func TestRemoteControlRefusalHidesOtherProfiles(t *testing.T) {
+	t.Parallel()
+	pki := newControlPKI(t)
+	ctrl, ctrlFP := pki.client("controller")
+	coldA, coldB, coldC := newColdKey(t), newColdKey(t), newColdKey(t)
+	pcA := profileOn(t, networkA, "pool-a", coldA)
+	pcA.ControlClientSPKI = []spki{ctrlFP}
+	pcB := profileOn(t, networkB, "pool-b", coldB)
+	pcC := profileOn(t, networkA, "pool-c", coldC) // never gets a key
+	a := newMultiAgent(t, pcA, pcB, pcC)
+	install(t, a, "pool-a", coldA, 3, 52, 5)
+	pb := install(t, a, "pool-b", coldB, 0, 25, 1)
+	rig := pki.serve(t, a)
+
+	for _, tc := range []struct {
+		what    string
+		profile string
+		kesVKey []byte
+	}{
+		{"listed name with another profile's key", "pool-a", pb.vkey},
+		{"another profile's key alone", "", pb.vkey},
+		{"unlisted profile with no key", "pool-c", nil},
+		{"unknown profile", "no-such-pool", nil},
+	} {
+		conn := rig.open(t, ctrl)
+		req, err := NewAttestationRequest()
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Role, req.Profile, req.KESVKey = RoleControl, tc.profile, tc.kesVKey
+		if err := writeFrame(conn, req); err != nil {
+			t.Fatalf("%s: write: %v", tc.what, err)
+		}
+		var resp AttestationResponse
+		if err := readFrame(conn, &resp); err != nil {
+			t.Fatalf("%s: read: %v", tc.what, err)
+		}
+		if resp.Error != ErrRoleNotPermitted.Error() || len(resp.OpCert) != 0 ||
+			len(resp.KESVKey) != 0 {
+			t.Errorf("%s: response %q, want %q with no key state",
+				tc.what, resp.Error, ErrRoleNotPermitted.Error())
+		}
+	}
+	if n := rig.attester.calls.Load(); n != 0 {
+		t.Fatalf("evidence produced %d time(s) for refused control requests", n)
+	}
+}
