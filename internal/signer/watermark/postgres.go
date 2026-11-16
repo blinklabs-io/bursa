@@ -52,7 +52,9 @@ type PostgresWatermark struct {
 // returns a ready store. The dsn must be sourced from the environment by the
 // caller; it commonly contains credentials and is never logged. Remote targets
 // require hostname-verified TLS; Unix sockets, localhost, and loopback addresses
-// are allowed without TLS.
+// are allowed without TLS. A refused, unreachable, or timed-out first dial is
+// retried with backoff for up to 20 seconds or until ctx ends; any other
+// error returns immediately.
 func NewPostgresWatermark(
 	ctx context.Context,
 	dsn string,
@@ -72,7 +74,13 @@ func NewPostgresWatermark(
 		return nil, fmt.Errorf("open postgres watermark pool: %w", err)
 	}
 	s := &PostgresWatermark{pool: pool}
-	if err := s.initSchema(ctx); err != nil {
+	// The pool connects lazily, so initSchema is the first dial. Wait out a
+	// network that is not reachable yet instead of failing startup.
+	if err := retryTransientDial(
+		ctx,
+		defaultDialRetryPolicy,
+		s.initSchema,
+	); err != nil {
 		pool.Close()
 		return nil, err
 	}
