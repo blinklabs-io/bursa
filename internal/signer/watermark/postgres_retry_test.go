@@ -137,7 +137,9 @@ func TestRetryTransientDial_ServerStartingIsTransient(t *testing.T) {
 func TestRetryTransientDial_CancelStopsWaiting(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
-	attempted := make(chan struct{})
+	// Buffered so the first attempt is recorded even before the receive
+	// below is ready; an unbuffered nonblocking send could drop it.
+	attempted := make(chan struct{}, 1)
 	done := make(chan error, 1)
 	policy := dialRetryPolicy{
 		Total:   time.Hour,
