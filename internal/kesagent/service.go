@@ -245,6 +245,7 @@ func (a *Agent) handleServeKey(ctx context.Context, conn net.Conn) {
 // the session was admitted for: every header on it must route to that
 // profile.
 func (a *Agent) handleSign(ctx context.Context, conn net.Conn, bound *profile) {
+	client := clientAttrs(conn)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -274,7 +275,7 @@ func (a *Agent) handleSign(ctx context.Context, conn net.Conn, bound *profile) {
 			}
 		}
 		if err == nil {
-			sig, err = a.signHeaderFor(target, req.Period, req.Message)
+			sig, err = a.signHeaderForClient(target, req.Period, req.Message, client)
 		}
 		if err != nil {
 			resp.Error = err.Error()

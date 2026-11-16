@@ -651,7 +651,7 @@ func (p *profile) DropKey(target string) error {
 // derived from the configured genesis schedule. It never signs a period below
 // the monotonic floor or below the active key's current period.
 func (p *profile) Sign(period uint64, msg []byte) ([]byte, error) {
-	return p.sign(period, msg, false)
+	return p.sign(period, msg, false, localClient)
 }
 
 // SignHeader is Sign for a request that must be a Praos block header body: the
@@ -660,13 +660,24 @@ func (p *profile) Sign(period uint64, msg []byte) ([]byte, error) {
 // Sign mode serves only this entry point, so the key cannot be used as an
 // oracle for arbitrary messages.
 func (p *profile) SignHeader(period uint64, headerBody []byte) ([]byte, error) {
-	return p.sign(period, headerBody, true)
+	return p.sign(period, headerBody, true, localClient)
+}
+
+// signHeaderFrom is SignHeader for a request from a connected peer; client is
+// the log attributes naming it (see clientAttrs).
+func (p *profile) signHeaderFrom(
+	client []any,
+	period uint64,
+	headerBody []byte,
+) ([]byte, error) {
+	return p.sign(period, headerBody, true, client)
 }
 
 func (p *profile) sign(
 	period uint64,
 	msg []byte,
 	typed bool,
+	client []any,
 ) (sig []byte, err error) {
 	// Timed from before the lock: a producer waits for it too.
 	start := time.Now()
@@ -750,13 +761,13 @@ func (p *profile) sign(
 			// slot. Hash only: never the header body. The recorded header is
 			// behind the slotGuard interface, so only the refused one is named.
 			sum := sha256.Sum256(msg)
-			p.logger.Warn("slot guard refused header",
+			p.logger.Warn("slot guard refused header", append([]any{
 				"reason", reason,
 				"slot", slot,
 				"kes_period", period,
 				"header_hash", hex.EncodeToString(sum[:8]),
 				"error", guardErr,
-			)
+			}, client...)...)
 		}
 		p.metrics.incSign("error")
 		return nil, guardErr

@@ -16,11 +16,16 @@ package kesagent
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,11 +328,121 @@ func TestSlotGuardRefusalsAreLogged(t *testing.T) {
 		rec := lines[len(lines)-1]
 		if rec["level"] != "WARN" ||
 			rec["profile"] != DefaultProfileName ||
+			rec["remote"] != "local" ||
 			rec["reason"] != tc.wantReason ||
 			rec["slot"] != tc.wantSlot ||
 			rec["kes_period"] != float64(5) ||
 			rec["header_hash"] != hashOf(tc.body) {
 			t.Fatalf("%s: unexpected refusal record: %v", tc.name, rec)
 		}
+	}
+}
+
+// peerConn is a connection that reports a fixed remote address and, like a
+// *tls.Conn, a connection state carrying the verified client certificate.
+type peerConn struct {
+	net.Conn
+	remote net.Addr
+	state  tls.ConnectionState
+}
+
+func (c peerConn) RemoteAddr() net.Addr { return c.remote }
+
+func (c peerConn) ConnectionState() tls.ConnectionState { return c.state }
+
+// TestSlotGuardRefusalLogNamesTheClient serves two sign requests for one slot
+// over a connection and checks the refusal line names the remote address and
+// the client certificate, and that the accepted request logs nothing.
+func TestSlotGuardRefusalLogNamesTheClient(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	cfg := signalAgentConfig(cold, filepath.Join(t.TempDir(), "guard.json"))
+	var logs bytes.Buffer
+	a, err := New(cfg, slog.New(slog.NewJSONHandler(&logs, nil)), NewMetrics())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(a.Close)
+	a.now = func() time.Time { return atPeriod(5) }
+	vkey, err := a.GenStagedKey()
+	if err != nil {
+		t.Fatalf("GenStagedKey: %v", err)
+	}
+	opcert := makeOpCert(t, vkey, 7, 3, cold)
+	if _, err := a.InstallKey(opcert); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	spec := headerSpec{
+		slot:      52,
+		issuer:    cold.pub,
+		hotVkey:   vkey,
+		sequence:  7,
+		kesPeriod: 3,
+		coldSig:   opCertColdSig(t, opcert),
+	}
+	other := spec
+	other.blockNumber = 2
+
+	spki := []byte("test-spki")
+	server, client := net.Pipe()
+	defer client.Close()
+	conn := peerConn{
+		Conn:   server,
+		remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.7"), Port: 4242},
+		state: tls.ConnectionState{PeerCertificates: []*x509.Certificate{{
+			Subject:                 pkix.Name{CommonName: "producer-1"},
+			RawSubjectPublicKeyInfo: spki,
+		}}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.handleSign(ctx, conn, nil)
+	}()
+	defer func() {
+		cancel()
+		_ = client.Close()
+		<-done
+	}()
+	roundTrip := func(body []byte) SignResponse {
+		if err := writeFrame(client, SignRequest{
+			Type: "sign_request", Period: 5, Message: body,
+		}); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		var resp SignResponse
+		if err := readFrame(client, &resp); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if resp := roundTrip(spec.encode(t)); resp.Error != "" {
+		t.Fatalf("first header refused: %s", resp.Error)
+	}
+	if n := strings.Count(logs.String(), "slot guard refused"); n != 0 {
+		t.Fatalf("accepted header logged %d refusals", n)
+	}
+	if resp := roundTrip(other.encode(t)); resp.Error == "" {
+		t.Fatal("equivocating header was signed")
+	}
+	var rec map[string]any
+	n := 0
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "slot guard refused") {
+			n++
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("log line %q: %v", line, err)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d refusal lines, want 1 (logs: %s)", n, logs.String())
+	}
+	sum := sha256.Sum256(spki)
+	if rec["remote"] != "192.0.2.7:4242" ||
+		rec["client_cert_subject"] != "CN=producer-1" ||
+		rec["client_cert_spki_sha256"] != hex.EncodeToString(sum[:]) {
+		t.Fatalf("refusal record does not name the client: %v", rec)
 	}
 }

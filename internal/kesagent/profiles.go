@@ -350,6 +350,17 @@ func (a *Agent) signHeaderFor(
 	period uint64,
 	headerBody []byte,
 ) ([]byte, error) {
+	return a.signHeaderForClient(bound, period, headerBody, localClient)
+}
+
+// signHeaderForClient is signHeaderFor for a request from a connected peer;
+// client is the log attributes naming it (see clientAttrs).
+func (a *Agent) signHeaderForClient(
+	bound *profile,
+	period uint64,
+	headerBody []byte,
+	client []any,
+) ([]byte, error) {
 	// A single-profile agent needs no routing, and its own header checks
 	// give the more specific reason for a header that does not match it.
 	var p *profile
@@ -374,7 +385,7 @@ func (a *Agent) signHeaderFor(
 			bound.cfg.Name,
 		)
 	}
-	return p.SignHeader(period, headerBody)
+	return p.signHeaderFrom(client, period, headerBody)
 }
 
 // SignHeader signs a Praos block header body with the key of the profile the
