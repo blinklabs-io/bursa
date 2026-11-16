@@ -40,7 +40,7 @@ require (
 	github.com/utxorpc/go-codegen v0.19.2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sync v0.25.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	google.golang.org/api v0.311.0
