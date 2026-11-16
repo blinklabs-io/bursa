@@ -178,3 +178,18 @@ func TestNewPostgresWatermark_AuthErrorFailsFast(t *testing.T) {
 		t.Fatalf("want 1 connection attempt, got %d", got)
 	}
 }
+
+// A refused dial as the platform reports it is transient. Windows reports
+// Winsock error codes, which the Unix errno values do not match.
+func TestIsTransientDialError_RealRefusedDial(t *testing.T) {
+	t.Parallel()
+	addr := closedLoopbackAddr(t)
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err == nil {
+		_ = conn.Close()
+		t.Skip("closed loopback port accepted a connection")
+	}
+	if !isTransientDialError(err) {
+		t.Fatalf("refused dial not transient: %v", err)
+	}
+}

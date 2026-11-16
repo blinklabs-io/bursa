@@ -19,7 +19,6 @@ import (
 	"errors"
 	"log/slog"
 	"net"
-	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -125,8 +124,13 @@ func isTransientDialError(err error) bool {
 	if !errors.As(err, &opErr) || opErr.Op != "dial" {
 		return false
 	}
-	return opErr.Timeout() ||
-		errors.Is(err, syscall.ECONNREFUSED) ||
-		errors.Is(err, syscall.ENETUNREACH) ||
-		errors.Is(err, syscall.EHOSTUNREACH)
+	if opErr.Timeout() {
+		return true
+	}
+	for _, errno := range unreachableDialErrnos {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+	return false
 }
