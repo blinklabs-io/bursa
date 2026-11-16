@@ -18,6 +18,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -53,6 +54,78 @@ func TestNewPostgresWatermark_RefusedRetriesUntilContextEnds(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "connection refused") {
 		t.Fatalf("want connection refused, got %v", err)
+	}
+}
+
+// silentServer accepts connections and holds them open without answering,
+// so a connect attempt waits until its context ends. It returns the address
+// and a channel that receives one value per accepted connection.
+func silentServer(t *testing.T) (string, <-chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	accepts := make(chan struct{}, 100)
+	var mu sync.Mutex
+	var conns []net.Conn
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+			accepts <- struct{}{}
+		}
+	}()
+	return ln.Addr().String(), accepts
+}
+
+// A connect that hits connect_timeout is retried while the caller context
+// still has time.
+func TestNewPostgresWatermark_ConnectTimeoutRetries(t *testing.T) {
+	t.Parallel()
+	addr, accepts := silentServer(t)
+	dsn := "postgres://u:pw@" + addr + "/db?sslmode=disable&connect_timeout=1"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := NewPostgresWatermark(ctx, dsn)
+	if err == nil {
+		t.Fatal("want error from a server that never answers")
+	}
+	if got := len(accepts); got < 2 {
+		t.Fatalf("want connect_timeout retried, got %d attempts: %v", got, err)
+	}
+}
+
+// When the caller context itself expires, the timeout is not retried.
+func TestNewPostgresWatermark_CallerDeadlineNotRetried(t *testing.T) {
+	t.Parallel()
+	addr, accepts := silentServer(t)
+	dsn := "postgres://u:pw@" + addr + "/db?sslmode=disable"
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := NewPostgresWatermark(ctx, dsn)
+	if err == nil {
+		t.Fatal("want error from a server that never answers")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("returned after %v, want shortly after the caller deadline", elapsed)
+	}
+	if got := len(accepts); got != 1 {
+		t.Fatalf("want 1 attempt, got %d: %v", got, err)
 	}
 }
 

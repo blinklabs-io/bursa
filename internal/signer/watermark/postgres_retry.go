@@ -100,13 +100,22 @@ func dialCause(err error) string {
 
 // isTransientDialError reports whether err means Postgres could not be
 // reached yet: a refused, unreachable, or timed-out dial, a temporary DNS
-// failure, or a server that is still starting up. Credential, database,
-// configuration, and schema errors are not transient.
+// failure, a connect that hit connect_timeout, or a server that is still
+// starting up. Credential, database, configuration, and schema errors are
+// not transient.
 func isTransientDialError(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		// cannot_connect_now: the server is starting up or shutting down.
 		return pgErr.Code == "57P03"
+	}
+	// connect_timeout ending a connect attempt: pgconn replaces the network
+	// error with its own timeout error, so no *net.OpError remains. A
+	// timeout from the caller context is not retried because
+	// retryTransientDial returns once ctx ends.
+	var connErr *pgconn.ConnectError
+	if errors.As(err, &connErr) && pgconn.Timeout(err) {
+		return true
 	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
