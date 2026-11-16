@@ -737,11 +737,26 @@ func (p *profile) sign(
 		guardErr = p.guard.Authorize(vkeyHex, period)
 	}
 	if guardErr != nil {
+		reason := ""
 		switch {
 		case errors.Is(guardErr, ErrSlotEquivocation):
-			p.metrics.incSlotGuardRefusal("equivocation")
+			reason = "equivocation"
 		case errors.Is(guardErr, ErrSlotRollback):
-			p.metrics.incSlotGuardRefusal("rollback")
+			reason = "rollback"
+		}
+		if reason != "" {
+			p.metrics.incSlotGuardRefusal(reason)
+			// The only per-event record of which header lost a contested
+			// slot. Hash only: never the header body. The recorded header is
+			// behind the slotGuard interface, so only the refused one is named.
+			sum := sha256.Sum256(msg)
+			p.logger.Warn("slot guard refused header",
+				"reason", reason,
+				"slot", slot,
+				"kes_period", period,
+				"header_hash", hex.EncodeToString(sum[:8]),
+				"error", guardErr,
+			)
 		}
 		p.metrics.incSign("error")
 		return nil, guardErr

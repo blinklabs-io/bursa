@@ -16,6 +16,9 @@ package kesagent
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -219,6 +222,112 @@ func TestSlotGuardRefusalsAreCounted(t *testing.T) {
 				got,
 				tc.wantRolledBack,
 			)
+		}
+	}
+}
+
+// TestSlotGuardRefusalsAreLogged writes one WARN line per slot-guard refusal
+// with the profile, reason, slot, period and a hash of the refused header, and
+// none for a signed header or its identical retry.
+func TestSlotGuardRefusalsAreLogged(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	cfg := signalAgentConfig(cold, filepath.Join(t.TempDir(), "guard.json"))
+	var logs bytes.Buffer
+	a, err := New(cfg, slog.New(slog.NewJSONHandler(&logs, nil)), NewMetrics())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(a.Close)
+	a.now = func() time.Time { return atPeriod(5) }
+	vkey, err := a.GenStagedKey()
+	if err != nil {
+		t.Fatalf("GenStagedKey: %v", err)
+	}
+	opcert := makeOpCert(t, vkey, 7, 3, cold)
+	if _, err := a.InstallKey(opcert); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	spec := headerSpec{
+		slot:      52,
+		issuer:    cold.pub,
+		hotVkey:   vkey,
+		sequence:  7,
+		kesPeriod: 3,
+		coldSig:   opCertColdSig(t, opcert),
+	}
+	other := spec
+	other.blockNumber = 2
+	older := spec
+	older.slot = 51
+
+	// refusalLines returns the guard refusal records written so far.
+	refusalLines := func() []map[string]any {
+		var out []map[string]any
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if !strings.Contains(line, "slot guard refused") {
+				continue
+			}
+			rec := map[string]any{}
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("log line %q: %v", line, err)
+			}
+			out = append(out, rec)
+		}
+		return out
+	}
+	hashOf := func(body []byte) string {
+		sum := sha256.Sum256(body)
+		return hex.EncodeToString(sum[:8])
+	}
+	for _, tc := range []struct {
+		name       string
+		body       []byte
+		wantErr    error
+		wantReason string
+		wantSlot   float64
+		wantLines  int
+	}{
+		{name: "first header", body: spec.encode(t)},
+		{name: "identical retry", body: spec.encode(t)},
+		{
+			name:       "other body for the slot",
+			body:       other.encode(t),
+			wantErr:    ErrSlotEquivocation,
+			wantReason: "equivocation",
+			wantSlot:   52,
+			wantLines:  1,
+		},
+		{
+			name:       "older slot",
+			body:       older.encode(t),
+			wantErr:    ErrSlotRollback,
+			wantReason: "rollback",
+			wantSlot:   51,
+			wantLines:  2,
+		},
+	} {
+		// The cases share one agent and run in order.
+		_, err := a.SignHeader(5, tc.body)
+		if !errors.Is(err, tc.wantErr) {
+			t.Fatalf("%s: want %v, got %v", tc.name, tc.wantErr, err)
+		}
+		lines := refusalLines()
+		if len(lines) != tc.wantLines {
+			t.Fatalf("%s: %d refusal log lines, want %d (logs: %s)",
+				tc.name, len(lines), tc.wantLines, logs.String())
+		}
+		if tc.wantErr == nil {
+			continue
+		}
+		rec := lines[len(lines)-1]
+		if rec["level"] != "WARN" ||
+			rec["profile"] != DefaultProfileName ||
+			rec["reason"] != tc.wantReason ||
+			rec["slot"] != tc.wantSlot ||
+			rec["kes_period"] != float64(5) ||
+			rec["header_hash"] != hashOf(tc.body) {
+			t.Fatalf("%s: unexpected refusal record: %v", tc.name, rec)
 		}
 	}
 }
