@@ -16,8 +16,16 @@ package kesagent
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -220,5 +228,221 @@ func TestSlotGuardRefusalsAreCounted(t *testing.T) {
 				tc.wantRolledBack,
 			)
 		}
+	}
+}
+
+// TestSlotGuardRefusalsAreLogged writes one WARN line per slot-guard refusal
+// with the profile, reason, slot, period and a hash of the refused header, and
+// none for a signed header or its identical retry.
+func TestSlotGuardRefusalsAreLogged(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	cfg := signalAgentConfig(cold, filepath.Join(t.TempDir(), "guard.json"))
+	var logs bytes.Buffer
+	a, err := New(cfg, slog.New(slog.NewJSONHandler(&logs, nil)), NewMetrics())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(a.Close)
+	a.now = func() time.Time { return atPeriod(5) }
+	vkey, err := a.GenStagedKey()
+	if err != nil {
+		t.Fatalf("GenStagedKey: %v", err)
+	}
+	opcert := makeOpCert(t, vkey, 7, 3, cold)
+	if _, err := a.InstallKey(opcert); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	spec := headerSpec{
+		slot:      52,
+		issuer:    cold.pub,
+		hotVkey:   vkey,
+		sequence:  7,
+		kesPeriod: 3,
+		coldSig:   opCertColdSig(t, opcert),
+	}
+	other := spec
+	other.blockNumber = 2
+	older := spec
+	older.slot = 51
+
+	// refusalLines returns the guard refusal records written so far.
+	refusalLines := func() []map[string]any {
+		var out []map[string]any
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if !strings.Contains(line, "slot guard refused") {
+				continue
+			}
+			rec := map[string]any{}
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("log line %q: %v", line, err)
+			}
+			out = append(out, rec)
+		}
+		return out
+	}
+	hashOf := func(body []byte) string {
+		sum := sha256.Sum256(body)
+		return hex.EncodeToString(sum[:8])
+	}
+	for _, tc := range []struct {
+		name       string
+		body       []byte
+		wantErr    error
+		wantReason string
+		wantSlot   float64
+		wantLines  int
+	}{
+		{name: "first header", body: spec.encode(t)},
+		{name: "identical retry", body: spec.encode(t)},
+		{
+			name:       "other body for the slot",
+			body:       other.encode(t),
+			wantErr:    ErrSlotEquivocation,
+			wantReason: "equivocation",
+			wantSlot:   52,
+			wantLines:  1,
+		},
+		{
+			name:       "older slot",
+			body:       older.encode(t),
+			wantErr:    ErrSlotRollback,
+			wantReason: "rollback",
+			wantSlot:   51,
+			wantLines:  2,
+		},
+	} {
+		// The cases share one agent and run in order.
+		_, err := a.SignHeader(5, tc.body)
+		if !errors.Is(err, tc.wantErr) {
+			t.Fatalf("%s: want %v, got %v", tc.name, tc.wantErr, err)
+		}
+		lines := refusalLines()
+		if len(lines) != tc.wantLines {
+			t.Fatalf("%s: %d refusal log lines, want %d (logs: %s)",
+				tc.name, len(lines), tc.wantLines, logs.String())
+		}
+		if tc.wantErr == nil {
+			continue
+		}
+		rec := lines[len(lines)-1]
+		if rec["level"] != "WARN" ||
+			rec["profile"] != DefaultProfileName ||
+			rec["remote"] != "local" ||
+			rec["reason"] != tc.wantReason ||
+			rec["slot"] != tc.wantSlot ||
+			rec["kes_period"] != float64(5) ||
+			rec["header_hash"] != hashOf(tc.body) {
+			t.Fatalf("%s: unexpected refusal record: %v", tc.name, rec)
+		}
+	}
+}
+
+// peerConn is a connection that reports a fixed remote address and, like a
+// *tls.Conn, a connection state carrying the verified client certificate.
+type peerConn struct {
+	net.Conn
+	remote net.Addr
+	state  tls.ConnectionState
+}
+
+func (c peerConn) RemoteAddr() net.Addr { return c.remote }
+
+func (c peerConn) ConnectionState() tls.ConnectionState { return c.state }
+
+// TestSlotGuardRefusalLogNamesTheClient serves two sign requests for one slot
+// over a connection and checks the refusal line names the remote address and
+// the client certificate, and that the accepted request logs nothing.
+func TestSlotGuardRefusalLogNamesTheClient(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	cfg := signalAgentConfig(cold, filepath.Join(t.TempDir(), "guard.json"))
+	var logs bytes.Buffer
+	a, err := New(cfg, slog.New(slog.NewJSONHandler(&logs, nil)), NewMetrics())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(a.Close)
+	a.now = func() time.Time { return atPeriod(5) }
+	vkey, err := a.GenStagedKey()
+	if err != nil {
+		t.Fatalf("GenStagedKey: %v", err)
+	}
+	opcert := makeOpCert(t, vkey, 7, 3, cold)
+	if _, err := a.InstallKey(opcert); err != nil {
+		t.Fatalf("InstallKey: %v", err)
+	}
+	spec := headerSpec{
+		slot:      52,
+		issuer:    cold.pub,
+		hotVkey:   vkey,
+		sequence:  7,
+		kesPeriod: 3,
+		coldSig:   opCertColdSig(t, opcert),
+	}
+	other := spec
+	other.blockNumber = 2
+
+	spki := []byte("test-spki")
+	server, client := net.Pipe()
+	defer client.Close()
+	conn := peerConn{
+		Conn:   server,
+		remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.7"), Port: 4242},
+		state: tls.ConnectionState{PeerCertificates: []*x509.Certificate{{
+			Subject:                 pkix.Name{CommonName: "producer-1"},
+			RawSubjectPublicKeyInfo: spki,
+		}}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.handleSign(ctx, conn, nil)
+	}()
+	defer func() {
+		cancel()
+		_ = client.Close()
+		<-done
+	}()
+	roundTrip := func(body []byte) SignResponse {
+		if err := writeFrame(client, SignRequest{
+			Type: "sign_request", Period: 5, Message: body,
+		}); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		var resp SignResponse
+		if err := readFrame(client, &resp); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return resp
+	}
+	if resp := roundTrip(spec.encode(t)); resp.Error != "" {
+		t.Fatalf("first header refused: %s", resp.Error)
+	}
+	if n := strings.Count(logs.String(), "slot guard refused"); n != 0 {
+		t.Fatalf("accepted header logged %d refusals", n)
+	}
+	if resp := roundTrip(other.encode(t)); resp.Error == "" {
+		t.Fatal("equivocating header was signed")
+	}
+	var rec map[string]any
+	n := 0
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "slot guard refused") {
+			n++
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("log line %q: %v", line, err)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d refusal lines, want 1 (logs: %s)", n, logs.String())
+	}
+	sum := sha256.Sum256(spki)
+	if rec["remote"] != "192.0.2.7:4242" ||
+		rec["client_cert_subject"] != "CN=producer-1" ||
+		rec["client_cert_spki_sha256"] != hex.EncodeToString(sum[:]) {
+		t.Fatalf("refusal record does not name the client: %v", rec)
 	}
 }
