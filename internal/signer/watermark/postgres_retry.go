@@ -61,23 +61,27 @@ func retryTransientDial(
 		if err == nil || !isTransientDialError(err) || ctx.Err() != nil {
 			return err
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		// The next attempt would start at or after the deadline: the budget
+		// is spent.
+		if backoff >= time.Until(deadline) {
 			return err
 		}
-		wait := min(backoff, remaining)
 		slog.Warn(
 			"postgres not reachable yet, retrying",
 			"attempt", attempt,
-			"retry_in", wait.String(),
+			"retry_in", backoff.String(),
 			"cause", dialCause(err),
 		)
-		timer := time.NewTimer(wait)
+		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return err
 		case <-timer.C:
+		}
+		// A late wakeup can still land past the deadline.
+		if !time.Now().Before(deadline) {
+			return err
 		}
 		backoff = min(backoff*2, policy.Max)
 	}

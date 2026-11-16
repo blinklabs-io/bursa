@@ -92,6 +92,34 @@ func TestRetryTransientDial_PersistentRefusalGivesUp(t *testing.T) {
 	}
 }
 
+// A backoff that reaches the end of the budget must not lead to another
+// attempt at or after the deadline.
+func TestRetryTransientDial_NoAttemptAfterBudget(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	policy := dialRetryPolicy{
+		Total:   100 * time.Millisecond,
+		Initial: 80 * time.Millisecond,
+		Max:     80 * time.Millisecond,
+	}
+	err := retryTransientDial(
+		context.Background(),
+		policy,
+		func(context.Context) error {
+			calls++
+			return refusedErr()
+		},
+	)
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("want last refused error, got %v", err)
+	}
+	// Attempts at 0 and 80 ms fit the 100 ms budget; the next backoff
+	// would start one at 160 ms.
+	if calls > 2 {
+		t.Fatalf("want at most 2 attempts within budget, got %d", calls)
+	}
+}
+
 func TestRetryTransientDial_NonTransientFailsFast(t *testing.T) {
 	t.Parallel()
 	cases := map[string]error{
