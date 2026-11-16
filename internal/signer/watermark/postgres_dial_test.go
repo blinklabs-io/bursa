@@ -19,8 +19,11 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // closedLoopbackAddr returns a loopback address with nothing listening.
@@ -191,5 +194,49 @@ func TestIsTransientDialError_RealRefusedDial(t *testing.T) {
 	}
 	if !isTransientDialError(err) {
 		t.Fatalf("refused dial not transient: %v", err)
+	}
+}
+
+// A dial that is still pending when connect_timeout expires goes through
+// pgconn as a timeout and is retried by the startup path.
+func TestRetryTransientDial_ConnectTimeoutDuringDial(t *testing.T) {
+	t.Parallel()
+	cfg, err := pgxpool.ParseConfig(
+		"postgres://u:pw@127.0.0.1:1/db?sslmode=disable&connect_timeout=1",
+	)
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	var dials atomic.Int32
+	cfg.ConnConfig.DialFunc = func(
+		ctx context.Context,
+		network, addr string,
+	) (net.Conn, error) {
+		dials.Add(1)
+		<-ctx.Done()
+		// Dial with the expired context so the error has the shape a
+		// net.Dialer returns when its deadline passes mid-dial.
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("new pool: %v", err)
+	}
+	defer pool.Close()
+	s := &PostgresWatermark{pool: pool}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	policy := dialRetryPolicy{
+		Total:   time.Minute,
+		Initial: 10 * time.Millisecond,
+		Max:     10 * time.Millisecond,
+	}
+	err = retryTransientDial(ctx, policy, s.initSchema)
+	if err == nil {
+		t.Fatal("want error from a dial that never completes")
+	}
+	if got := dials.Load(); got < 2 {
+		t.Fatalf("want the dial timeout retried, got %d dials: %v", got, err)
 	}
 }
