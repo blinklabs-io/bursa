@@ -16,7 +16,6 @@
 package atomicfile
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 )
@@ -54,7 +53,7 @@ func Replace(
 	if err := tmp.Close(); err != nil {
 		return false, err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := replacePath(tmpName, path); err != nil {
 		return false, err
 	}
 	return finishCommit(dir, syncDir)
@@ -66,11 +65,9 @@ func Remove(
 	path string,
 	syncDir func(string) error,
 ) (removed bool, err error) {
-	if err := os.Remove(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
+	removed, err = removePath(path)
+	if err != nil || !removed {
+		return removed, err
 	}
 	return finishCommit(filepath.Dir(path), syncDir)
 }

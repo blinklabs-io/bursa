@@ -16,9 +16,8 @@
 
 package atomicfile
 
-// syncDirFS is a no-op off unix. Windows has no directory-flush primitive:
-// os.Open yields a GENERIC_READ handle and FlushFileBuffers needs
-// GENERIC_WRITE, so the call fails rather than adding durability.
+// syncDirFS is a no-op off unix. Windows durability is provided by the
+// write-through replacement in path_windows.go.
 func syncDirFS(string) error {
 	return nil
 }
