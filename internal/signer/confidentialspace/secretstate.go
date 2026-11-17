@@ -60,10 +60,10 @@ const (
 	// maxStateDocumentSize is Secret Manager's payload limit.
 	maxStateDocumentSize = 64 << 10
 	secretRPCTimeout     = 30 * time.Second
-	// secretCleanupTimeout bounds the cleanup after a write. The signing
-	// request waits for it, so it must leave the serve command's 30-second
-	// write timeout room for the response. Unfinished cleanup is retried by
-	// the next write.
+	// secretCleanupTimeout bounds the cleanup after a write, which also ends
+	// by the write's own deadline: the signing request waits for it, so it
+	// must not extend the request past the write's timeout. Unfinished
+	// cleanup is retried by the next write.
 	secretCleanupTimeout = 5 * time.Second
 )
 
@@ -726,13 +726,13 @@ func (s *SecretStateStore) addVersion(
 	if !ok {
 		return errors.New("state secret version has an unexpected name")
 	}
-	s.destroyOlder(detached, keep)
+	s.destroyOlder(addCtx, keep)
 	return nil
 }
 
 // destroyOlder destroys every enabled version numbered below keep, never a
-// newer one. A failure is logged and retried by the next save: the version
-// that was added is already durable.
+// newer one, by the deadline of parent. A failure is logged and retried by
+// the next save: the version that was added is already durable.
 func (s *SecretStateStore) destroyOlder(
 	parent context.Context,
 	keep uint64,

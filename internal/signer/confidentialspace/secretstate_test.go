@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
@@ -62,6 +63,8 @@ type fakeSecretClient struct {
 	visible int
 	// onList runs when a version list is requested.
 	onList func(*fakeSecretClient)
+	// onAdd runs when a version is added, before it is.
+	onAdd func()
 	// cleanupBudgets records the time left on the context of every list and
 	// destroy call.
 	cleanupBudgets []time.Duration
@@ -200,6 +203,12 @@ func (c *fakeSecretClient) AddSecretVersion(
 	_ context.Context,
 	req *secretmanagerpb.AddSecretVersionRequest,
 ) (*secretmanagerpb.SecretVersion, error) {
+	c.mu.Lock()
+	hook := c.onAdd
+	c.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.addErr != nil {
@@ -1140,6 +1149,44 @@ func TestSecretStateCleanupFitsTheResponseBudget(t *testing.T) {
 			)
 		}
 	}
+}
+
+func TestSecretStateCleanupEndsByTheWriteDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		const left = 2 * time.Second
+		c := provisionedSecret(t)
+		s := newTestStateStore(t, c)
+		if _, err := s.Load(); err != nil {
+			t.Fatal(err)
+		}
+		counter, err := s.Counter("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.mu.Lock()
+		c.onAdd = func() { time.Sleep(secretRPCTimeout - left) }
+		c.cleanupBudgets = nil
+		c.mu.Unlock()
+
+		if err := counter.Prepare(t.Context(), s.hash, true); err != nil {
+			t.Fatal(err)
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if len(c.cleanupBudgets) == 0 {
+			t.Fatal("no cleanup call was made")
+		}
+		for _, budget := range c.cleanupBudgets {
+			if budget > left {
+				t.Fatalf(
+					"cleanup after a slow write allowed %v, want at most %v",
+					budget,
+					left,
+				)
+			}
+		}
+	})
 }
 
 func TestSecretStateCleanupNeverDestroysANewerVersion(t *testing.T) {
