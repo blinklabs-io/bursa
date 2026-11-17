@@ -52,6 +52,62 @@ func TestGrantStore(t *testing.T) {
 	}
 }
 
+func TestGrantStoreRevokePublishesCommittedStateWhenDirectorySyncFails(
+	t *testing.T,
+) {
+	path := filepath.Join(t.TempDir(), "grants.json")
+	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
+	g := NewGrantStore(path)
+	if err := g.Grant("https://a.io", identity); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	if err := g.Revoke("https://a.io", identity); !errors.Is(err, syncErr) {
+		t.Fatalf("Revoke error = %v, want directory sync failure", err)
+	}
+	if g.IsGranted("https://a.io", identity) {
+		t.Fatal("committed revocation was not published")
+	}
+	if NewGrantStore(path).IsGranted("https://a.io", identity) {
+		t.Fatal("reloaded grant store retained committed revocation")
+	}
+}
+
+func TestGrantStoreMutationPreservesStateOnPrecommitFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "grants.json")
+	identity := accountIdentity{WalletID: "wallet-a", AccountIndex: 0}
+	g := NewGrantStore(path)
+	if err := g.Grant("https://a.io", identity); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+
+	writeErr := errors.New("grant replacement failed")
+	originalReplaceAuthFile := replaceAuthFile
+	replaceAuthFile = func(
+		string,
+		[]byte,
+		func(string) error,
+	) (bool, error) {
+		return false, writeErr
+	}
+	t.Cleanup(func() { replaceAuthFile = originalReplaceAuthFile })
+
+	if err := g.Revoke("https://a.io", identity); !errors.Is(err, writeErr) {
+		t.Fatalf("Revoke error = %v, want replacement failure", err)
+	}
+	if !g.IsGranted("https://a.io", identity) {
+		t.Fatal("grant was revoked after pre-commit failure")
+	}
+	if !NewGrantStore(path).IsGranted("https://a.io", identity) {
+		t.Fatal("persisted grant changed after pre-commit failure")
+	}
+}
+
 func TestGrantStoreRejectsInvalidOrigins(t *testing.T) {
 	path := t.TempDir() + "/grants.json"
 	g := NewGrantStore(path)

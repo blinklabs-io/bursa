@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -434,5 +435,180 @@ func TestEnableAndRotatePersistOnlyCurrentCapability(t *testing.T) {
 	}
 	if _, err := reloaded.Rotate(); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("Rotate after disable error = %v, want ErrDisabled", err)
+	}
+}
+
+func TestRotatePublishesCommittedStateWhenDirectorySyncFails(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	submitter := &fakeSubmitter{
+		decode:        spend.TxSummary{IsComplete: true},
+		submitEntered: make(chan struct{}),
+	}
+	svc, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	first, err := svc.Enable()
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	firstPath := endpointPath(t, svc)
+
+	done := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		svc.ServeHTTP(
+			rec,
+			submitRequest(firstPath, "approved-transaction"),
+		)
+		done <- rec.Code
+	}()
+	<-submitter.submitEntered
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	if _, err := svc.Rotate(); !errors.Is(err, syncErr) {
+		t.Fatalf("Rotate error = %v, want directory sync failure", err)
+	}
+	second := svc.Status()
+	if !second.Enabled || second.Endpoint == first.Endpoint {
+		t.Fatalf("committed rotation was not published: %+v", second)
+	}
+	if status := <-done; status != http.StatusForbidden {
+		t.Fatalf("revoked submission status = %d, want 403", status)
+	}
+
+	reloaded, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Status().Endpoint; got != second.Endpoint {
+		t.Fatalf("reloaded endpoint = %q, want %q", got, second.Endpoint)
+	}
+}
+
+func TestDisablePublishesCommittedStateWhenDirectorySyncFails(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	submitter := &fakeSubmitter{decode: spend.TxSummary{IsComplete: true}}
+	svc, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.Enable(); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	status, err := svc.Disable()
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("Disable error = %v, want directory sync failure", err)
+	}
+	if status.Enabled || svc.Status().Enabled {
+		t.Fatal("committed disablement was not published")
+	}
+	reloaded, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Status().Enabled {
+		t.Fatal("reloaded service remained enabled")
+	}
+}
+
+func TestDisableSyncsFallbackRemoval(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	submitter := &fakeSubmitter{decode: spend.TxSummary{IsComplete: true}}
+	svc, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.Enable(); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	writeErr := errors.New("state replacement failed")
+	syncErr := errors.New("directory sync failed")
+	originalReplaceState := replaceState
+	originalSyncDirectory := syncDirectory
+	replaceState = func(
+		string,
+		[]byte,
+		func(string) error,
+	) (bool, error) {
+		return false, writeErr
+	}
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() {
+		replaceState = originalReplaceState
+		syncDirectory = originalSyncDirectory
+	})
+
+	if _, err := svc.Disable(); !errors.Is(err, writeErr) ||
+		!errors.Is(err, syncErr) {
+		t.Fatalf(
+			"Disable error = %v, want replacement and directory sync failures",
+			err,
+		)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state file still present after fallback removal: %v", err)
+	}
+}
+
+func TestRotatePreservesStateOnPrecommitFailure(t *testing.T) {
+	svc, _ := newTestService(t, &fakeApprover{})
+	first, err := svc.Enable()
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	writeErr := errors.New("state replacement failed")
+	originalReplaceState := replaceState
+	replaceState = func(
+		string,
+		[]byte,
+		func(string) error,
+	) (bool, error) {
+		return false, writeErr
+	}
+	t.Cleanup(func() { replaceState = originalReplaceState })
+
+	if _, err := svc.Rotate(); !errors.Is(err, writeErr) {
+		t.Fatalf("Rotate error = %v, want replacement failure", err)
+	}
+	if got := svc.Status(); got.Endpoint != first.Endpoint {
+		t.Fatalf("endpoint changed after pre-commit failure: %+v", got)
 	}
 }

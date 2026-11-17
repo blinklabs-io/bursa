@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/blinklabs-io/bursa/ui/internal/atomicfile"
 )
 
 type tokenData struct {
@@ -19,7 +19,14 @@ type tokenData struct {
 	Token       string `json:"token"`
 }
 
-var ErrInvalidExtensionID = errors.New("connector: invalid extension id")
+var (
+	ErrInvalidExtensionID = errors.New("connector: invalid extension id")
+
+	syncDirectory   = atomicfile.SyncDir
+	replaceAuthFile = atomicfile.Replace
+	removeAuthFile  = atomicfile.Remove
+	syncTokenFile   = func(f *os.File) error { return f.Sync() }
+)
 
 // TokenStore holds the single paired-extension token, persisted atomically.
 type TokenStore struct {
@@ -59,22 +66,32 @@ func NewTokenStore(path string, rnd func() (string, error)) *TokenStore {
 }
 
 func (s *TokenStore) Mint(extensionID string) (string, error) {
+	token, _, err := s.mint(extensionID)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *TokenStore) mint(
+	extensionID string,
+) (token string, committed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	extensionID = normalizeExtensionID(extensionID)
 	if !validExtensionID(extensionID) {
-		return "", ErrInvalidExtensionID
+		return "", false, ErrInvalidExtensionID
 	}
 	tok, err := s.rnd()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	next := tokenData{ExtensionID: extensionID, Token: tok}
-	if err := s.persist(next); err != nil {
-		return "", err
+	committed, err = s.persist(next)
+	if committed {
+		s.data = next
 	}
-	s.data = next
-	return s.data.Token, nil
+	return next.Token, committed, err
 }
 
 func (s *TokenStore) Verify(token, extensionID string) bool {
@@ -104,11 +121,14 @@ func (s *TokenStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data = tokenData{}
-	err := os.Remove(s.path)
-	if err == nil || errors.Is(err, fs.ErrNotExist) {
+	removed, err := removeAuthFile(s.path, syncDirectory)
+	if err == nil {
 		return nil
 	}
-	if truncErr := os.Truncate(s.path, 0); truncErr != nil {
+	if removed {
+		return err
+	}
+	if truncErr := truncateTokenFile(s.path); truncErr != nil {
 		return fmt.Errorf(
 			"connector: pairing revoked but token file not removed: %w",
 			errors.Join(err, truncErr),
@@ -117,32 +137,23 @@ func (s *TokenStore) Clear() error {
 	return nil
 }
 
-func (s *TokenStore) persist(data tokenData) error {
+func truncateTokenFile(path string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if err := syncTokenFile(f); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
+}
+
+func (s *TokenStore) persist(data tokenData) (committed bool, err error) {
 	b, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".token-*")
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(f.Name())
-		return err
-	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
-		_ = os.Remove(f.Name())
-		return err
-	}
-	return nil
+	return replaceAuthFile(s.path, b, syncDirectory)
 }
 
 func normalizeExtensionID(extensionID string) string {
