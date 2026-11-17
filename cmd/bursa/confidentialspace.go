@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,6 +38,7 @@ func confidentialSpaceCommand() *cobra.Command {
 		listenAddress  string
 		audience       string
 		kmsKey         string
+		stateSecret    string
 		wrappedKeyFile string
 		counterBucket  string
 		counterObject  string
@@ -52,6 +54,14 @@ func confidentialSpaceCommand() *cobra.Command {
 		Short: "Run pool cold-key custody inside GCP Confidential Space",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
+			if err := validateConfidentialSpaceStorage(
+				stateSecret,
+				wrappedKeyFile,
+				counterBucket,
+				counterObject,
+			); err != nil {
+				return err
+			}
 			logging.ConfigureJSON()
 			tlsConfig, err := confidentialSpaceTLSConfig(
 				tlsCertFile,
@@ -95,46 +105,83 @@ func confidentialSpaceCommand() *cobra.Command {
 					"--create-profile-counter requires --profile",
 				)
 			}
-			if len(profiles) == 0 {
-				counter, err := confidentialspace.NewCloudCounterStore(
+			if stateSecret != "" {
+				state, err := confidentialspace.NewSecretStateStore(
 					ctx,
-					counterBucket,
-					counterObject,
+					stateSecret,
+					kmsKey,
+					wrapper,
 					wifCredentials,
 				)
 				if err != nil {
 					return err
 				}
-				defer counter.Close()
-				cfg.Counter = counter
-			} else {
-				cfg.Profiles = make(
-					map[string]confidentialspace.CounterStore,
-					len(profiles),
-				)
-				for _, profile := range profiles {
-					if _, dup := cfg.Profiles[profile]; dup {
-						return fmt.Errorf("duplicate --profile %q", profile)
+				defer state.Close()
+				cfg.Store = state
+				if len(profiles) == 0 {
+					counter, err := state.Counter("")
+					if err != nil {
+						return err
 					}
-					counter, err := confidentialspace.NewProfiledCloudCounterStore(
+					cfg.Counter = counter
+				} else {
+					cfg.Profiles = make(
+						map[string]confidentialspace.CounterStore,
+						len(profiles),
+					)
+					for _, profile := range profiles {
+						if _, dup := cfg.Profiles[profile]; dup {
+							return fmt.Errorf("duplicate --profile %q", profile)
+						}
+						counter, err := state.Counter(profile)
+						if err != nil {
+							return err
+						}
+						cfg.Profiles[profile] = counter
+					}
+				}
+			} else {
+				if len(profiles) == 0 {
+					counter, err := confidentialspace.NewCloudCounterStore(
 						ctx,
 						counterBucket,
 						counterObject,
-						profile,
 						wifCredentials,
 					)
 					if err != nil {
 						return err
 					}
 					defer counter.Close()
-					cfg.Profiles[profile] = counter
+					cfg.Counter = counter
+				} else {
+					cfg.Profiles = make(
+						map[string]confidentialspace.CounterStore,
+						len(profiles),
+					)
+					for _, profile := range profiles {
+						if _, dup := cfg.Profiles[profile]; dup {
+							return fmt.Errorf("duplicate --profile %q", profile)
+						}
+						counter, err := confidentialspace.NewProfiledCloudCounterStore(
+							ctx,
+							counterBucket,
+							counterObject,
+							profile,
+							wifCredentials,
+						)
+						if err != nil {
+							return err
+						}
+						defer counter.Close()
+						cfg.Profiles[profile] = counter
+					}
 				}
+				store, err := confidentialspace.NewFileEnvelopeStore(wrappedKeyFile)
+				if err != nil {
+					return err
+				}
+				cfg.Store = store
 			}
-			store, err := confidentialspace.NewFileEnvelopeStore(wrappedKeyFile)
-			if err != nil {
-				return err
-			}
-			cfg.Store = store
 			workload, err := confidentialspace.New(ctx, cfg)
 			if err != nil {
 				return err
@@ -184,6 +231,8 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringVar(&kmsKey, "kms-key", "", "Cloud KMS CryptoKey resource used to wrap the pool key")
 	cmd.Flags().
+		StringVar(&stateSecret, "state-secret", "", "existing Secret Manager secret, projects/<project>/secrets/<secret>, holding the wrapped pool key and every issue counter; replaces --wrapped-key-file, --counter-bucket and --counter-object")
+	cmd.Flags().
 		StringVar(&wrappedKeyFile, "wrapped-key-file", "", "absolute path for the persistent wrapped pool key")
 	cmd.Flags().
 		StringVar(&counterBucket, "counter-bucket", "", "Cloud Storage bucket for the pool issue counter")
@@ -203,14 +252,45 @@ func confidentialSpaceCommand() *cobra.Command {
 		StringVar(&clientCAFile, "client-ca-file", "", "PEM CA trusted to authenticate the signer client")
 	_ = cmd.MarkFlagRequired("audience")
 	_ = cmd.MarkFlagRequired("kms-key")
-	_ = cmd.MarkFlagRequired("wrapped-key-file")
-	_ = cmd.MarkFlagRequired("counter-bucket")
-	_ = cmd.MarkFlagRequired("counter-object")
 	_ = cmd.MarkFlagRequired("wif-credentials")
 	_ = cmd.MarkFlagRequired("tls-cert-file")
 	_ = cmd.MarkFlagRequired("tls-key-file")
 	_ = cmd.MarkFlagRequired("client-ca-file")
 	return cmd
+}
+
+// validateConfidentialSpaceStorage requires exactly one storage mode: the
+// state secret, or the wrapped-key file with the counter bucket and object.
+func validateConfidentialSpaceStorage(
+	stateSecret, wrappedKeyFile, counterBucket, counterObject string,
+) error {
+	gcs := []struct{ name, value string }{
+		{"--wrapped-key-file", wrappedKeyFile},
+		{"--counter-bucket", counterBucket},
+		{"--counter-object", counterObject},
+	}
+	var missing []string
+	for _, f := range gcs {
+		if stateSecret != "" && f.value != "" {
+			return fmt.Errorf("--state-secret excludes %s", f.name)
+		}
+		if f.value == "" {
+			missing = append(missing, f.name)
+		}
+	}
+	switch {
+	case stateSecret != "" || len(missing) == 0:
+		return nil
+	case len(missing) == len(gcs):
+		return errors.New(
+			"one of --state-secret or --wrapped-key-file with --counter-bucket and --counter-object is required",
+		)
+	default:
+		return fmt.Errorf(
+			"%s required without --state-secret",
+			strings.Join(missing, ", "),
+		)
+	}
 }
 
 func confidentialSpaceTLSConfig(
