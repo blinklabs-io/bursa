@@ -266,9 +266,9 @@ Two signer features are refused by design:
   certificate at an issue number it has already used (it repeats only the
   identical payload, which yields the same signature). Send `issue_counter`
   instead.
-- A backend `profile`. The enclave signs no profile binding, so leave
-  `profile` unset on a `nitro` backend; with it set, the inventory request is
-  refused and the backend does not load.
+- A backend `profile`. Nitro supports only the legacy unprofiled inventory
+  binding, so leave `profile` unset on a `nitro` backend; with it set, the
+  inventory request is refused and the backend does not load.
 
 ## Reproducible EIF and PCR rotation
 

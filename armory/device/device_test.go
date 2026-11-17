@@ -630,7 +630,7 @@ func TestInventory(t *testing.T) {
 
 	if !ed25519.Verify(
 		identity,
-		InventoryBinding(nonce(1), inv.Keys),
+		InventoryBindingForProfile(nonce(1), "otg@preview", inv.Keys),
 		inv.Attestation,
 	) {
 		t.Fatal("attestation does not verify under the identity key")
@@ -638,10 +638,18 @@ func TestInventory(t *testing.T) {
 
 	if ed25519.Verify(
 		identity,
-		InventoryBinding(nonce(2), inv.Keys),
+		InventoryBindingForProfile(nonce(2), "otg@preview", inv.Keys),
 		inv.Attestation,
 	) {
 		t.Fatal("attestation verifies for another nonce")
+	}
+
+	if ed25519.Verify(
+		identity,
+		InventoryBindingForProfile(nonce(1), "otg@mainnet", inv.Keys),
+		inv.Attestation,
+	) {
+		t.Fatal("attestation verifies for another profile")
 	}
 
 	if code, _ := post(t, s, "/v1/inventory", InventoryRequest{Nonce: nonce(1), Profile: "nope"}); code == http.StatusOK {

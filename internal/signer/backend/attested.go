@@ -399,6 +399,10 @@ func AttestedRequestBinding(req AttestedRequest) []byte {
 // requests from every other signature a host key could make.
 const attestedInventoryRequestDomain = "bursa-armory-inventory-request/1"
 
+// attestedInventoryProfileDomain separates profile-bound inventory evidence
+// from the legacy unprofiled binding.
+const attestedInventoryProfileDomain = "bursa-attested-inventory-profile/1"
+
 // AttestedInventoryRequestBinding is the digest a host key signs to
 // authenticate an inventory request to an armory multi image: the domain
 // string, the nonce, the profile and the challenge, length-prefixed as in
@@ -424,7 +428,7 @@ func AttestedInventoryRequestBinding(
 // evidence and from verifying signatures, never from the channel.
 type Enclave interface {
 	// Inventory returns the held keys and attestation evidence bound to nonce
-	// (see InventoryBinding).
+	// (see InventoryBinding and InventoryBindingForProfile).
 	Inventory(ctx context.Context, nonce []byte) (AttestedInventory, error)
 	// Sign performs one purpose-bound signature.
 	Sign(ctx context.Context, req AttestedRequest) (AttestedResponse, error)
@@ -437,14 +441,45 @@ type AttestationVerifier interface {
 	Verify(ctx context.Context, evidence, binding []byte) error
 }
 
-// InventoryBinding is the digest an enclave commits to in its attestation
-// evidence: the protocol version, the caller's nonce, and every key's role and
-// public key in order. A verifier checks the evidence carries this value, so
-// evidence cannot be replayed for another nonce or paired with another key list.
+// InventoryBinding is the legacy unprofiled digest an enclave commits to in
+// its attestation evidence: the protocol version, the caller's nonce, and every
+// key's role and public key in order. A verifier checks the evidence carries
+// this value, so evidence cannot be replayed for another nonce or paired with
+// another key list. Profiled callers use InventoryBindingForProfile.
 func InventoryBinding(nonce []byte, keys []AttestedKeyInfo) []byte {
 	h := sha256.New()
 	h.Write([]byte(AttestedProtocol))
 	h.Write(nonce)
+	for _, k := range keys {
+		h.Write([]byte(strconv.Itoa(len(k.Role)) + ":" + string(k.Role)))
+		h.Write(k.PublicKey)
+	}
+	return h.Sum(nil)
+}
+
+// InventoryBindingForProfile is the inventory digest for a selected profile.
+// An empty profile retains InventoryBinding exactly. A non-empty profile uses
+// a separate domain and length-prefixes the protocol, nonce and profile before
+// the existing ordered key encoding.
+func InventoryBindingForProfile(
+	nonce []byte,
+	profile string,
+	keys []AttestedKeyInfo,
+) []byte {
+	if profile == "" {
+		return InventoryBinding(nonce, keys)
+	}
+
+	h := sha256.New()
+	for _, field := range [][]byte{
+		[]byte(attestedInventoryProfileDomain),
+		[]byte(AttestedProtocol),
+		nonce,
+		[]byte(profile),
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
 	for _, k := range keys {
 		h.Write([]byte(strconv.Itoa(len(k.Role)) + ":" + string(k.Role)))
 		h.Write(k.PublicKey)
@@ -911,7 +946,11 @@ func (b *AttestedBackend) Load(ctx context.Context) error {
 	if len(inv.Attestation) == 0 {
 		return fmt.Errorf("%w: missing attestation evidence", ErrAttestation)
 	}
-	if err := b.verifier.Verify(ctx, inv.Attestation, InventoryBinding(nonce, inv.Keys)); err != nil {
+	if err := b.verifier.Verify(
+		ctx,
+		inv.Attestation,
+		InventoryBindingForProfile(nonce, b.profile, inv.Keys),
+	); err != nil {
 		return fmt.Errorf("%w: %w", ErrAttestation, err)
 	}
 	keys := make(map[KeyHash]*attestedKey, len(inv.Keys))

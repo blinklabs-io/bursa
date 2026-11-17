@@ -27,9 +27,9 @@ Because the proxy remains untrusted for response integrity, correctness rests
 on four checks the signer performs itself:
 
 1. The key inventory is accepted only when its attestation evidence verifies and
-   commits to the signer's fresh nonce and to the exact key list
-   (`InventoryBinding`). Evidence cannot be replayed for another nonce or paired
-   with a different key list.
+   commits to the signer's fresh nonce, the exact key list and, when selected,
+   the requested profile (`InventoryBindingForProfile`). Evidence cannot be
+   replayed for another nonce or paired with a different profile or key list.
 2. Every sign request carries a fresh random nonce that the response must echo;
    a stale or replayed response is refused.
 3. Every signature is verified against the attested public key before it is
@@ -94,14 +94,23 @@ and returns:
  "attestation": "<platform evidence>"}
 ```
 
-The evidence must commit to
+For an unprofiled workload, the evidence must commit to
 `sha256("bursa-attested-signer/1" || nonce || for each key: decimal(len(role)) || ":" || role || public_key)`.
-Nitro carries it in the document's `user_data`; Confidential Space carries
-`hex(binding)` in the token's `eat_nonce`. Keys are identified by their Cardano
-key hash (blake2b-224 of the public key) and carry the role the enclave
-attests: `payment`, `stake`, `drep`, `cc-hot`, `cc-cold`, `pool`, or `policy`.
+For a non-empty profile, let `LP(x)` be `decimal(len(x)) || ":" || x`; the
+evidence must instead commit to
+`sha256(LP("bursa-attested-inventory-profile/1") || LP("bursa-attested-signer/1") || LP(nonce) || LP(profile) || for each key: decimal(len(role)) || ":" || role || public_key)`.
+Nitro is legacy/unprofiled only and carries the unprofiled digest in the
+document's `user_data`. Confidential Space carries the selected digest as
+`hex(binding)` in the token's `eat_nonce`; Armory signs the profile-bound digest
+with the device identity key. Keys are identified by their Cardano key hash
+(blake2b-224 of the public key) and carry the role the enclave attests:
+`payment`, `stake`, `drep`, `cc-hot`, `cc-cold`, `pool`, or `policy`.
 An unknown role, a malformed public key, or a duplicate key fails the load, and
 a failed load leaves the backend serving no keys.
+
+The JSON request and response shapes and protocol version remain unchanged.
+Profiled producers and consumers must be upgraded together: mixing the legacy
+unprofiled digest with the profile-bound digest fails inventory attestation.
 
 `POST /v1/sign` takes:
 
@@ -210,7 +219,9 @@ the enclave image, outside the signer:
 The production workload, host proxy, provisioning/reload flow, KMS policy, and
 PCR build and rotation procedure are documented in
 [`nitro-custody.md`](nitro-custody.md). That enclave signs only `opcert`
-requests with an explicit issue counter and implements no profile.
+requests with an explicit issue counter. It implements no profile, so a Nitro
+backend must leave `profile` empty and uses only the legacy unprofiled inventory
+digest.
 
 ## GCP Confidential Space
 
@@ -313,9 +324,9 @@ workload can serve a pool on several networks to signer backends that each set
   and the Cardano signature). The signer rejects a response whose binding does
   not match the profile it asked for, so an untrusted proxy cannot move a
   request to another profile.
-- The attestation token is bound to the nonce and key list, not the profile,
-  and the key is the same under every profile; profiles are separated by the
-  signing request binding and the counters.
+- The attestation token is bound to the nonce, selected profile and key list.
+  The key is the same under every profile, while inventory attribution,
+  signing requests and counters remain separated by profile.
 - First boot, and a restart that finishes a pending bootstrap, create every
   profile's counter object, as they create the unprofiled one. With an active
   envelope a missing profile counter stops startup, so a deleted object is not
@@ -373,7 +384,7 @@ and reads its text subject token only from
 launcher's automatically refreshed default token for the Workload Identity
 Federation provider. The custom token returned to the signer is separate: the
 workload requests it for the configured signer audience with
-`hex(InventoryBinding)` as its nonce on every inventory request.
+`hex(InventoryBindingForProfile)` as its nonce on every inventory request.
 
 Use direct resource access for the Cloud KMS key and counter object. Before a
 signature is made, the workload commits the operational-certificate issue
@@ -557,9 +568,9 @@ a host-key enclave whose unauthenticated `/v1/inventory` request is refused
 asks again with `challenge`, `host_key` and `host_signature`, signed over
 `AttestedInventoryRequestBinding` (the domain `bursa-armory-inventory-request/1`,
 the nonce, the profile and the challenge, length-prefixed). The inventory
-attestation itself encodes no network or chain, so the pinned identity key
-verifies a multi image as any other. Point `host_key_file` at the key of the
-profile's scope.
+attestation binds the selected profile but does not separately encode a network
+or chain, so the pinned identity key verifies a multi image as any other. Point
+`host_key_file` at the key of the profile's scope.
 
 ### Cold key provisioning
 

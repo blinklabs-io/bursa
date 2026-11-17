@@ -565,9 +565,8 @@ var errProfileNotServed = errors.New("profile is not served by this workload")
 
 // Inventory returns the public key and a custom token bound to the caller's
 // nonce and the exact inventory. profile must be one the workload serves, ""
-// for an unprofiled workload. The attested binding does not cover the profile:
-// every key is the same under all profiles, and each profiled signature is
-// bound to its profile by its own binding signature.
+// for an unprofiled workload. A profiled inventory attestation covers the
+// selected profile even when every profile exposes the same public key.
 func (w *Workload) Inventory(
 	ctx context.Context,
 	nonce []byte,
@@ -584,7 +583,7 @@ func (w *Workload) Inventory(
 	keys := []backend.AttestedKeyInfo{
 		{Role: backend.KeyTypePool, PublicKey: append([]byte(nil), w.pub...)},
 	}
-	binding := backend.InventoryBinding(nonce, keys)
+	binding := backend.InventoryBindingForProfile(nonce, profile, keys)
 	token, err := w.tokens.Token(
 		ctx,
 		w.audience,
