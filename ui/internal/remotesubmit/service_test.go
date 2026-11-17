@@ -11,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Salvionied/apollo/v2/backend/utxorpc"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 )
@@ -31,7 +33,7 @@ func (f *fakeSubmitter) DecodeTx(
 	return f.decode, f.err
 }
 
-func (f *fakeSubmitter) SubmitTxCbor(
+func (f *fakeSubmitter) SubmitTxCborContext(
 	ctx context.Context,
 	_ string,
 ) (spend.TxResult, error) {
@@ -44,6 +46,24 @@ func (f *fakeSubmitter) SubmitTxCbor(
 	defer f.mu.Unlock()
 	f.submits++
 	return spend.TxResult{TxHash: "abc123"}, f.err
+}
+
+type productionSubmitter struct {
+	service *spend.Service
+}
+
+func (p productionSubmitter) DecodeTx(
+	context.Context,
+	string,
+) (spend.TxSummary, error) {
+	return spend.TxSummary{IsComplete: true}, nil
+}
+
+func (p productionSubmitter) SubmitTxCborContext(
+	ctx context.Context,
+	txCbor string,
+) (spend.TxResult, error) {
+	return p.service.SubmitTxCborContext(ctx, txCbor)
 }
 
 func (f *fakeSubmitter) count() int {
@@ -272,6 +292,107 @@ func TestDisableCancelsSubmissionThatAlreadyLeftApproval(t *testing.T) {
 	}
 	if submitter.count() != 0 {
 		t.Fatal("revoked transaction completed submission")
+	}
+}
+
+func TestRevocationCancelsActiveNodeSubmission(t *testing.T) {
+	tests := []struct {
+		name   string
+		revoke func(*Service) error
+	}{
+		{
+			name: "disable",
+			revoke: func(s *Service) error {
+				_, err := s.Disable()
+				return err
+			},
+		},
+		{
+			name: "rotate",
+			revoke: func(s *Service) error {
+				_, err := s.Rotate()
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			accepted := make(chan struct{})
+			canceled := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			releaseNode := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			node := httptest.NewUnstartedServer(http.HandlerFunc(
+				func(_ http.ResponseWriter, r *http.Request) {
+					close(accepted)
+					select {
+					case <-r.Context().Done():
+						close(canceled)
+					case <-release:
+					}
+				},
+			))
+			node.Config.Protocols = new(http.Protocols)
+			node.Config.Protocols.SetUnencryptedHTTP2(true)
+			node.Start()
+			t.Cleanup(func() {
+				releaseNode()
+				node.Close()
+			})
+
+			submitter := productionSubmitter{service: spend.NewService(
+				utxorpc.NewUtxoRpcChainContext(node.URL, 0, nil),
+				nil,
+				nil,
+			)}
+			svc, err := New(
+				t.TempDir()+"/state.json",
+				"https://wallet.example:8443",
+				submitter,
+				&fakeApprover{},
+			)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := svc.Enable(); err != nil {
+				t.Fatalf("Enable: %v", err)
+			}
+			path := endpointPath(t, svc)
+
+			done := make(chan int, 1)
+			go func() {
+				rec := httptest.NewRecorder()
+				svc.ServeHTTP(
+					rec,
+					submitRequest(path, "approved-transaction"),
+				)
+				done <- rec.Code
+			}()
+			select {
+			case <-accepted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("submission did not reach the node")
+			}
+
+			if err := test.revoke(svc); err != nil {
+				t.Fatalf("revoke: %v", err)
+			}
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				t.Fatal("revocation did not cancel the active node submission")
+			}
+			select {
+			case status := <-done:
+				if status != http.StatusForbidden {
+					t.Fatalf("revoked submission status = %d, want 403", status)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("revoked submission handler did not return")
+			}
+		})
 	}
 }
 

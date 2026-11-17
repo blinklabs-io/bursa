@@ -22,6 +22,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
 )
 
 const (
@@ -45,7 +46,7 @@ var (
 
 type Submitter interface {
 	DecodeTx(context.Context, string) (spend.TxSummary, error)
-	SubmitTxCbor(context.Context, string) (spend.TxResult, error)
+	SubmitTxCborContext(context.Context, string) (spend.TxResult, error)
 }
 
 type Approver interface {
@@ -351,7 +352,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return "", ErrStaleApproval
 			}
-			result, err := s.submitter.SubmitTxCbor(submitCtx, txHex)
+			result, err := s.submitter.SubmitTxCborContext(submitCtx, txHex)
 			if !s.finishSubmission(activeID, generation, token) {
 				return "", ErrStaleApproval
 			}
@@ -413,9 +414,17 @@ func (s *Service) beginSubmission(
 	if !s.generationActiveLocked(generation, token) {
 		return nil, 0, false
 	}
-	ctx, cancel := context.WithCancel(parent)
+	// Ignore requester disconnects once approval has completed, while retaining
+	// a bounded lifetime. The cancellable child is created afterwards so access
+	// revocation still reaches the node submission.
+	baseCtx, baseCancel := submissionctx.New(parent)
+	ctx, cancel := context.WithCancel(baseCtx)
+	cancelSubmission := func() {
+		cancel()
+		baseCancel()
+	}
 	s.nextActive++
-	s.active[s.nextActive] = cancel
+	s.active[s.nextActive] = cancelSubmission
 	return ctx, s.nextActive, true
 }
 
