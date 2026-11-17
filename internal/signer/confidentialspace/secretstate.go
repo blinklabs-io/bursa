@@ -181,8 +181,11 @@ type SecretStateStore struct {
 	// base is the context of the RPCs that take no caller context.
 	base context.Context
 
-	mu       sync.Mutex
-	loaded   bool
+	mu     sync.Mutex
+	loaded bool
+	// parent is the secret as the service names it, read at Load. It names
+	// the project by number even when secret names it by ID.
+	parent   string
 	stopped  error
 	envelope []byte
 	pub      ed25519.PublicKey
@@ -401,6 +404,7 @@ func (s *SecretStateStore) loadLocked() error {
 		}
 		states[profile] = state
 	}
+	s.parent, _, _ = strings.Cut(resp.GetName(), "/versions/")
 	s.envelope = bytes.Clone(doc.Envelope)
 	s.pub = pub
 	s.hash = hash
@@ -505,6 +509,16 @@ func (s *SecretStateStore) versionNumber(name string) (uint64, bool) {
 	}
 	n, err := strconv.ParseUint(number, 10, 64)
 	if err != nil || n == 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// canonicalVersion returns the number of a version named exactly under the
+// parent read at Load.
+func (s *SecretStateStore) canonicalVersion(name string) (uint64, bool) {
+	n, ok := s.versionNumber(name)
+	if !ok || name != s.parent+"/versions/"+strconv.FormatUint(n, 10) {
 		return 0, false
 	}
 	return n, true
@@ -722,7 +736,7 @@ func (s *SecretStateStore) addVersion(
 	if err != nil {
 		return fmt.Errorf("add state secret version: %w", err)
 	}
-	keep, ok := s.versionNumber(added.GetName())
+	keep, ok := s.canonicalVersion(added.GetName())
 	if !ok {
 		return errors.New("state secret version has an unexpected name")
 	}
@@ -759,7 +773,7 @@ func (s *SecretStateStore) destroyOlder(
 			)
 			return
 		}
-		n, ok := s.versionNumber(v.GetName())
+		n, ok := s.canonicalVersion(v.GetName())
 		if ok && n < keep &&
 			v.GetState() == secretmanagerpb.SecretVersion_ENABLED {
 			older = append(older, v.GetName())

@@ -1093,6 +1093,23 @@ func TestSecretStateAcceptsProjectNumberNames(t *testing.T) {
 	requireProfiledIssue(t, w2, explicitReq(w2, "", 4, 2), 2)
 }
 
+func TestSecretStateRefusesAddedVersionOfAnotherProject(t *testing.T) {
+	t.Parallel()
+	c := provisionedSecret(t)
+	c.mu.Lock()
+	c.projectNumber = "123456789012"
+	c.mu.Unlock()
+	w := mustStateWorkload(t, c)
+	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+
+	// The service now names another project in the version it returns.
+	c.mu.Lock()
+	c.projectNumber = "210987654321"
+	c.mu.Unlock()
+	requireRefusedResp(t, w, explicitReq(w, "", 2, 1))
+	requireRefusedResp(t, w, explicitReq(w, "", 3, 2))
+}
+
 func TestSecretStateVersionNumber(t *testing.T) {
 	t.Parallel()
 	s := newTestStateStore(t, &fakeSecretClient{})
