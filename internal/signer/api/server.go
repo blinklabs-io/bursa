@@ -806,10 +806,9 @@ const readinessTimeout = 3 * time.Second
 // HealthHandler returns the unauthenticated health/readiness mux.
 //
 // /healthz is a static liveness endpoint: it returns 200 as long as the process
-// is running. /readyz is a real readiness probe: it invokes ready (typically a
-// ping of the watermark store plus a check that backends were built) and returns
-// 503 when the dependency is unreachable, 200 otherwise. A nil ready means no
-// dependency to check and /readyz always returns 200.
+// is running. /readyz evaluates ready and returns 503 when a dependency is
+// unavailable, 200 otherwise. A nil ready means no dependency to check and
+// /readyz always returns 200.
 func HealthHandler(ready func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(

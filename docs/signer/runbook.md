@@ -475,10 +475,12 @@ affected keys sign for the first time.
 Unauthenticated endpoints on the signer's listener:
 
 - `GET /healthz` - liveness (always 200 while the process runs).
-- `GET /readyz` - pings the configured SQLite or PostgreSQL watermark store
+- `GET /readyz` - reports the latest background writeability check of the
+  configured SQLite or PostgreSQL watermark store. Checks run every ten seconds
   with a three-second timeout. It returns 503 while that dependency is
-  unreachable and 200 for a healthy store. The in-memory store has no external
-  dependency and is always ready after startup.
+  unreachable or before the first check completes, and 200 for a healthy store.
+  The in-memory store has no external dependency and is always ready after
+  startup. Requests read the latest result and do not initiate database writes.
 
 Prometheus exposition is available at `/metrics` on the dedicated metrics
 listener. The listener accepts only a loopback host, with the port set by
