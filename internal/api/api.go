@@ -1062,13 +1062,20 @@ func registerAPIHandlers(
 		}
 		return protected(withLegacyStore(store, next))
 	}
+	// Reject cross-site browser requests before they can reach the expensive
+	// wallet derivation paths. Requests without browser metadata remain valid.
+	walletDerivationAccess := http.NewCrossOriginProtection().Handler
 	mux.Handle(
 		"/api/wallet/create",
-		walletAccess(http.HandlerFunc(handleWalletCreate)),
+		walletDerivationAccess(
+			walletAccess(http.HandlerFunc(handleWalletCreate)),
+		),
 	)
 	mux.Handle(
 		"/api/wallet/restore",
-		walletAccess(http.HandlerFunc(handleWalletRestore)),
+		walletDerivationAccess(
+			walletAccess(http.HandlerFunc(handleWalletRestore)),
+		),
 	)
 
 	mux.HandleFunc("/api/script/create", handleScriptCreate)

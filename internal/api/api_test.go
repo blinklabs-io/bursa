@@ -920,6 +920,89 @@ func TestRegisterAPIHandlersProtectsSensitiveRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, public.Code)
 }
 
+func TestRegisterAPIHandlersRejectsCrossOriginWalletDerivation(t *testing.T) {
+	mnemonic, err := bursa.GenerateMnemonic()
+	require.NoError(t, err)
+	restoreBody, err := json.Marshal(WalletRestoreRequest{Mnemonic: mnemonic})
+	require.NoError(t, err)
+
+	cfg := config.GetConfig()
+	original := *cfg
+	t.Cleanup(func() { *cfg = original })
+	*cfg = config.Config{Network: "preprod"}
+
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, nil)
+
+	for _, request := range []struct {
+		name string
+		path string
+		body []byte
+	}{
+		{name: "create", path: "/api/wallet/create"},
+		{name: "restore", path: "/api/wallet/restore", body: restoreBody},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"http://127.0.0.1:8080"+request.path,
+				bytes.NewReader(request.body),
+			)
+			req.Header.Set("Origin", "https://attacker.example")
+			mux.ServeHTTP(recorder, req)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+		})
+	}
+}
+
+func TestRegisterAPIHandlersPreservesWalletDerivationClients(t *testing.T) {
+	mnemonic, err := bursa.GenerateMnemonic()
+	require.NoError(t, err)
+	restoreBody, err := json.Marshal(WalletRestoreRequest{Mnemonic: mnemonic})
+	require.NoError(t, err)
+
+	cfg := config.GetConfig()
+	original := *cfg
+	t.Cleanup(func() { *cfg = original })
+	*cfg = config.Config{Network: "preprod"}
+
+	mux := http.NewServeMux()
+	registerAPIHandlers(mux, cfg, nil)
+
+	for _, request := range []struct {
+		name   string
+		path   string
+		body   []byte
+		origin string
+	}{
+		{name: "non-browser create", path: "/api/wallet/create"},
+		{
+			name:   "same-origin browser restore",
+			path:   "/api/wallet/restore",
+			body:   restoreBody,
+			origin: "http://127.0.0.1:8080",
+		},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"http://127.0.0.1:8080"+request.path,
+				bytes.NewReader(request.body),
+			)
+			if request.origin != "" {
+				req.Header.Set("Origin", request.origin)
+				req.Header.Set("Sec-Fetch-Site", "same-origin")
+			}
+			mux.ServeHTTP(recorder, req)
+
+			assert.Equal(t, http.StatusOK, recorder.Code)
+		})
+	}
+}
+
 func TestRegisterAPIHandlersRequiresStorageAdminToPersistWallets(t *testing.T) {
 	const secret = "01234567890123456789012345678901"
 	mnemonic, err := bursa.GenerateMnemonic()
