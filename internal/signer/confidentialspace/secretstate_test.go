@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -35,12 +36,12 @@ import (
 const testStateSecret = "projects/data/secrets/pool-state"
 
 type fakeSecretVersion struct {
-	name  string
 	data  []byte
 	state secretmanagerpb.SecretVersion_State
 }
 
-// fakeSecretClient models one Secret Manager secret.
+// fakeSecretClient models one Secret Manager secret. Version n is
+// versions[n-1].
 type fakeSecretClient struct {
 	mu       sync.Mutex
 	versions []*fakeSecretVersion
@@ -51,18 +52,64 @@ type fakeSecretClient struct {
 	destroyErr error
 	adds       int
 	destroys   int
+	// projectNumber, when set, is the project the API names in the resource
+	// names it returns, as Secret Manager does for a request naming the
+	// project by ID.
+	projectNumber string
+	// visible, when nonzero, is the newest version the latest alias and the
+	// version list show: both are eventually consistent. Reads by version
+	// number see every version.
+	visible int
+	// onList runs when a version list is requested.
+	onList func(*fakeSecretClient)
+	// cleanupBudgets records the time left on the context of every list and
+	// destroy call.
+	cleanupBudgets []time.Duration
 }
 
-func (c *fakeSecretClient) addLocked(data []byte) *fakeSecretVersion {
-	v := &fakeSecretVersion{
-		name: fmt.Sprintf(
-			"%s/versions/%d", testStateSecret, len(c.versions)+1,
-		),
+func (c *fakeSecretClient) nameLocked(n int) string {
+	parent := testStateSecret
+	if c.projectNumber != "" {
+		parent = "projects/" + c.projectNumber + "/secrets/pool-state"
+	}
+	return fmt.Sprintf("%s/versions/%d", parent, n)
+}
+
+// numberLocked resolves a version name in either project form.
+func (c *fakeSecretClient) numberLocked(name string) (int, bool) {
+	for _, parent := range []string{
+		testStateSecret,
+		"projects/" + c.projectNumber + "/secrets/pool-state",
+	} {
+		number, ok := strings.CutPrefix(name, parent+"/versions/")
+		if !ok {
+			continue
+		}
+		n, err := strconv.Atoi(number)
+		if err != nil || n < 1 || n > len(c.versions) {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
+}
+
+func (c *fakeSecretClient) shownLocked(n int) bool {
+	return c.visible == 0 || n <= c.visible
+}
+
+func (c *fakeSecretClient) recordBudgetLocked(ctx context.Context) {
+	if deadline, ok := ctx.Deadline(); ok {
+		c.cleanupBudgets = append(c.cleanupBudgets, time.Until(deadline))
+	}
+}
+
+func (c *fakeSecretClient) addLocked(data []byte) int {
+	c.versions = append(c.versions, &fakeSecretVersion{
 		data:  bytes.Clone(data),
 		state: secretmanagerpb.SecretVersion_ENABLED,
-	}
-	c.versions = append(c.versions, v)
-	return v
+	})
+	return len(c.versions)
 }
 
 // seed adds a version out of band, as provisioning or an attacker would.
@@ -101,6 +148,20 @@ func (c *fakeSecretClient) counts() (adds, destroys int) {
 	return c.adds, c.destroys
 }
 
+func (c *fakeSecretClient) accessResponseLocked(
+	n int,
+) *secretmanagerpb.AccessSecretVersionResponse {
+	v := c.versions[n-1]
+	crc := checksumValue(v.data)
+	return &secretmanagerpb.AccessSecretVersionResponse{
+		Name: c.nameLocked(n),
+		Payload: &secretmanagerpb.SecretPayload{
+			Data:       bytes.Clone(v.data),
+			DataCrc32C: &crc,
+		},
+	}
+}
+
 func (c *fakeSecretClient) AccessSecretVersion(
 	_ context.Context,
 	req *secretmanagerpb.AccessSecretVersionRequest,
@@ -110,26 +171,29 @@ func (c *fakeSecretClient) AccessSecretVersion(
 	if c.accessErr != nil {
 		return nil, c.accessErr
 	}
-	if req.GetName() != testStateSecret+"/versions/latest" {
-		return nil, status.Error(codes.InvalidArgument, "unexpected version")
+	if c.missing {
+		return nil, status.Error(codes.NotFound, "no such secret")
 	}
-	if !c.missing {
-		for i := len(c.versions) - 1; i >= 0; i-- {
-			v := c.versions[i]
-			if v.state != secretmanagerpb.SecretVersion_ENABLED {
-				continue
+	if req.GetName() == testStateSecret+"/versions/latest" {
+		for n := len(c.versions); n >= 1; n-- {
+			if c.shownLocked(n) &&
+				c.versions[n-1].state == secretmanagerpb.SecretVersion_ENABLED {
+				return c.accessResponseLocked(n), nil
 			}
-			crc := checksumValue(v.data)
-			return &secretmanagerpb.AccessSecretVersionResponse{
-				Name: v.name,
-				Payload: &secretmanagerpb.SecretPayload{
-					Data:       bytes.Clone(v.data),
-					DataCrc32C: &crc,
-				},
-			}, nil
 		}
+		return nil, status.Error(codes.NotFound, "no such version")
 	}
-	return nil, status.Error(codes.NotFound, "no such version")
+	n, ok := c.numberLocked(req.GetName())
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no such version")
+	}
+	if c.versions[n-1].state != secretmanagerpb.SecretVersion_ENABLED {
+		return nil, status.Error(
+			codes.FailedPrecondition,
+			"version is not enabled",
+		)
+	}
+	return c.accessResponseLocked(n), nil
 }
 
 func (c *fakeSecretClient) AddSecretVersion(
@@ -150,15 +214,22 @@ func (c *fakeSecretClient) AddSecretVersion(
 		return nil, status.Error(codes.InvalidArgument, "bad checksum")
 	}
 	c.adds++
-	v := c.addLocked(data)
-	return &secretmanagerpb.SecretVersion{Name: v.name, State: v.state}, nil
+	n := c.addLocked(data)
+	return &secretmanagerpb.SecretVersion{
+		Name:  c.nameLocked(n),
+		State: secretmanagerpb.SecretVersion_ENABLED,
+	}, nil
 }
 
 type fakeVersionIterator struct {
 	versions []*secretmanagerpb.SecretVersion
+	err      error
 }
 
 func (i *fakeVersionIterator) Next() (*secretmanagerpb.SecretVersion, error) {
+	if i.err != nil {
+		return nil, i.err
+	}
 	if len(i.versions) == 0 {
 		return nil, iterator.Done
 	}
@@ -167,41 +238,61 @@ func (i *fakeVersionIterator) Next() (*secretmanagerpb.SecretVersion, error) {
 	return v, nil
 }
 
+// ListSecretVersions lists newest first, as Secret Manager does.
 func (c *fakeSecretClient) ListSecretVersions(
-	context.Context,
-	*secretmanagerpb.ListSecretVersionsRequest,
+	ctx context.Context,
+	req *secretmanagerpb.ListSecretVersionsRequest,
 ) secretVersionIterator {
 	c.mu.Lock()
+	hook := c.onList
+	c.mu.Unlock()
+	if hook != nil {
+		hook(c)
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.recordBudgetLocked(ctx)
+	if c.missing {
+		return &fakeVersionIterator{
+			err: status.Error(codes.NotFound, "no such secret"),
+		}
+	}
 	it := &fakeVersionIterator{}
-	for _, v := range c.versions {
+	for n := len(c.versions); n >= 1; n-- {
+		v := c.versions[n-1]
+		if !c.shownLocked(n) ||
+			(req.GetFilter() == "state:ENABLED" &&
+				v.state != secretmanagerpb.SecretVersion_ENABLED) {
+			continue
+		}
 		it.versions = append(it.versions, &secretmanagerpb.SecretVersion{
-			Name: v.name, State: v.state,
+			Name: c.nameLocked(n), State: v.state,
 		})
 	}
 	return it
 }
 
 func (c *fakeSecretClient) DestroySecretVersion(
-	_ context.Context,
+	ctx context.Context,
 	req *secretmanagerpb.DestroySecretVersionRequest,
 ) (*secretmanagerpb.SecretVersion, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.recordBudgetLocked(ctx)
 	if c.destroyErr != nil {
 		return nil, c.destroyErr
 	}
-	for _, v := range c.versions {
-		if v.name == req.GetName() {
-			v.state = secretmanagerpb.SecretVersion_DESTROYED
-			v.data = nil
-			c.destroys++
-			return &secretmanagerpb.SecretVersion{
-				Name: v.name, State: v.state,
-			}, nil
-		}
+	n, ok := c.numberLocked(req.GetName())
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no such version")
 	}
-	return nil, status.Error(codes.NotFound, "no such version")
+	v := c.versions[n-1]
+	v.state = secretmanagerpb.SecretVersion_DESTROYED
+	v.data = nil
+	c.destroys++
+	return &secretmanagerpb.SecretVersion{
+		Name: c.nameLocked(n), State: v.state,
+	}, nil
 }
 
 func (*fakeSecretClient) Close() error { return nil }
@@ -972,5 +1063,154 @@ func TestSecretStateRefusesOtherKeyHash(t *testing.T) {
 	}
 	if _, err := counter.NextOpCert(t.Context(), other, 5, 10); err == nil {
 		t.Fatal("NextOpCert accepted another key")
+	}
+}
+
+func TestSecretStateAcceptsProjectNumberNames(t *testing.T) {
+	t.Parallel()
+	c := provisionedSecret(t)
+	c.mu.Lock()
+	c.projectNumber = "123456789012"
+	c.mu.Unlock()
+	w := mustStateWorkload(t, c)
+	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+	requireProfiledIssue(t, w, explicitReq(w, "", 2, 1), 1)
+	if n := c.enabled(); n != 1 {
+		t.Fatalf("%d enabled versions, want 1", n)
+	}
+
+	w2 := mustStateWorkload(t, c)
+	requireRefusedResp(t, w2, explicitReq(w2, "", 3, 1))
+	requireProfiledIssue(t, w2, explicitReq(w2, "", 4, 2), 2)
+}
+
+func TestSecretStateVersionNumber(t *testing.T) {
+	t.Parallel()
+	s := newTestStateStore(t, &fakeSecretClient{})
+	tests := []struct {
+		name string
+		want uint64
+	}{
+		{testStateSecret + "/versions/7", 7},
+		{"projects/123456789012/secrets/pool-state/versions/7", 7},
+		{"projects/123456789012/secrets/other-state/versions/7", 0},
+		{testStateSecret + "/versions/latest", 0},
+		{testStateSecret + "/versions/0", 0},
+		{testStateSecret + "/versions/7/extra", 0},
+		{testStateSecret, 0},
+	}
+	for _, tt := range tests {
+		got, ok := s.versionNumber(tt.name)
+		if ok != (tt.want != 0) || got != tt.want {
+			t.Errorf(
+				"versionNumber(%q) = %d, %v, want %d",
+				tt.name,
+				got,
+				ok,
+				tt.want,
+			)
+		}
+	}
+}
+
+// The serve command's HTTP write timeout is 30 seconds, and a signing request
+// waits for the cleanup that follows its write.
+const cleanupResponseBudget = 10 * time.Second
+
+func TestSecretStateCleanupFitsTheResponseBudget(t *testing.T) {
+	t.Parallel()
+	c := provisionedSecret(t)
+	w := mustStateWorkload(t, c)
+	c.mu.Lock()
+	c.cleanupBudgets = nil
+	c.mu.Unlock()
+
+	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.cleanupBudgets) == 0 {
+		t.Fatal("no cleanup call was made")
+	}
+	for _, budget := range c.cleanupBudgets {
+		if budget > cleanupResponseBudget {
+			t.Fatalf(
+				"cleanup call allowed %v, want at most %v",
+				budget,
+				cleanupResponseBudget,
+			)
+		}
+	}
+}
+
+func TestSecretStateCleanupNeverDestroysANewerVersion(t *testing.T) {
+	t.Parallel()
+	c := provisionedSecret(t)
+	w := mustStateWorkload(t, c)
+	newer := 0
+	c.mu.Lock()
+	c.onList = func(c *fakeSecretClient) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if newer == 0 {
+			newer = c.addLocked([]byte("newer"))
+		}
+	}
+	c.mu.Unlock()
+
+	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if newer == 0 {
+		t.Fatal("no cleanup listed the versions")
+	}
+	if got := c.versions[newer-1].state; got != secretmanagerpb.SecretVersion_ENABLED {
+		t.Fatalf("version newer than the write is %v, want ENABLED", got)
+	}
+}
+
+func TestSecretStateRestartReadsTheNewestVersionByNumber(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name       string
+		destroyErr error
+	}{
+		{"cleanup failed", errors.New("destroy denied")},
+		{"cleanup succeeded", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := provisionedSecret(t)
+			w := mustStateWorkload(t, c)
+			c.mu.Lock()
+			c.destroyErr = tt.destroyErr
+			c.mu.Unlock()
+			requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+
+			// The latest alias and the version list lag behind the
+			// version the issue added.
+			c.mu.Lock()
+			c.visible = len(c.versions) - 1
+			c.mu.Unlock()
+			w2 := mustStateWorkload(t, c)
+			requireRefusedResp(t, w2, explicitReq(w2, "", 2, 0))
+			requireProfiledIssue(t, w2, explicitReq(w2, "", 3, 1), 1)
+		})
+	}
+}
+
+func TestSecretStateRefusesWhenNewestVersionIsNotEnabled(t *testing.T) {
+	t.Parallel()
+	c := provisionedSecret(t)
+	w := mustStateWorkload(t, c)
+	c.mu.Lock()
+	c.destroyErr = errors.New("destroy denied")
+	c.mu.Unlock()
+	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+	c.mu.Lock()
+	c.versions[len(c.versions)-1].state = secretmanagerpb.SecretVersion_DISABLED
+	c.mu.Unlock()
+
+	if _, _, err := stateWorkload(t, c, nil); err == nil {
+		t.Fatal("startup loaded an older version below a disabled newest one")
 	}
 }

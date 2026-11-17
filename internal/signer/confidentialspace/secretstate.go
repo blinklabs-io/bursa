@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"maps"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,11 @@ const (
 	// maxStateDocumentSize is Secret Manager's payload limit.
 	maxStateDocumentSize = 64 << 10
 	secretRPCTimeout     = 30 * time.Second
+	// secretCleanupTimeout bounds the cleanup after a write. The signing
+	// request waits for it, so it must leave the serve command's 30-second
+	// write timeout room for the response. Unfinished cleanup is retried by
+	// the next write.
+	secretCleanupTimeout = 5 * time.Second
 )
 
 var (
@@ -164,7 +170,7 @@ type stateDocument struct {
 // is the authority against a rolled-back secret.
 //
 // A failed save stops the store: its outcome is unknown, so every later
-// counter call fails until restart, which reloads the latest version.
+// counter call fails until restart, which reloads the newest version.
 //
 // Bursa never creates or deletes the secret.
 type SecretStateStore struct {
@@ -336,17 +342,9 @@ func (s *SecretStateStore) Replace(expected, data []byte) error {
 func (s *SecretStateStore) loadLocked() error {
 	ctx, cancel := s.rpcContext(s.base)
 	defer cancel()
-	resp, err := s.client.AccessSecretVersion(
-		ctx,
-		&secretmanagerpb.AccessSecretVersionRequest{
-			Name: s.secret + "/versions/latest",
-		},
-	)
-	if status.Code(err) == codes.NotFound {
-		return ErrStateNotProvisioned
-	}
+	resp, err := s.readNewest(ctx)
 	if err != nil {
-		return fmt.Errorf("read state secret: %w", err)
+		return err
 	}
 	payload := resp.GetPayload()
 	data := payload.GetData()
@@ -410,6 +408,110 @@ func (s *SecretStateStore) loadLocked() error {
 	s.states = states
 	s.loaded = true
 	return nil
+}
+
+// readNewest reads the newest version of the state secret. The latest alias
+// and the version list are eventually consistent, so after a restart either
+// can still name a version older than the last one added. Only a read by
+// version number is strongly consistent, and version numbers are dense, so
+// reads continue past the newest listed version until one is not found. The
+// newest version must be enabled: an older one may hold a lower counter.
+func (s *SecretStateStore) readNewest(
+	ctx context.Context,
+) (*secretmanagerpb.AccessSecretVersionResponse, error) {
+	newest, err := s.newestListed(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var resp *secretmanagerpb.AccessSecretVersionResponse
+	var respErr error
+	if newest > 0 {
+		resp, respErr = s.accessVersion(ctx, newest)
+	}
+	for {
+		next, err := s.accessVersion(ctx, newest+1)
+		if status.Code(err) == codes.NotFound {
+			break
+		}
+		// A disabled or destroyed version still holds its number.
+		if err != nil && status.Code(err) != codes.FailedPrecondition {
+			return nil, fmt.Errorf("read state secret: %w", err)
+		}
+		newest++
+		resp, respErr = next, err
+	}
+	if newest == 0 || status.Code(respErr) == codes.NotFound {
+		return nil, ErrStateNotProvisioned
+	}
+	if respErr != nil {
+		return nil, fmt.Errorf(
+			"read state secret version %d: %w", newest, respErr,
+		)
+	}
+	if n, ok := s.versionNumber(resp.GetName()); !ok || n != newest {
+		return nil, errors.New("state secret version has an unexpected name")
+	}
+	return resp, nil
+}
+
+// newestListed returns the highest enabled version number the version list
+// shows, or 0.
+func (s *SecretStateStore) newestListed(ctx context.Context) (uint64, error) {
+	it := s.client.ListSecretVersions(
+		ctx,
+		&secretmanagerpb.ListSecretVersionsRequest{
+			Parent: s.secret,
+			Filter: "state:ENABLED",
+		},
+	)
+	var newest uint64
+	for {
+		v, err := it.Next()
+		if errors.Is(err, iterator.Done) {
+			return newest, nil
+		}
+		if status.Code(err) == codes.NotFound {
+			return 0, ErrStateNotProvisioned
+		}
+		if err != nil {
+			return 0, fmt.Errorf("list state secret versions: %w", err)
+		}
+		if n, ok := s.versionNumber(v.GetName()); ok && n > newest {
+			newest = n
+		}
+	}
+}
+
+func (s *SecretStateStore) accessVersion(
+	ctx context.Context,
+	n uint64,
+) (*secretmanagerpb.AccessSecretVersionResponse, error) {
+	return s.client.AccessSecretVersion(
+		ctx,
+		&secretmanagerpb.AccessSecretVersionRequest{
+			Name: s.secret + "/versions/" + strconv.FormatUint(n, 10),
+		},
+	)
+}
+
+// versionNumber returns the number of a version of the state secret. Secret
+// Manager names the project by number in the names it returns, even for a
+// request that named it by ID, so the project is not compared.
+func (s *SecretStateStore) versionNumber(name string) (uint64, bool) {
+	parent, number, ok := strings.Cut(name, "/versions/")
+	if !ok || !stateSecretPattern.MatchString(parent) ||
+		secretID(parent) != secretID(s.secret) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(number, 10, 64)
+	if err != nil || n == 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func secretID(secret string) string {
+	return secret[strings.LastIndex(secret, "/")+1:]
 }
 
 // parseStateEnvelope reads the metadata of an envelope the store must be able
@@ -620,20 +722,22 @@ func (s *SecretStateStore) addVersion(
 	if err != nil {
 		return fmt.Errorf("add state secret version: %w", err)
 	}
-	if !strings.HasPrefix(added.GetName(), s.secret+"/versions/") {
+	keep, ok := s.versionNumber(added.GetName())
+	if !ok {
 		return errors.New("state secret version has an unexpected name")
 	}
-	s.destroyOlder(detached, added.GetName())
+	s.destroyOlder(detached, keep)
 	return nil
 }
 
-// destroyOlder destroys every enabled version but keep. A failure is logged
-// and retried by the next save: the version that was added is already durable.
+// destroyOlder destroys every enabled version numbered below keep, never a
+// newer one. A failure is logged and retried by the next save: the version
+// that was added is already durable.
 func (s *SecretStateStore) destroyOlder(
 	parent context.Context,
-	keep string,
+	keep uint64,
 ) {
-	ctx, cancel := s.rpcContext(parent)
+	ctx, cancel := context.WithTimeout(parent, secretCleanupTimeout)
 	defer cancel()
 	it := s.client.ListSecretVersions(
 		ctx,
@@ -655,7 +759,8 @@ func (s *SecretStateStore) destroyOlder(
 			)
 			return
 		}
-		if v.GetName() != keep &&
+		n, ok := s.versionNumber(v.GetName())
+		if ok && n < keep &&
 			v.GetState() == secretmanagerpb.SecretVersion_ENABLED {
 			older = append(older, v.GetName())
 		}

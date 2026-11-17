@@ -386,7 +386,10 @@ are those of the Cloud Storage counter.
   destroyed; a failed destroy is logged, does not fail the request, and is
   retried by the next write.
 - A failed write stops the counter: every later request is refused until the
-  workload restarts and reloads the latest version.
+  workload restarts and reloads the newest version.
+- Startup reads the newest version by number, since the `latest` alias and the
+  version list are eventually consistent. If the newest version is disabled or
+  destroyed, startup stops rather than load an older one.
 - Bursa never creates or deletes the secret. A missing secret, a secret without
   a version, or an empty payload stops startup; the workload never generates a
   pool key in this mode and refuses to create one. Provisioning must write the
