@@ -232,6 +232,45 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 	}
 }
 
+func TestPrereleaseTagCreatesPrerelease(t *testing.T) {
+	data, err := os.ReadFile(
+		filepath.Join(".github", "workflows", "publish.yml"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				ID   string `yaml:"id"`
+				With struct {
+					Script string `yaml:"script"`
+				} `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	job, ok := workflow.Jobs["create-draft-release"]
+	if !ok {
+		t.Fatal("create-draft-release job is missing")
+	}
+	for _, step := range job.Steps {
+		if step.ID != "create-release" {
+			continue
+		}
+		if !strings.Contains(
+			step.With.Script,
+			`prerelease: process.env.RELEASE_TAG.includes('-')`,
+		) {
+			t.Fatal("release creation does not classify prerelease tags")
+		}
+		return
+	}
+	t.Fatal("release creation step is missing")
+}
+
 func TestMakeVersionStaysData(t *testing.T) {
 	if _, err := exec.LookPath("make"); err != nil {
 		t.Skip("make is required for release build checks")
