@@ -1,4 +1,4 @@
-import { loadIdentity, signRequest } from './identity';
+import { loadIdentity, signRequest, challengeHeaders } from './identity';
 
 /**
  * MV3 service workers can be suspended by the browser at any time.
@@ -57,10 +57,11 @@ export async function handleRequest(
     });
     const challengeResponse = await fetch(new URL('/connector/challenge', baseURL).toString(), {
       method: 'POST',
+      headers: await challengeHeaders(identity),
       signal: controller.signal,
     });
     if (!challengeResponse.ok) {
-      return { id: message.id, error: { code: -3, info: 'Not paired with Bursa.' } };
+      return { id: message.id, error: { code: challengeResponse.status === 401 ? -3 : -2, info: challengeResponse.status === 401 ? 'Not paired with Bursa.' : 'Bursa challenge service is busy. Try again.' } };
     }
     const { challenge } = (await challengeResponse.json()) as { challenge: string };
     const signature = await signRequest(

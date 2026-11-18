@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../src/identity', () => ({
+  challengeHeaders: vi.fn(async () => ({ 'X-Bursa-Challenge': 'nonce', 'X-Bursa-Signature': 'proof' })),
   loadIdentity: vi.fn(async () => ({ privateKey: {}, publicKey: 'test-public-key' })),
   signRequest: vi.fn(async () => 'test-signature'),
 }));

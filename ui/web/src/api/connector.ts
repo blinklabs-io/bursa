@@ -134,3 +134,7 @@ export function subscribePending(
     es?.close();
   };
 }
+
+export function confirmPairing(extensionID: string, code: string, password: string): Promise<void> {
+  return apiPost<void>("/connector/confirm-pair", { extension_id: extensionID, code, password });
+}

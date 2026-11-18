@@ -73,29 +73,20 @@ const signTxEffects = {
 let restoreEventSource: (() => void) | undefined;
 let emittedRequests: ConnectorRequest[] = [];
 
-function emitRequest(req: ConnectorRequest) {
+async function emitRequest(req: ConnectorRequest) {
   emittedRequests = [...emittedRequests.filter((item) => item.id !== req.id), req];
-  emitSnapshot(emittedRequests);
+  await emitSnapshot(emittedRequests);
 }
 
-function emitSnapshot(pending: ConnectorRequest[]) {
-	void waitFor(() => expect(FakeEventSource.instances).toHaveLength(1)).then(() => {
-		act(() => {
-			FakeEventSource.instances[0].emit(JSON.stringify({ type: "snapshot", pending }));
-		});
-	});
+async function emitSnapshot(pending: ConnectorRequest[]) {
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  act(() => {
+    FakeEventSource.instances[0].emit(JSON.stringify({ type: "snapshot", pending }));
+  });
 }
 
-function emitError() {
-	void waitFor(() => expect(FakeEventSource.instances).toHaveLength(1)).then(() => {
-		act(() => FakeEventSource.instances[0].emitError());
-	});
-}
-
-function emitOpen() {
-	void waitFor(() => expect(FakeEventSource.instances).toHaveLength(1)).then(() => {
-		act(() => FakeEventSource.instances[0].emitOpen());
-	});
+async function emitOpen() {
+  act(() => FakeEventSource.instances[0].emitOpen());
 }
 
 beforeEach(() => {
@@ -110,6 +101,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 	vi.unstubAllGlobals();
   restoreEventSource?.();
@@ -127,7 +119,7 @@ test("renders nothing when there are no pending requests", () => {
 
 test("shows the approval dialog when a pending request arrives", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq());
+  await emitRequest(makeReq());
   await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
   expect(screen.getByText("https://app.minswap.org")).toBeInTheDocument();
   expect(screen.getByText(/grant wallet access/i)).toBeInTheDocument();
@@ -135,7 +127,7 @@ test("shows the approval dialog when a pending request arrives", async () => {
 
 test("shows the oldest request first when a reconnect snapshot is unordered", async () => {
   render(<ConnectorApproval />);
-  emitSnapshot([
+  await emitSnapshot([
     makeReq({
       id: "newer",
       origin: "https://newer.example",
@@ -156,14 +148,14 @@ test("shows the oldest request first when a reconnect snapshot is unordered", as
 
 test("authoritative snapshots remove expired requests from the overlay", async () => {
   render(<ConnectorApproval />);
-  emitSnapshot([
+  await emitSnapshot([
     makeReq({ id: "expired", origin: "https://expired.example" }),
   ]);
   await waitFor(() =>
     expect(screen.getByText("https://expired.example")).toBeInTheDocument(),
   );
 
-  emitSnapshot([]);
+  await emitSnapshot([]);
 
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
@@ -175,7 +167,7 @@ test("moves focus into non-password dialogs and traps Tab navigation", async () 
   backgroundButton.focus();
 
   const { unmount } = render(<ConnectorApproval />);
-  emitRequest(makeReq({ method: "enable" }));
+  await emitRequest(makeReq({ method: "enable" }));
 
   const reject = await screen.findByRole("button", { name: /reject/i });
   const approve = screen.getByRole("button", { name: /approve/i });
@@ -198,7 +190,7 @@ test("Approve calls decide(id, true, password) for a signing method", async () =
   const req = makeReq({ id: "sign-1", method: "signTx", effects: signTxEffects });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => screen.getByLabelText(/spending password/i));
   fireEvent.change(screen.getByLabelText(/spending password/i), {
@@ -214,7 +206,7 @@ test("Reject calls decide(id, false) without a password", async () => {
   const req = makeReq({ id: "enable-1", method: "enable" });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => screen.getByRole("button", { name: /reject/i }));
   fireEvent.click(screen.getByRole("button", { name: /reject/i }));
@@ -227,7 +219,7 @@ test("dialog disappears after a request is decided", async () => {
   const req = makeReq({ id: "vanish-1", method: "enable" });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => screen.getByRole("dialog"));
   fireEvent.click(screen.getByRole("button", { name: /reject/i }));
@@ -240,7 +232,7 @@ test("notifyPending is called once per new request", async () => {
   const req = makeReq({ id: "notify-1" });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => expect(notifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "notify-1" })));
   expect(notifySpy).toHaveBeenCalledTimes(1);
@@ -250,7 +242,7 @@ test("Approve is disabled when password is required but empty", async () => {
   const req = makeReq({ id: "signTx-pw", method: "signTx" });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => screen.getByRole("button", { name: /approve/i }));
   expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
@@ -261,7 +253,7 @@ test("submitTx approval does not require a spending password", async () => {
   const req = makeReq({ id: "submit-1", method: "submitTx", params: { tx: "deadbeef" } });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => screen.getByRole("button", { name: /approve/i }));
   expect(screen.queryByLabelText(/spending password/i)).toBeNull();
@@ -275,7 +267,7 @@ test("submitTx approval does not require a spending password", async () => {
 test("remote submission shows its bounded summary and requires explicit approval", async () => {
   const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "remote-submit-1",
     origin: "Remote transaction submission",
     method: "remoteSubmitTx",
@@ -295,12 +287,12 @@ test("drops stale pending requests when decide returns 404", async () => {
   vi.spyOn(connectorApi, "decide").mockRejectedValue(new ApiError(404, "unknown request id"));
 
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "stale-1",
     origin: "https://stale.example",
     created: "2026-06-27T00:00:00Z",
   }));
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "next-1",
     origin: "https://next.example",
     created: "2026-06-27T00:00:01Z",
@@ -321,7 +313,7 @@ test("shows request params before approval", async () => {
   });
 
   render(<ConnectorApproval />);
-  emitRequest(req);
+  await emitRequest(req);
 
   await waitFor(() => expect(screen.getByText(/"payload": "4275727361"/)).toBeInTheDocument());
   expect(screen.getByText(/"addr": "addr_test1qpz\.\.\."/)).toBeInTheDocument();
@@ -329,7 +321,7 @@ test("shows request params before approval", async () => {
 
 test("signData shows a raw-contents warning while verified signTx does not", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "sign-warn",
     method: "signData",
     params: { addr: "addr_test1", payload: "deadbeef" },
@@ -337,7 +329,7 @@ test("signData shows a raw-contents warning while verified signTx does not", asy
 
   await waitFor(() => expect(screen.getByText(/contents unverified/i)).toBeInTheDocument());
 
-  emitSnapshot([makeReq({
+  await emitSnapshot([makeReq({
     id: "signTx-nowarn",
     method: "signTx",
     origin: "https://x.example",
@@ -352,7 +344,7 @@ test("signData shows a raw-contents warning while verified signTx does not", asy
 
 test("shows verified signTx effects before approval", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "sign-effects",
     method: "signTx",
     params: { tx: "deadbeef", partialSign: true },
@@ -384,7 +376,7 @@ test("shows verified signTx effects before approval", async () => {
 
 test("shows the metadata a signTx commits to before approval", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "sign-metadata",
     method: "signTx",
     params: { tx: "deadbeef", partialSign: false },
@@ -403,7 +395,7 @@ test("shows the metadata a signTx commits to before approval", async () => {
 test("refuses approval when a signTx snapshot has no verified effects", async () => {
   const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "sign-missing-effects",
     method: "signTx",
     params: { tx: "deadbeef" },
@@ -420,7 +412,7 @@ test("refuses approval when a signTx snapshot has no verified effects", async ()
 test("refuses approval when a signTx snapshot carries null effects", async () => {
   const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
   render(<ConnectorApproval />);
-  emitRequest(makeReq({
+  await emitRequest(makeReq({
     id: "sign-null-effects",
     method: "signTx",
     params: { tx: "deadbeef" },
@@ -437,14 +429,14 @@ test("refuses approval when a signTx snapshot carries null effects", async () =>
 
 test("a substituted head request forces re-review before Approve", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq({ id: "orig", method: "enable", origin: "https://orig.example" }));
+  await emitRequest(makeReq({ id: "orig", method: "enable", origin: "https://orig.example" }));
 
   // The first request needs no re-review: Approve is immediately actionable.
   await waitFor(() => expect(screen.getByText("https://orig.example")).toBeInTheDocument());
   expect(screen.getByRole("button", { name: /approve/i })).not.toBeDisabled();
 
   // The head is replaced externally (timeout / another tab) by a different request.
-  emitSnapshot([makeReq({ id: "swapped", method: "enable", origin: "https://swapped.example" })]);
+  await emitSnapshot([makeReq({ id: "swapped", method: "enable", origin: "https://swapped.example" })]);
   await waitFor(() => expect(screen.getByText("https://swapped.example")).toBeInTheDocument());
 
   // Approve is now gated behind an explicit re-review acknowledgement.
@@ -457,20 +449,22 @@ test("a substituted head request forces re-review before Approve", async () => {
 
 test("shows a reconnecting indicator when the stream degrades and clears it on recovery", async () => {
   render(<ConnectorApproval />);
-  emitRequest(makeReq({ id: "degrade-1", method: "enable" }));
+  await emitRequest(makeReq({ id: "degrade-1", method: "enable" }));
   await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
 
   // No indicator while the stream is healthy.
   expect(screen.queryByText(/reconnecting to node/i)).toBeNull();
 
   // A connection error surfaces the indicator.
-  emitError();
-  await waitFor(() =>
-    expect(screen.getByText(/reconnecting to node/i)).toBeInTheDocument(),
-  );
+  vi.useFakeTimers();
+  act(() => FakeEventSource.instances[0].emitError());
+  expect(screen.getByText(/reconnecting to node/i)).toBeInTheDocument();
 
-  // The stream reopening clears it again.
-  emitOpen();
+  // Advance the production reconnect timer before opening the new stream.
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  vi.useRealTimers();
+  await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  await emitOpen();
   await waitFor(() => expect(screen.queryByText(/reconnecting to node/i)).toBeNull());
 });
 
@@ -478,10 +472,10 @@ test("a substituted no-password request cannot be one-click approved", async () 
   const decideSpy = vi.spyOn(connectorApi, "decide").mockResolvedValue(undefined);
 
   render(<ConnectorApproval />);
-  emitRequest(makeReq({ id: "sub-a", method: "submitTx", params: { tx: "aa" } }));
+  await emitRequest(makeReq({ id: "sub-a", method: "submitTx", params: { tx: "aa" } }));
   await waitFor(() => expect(screen.getByRole("button", { name: /approve/i })).not.toBeDisabled());
 
-  emitSnapshot([makeReq({ id: "sub-b", method: "submitTx", params: { tx: "bb" } })]);
+  await emitSnapshot([makeReq({ id: "sub-b", method: "submitTx", params: { tx: "bb" } })]);
   await waitFor(() => expect(screen.getByText(/request changed/i)).toBeInTheDocument());
 
   // A click that lands on the substituted request must not approve it.

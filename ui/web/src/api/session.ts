@@ -12,8 +12,9 @@ export async function establishControlSession(): Promise<void> {
   const token = decodeURIComponent(window.location.hash.slice(SESSION_FRAGMENT_PREFIX.length));
   if (!token) return;
 
-  controlSessionToken = token;
-
+  controlSessionToken = "";
+  // Remove the launch credential even if validation fails or the network drops.
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/`);
   const response = await fetch("/session", {
     method: "POST",
     headers: { "X-Bursa-Session": token },
@@ -23,7 +24,9 @@ export async function establishControlSession(): Promise<void> {
     throw new Error("wallet session authorization failed");
   }
 
-  // Keep the capability only in this page's memory and remove it from browser
-  // history. Hash routes resume at the normal default screen.
-  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/`);
+  controlSessionToken = token;
+}
+
+export function hasControlSession(): boolean {
+  return controlSessionToken !== "";
 }

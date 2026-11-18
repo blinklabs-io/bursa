@@ -41,13 +41,19 @@ async function readIdentity(): Promise<StoredIdentity | undefined> {
   }
 }
 
-async function writeIdentity(identity: StoredIdentity): Promise<void> {
+async function writeIdentity(identity: StoredIdentity): Promise<StoredIdentity> {
   const database = await openDatabase();
   try {
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<StoredIdentity>((resolve, reject) => {
       const transaction = database.transaction(storeName, 'readwrite');
-      transaction.objectStore(storeName).put(identity, identityKey);
-      transaction.oncomplete = () => resolve();
+      const store = transaction.objectStore(storeName);
+      const request = store.get(identityKey);
+      let stored = identity;
+      request.onsuccess = () => {
+        if (request.result) stored = request.result as StoredIdentity;
+        else store.add(identity, identityKey);
+      };
+      transaction.oncomplete = () => resolve(stored);
       transaction.onerror = () => reject(transaction.error ?? new Error('Unable to store identity'));
       transaction.onabort = () => reject(transaction.error ?? new Error('Unable to store identity'));
     });
@@ -86,8 +92,7 @@ export async function loadOrCreateIdentity(): Promise<StoredIdentity> {
     const existing = await readIdentity();
     if (existing) return existing;
     const created = await createIdentity();
-    await writeIdentity(created);
-    return created;
+    return writeIdentity(created);
   })();
   return identityPromise;
 }
@@ -113,4 +118,19 @@ export async function signRequest(
     new TextEncoder().encode(payload),
   );
   return base64URL(new Uint8Array(signature));
+}
+
+export async function pairingCode(publicKey: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('bursa-pair-v1\n' + publicKey)));
+  return Array.from(digest.slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function challengeHeaders(identity: StoredIdentity): Promise<Record<string, string>> {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  new DataView(bytes.buffer).setBigUint64(0, BigInt(Date.now()));
+  const nonce = base64URL(bytes);
+  return {
+    'X-Bursa-Challenge': nonce,
+    'X-Bursa-Signature': await signRequest(identity, nonce, 'POST', '/connector/challenge', ''),
+  };
 }

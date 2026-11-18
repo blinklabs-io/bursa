@@ -9512,7 +9512,9 @@ func TestSessionEventTicketIsSingleUse(t *testing.T) {
 
 	passed = false
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, request)
+	replay := httptest.NewRequest(http.MethodGet,
+		"/connector/events?ticket="+url.QueryEscape(response.Ticket), nil)
+	h.ServeHTTP(rec, replay)
 	if rec.Code != http.StatusUnauthorized || passed {
 		t.Fatalf("replayed event ticket = %d, passed=%v", rec.Code, passed)
 	}
@@ -9589,10 +9591,11 @@ func TestSameOriginGuardSkipsConnector(t *testing.T) {
 		WithConnector(svc),
 	)
 
+	_, publicKey := newTestConnectorKey(t)
 	req := httptest.NewRequest(
 		http.MethodPost,
 		"/connector/pair",
-		strings.NewReader(`{"extension_id":"chrome-extension://guardtest"}`),
+		strings.NewReader(`{"extension_id":"chrome-extension://guardtest","public_key":"`+publicKey+`"}`),
 	)
 	req.Host = "127.0.0.1:8090"
 	req.Header.Set("Origin", "chrome-extension://guardtest")

@@ -242,7 +242,8 @@ func TestConnectorPairRoute(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		body := `{"extension_id":"` + extID + `","code":""}`
+		_, publicKey := newTestConnectorKey(t)
+		body := `{"extension_id":"` + extID + `","public_key":"` + publicKey + `"}`
 		req := httptest.NewRequest(
 			http.MethodPost,
 			"/connector/pair",
@@ -277,20 +278,23 @@ func TestConnectorPairRoute(t *testing.T) {
 		func(t *testing.T) {
 			svc := newSvc(t)
 			mux := http.NewServeMux()
-			registerConnector(mux, svc)
+			registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(string) error { return nil }))
 
 			// Learn the code directly (simulates in-app display).
-			code, _ := svc.BeginPair(extID)
-
 			_, publicKey := newTestConnectorKey(t)
+			if err := svc.BeginKeyPair(extID, publicKey); err != nil {
+				t.Fatal(err)
+			}
+			code := svc.PendingPairings()[0].Code
 			body := `{"extension_id":"` + extID + `","code":"` + code + `","public_key":"` + publicKey + `"}`
 			req := httptest.NewRequest(
 				http.MethodPost,
-				"/connector/pair",
+				"/connector/confirm-pair",
 				strings.NewReader(body),
 			)
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Origin", extID)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set("Origin", "http://127.0.0.1:8090")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
@@ -441,11 +445,12 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 				&fakeConnectorBackend{},
 				nil,
 			)
-			code, err := svc.BeginPair(extID)
+			_, publicKey := newTestConnectorKey(t)
+			err := svc.BeginKeyPair(extID, publicKey)
+			code := svc.PendingPairings()[0].Code
 			if err != nil {
 				t.Fatalf("BeginPair: %v", err)
 			}
-			_, publicKey := newTestConnectorKey(t)
 			rec := post(
 				t,
 				svc,
@@ -459,18 +464,8 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 					rec.Body.String(),
 				)
 			}
-			rec = post(
-				t,
-				svc,
-				extID,
-				`{"extension_id":"`+extID+`","code":"`+code+`","public_key":"`+publicKey+`"}`,
-			)
-			if rec.Code != http.StatusOK {
-				t.Fatalf(
-					"matching origin status = %d, want 200; body: %s",
-					rec.Code,
-					rec.Body.String(),
-				)
+			if err := svc.ConfirmDesktopPair(extID, code); err != nil {
+				t.Fatal(err)
 			}
 		},
 	)
@@ -484,7 +479,8 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 				&fakeConnectorBackend{},
 				nil,
 			)
-			rec := post(t, svc, extID, `{"extension_id":"testpair"}`)
+			_, publicKey := newTestConnectorKey(t)
+			rec := post(t, svc, extID, `{"extension_id":"testpair","public_key":"`+publicKey+`"}`)
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf(
 					"status = %d, want 202; body: %s",
@@ -1932,8 +1928,10 @@ func TestConnectorMiddleware(t *testing.T) {
 				req.Header.Set("Origin", tc.origin)
 			}
 			if tc.tokenHdr != "" {
-				if _, ok := testConnectorKeys.Load(tc.tokenHdr); ok && tc.origin == extID {
+				if _, ok := testConnectorKeys.Load(tc.tokenHdr); ok {
+					req.Header.Set("Origin", extID)
 					authorizeTestConnectorRequest(t, svc, tc.tokenHdr, req)
+					req.Header.Set("Origin", tc.origin)
 				} else {
 					req.Header.Set("X-Bursa-Challenge", "invalid")
 					req.Header.Set("X-Bursa-Signature", "invalid")
@@ -2285,4 +2283,82 @@ func TestHandlePendingPairings(t *testing.T) {
 			t.Fatalf("status = %d, want 403", rec.Code)
 		}
 	})
+}
+
+type observedConnectorBody struct{ read bool }
+
+func (b *observedConnectorBody) Read([]byte) (int, error) { b.read = true; return 0, io.EOF }
+func (*observedConnectorBody) Close() error               { return nil }
+
+func TestConnectorRejectsBeforeReadingUnauthorizedBody(t *testing.T) {
+	const origin = "chrome-extension://paired"
+	svc, authority := newTestService(t, origin)
+	called := false
+	handler := connectorMiddleware(svc, svc.PairedExtensionID)(newOKHandler(&called))
+	req := httptest.NewRequest(http.MethodPost, "/connector/request", nil)
+	req.Header.Set("Origin", origin)
+	body := &observedConnectorBody{}
+	req.Body = body
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || body.read || called {
+		t.Fatal("unsigned body was read or admitted")
+	}
+	authorizeTestConnectorRequest(t, svc, authority, req)
+	body.read = false
+	req.Body = body
+	req.Header.Set("Origin", "chrome-extension://evil")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || body.read || called {
+		t.Fatal("wrong-origin body was read or admitted")
+	}
+	req.Header.Set("Origin", origin)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatal("wrong-origin challenge was reusable")
+	}
+}
+
+func TestDesktopPairingRequiresSessionAndPassword(t *testing.T) {
+	const extID = "chrome-extension://desktop-confirm"
+	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+	_, key := newTestConnectorKey(t)
+	if err := svc.BeginKeyPair(extID, key); err != nil {
+		t.Fatal(err)
+	}
+	code := svc.PendingPairings()[0].Code
+	mux := http.NewServeMux()
+	registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(password string) error {
+		if password != "correct" {
+			return vault.ErrWrongPassword
+		}
+		return nil
+	}))
+	handler := sessionGuard(testSessionToken, mux)
+	for _, tc := range []struct {
+		name, session, password string
+		want                    int
+	}{
+		{"no session", "", "correct", http.StatusUnauthorized},
+		{"wrong password", testSessionToken, "wrong", http.StatusUnauthorized},
+		{"valid", testSessionToken, "correct", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/connector/confirm-pair", strings.NewReader(`{"extension_id":"`+extID+`","code":"`+code+`","password":"`+tc.password+`"}`))
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set("Origin", "http://127.0.0.1:8090")
+			req.Header.Set("X-Bursa-Session", tc.session)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status=%d want=%d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+			_, paired := svc.PairedExtensionID()
+			if paired != (tc.want == http.StatusOK) {
+				t.Fatal("pairing changed without authorized confirmation")
+			}
+		})
+	}
 }

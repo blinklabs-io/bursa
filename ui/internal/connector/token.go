@@ -22,6 +22,7 @@ import (
 type tokenData struct {
 	ExtensionID string `json:"extension_id"`
 	PublicKey   string `json:"public_key"`
+	Binding     string `json:"binding"`
 }
 
 var ErrInvalidExtensionID = errors.New("connector: invalid extension id")
@@ -58,7 +59,7 @@ func NewTokenStore(path string, rnd func() (string, error)) *TokenStore {
 	if b, err := os.ReadFile(path); err == nil {
 		var data tokenData
 		if err := json.Unmarshal(b, &data); err == nil {
-			data.ExtensionID = normalizeExtensionID(data.ExtensionID)
+			data.ExtensionID = NormalizeExtensionID(data.ExtensionID)
 			if data.PublicKey != "" && validExtensionID(data.ExtensionID) {
 				ts.data = data
 			}
@@ -70,7 +71,7 @@ func NewTokenStore(path string, rnd func() (string, error)) *TokenStore {
 func (s *TokenStore) Mint(extensionID string, suppliedPublicKey ...string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	extensionID = normalizeExtensionID(extensionID)
+	extensionID = NormalizeExtensionID(extensionID)
 	if !validExtensionID(extensionID) {
 		return "", ErrInvalidExtensionID
 	}
@@ -87,7 +88,11 @@ func (s *TokenStore) Mint(extensionID string, suppliedPublicKey ...string) (stri
 			return "", err
 		}
 	}
-	next := tokenData{ExtensionID: extensionID, PublicKey: publicKey}
+	binding := make([]byte, 32)
+	if _, err := rand.Read(binding); err != nil {
+		return "", err
+	}
+	next := tokenData{ExtensionID: extensionID, PublicKey: publicKey, Binding: base64.RawURLEncoding.EncodeToString(binding)}
 	if err := s.persist(next); err != nil {
 		return "", err
 	}
@@ -98,7 +103,7 @@ func (s *TokenStore) Mint(extensionID string, suppliedPublicKey ...string) (stri
 func (s *TokenStore) Verify(publicKey, extensionID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	extensionID = normalizeExtensionID(extensionID)
+	extensionID = NormalizeExtensionID(extensionID)
 	if !validExtensionID(extensionID) {
 		return false
 	}
@@ -116,7 +121,7 @@ func (s *TokenStore) VerifySignature(
 ) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	extensionID = normalizeExtensionID(extensionID)
+	extensionID = NormalizeExtensionID(extensionID)
 	if s.data.PublicKey == "" || s.data.ExtensionID != extensionID {
 		return "", false
 	}
@@ -134,7 +139,7 @@ func (s *TokenStore) VerifySignature(
 	if !ecdsa.Verify(key, digest[:], r, sigS) {
 		return "", false
 	}
-	return s.data.PublicKey, true
+	return s.authorityLocked(), true
 }
 
 func (s *TokenStore) Pair() (string, string, bool) {
@@ -216,7 +221,8 @@ func (s *TokenStore) persist(data tokenData) error {
 	return nil
 }
 
-func normalizeExtensionID(extensionID string) string {
+// NormalizeExtensionID accepts raw Chromium IDs and full extension origins.
+func NormalizeExtensionID(extensionID string) string {
 	extensionID = strings.TrimSpace(extensionID)
 	if extensionID == "" || strings.Contains(extensionID, "://") {
 		return extensionID
@@ -232,4 +238,24 @@ func validExtensionID(extensionID string) bool {
 		}
 	}
 	return false
+}
+
+// authorityLocked identifies one binding even when the extension reuses its key.
+func (s *TokenStore) authorityLocked() string {
+	return s.data.PublicKey + "." + s.data.Binding
+}
+
+// VerifyAuthority accepts only the current key and binding generation.
+func (s *TokenStore) VerifyAuthority(authority, extensionID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.PublicKey != "" && NormalizeExtensionID(extensionID) == s.data.ExtensionID &&
+		subtle.ConstantTimeCompare([]byte(authority), []byte(s.authorityLocked())) == 1
+}
+
+// Authority returns the identifier of the current pairing binding.
+func (s *TokenStore) Authority() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.authorityLocked()
 }

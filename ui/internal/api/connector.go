@@ -111,6 +111,17 @@ func connectorMiddleware(
 				return
 			}
 
+			if r.Header.Get("X-Bursa-Challenge") == "" || r.Header.Get("X-Bursa-Signature") == "" {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
+			extID, paired := allowedExtensionID()
+			if !paired || connector.NormalizeExtensionID(r.Header.Get("Origin")) != connector.NormalizeExtensionID(extID) {
+				// Consume a supplied challenge even when the origin is refused.
+				svc.AuthorizeRequest(r.Header.Get("Origin"), r.Header.Get("X-Bursa-Challenge"), r.Method, r.URL.Path, nil, r.Header.Get("X-Bursa-Signature"))
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
 			body, err := io.ReadAll(
 				http.MaxBytesReader(w, r.Body, maxConnectorRequestBytes),
 			)
@@ -257,13 +268,18 @@ func registerConnector(
 		"POST /connector/pending-pairings",
 		handleConnectorPendingPairings(svc, cfg.authorizePairingCode),
 	)
+	mux.HandleFunc("POST /connector/confirm-pair", handleConnectorConfirmPair(svc, cfg.authorizePairingCode))
 	registerApprovalRoutes(mux, svc)
 }
 
 func handleConnectorChallenge(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		challenge, err := svc.IssueChallenge(r.Header.Get("Origin"))
+		challenge, err := svc.IssueSignedChallenge(r.Header.Get("Origin"), r.Header.Get("X-Bursa-Challenge"), r.Header.Get("X-Bursa-Signature"))
 		if err != nil {
+			if errors.Is(err, connector.ErrChallengeCapacity) {
+				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "challenge capacity reached"})
+				return
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
@@ -740,17 +756,8 @@ func handleConnectorRequest(svc *connector.Service) http.HandlerFunc {
 	}
 }
 
-// handleConnectorPair handles POST /connector/pair.
-//
-// JSON body: { "extension_id": string, "code": string }
-//
-// Two modes:
-//   - Initiate (code == ""): calls svc.BeginPair and responds 202 {"status":"pending"}.
-//     The generated code is NOT returned — it is shown inside the Bursa app so the
-//     user can transfer it out-of-band to the extension. Returning it here would
-//     allow any local caller to self-pair without user interaction.
-//   - Confirm (code != ""): binds the extension public key and responds 200.
-//     Returns 403 on a code mismatch, 400 for other errors.
+// handleConnectorPair admits a key-bound pending pairing. Confirmation is
+// restricted to the authenticated desktop control route.
 func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -796,10 +803,6 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			)
 			return
 		}
-		// A browser sets Origin to the extension's own origin and a web page
-		// cannot choose it, so pairing is accepted only from the extension it
-		// names. Local processes can still forge the header; the pairing code
-		// shown in the app remains the capability that authorizes the key binding.
 		if !svc.TrustedPairingOrigin(r.Header.Get("Origin"), req.ExtensionID) {
 			writeJSON(
 				w,
@@ -810,10 +813,7 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 		}
 
 		if req.Code == "" {
-			// Initiate: generate + cache a pairing code for display in the Bursa UI.
-			// Do NOT return the code in the HTTP response — that would allow any
-			// local unauthenticated caller to pair without user approval.
-			if _, err := svc.BeginPair(req.ExtensionID); err != nil {
+			if err := svc.BeginKeyPair(req.ExtensionID, req.PublicKey); err != nil {
 				status := http.StatusBadRequest
 				if errors.Is(err, connector.ErrTooManyPairings) {
 					status = http.StatusTooManyRequests
@@ -829,27 +829,36 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			return
 		}
 
-		if req.PublicKey == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "public_key is required"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "confirm pairing in the desktop wallet"})
+	}
+}
+
+func handleConnectorConfirmPair(svc *connector.Service, authorize func(string) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !strictSameOrigin(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
 			return
 		}
-
-		// Confirm: validate the code and bind the extension's public key.
-		_, err = svc.ConfirmPair(req.ExtensionID, req.Code, req.PublicKey)
-		if err != nil {
-			if errors.Is(err, connector.ErrPairCodeMismatch) {
-				writeJSON(
-					w,
-					http.StatusForbidden,
-					map[string]string{"error": "pairing code mismatch"},
-				)
-				return
-			}
-			writeJSON(
-				w,
-				http.StatusBadRequest,
-				map[string]string{"error": err.Error()},
-			)
+		var body struct {
+			ExtensionID string `json:"extension_id"`
+			Code        string `json:"code"`
+			Password    string `json:"password"`
+		}
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPairRequestBytes))
+		if err != nil || json.Unmarshal(raw, &body) != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if authorize == nil {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing confirmation unavailable"})
+			return
+		}
+		if err := authorize(body.Password); err != nil {
+			serve(w, struct{}{}, err)
+			return
+		}
+		if err := svc.ConfirmDesktopPair(body.ExtensionID, body.Code); err != nil {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "pairing code mismatch"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
