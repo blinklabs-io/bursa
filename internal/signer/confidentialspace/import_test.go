@@ -721,6 +721,40 @@ func TestImportRefusesNonEmptySecret(t *testing.T) {
 			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
 		}
 	})
+	t.Run("version disabled after the list", func(t *testing.T) {
+		t.Parallel()
+		c := &fakeSecretClient{}
+		c.seed(provisionedSecret(t).latest())
+		c.seed([]byte{})
+		h := newImportHarnessOn(t, c)
+		store, err := newSecretStateStore(
+			t.Context(), &disableAfterList{fakeSecretClient: c, version: 1},
+			testStateSecret, testKMSKey, h.wrapper,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		importer, err := NewImporter(ImportConfig{
+			Audience: importAudience, KMSKey: testKMSKey, Tokens: h.tokens,
+			Wrapper: h.wrapper, Store: store,
+			Authority: h.authority.Public().(ed25519.PublicKey),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = importer.Close() })
+		ch, err := importer.Challenge(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = importer.Import(t.Context(), h.request(ch))
+		if !errors.Is(err, ErrStateNotEmpty) {
+			t.Fatalf("import beside a version disabled after the list: %v", err)
+		}
+		if adds, destroys := c.counts(); adds != 0 || destroys != 0 {
+			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
+		}
+	})
 	t.Run("destroyed older version", func(t *testing.T) {
 		t.Parallel()
 		c := provisionedSecret(t)
@@ -759,6 +793,26 @@ func TestImportRefusesNonEmptySecret(t *testing.T) {
 			t.Fatalf("second import: %v", err)
 		}
 	})
+}
+
+// disableAfterList disables a version once an unfiltered version list has
+// been read, as an operator could between the list and the reads by number.
+type disableAfterList struct {
+	*fakeSecretClient
+	version int
+}
+
+func (d *disableAfterList) ListSecretVersions(
+	ctx context.Context,
+	req *secretmanagerpb.ListSecretVersionsRequest,
+) secretVersionIterator {
+	it := d.fakeSecretClient.ListSecretVersions(ctx, req)
+	if req.GetFilter() == "" {
+		d.mu.Lock()
+		d.versions[d.version-1].state = secretmanagerpb.SecretVersion_DISABLED
+		d.mu.Unlock()
+	}
+	return it
 }
 
 // After a failed write the store reports the stop, which tells the operator to
