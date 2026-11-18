@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,6 +49,8 @@ func confidentialSpaceCommand() *cobra.Command {
 		clientCAFile   string
 		profiles       []string
 		createProfiles []string
+		importMode     bool
+		importAuthFile string
 	)
 	cmd := &cobra.Command{
 		Use:   "confidential-space-workload",
@@ -59,6 +62,15 @@ func confidentialSpaceCommand() *cobra.Command {
 				wrappedKeyFile,
 				counterBucket,
 				counterObject,
+			); err != nil {
+				return err
+			}
+			if err := validateConfidentialSpaceImport(
+				importMode,
+				importAuthFile,
+				stateSecret,
+				profiles,
+				createProfiles,
 			); err != nil {
 				return err
 			}
@@ -117,6 +129,21 @@ func confidentialSpaceCommand() *cobra.Command {
 					return err
 				}
 				defer state.Close()
+				if importMode {
+					return serveConfidentialSpaceImport(
+						ctx,
+						listenAddress,
+						tlsConfig,
+						importAuthFile,
+						confidentialspace.ImportConfig{
+							Audience: audience,
+							KMSKey:   kmsKey,
+							Tokens:   tokens,
+							Wrapper:  wrapper,
+							Store:    state,
+						},
+					)
+				}
 				cfg.Store = state
 				if len(profiles) == 0 {
 					counter, err := state.Counter("")
@@ -188,40 +215,13 @@ func confidentialSpaceCommand() *cobra.Command {
 			}
 			defer workload.Close()
 
-			server := &http.Server{
-				Addr:              listenAddress,
-				Handler:           workload.Handler(),
-				ReadHeaderTimeout: 5 * time.Second,
-				ReadTimeout:       15 * time.Second,
-				WriteTimeout:      30 * time.Second,
-				IdleTimeout:       60 * time.Second,
-				MaxHeaderBytes:    16 << 10,
-				TLSConfig:         tlsConfig,
-			}
-			errCh := make(chan error, 1)
-			go func() {
-				errCh <- server.ListenAndServeTLS("", "")
-			}()
-			select {
-			case err := <-errCh:
-				if !errors.Is(err, http.ErrServerClosed) {
-					return fmt.Errorf("confidential space workload: %w", err)
-				}
-				return nil
-			case <-ctx.Done():
-				shutdownCtx, cancel := context.WithTimeout(
-					context.Background(),
-					10*time.Second,
-				)
-				defer cancel()
-				if err := server.Shutdown(shutdownCtx); err != nil {
-					return fmt.Errorf(
-						"stop confidential space workload: %w",
-						err,
-					)
-				}
-				return nil
-			}
+			return serveConfidentialSpace(
+				ctx,
+				listenAddress,
+				workload.Handler(),
+				tlsConfig,
+				nil,
+			)
 		},
 	}
 	cmd.Flags().
@@ -242,6 +242,10 @@ func confidentialSpaceCommand() *cobra.Command {
 		StringArrayVar(&profiles, "profile", nil, "serve the key under this profile, repeatable; each profile has its own counter object <counter-object>/profiles/<profile>, which does not take over the --counter-object state, and requests without a profile are refused")
 	cmd.Flags().
 		StringArrayVar(&createProfiles, "create-profile-counter", nil, "create the missing counter object of this --profile, repeatable, for the one start that adds it; a missing counter object of any other profile still stops startup")
+	cmd.Flags().
+		BoolVar(&importMode, "import", false, "serve only the pool cold-key import routes into an empty --state-secret, then exit; never signs and never generates a key")
+	cmd.Flags().
+		StringVar(&importAuthFile, "import-authority-file", "", "hex Ed25519 public key file of the provisioning authority that authorizes the import; required with --import")
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().
@@ -291,6 +295,96 @@ func validateConfidentialSpaceStorage(
 			strings.Join(missing, ", "),
 		)
 	}
+}
+
+// validateConfidentialSpaceImport checks the import-mode flags. Import mode
+// writes into an empty state secret, takes its profiles from the request, and
+// needs the provisioning authority.
+func validateConfidentialSpaceImport(
+	importMode bool,
+	authorityFile, stateSecret string,
+	profiles, createProfiles []string,
+) error {
+	if !importMode {
+		if authorityFile != "" {
+			return errors.New("--import-authority-file requires --import")
+		}
+		return nil
+	}
+	switch {
+	case stateSecret == "":
+		return errors.New("--import requires --state-secret")
+	case authorityFile == "":
+		return errors.New("--import requires --import-authority-file")
+	case len(profiles) > 0:
+		return errors.New("--import excludes --profile")
+	case len(createProfiles) > 0:
+		return errors.New("--import excludes --create-profile-counter")
+	}
+	return nil
+}
+
+// serveConfidentialSpace serves handler over TLS on listenAddress until the
+// context ends or, when done is not nil, until it is closed.
+func serveConfidentialSpace(
+	ctx context.Context,
+	listenAddress string,
+	handler http.Handler,
+	tlsConfig *tls.Config,
+	done <-chan struct{},
+) error {
+	// http.Server.ListenAndServeTLS reads an empty address as :https.
+	if listenAddress == "" {
+		listenAddress = ":https"
+	}
+	ln, err := net.Listen("tcp", listenAddress)
+	if err != nil {
+		return fmt.Errorf("confidential space workload: %w", err)
+	}
+	return serveConfidentialSpaceOn(ctx, ln, handler, tlsConfig, done)
+}
+
+// serveConfidentialSpaceOn serves on ln. Shutdown lets a request in flight
+// finish, so the response that closed done is still sent.
+func serveConfidentialSpaceOn(
+	ctx context.Context,
+	ln net.Listener,
+	handler http.Handler,
+	tlsConfig *tls.Config,
+	done <-chan struct{},
+) error {
+	server := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+		TLSConfig:         tlsConfig,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ServeTLS(ln, "", "")
+	}()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("confidential space workload: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+	case <-done:
+	}
+	// The context is already cancelled when it is what ended the wait.
+	shutdownCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		10*time.Second,
+	)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("stop confidential space workload: %w", err)
+	}
+	return nil
 }
 
 func confidentialSpaceTLSConfig(
