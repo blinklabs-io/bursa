@@ -71,7 +71,8 @@ printf '%s\n' "$presenter" | rg -U -q 'present\(alert, animated: true\)'
 # site cannot reintroduce the log-only path.
 exclusion_calls=$(rg -c 'Self\.excludeFromBackup\(' "$ios")
 reported_calls=$(rg -c '^\s*noteBackupExclusionFailure\(' "$ios")
-if [ "$exclusion_calls" != "$reported_calls" ]; then
+fatal_calls=$(rg -c '^\s*let detail = Self\.excludeFromBackup\(' "$ios")
+if [ "$exclusion_calls" -ne $((reported_calls + fatal_calls)) ]; then
     printf '%s\n' 'every Self.excludeFromBackup call must report its failure' >&2
     exit 1
 fi
@@ -87,8 +88,13 @@ printf '%s\n' "$migration_catch" | rg -U -q 'migrationFailureDetail = '
 rg -q 'private var contactsPersistenceEnabled = true' "$ios"
 backup_failure=$(sed -n '/private func noteBackupExclusionFailure(/,/^    }/p' "$ios")
 printf '%s\n' "$backup_failure" | rg -U -q 'disablesContactPersistence[\s\S]*contactsPersistenceEnabled = false'
+printf '%s\n' "$backup_failure" | rg -U -q 'contactDirectory[\s\S]*contactDirectoriesRequiringFileExclusion\.append'
 printf '%s\n' "$create_branch" | rg -U -q 'Self\.excludeFromBackup\(dataDir\)[\s\S]*disablesContactPersistence: true'
 printf '%s\n' "$migration_catch" | rg -U -q 'Self\.excludeFromBackup\(fallback\)[\s\S]*disablesContactPersistence: true'
+contact_protection=$(sed -n '/private func protectExistingContactsFromBackup(/,/^    }/p' "$ios")
+printf '%s\n' "$contact_protection" | rg -U -q 'contacts\.json[\s\S]*Self\.excludeFromBackup\(contacts\)[\s\S]*throw'
+view_load=$(sed -n '/override func viewDidLoad(/,/^    }/p' "$ios")
+printf '%s\n' "$view_load" | rg -U -q 'protectExistingContactsFromBackup\(\)[\s\S]*startWallet\('
 start_fn=$(sed -n '/private func startWallet(/,/^    }/p' "$ios")
 printf '%s\n' "$start_fn" | rg -U -q 'setContactsPersistenceEnabled\(contactsPersistenceEnabled\)[\s\S]*app\?\.start\('
 

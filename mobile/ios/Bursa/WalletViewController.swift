@@ -56,6 +56,7 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
     // from backup. Main-thread only during startup; passed by value to the state
     // queue when the wallet starts.
     private var contactsPersistenceEnabled = true
+    private var contactDirectoriesRequiringFileExclusion: [URL] = []
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -74,7 +75,15 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         // the node and wallet tree there avoids treating it as user documents.
         // "preview" is the network; lean = true selects the history-expiry
         // profile (small on-disk footprint) for a phone.
-        let dataDir = walletDataDirectory().path
+        let dataDirURL = walletDataDirectory()
+        do {
+            try protectExistingContactsFromBackup()
+        } catch {
+            Self.logger.error("contact backup protection failed: \(String(describing: error))")
+            showStartupError("Wallet failed to start", detail: error.localizedDescription)
+            return
+        }
+        let dataDir = dataDirURL.path
         let nodeDir: String
         do {
             nodeDir = try nodeDataDirectory().path
@@ -160,13 +169,37 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
     // Keeps the first failure of a launch; see backupExclusionFailureDetail.
     private func noteBackupExclusionFailure(
         _ detail: String?,
-        disablesContactPersistence: Bool = false
+        disablesContactPersistence: Bool = false,
+        contactDirectory: URL? = nil
     ) {
         if detail != nil && disablesContactPersistence {
             contactsPersistenceEnabled = false
+            if let contactDirectory,
+               !contactDirectoriesRequiringFileExclusion.contains(contactDirectory) {
+                contactDirectoriesRequiringFileExclusion.append(contactDirectory)
+            }
         }
         guard let detail, backupExclusionFailureDetail == nil else { return }
         backupExclusionFailureDetail = detail
+    }
+
+    private func protectExistingContactsFromBackup() throws {
+        let fileManager = FileManager.default
+        for directory in contactDirectoriesRequiringFileExclusion {
+            let contacts = directory.appendingPathComponent("contacts.json")
+            guard fileManager.fileExists(atPath: contacts.path),
+                  let detail = Self.excludeFromBackup(contacts) else {
+                continue
+            }
+            throw NSError(
+                domain: "BursaContactBackup",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Existing contacts could not be excluded from device backup. \(detail)"
+                ]
+            )
+        }
     }
 
     // Written only after a migration has copied and verified every entry, so
@@ -226,7 +259,9 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             // Before anything is written or copied in, so the tree is never
             // eligible for a backup that starts mid-migration.
             noteBackupExclusionFailure(
-                Self.excludeFromBackup(dataDir), disablesContactPersistence: true
+                Self.excludeFromBackup(dataDir),
+                disablesContactPersistence: true,
+                contactDirectory: dataDir
             )
             // Documents is backed up too, and the legacy tree outlives the
             // copy: it is still there during the copy window, after a cleanup
@@ -238,7 +273,9 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             // excluding it takes nothing of the user's out of backup.
             if let documentsDir, fileManager.fileExists(atPath: documentsDir.path) {
                 noteBackupExclusionFailure(
-                    Self.excludeFromBackup(documentsDir), disablesContactPersistence: true
+                    Self.excludeFromBackup(documentsDir),
+                    disablesContactPersistence: true,
+                    contactDirectory: documentsDir
                 )
             }
             if let documentsDir,
@@ -319,7 +356,9 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
             // from is how a one-off copy error becomes a permanent second tree.
             let fallback = documentsDir ?? dataDir
             noteBackupExclusionFailure(
-                Self.excludeFromBackup(fallback), disablesContactPersistence: true
+                Self.excludeFromBackup(fallback),
+                disablesContactPersistence: true,
+                contactDirectory: fallback
             )
             migrationFailureDetail = error.localizedDescription
             return fallback

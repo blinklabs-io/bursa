@@ -213,7 +213,10 @@ launch would deny access to a working wallet over something the app cannot fix.
 When the selected wallet tree cannot be excluded, the iOS shell disables
 contact persistence before boot. The address book stays empty and contact
 mutations return a service-unavailable error for that launch, so plaintext
-names, addresses, and notes are never added to backup-eligible storage.
+names, addresses, and notes are never added to backup-eligible storage. Any
+existing `contacts.json` is separately excluded from backup before startup. If
+the system also rejects that file-level exclusion, startup stops instead of
+leaving plaintext contacts eligible for the next device backup.
 
 Android sets `android:allowBackup="false"`, which opts out of cloud backup and
 restore. That attribute does not govern Android 12+ device-to-device transfer,
