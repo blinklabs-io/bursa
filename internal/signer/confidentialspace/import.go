@@ -42,6 +42,10 @@ import (
 const (
 	// ImportProtocol is the version of the pool cold-key import protocol.
 	ImportProtocol = "bursa-confidential-space-import/1"
+	// ImportProtocolKeys is ImportProtocol with one key per profile in the
+	// request instead of one key for all of them. The binding covers the
+	// version, so a request cannot be replayed as the other.
+	ImportProtocolKeys = "bursa-confidential-space-import/2"
 	// ImportChallengeRoute and ImportRoute are the only routes an import-mode
 	// workload serves.
 	ImportChallengeRoute = "/v1/import/challenge"
@@ -91,9 +95,10 @@ type ImportProfile struct {
 	NextIssueNumber uint64 `json:"next_issue_number"`
 }
 
-// ImportRequest carries one pool cold key sealed to the workload. The profile
-// names travel in the clear because the binding, which authenticates the
-// ciphertext, covers them.
+// ImportRequest carries the pool cold keys sealed to the workload: one key
+// for every profile (Version ImportProtocol) or one key per profile
+// (ImportProtocolKeys). The profile names travel in the clear because the
+// binding, which authenticates the ciphertext, covers them.
 type ImportRequest struct {
 	Version         string   `json:"version"`
 	Challenge       []byte   `json:"challenge"`
@@ -197,6 +202,31 @@ func importBinding(
 	kmsKey string,
 	profiles []string,
 ) []byte {
+	return bindImport(
+		ImportProtocol, route, challenge, tokenNonce, workloadKey, clientKey,
+		kmsKey, profiles,
+	)
+}
+
+// importBindingKeys is importBinding for ImportProtocolKeys.
+func importBindingKeys(
+	route string,
+	challenge, tokenNonce, workloadKey, clientKey []byte,
+	kmsKey string,
+	profiles []string,
+) []byte {
+	return bindImport(
+		ImportProtocolKeys, route, challenge, tokenNonce, workloadKey,
+		clientKey, kmsKey, profiles,
+	)
+}
+
+func bindImport(
+	protocol, route string,
+	challenge, tokenNonce, workloadKey, clientKey []byte,
+	kmsKey string,
+	profiles []string,
+) []byte {
 	h := sha256.New()
 	write := func(field []byte) {
 		_, _ = h.Write([]byte(strconv.Itoa(len(field)) + ":"))
@@ -204,7 +234,7 @@ func importBinding(
 	}
 	for _, field := range [][]byte{
 		[]byte(importBindingDomain),
-		[]byte(ImportProtocol),
+		[]byte(protocol),
 		[]byte(route),
 		challenge,
 		tokenNonce,
@@ -331,7 +361,8 @@ func (i *Importer) Import(ctx context.Context, req ImportRequest) error {
 	if i.finished {
 		return errImportDone
 	}
-	if req.Version != ImportProtocol ||
+	multi := req.Version == ImportProtocolKeys
+	if (req.Version != ImportProtocol && !multi) ||
 		len(req.Challenge) != importChallengeSize ||
 		len(req.ClientPublicKey) != curve25519.PointSize ||
 		len(req.Nonce) != chacha20poly1305.NonceSizeX ||
@@ -345,7 +376,11 @@ func (i *Importer) Import(ctx context.Context, req ImportRequest) error {
 		subtle.ConstantTimeCompare(s.challenge, req.Challenge) != 1 {
 		return errImportChallenge
 	}
-	binding := importBinding(
+	bind := importBinding
+	if multi {
+		bind = importBindingKeys
+	}
+	binding := bind(
 		ImportRoute, s.challenge, s.tokenNonce, s.publicKey,
 		req.ClientPublicKey, i.cfg.KMSKey, req.Profiles,
 	)
@@ -356,7 +391,11 @@ func (i *Importer) Import(ctx context.Context, req ImportRequest) error {
 	) {
 		return errImportAuthorization
 	}
-	body, err := openImportBody(s, req, binding)
+	fixed := importBodyFixedSize
+	if multi {
+		fixed *= len(req.Profiles)
+	}
+	body, err := openImportBody(s, req, binding, fixed)
 	if err != nil {
 		return err
 	}
@@ -365,27 +404,42 @@ func (i *Importer) Import(ctx context.Context, req ImportRequest) error {
 	i.session = nil
 	defer s.wipe()
 
-	seed := body[:ed25519.SeedSize]
-	vkey := body[ed25519.SeedSize:importBodyFixedSize]
-	nextIssue, err := parseImportCounters(
-		body[importBodyFixedSize:], req.Profiles,
-	)
+	nextIssue, err := parseImportCounters(body[fixed:], req.Profiles)
 	if err != nil {
 		return err
 	}
-	derived := ed25519.NewKeyFromSeed(seed)
-	defer wipe(derived)
-	if !bytes.Equal(derived.Public().(ed25519.PublicKey), vkey) {
-		return errImportVKey
+	// The sealed keys are positional: the n-th seed and verification key
+	// belong to the n-th of the binding's sorted profiles.
+	seeds := make(map[string][]byte, len(req.Profiles))
+	for n, profile := range req.Profiles {
+		block := body[n*importBodyFixedSize:]
+		if !multi {
+			block = body
+		}
+		seed := block[:ed25519.SeedSize]
+		vkey := block[ed25519.SeedSize:importBodyFixedSize]
+		derived := ed25519.NewKeyFromSeed(seed)
+		match := bytes.Equal(derived.Public().(ed25519.PublicKey), vkey)
+		wipe(derived)
+		if !match {
+			return errImportVKey
+		}
+		seeds[profile] = seed
+		if !multi {
+			break
+		}
 	}
-	key, err := wrapSeed(ctx, Config{
-		KMSKey:  i.cfg.KMSKey,
-		Wrapper: i.cfg.Wrapper,
-	}, seed)
+	wrapCfg := Config{KMSKey: i.cfg.KMSKey, Wrapper: i.cfg.Wrapper}
+	var key *keyMaterial
+	if multi {
+		key, err = wrapSeeds(ctx, wrapCfg, seeds)
+	} else {
+		key, err = wrapSeed(ctx, wrapCfg, seeds[req.Profiles[0]])
+	}
 	if err != nil {
 		return err
 	}
-	defer wipe(key.priv)
+	defer key.wipe()
 	if err := i.cfg.Store.Import(ctx, key.active, nextIssue); err != nil {
 		return err
 	}
@@ -400,6 +454,7 @@ func openImportBody(
 	s *importSession,
 	req ImportRequest,
 	binding []byte,
+	fixed int,
 ) ([]byte, error) {
 	shared, err := curve25519.X25519(s.seed, req.ClientPublicKey)
 	if err != nil {
@@ -419,7 +474,7 @@ func openImportBody(
 	if err != nil {
 		return nil, errImportOpen
 	}
-	if len(body) <= importBodyFixedSize {
+	if len(body) <= fixed {
 		wipe(body)
 		return nil, errImportRequest
 	}
