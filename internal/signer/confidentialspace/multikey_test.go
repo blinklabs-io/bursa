@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
@@ -488,5 +489,92 @@ func TestSingleKeyEnvelopeStillServesOneKeyUnderEveryProfile(t *testing.T) {
 	}
 	if e.Version != envelopeVersion || len(e.Keys) != 0 {
 		t.Fatalf("shared-key import wrote %q", e.Version)
+	}
+}
+
+// TestMultiKeyEnvelopeBindsEachKeyToItsProfile pins the additional data: a
+// whole entry moved to another profile, or an entry dropped, derives its own
+// public key, so only the binding of the profile-to-key map refuses it.
+func TestMultiKeyEnvelopeBindsEachKeyToItsProfile(t *testing.T) {
+	t.Parallel()
+	c, _, _ := multiKeyImported(t)
+	var e envelope
+	if err := json.Unmarshal(latestDoc(t, c).Envelope, &e); err != nil {
+		t.Fatal(err)
+	}
+	moved := e
+	moved.Keys = []envelopeKey{e.Keys[1], e.Keys[0]}
+	moved.Keys[0].Profile, moved.Keys[1].Profile =
+		e.Keys[0].Profile, e.Keys[1].Profile
+	dropped := e
+	dropped.Keys = []envelopeKey{e.Keys[0]}
+	cfg := Config{KMSKey: testKMSKey, Wrapper: &testWrapper{}}
+	for name, bad := range map[string]envelope{
+		"keys moved between profiles": moved, "profile dropped": dropped,
+	} {
+		data, err := json.Marshal(bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if k, err := openEnvelope(t.Context(), cfg, data); err == nil {
+			k.wipe()
+			t.Fatalf("%s: envelope opened", name)
+		}
+	}
+}
+
+func TestMultiKeyServiceKeysRefusals(t *testing.T) {
+	t.Parallel()
+	keys := newMultiKeys(t)
+	material := &keyMaterial{profileKeys: map[string]ed25519.PrivateKey{}}
+	for profile, seed := range keys.seeds {
+		material.profileKeys[profile] = ed25519.NewKeyFromSeed(seed)
+	}
+	defer material.wipe()
+	for name, tc := range map[string]struct {
+		counters []string
+		want     string
+	}{
+		"unprofiled": {
+			[]string{"", profileMainnet, profilePreview}, "requires profiles",
+		},
+		"key not served": {
+			[]string{profileMainnet}, "which is not served",
+		},
+		"profile without a key": {
+			[]string{profileMainnet, profilePreview, "pool@sanchonet"},
+			`holds no key for profile "pool@sanchonet"`,
+		},
+	} {
+		counters := make(map[string]CounterStore, len(tc.counters))
+		for _, profile := range tc.counters {
+			counters[profile] = nil
+		}
+		_, err := serviceKeys(material, counters)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
+func TestMultiKeyStoreImportRequiresEveryProfileCounter(t *testing.T) {
+	t.Parallel()
+	h := newImportHarness(t)
+	keys := newMultiKeys(t)
+	material, err := wrapSeeds(
+		t.Context(), Config{KMSKey: testKMSKey, Wrapper: h.wrapper}, keys.seeds,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer material.wipe()
+	err = h.store.Import(
+		t.Context(), material.active, map[string]uint64{profileMainnet: 0},
+	)
+	if err == nil {
+		t.Fatal("imported a multi-key envelope without every profile's counter")
+	}
+	if h.versions() != 0 {
+		t.Fatal("a refused import wrote state")
 	}
 }

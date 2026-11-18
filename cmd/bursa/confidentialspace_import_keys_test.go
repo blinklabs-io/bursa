@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/blinklabs-io/bursa/internal/signer/confidentialspace"
@@ -155,5 +156,22 @@ func TestRunConfidentialSpaceImportPerProfileKeys(t *testing.T) {
 	if store.nextIssue["pool@mainnet"] != 4 || store.nextIssue["pool@preview"] != 0 ||
 		len(store.nextIssue) != 2 {
 		t.Fatalf("starting counters %v", store.nextIssue)
+	}
+}
+
+func TestLoadImportKeysRefusesMixedForms(t *testing.T) {
+	t.Parallel()
+	a, b := newImportFixture(t), newImportFixture(t)
+	keys, err := loadImportKeys(
+		[]string{a.signingKey, "pool@preview=" + b.signingKey},
+		[]string{a.vkeyFile, "pool@preview=" + b.vkeyFile},
+		importKeyProfiles,
+	)
+	if err == nil {
+		keys.wipe()
+		t.Fatal("mixed plain and NAME=FILE values accepted")
+	}
+	if !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("err = %v, want the mixed-form refusal", err)
 	}
 }
