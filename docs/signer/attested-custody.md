@@ -390,17 +390,24 @@ must name the digest of the derived image, not of the Bursa image.
 
 The TLS private key never ships in an image. `--tls-secret
 projects/PROJECT/secrets/SECRET` names an existing Secret Manager secret whose
-newest enabled version holds one PEM bundle: the certificate chain, leaf first,
-and one private key, in any order. The workload reads it through the same
-external-account credentials as `--state-secret`, and it excludes
-`--tls-cert-file` and `--tls-key-file`; exactly one TLS source is required, and
-a certificate file without a key file (or the reverse) is refused. Startup
-stops if the read fails, the version is empty or not PEM, the bundle has no
-certificate, no private key or more than one key, or the key does not match the
-leaf certificate. Key material is never logged, and the bundle bytes are wiped
-after parsing. The workload reads the secret once at startup. The newest enabled
-version is read through the `latest` alias, since a stale read of a certificate
-is harmless; rotating the certificate takes a new version and a restart.
+most recently created version holds one PEM bundle: the certificate chain, leaf
+first, and one private key, in any order, with nothing but white space between
+the blocks. The workload reads it through the same external-account
+credentials as `--state-secret`, and it excludes `--tls-cert-file` and
+`--tls-key-file`; exactly one TLS source is required, and a certificate file
+without a key file (or the reverse) is refused. A malformed secret name is
+refused before the workload starts. Startup stops if the read fails, the
+version is empty or not PEM, the bundle has text outside its PEM blocks, a block
+of another type, no certificate, no private key or more than one key, or the key
+does not match the leaf certificate. Errors and logs carry no key material. The
+workload clears its own copy of the bundle after parsing; the parsed key stays
+in process memory while the workload serves.
+
+The workload reads the secret once at startup, through the `latest` alias,
+since a stale read of a certificate is harmless. The alias names the most
+recently created version and does not skip a disabled one: disabling the newest
+version stops the next start rather than falling back to an older one. Rotating
+the certificate takes a new version and a restart.
 
 Grant the image's federated principal `secretmanager.versions.access` on that
 secret only. It needs no other permission on it, and the TLS secret is a
