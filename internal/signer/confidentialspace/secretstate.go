@@ -60,10 +60,10 @@ const (
 	// maxStateDocumentSize is Secret Manager's payload limit.
 	maxStateDocumentSize = 64 << 10
 	secretRPCTimeout     = 30 * time.Second
-	// secretCleanupTimeout bounds the cleanup after a write, which also ends
-	// by the write's own deadline: the signing request waits for it, so it
-	// must not extend the request past the write's timeout. Unfinished
-	// cleanup is retried by the next write.
+	// secretCleanupTimeout bounds the cleanup after a write. The cleanup
+	// runs after the response and holds the store's lock, so it also bounds
+	// how long it can delay the next write. Unfinished cleanup is retried by
+	// the next write.
 	secretCleanupTimeout = 5 * time.Second
 )
 
@@ -192,6 +192,12 @@ type SecretStateStore struct {
 	hash     backend.KeyHash
 	sealKey  []byte
 	states   map[string]counterState
+
+	// pendingKeep is the version of the newest write whose older versions
+	// are not yet destroyed, 0 if none.
+	pendingKeep uint64
+	// cleanups counts the cleanup goroutines in flight.
+	cleanups sync.WaitGroup
 }
 
 // NewSecretStateStore creates a state store over the existing secret using
@@ -258,8 +264,10 @@ func newSecretStateStore(
 	}, nil
 }
 
-// Close releases the Secret Manager client and wipes the sealing key.
+// Close waits for the cleanup in flight, releases the Secret Manager client
+// and wipes the sealing key.
 func (s *SecretStateStore) Close() error {
+	s.cleanups.Wait()
 	s.mu.Lock()
 	wipe(s.sealKey)
 	s.mu.Unlock()
@@ -718,11 +726,18 @@ func (s *SecretStateStore) addVersion(
 		return errors.New("state secret would exceed size limit")
 	}
 	crc := checksumValue(data)
+	s.cleanupLocked()
 	// A cancelled request must not abandon a write half way: its outcome
-	// would be unknown. Only the RPC timeout bounds it.
-	detached := context.WithoutCancel(ctx)
-	addCtx, cancel := s.rpcContext(detached)
+	// would be unknown. Only the RPC timeout and the request's own deadline
+	// bound it: the deadline sits below the server's write timeout, so a
+	// write that commits can still be answered.
+	addCtx, cancel := s.rpcContext(context.WithoutCancel(ctx))
 	defer cancel()
+	if deadline, ok := ctx.Deadline(); ok {
+		var cancelDeadline context.CancelFunc
+		addCtx, cancelDeadline = context.WithDeadline(addCtx, deadline)
+		defer cancelDeadline()
+	}
 	added, err := s.client.AddSecretVersion(
 		addCtx,
 		&secretmanagerpb.AddSecretVersionRequest{
@@ -740,12 +755,35 @@ func (s *SecretStateStore) addVersion(
 	if !ok {
 		return errors.New("state secret version has an unexpected name")
 	}
-	s.destroyOlder(addCtx, keep)
+	s.scheduleCleanup(keep)
 	return nil
 }
 
+// scheduleCleanup destroys the versions older than keep after the caller
+// releases the lock, so the response of a committed write does not wait for
+// it. The caller holds s.mu. A write that takes the lock first runs the
+// pending cleanup before its own add.
+func (s *SecretStateStore) scheduleCleanup(keep uint64) {
+	s.pendingKeep = max(s.pendingKeep, keep)
+	s.cleanups.Go(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.cleanupLocked()
+	})
+}
+
+// cleanupLocked runs the pending cleanup, if any. The caller holds s.mu.
+func (s *SecretStateStore) cleanupLocked() {
+	if s.pendingKeep == 0 {
+		return
+	}
+	keep := s.pendingKeep
+	s.pendingKeep = 0
+	s.destroyOlder(s.base, keep)
+}
+
 // destroyOlder destroys every enabled version numbered below keep, never a
-// newer one, by the deadline of parent. A failure is logged and retried by
+// newer one, within secretCleanupTimeout. A failure is logged and retried by
 // the next save: the version that was added is already durable.
 func (s *SecretStateStore) destroyOlder(
 	parent context.Context,

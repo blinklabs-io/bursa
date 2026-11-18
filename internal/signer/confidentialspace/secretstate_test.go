@@ -17,12 +17,18 @@ package confidentialspace
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -65,6 +71,13 @@ type fakeSecretClient struct {
 	onList func(*fakeSecretClient)
 	// onAdd runs when a version is added, before it is.
 	onAdd func()
+	// addDelay and listDelay hold a call for that long, or until its context
+	// ends.
+	addDelay  time.Duration
+	listDelay time.Duration
+	// stores are the stores over this client, whose background cleanup
+	// settle waits for.
+	stores []*SecretStateStore
 	// cleanupBudgets records the time left on the context of every list and
 	// destroy call.
 	cleanupBudgets []time.Duration
@@ -133,7 +146,33 @@ func (c *fakeSecretClient) latest() []byte {
 	return nil
 }
 
+// settle waits for the background cleanup of every store over c.
+func (c *fakeSecretClient) settle() {
+	c.mu.Lock()
+	stores := slices.Clone(c.stores)
+	c.mu.Unlock()
+	for _, s := range stores {
+		s.cleanups.Wait()
+	}
+}
+
+// sleepCtx waits d, or until ctx ends.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (c *fakeSecretClient) enabled() int {
+	c.settle()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	n := 0
@@ -146,6 +185,12 @@ func (c *fakeSecretClient) enabled() int {
 }
 
 func (c *fakeSecretClient) counts() (adds, destroys int) {
+	c.settle()
+	return c.rawCounts()
+}
+
+// rawCounts does not wait for cleanup in flight.
+func (c *fakeSecretClient) rawCounts() (adds, destroys int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.adds, c.destroys
@@ -200,14 +245,18 @@ func (c *fakeSecretClient) AccessSecretVersion(
 }
 
 func (c *fakeSecretClient) AddSecretVersion(
-	_ context.Context,
+	ctx context.Context,
 	req *secretmanagerpb.AddSecretVersionRequest,
 ) (*secretmanagerpb.SecretVersion, error) {
 	c.mu.Lock()
 	hook := c.onAdd
+	delay := c.addDelay
 	c.mu.Unlock()
 	if hook != nil {
 		hook()
+	}
+	if err := sleepCtx(ctx, delay); err != nil {
+		return nil, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -254,13 +303,19 @@ func (c *fakeSecretClient) ListSecretVersions(
 ) secretVersionIterator {
 	c.mu.Lock()
 	hook := c.onList
+	delay := c.listDelay
 	c.mu.Unlock()
 	if hook != nil {
 		hook(c)
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.recordBudgetLocked(ctx)
+	c.mu.Unlock()
+	if err := sleepCtx(ctx, delay); err != nil {
+		return &fakeVersionIterator{err: err}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.missing {
 		return &fakeVersionIterator{
 			err: status.Error(codes.NotFound, "no such secret"),
@@ -340,6 +395,9 @@ func newTestStateStore(
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.mu.Lock()
+	c.stores = append(c.stores, s)
+	c.mu.Unlock()
 	return s
 }
 
@@ -378,6 +436,8 @@ func stateWorkload(
 		}
 	}
 	w, err := New(t.Context(), cfg)
+	// Startup's own cleanup is not what a test observes.
+	c.settle()
 	if err == nil {
 		t.Cleanup(func() { _ = w.Close() })
 	}
@@ -1139,9 +1199,9 @@ func TestSecretStateVersionNumber(t *testing.T) {
 	}
 }
 
-// The serve command's HTTP write timeout is 30 seconds, and a signing request
-// waits for the cleanup that follows its write.
-const cleanupResponseBudget = 10 * time.Second
+// The cleanup after a write runs after the response, so its budget is its own
+// and never the request's.
+const cleanupBudgetBound = 10 * time.Second
 
 func TestSecretStateCleanupFitsTheResponseBudget(t *testing.T) {
 	t.Parallel()
@@ -1152,26 +1212,26 @@ func TestSecretStateCleanupFitsTheResponseBudget(t *testing.T) {
 	c.mu.Unlock()
 
 	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+	c.settle()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.cleanupBudgets) == 0 {
 		t.Fatal("no cleanup call was made")
 	}
 	for _, budget := range c.cleanupBudgets {
-		if budget > cleanupResponseBudget {
+		if budget > cleanupBudgetBound {
 			t.Fatalf(
 				"cleanup call allowed %v, want at most %v",
 				budget,
-				cleanupResponseBudget,
+				cleanupBudgetBound,
 			)
 		}
 	}
 }
 
-func TestSecretStateCleanupEndsByTheWriteDeadline(t *testing.T) {
+func TestSecretStateCleanupKeepsItsOwnBudgetAfterASlowWrite(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		const left = 2 * time.Second
 		c := provisionedSecret(t)
 		s := newTestStateStore(t, c)
 		if _, err := s.Load(); err != nil {
@@ -1182,28 +1242,229 @@ func TestSecretStateCleanupEndsByTheWriteDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 		c.mu.Lock()
-		c.onAdd = func() { time.Sleep(secretRPCTimeout - left) }
+		c.addDelay = secretRPCTimeout - 2*time.Second
 		c.cleanupBudgets = nil
 		c.mu.Unlock()
 
 		if err := counter.Prepare(t.Context(), s.hash, true); err != nil {
 			t.Fatal(err)
 		}
+		c.settle()
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if len(c.cleanupBudgets) == 0 {
 			t.Fatal("no cleanup call was made")
 		}
 		for _, budget := range c.cleanupBudgets {
-			if budget > left {
+			if budget != secretCleanupTimeout {
 				t.Fatalf(
-					"cleanup after a slow write allowed %v, want at most %v",
+					"cleanup after a slow write allowed %v, want %v",
 					budget,
-					left,
+					secretCleanupTimeout,
 				)
 			}
 		}
 	})
+}
+
+// signOverHandler posts req to the workload's HTTP handler and returns the
+// status, the decoded response and the time the handler took.
+func signOverHandler(
+	t *testing.T,
+	w *Workload,
+	req backend.AttestedRequest,
+) (int, backend.AttestedResponse, time.Duration) {
+	t.Helper()
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sign",
+		bytes.NewReader(body),
+	)
+	r.Header.Set("Content-Type", "application/json")
+	r.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{{}},
+		VerifiedChains:   [][]*x509.Certificate{{{}}},
+	}
+	rw := httptest.NewRecorder()
+	start := time.Now()
+	w.Handler().ServeHTTP(rw, r)
+	elapsed := time.Since(start)
+	var resp backend.AttestedResponse
+	if rw.Code == http.StatusOK {
+		if err := json.Unmarshal(rw.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return rw.Code, resp, elapsed
+}
+
+// The serve command's HTTP write timeout is 30 seconds. A signing request
+// gets a budget clearly below it, so the response of a committed write is
+// still sent.
+const handlerResponseBound = 20 * time.Second
+
+func TestSecretStateHandlerAnswersBeforeCleanupAfterASlowWrite(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := provisionedSecret(t)
+		w, _, err := stateWorkload(t, c, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.settle()
+		addsBefore, _ := c.rawCounts()
+		c.mu.Lock()
+		c.addDelay = handlerResponseBound - time.Second
+		c.listDelay = secretCleanupTimeout
+		c.mu.Unlock()
+
+		code, resp, elapsed := signOverHandler(
+			t, w, explicitReq(w, "", 1, 0),
+		)
+		if elapsed > handlerResponseBound {
+			t.Fatalf(
+				"handler took %v, want at most %v: the response waited "+
+					"for version cleanup",
+				elapsed,
+				handlerResponseBound,
+			)
+		}
+		if code != http.StatusOK || resp.Error != "" ||
+			len(resp.Signature) == 0 {
+			t.Fatalf("status %d response %+v", code, resp)
+		}
+		if adds, _ := c.rawCounts(); adds != addsBefore+1 {
+			t.Fatalf("%d adds, want %d: counter not committed",
+				adds, addsBefore+1)
+		}
+		c.settle()
+	})
+}
+
+func TestSecretStateHandlerRefusesAWriteThatOutlastsTheRequestBudget(
+	t *testing.T,
+) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := provisionedSecret(t)
+		w, _, err := stateWorkload(t, c, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.settle()
+		c.mu.Lock()
+		c.addDelay = secretRPCTimeout - time.Second
+		c.mu.Unlock()
+
+		code, resp, elapsed := signOverHandler(
+			t, w, explicitReq(w, "", 1, 0),
+		)
+		if elapsed > handlerResponseBound {
+			t.Fatalf(
+				"handler took %v, want at most %v: the write was not "+
+					"bound by the request budget",
+				elapsed,
+				handlerResponseBound,
+			)
+		}
+		if code != http.StatusOK || resp.Error == "" ||
+			len(resp.Signature) != 0 {
+			t.Fatalf("status %d response %+v, want a refusal", code, resp)
+		}
+		c.settle()
+	})
+}
+
+func TestSecretStateCleanupRunsAfterTheResponseAndBeforeTheNextWrite(
+	t *testing.T,
+) {
+	t.Parallel()
+	c := provisionedSecret(t)
+	w, _, err := stateWorkload(t, c, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.settle()
+
+	started := make(chan struct{}, 8)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseList := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseList()
+	var blockOnce sync.Once
+	c.mu.Lock()
+	c.onList = func(*fakeSecretClient) {
+		started <- struct{}{}
+		blockOnce.Do(func() { <-release })
+	}
+	c.mu.Unlock()
+	var addCalls, destroysAtSecondAdd atomic.Int64
+	c.mu.Lock()
+	c.onAdd = func() {
+		if addCalls.Add(1) == 2 {
+			_, d := c.rawCounts()
+			destroysAtSecondAdd.Store(int64(d))
+		}
+	}
+	c.mu.Unlock()
+	_, destroysBefore := c.rawCounts()
+
+	signed := make(chan error, 1)
+	go func() {
+		resp, err := w.Sign(t.Context(), explicitReq(w, "", 1, 0))
+		if err == nil && resp.Error != "" {
+			err = errors.New(resp.Error)
+		}
+		signed <- err
+	}()
+	select {
+	case err := <-signed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Sign did not return while version cleanup was blocked")
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("cleanup did not run after the response")
+	}
+	if _, d := c.rawCounts(); d != destroysBefore {
+		t.Fatalf("%d destroys before cleanup was released", d-destroysBefore)
+	}
+
+	next := make(chan error, 1)
+	go func() {
+		resp, err := w.Sign(t.Context(), explicitReq(w, "", 2, 1))
+		if err == nil && resp.Error != "" {
+			err = errors.New(resp.Error)
+		}
+		next <- err
+	}()
+	releaseList()
+	select {
+	case err := <-next:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("next Sign did not return")
+	}
+	if got := destroysAtSecondAdd.Load(); got <= int64(destroysBefore) {
+		t.Fatalf(
+			"next write added a version after %d destroys, want cleanup "+
+				"of the earlier write done first",
+			got,
+		)
+	}
+	if n := c.enabled(); n != 1 {
+		t.Fatalf("%d enabled versions, want 1", n)
+	}
 }
 
 func TestSecretStateCleanupNeverDestroysANewerVersion(t *testing.T) {
@@ -1222,6 +1483,7 @@ func TestSecretStateCleanupNeverDestroysANewerVersion(t *testing.T) {
 	c.mu.Unlock()
 
 	requireProfiledIssue(t, w, explicitReq(w, "", 1, 0), 0)
+	c.settle()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if newer == 0 {

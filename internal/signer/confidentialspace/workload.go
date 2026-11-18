@@ -32,6 +32,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/opcertrule"
@@ -44,6 +45,11 @@ const (
 	envelopeActive    = "active"
 	maxRequestBody    = 64 << 10
 	maxRequestNonces  = 4096
+	// signRequestTimeout bounds a whole signing request, including its
+	// counter write. The serve command's HTTP write timeout is 30 seconds;
+	// the margin lets the response of a write that commits near this
+	// deadline still be sent.
+	signRequestTimeout = 20 * time.Second
 )
 
 // TokenSource requests a custom-audience attestation token from the
@@ -768,7 +774,9 @@ func (w *Workload) handleSign(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "invalid request", http.StatusBadRequest)
 		return
 	}
-	resp, err := w.Sign(r.Context(), req)
+	ctx, cancel := context.WithTimeout(r.Context(), signRequestTimeout)
+	defer cancel()
+	resp, err := w.Sign(ctx, req)
 	if err != nil {
 		http.Error(rw, "signing unavailable", http.StatusServiceUnavailable)
 		return
