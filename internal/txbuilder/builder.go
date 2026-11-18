@@ -29,9 +29,14 @@ import (
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
 )
 
-// DefaultTTLMargin is the number of slots a transaction stays valid for when
-// BuildOptions sets neither TTL nor TTLMargin.
-const DefaultTTLMargin = 3600
+const (
+	// DefaultTTLMargin is the number of slots a transaction stays valid for when
+	// BuildOptions sets neither TTL nor TTLMargin.
+	DefaultTTLMargin = 3600
+	// DefaultMaxFee bounds the fee accepted from node-supplied protocol
+	// parameters unless the caller chooses another limit.
+	DefaultMaxFee = 2_000_000
+)
 
 // PoolVote represents a stake pool governance vote.
 type PoolVote struct {
@@ -48,6 +53,7 @@ type BuildOptions struct {
 	WitnessCount     uint
 	TTL              uint64
 	TTLMargin        uint64 // slots added to the current slot when TTL is 0
+	MaxFee           uint64 // maximum transaction fee; 0 uses DefaultMaxFee
 	Vote             *PoolVote
 }
 
@@ -346,12 +352,17 @@ func Build(
 
 	// Add inputs largest first until one balances with a change output at
 	// or above the minimum UTxO.
+	maxFee := opts.MaxFee
+	if maxFee == 0 {
+		maxFee = DefaultMaxFee
+	}
 	b := balancer{
 		body:         body,
 		changeAddr:   changeAddr,
 		witnessCount: opts.WitnessCount,
 		pp:           ppFee,
 		extra:        ppConv,
+		maxFee:       maxFee,
 		need:         deposits,
 		refunds:      refunds,
 	}
@@ -406,6 +417,7 @@ type balancer struct {
 	witnessCount uint
 	pp           *bursa.ProtocolParams
 	extra        *ProtocolParametersExtra
+	maxFee       uint64
 	inputs       []shelley.ShelleyTransactionInput
 	inputSum     uint64
 	need         uint64 // deposits
@@ -463,6 +475,13 @@ func (b *balancer) balance() ([]byte, error) {
 		minFee, err := bursa.MinFee(size, *b.pp)
 		if err != nil {
 			return nil, err
+		}
+		if minFee > b.maxFee {
+			return nil, fmt.Errorf(
+				"transaction fee %d exceeds maximum %d",
+				minFee,
+				b.maxFee,
+			)
 		}
 		if minFee <= fee {
 			return txCbor, nil

@@ -171,14 +171,14 @@ func txBuildCommand() *cobra.Command {
 	var socketPath, network, changeAddress, outFile string
 	var certificateFiles []string
 	var witnessCount uint
-	var ttlMargin uint64
+	var ttlMargin, maxFee uint64
 	var timeout int64
 	var vote cli.PoolVoteFlags
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Build a pool operation transaction",
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := cli.RunTxBuild(socketPath, network, changeAddress, certificateFiles, witnessCount, outFile, ttlMargin, timeout, vote); err != nil {
+			if err := cli.RunTxBuild(socketPath, network, changeAddress, certificateFiles, witnessCount, outFile, ttlMargin, maxFee, timeout, vote); err != nil {
 				logging.GetLogger().
 					Error("failed to build transaction", "error", err)
 				os.Exit(1)
@@ -197,6 +197,8 @@ func txBuildCommand() *cobra.Command {
 		StringVar(&outFile, "out-file", "", "Output file (default: stdout)")
 	cmd.Flags().
 		Uint64Var(&ttlMargin, "ttl-margin", txbuilder.DefaultTTLMargin, "Slots the transaction stays valid for")
+	cmd.Flags().
+		Uint64Var(&maxFee, "max-fee", txbuilder.DefaultMaxFee, "Maximum transaction fee in lovelace")
 	cmd.Flags().Int64Var(&timeout, "timeout", 60, "Timeout in seconds")
 	cmd.Flags().
 		StringVar(&vote.PoolID, "vote-pool-id", "", "Stake pool ID (bech32 pool1... or 56-hex key hash)")
