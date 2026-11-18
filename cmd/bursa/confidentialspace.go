@@ -245,7 +245,7 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		BoolVar(&importMode, "import", false, "serve only the pool cold-key import routes into an empty --state-secret, then exit; never signs and never generates a key")
 	cmd.Flags().
-		StringVar(&importAuthFile, "import-authority-file", "", "hex Ed25519 public key file of the offline provisioning authority that authorizes the import; required with --import")
+		StringVar(&importAuthFile, "import-authority-file", "", "hex Ed25519 public key file of the provisioning authority that authorizes the import; required with --import")
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().

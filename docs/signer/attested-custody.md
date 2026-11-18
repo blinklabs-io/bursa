@@ -428,14 +428,16 @@ bursa confidential-space-workload \
 
 `--import` requires `--state-secret` and `--import-authority-file`, and excludes
 `--profile` and `--create-profile-counter`: the profiles come from the request.
-`--import-authority-file` holds the hex Ed25519 public key of an offline
+`--import-authority-file` holds the hex Ed25519 public key of the
 provisioning authority. It must be a different key from the signer client's
 mTLS identity: the workload refuses a request whose client certificate carries
 the authority's key, and the import client refuses to run with one. Import mode
 keeps mutual TLS, serves only `POST /v1/import/challenge` and
 `POST /v1/import`, and never serves `/v1/sign` or `/v1/inventory`.
 
-Run the client on the offline machine that holds the cold key:
+Run the client on the machine that holds the cold key. It connects to the
+workload and, unless `--jwks-url` names another source, fetches Google's token
+signing keys:
 
 ```text
 bursa confidential-space import \
@@ -471,7 +473,7 @@ The import runs in three steps.
 1. The challenge. `POST /v1/import/challenge` makes a one-use X25519 key pair
    and a fresh 32-byte challenge, and returns the public key with an attestation
    token whose nonces are `hex(challenge)` and `hex(SHA-256(public key))`.
-2. The offline check. The client verifies the token with the signer's
+2. The client check. The client verifies the token with the signer's
    Confidential Space verifier: Google's signature, the audience, the image
    digest, the production image (`disabled-since-boot`, secure boot, a stable
    image), and that the token carries both nonces. It builds nothing, and sends

@@ -106,11 +106,11 @@ func confidentialSpaceImportCommand() *cobra.Command {
 		Long: `Import one existing pool cold key into a confidential-space-workload started
 with --import against an empty --state-secret.
 
-Run this on the offline machine that holds the cold key. It requests an
-attestation token from the workload and verifies it offline (Google's
-signature, the audience, the image digest, the production and debug claims, and
-that the token vouches for the workload's one-use channel key), seals the key to
-that channel, has the provisioning authority sign the exact request, and sends
+Run this on the machine that holds the cold key. It requests an attestation
+token from the workload and verifies it locally (Google's signature, the
+audience, the image digest, the production and debug claims, and that the token
+vouches for the workload's one-use channel key), seals the key to that channel,
+has the provisioning authority sign the binding and the ciphertext, and sends
 it. The workload checks that the key derives --vkey-file before it wraps it.
 
 --signing-key-file is the non-extended StakePoolSigningKey_ed25519 file, as
@@ -139,7 +139,7 @@ for a pool that has never issued.`,
 	f.StringVar(&o.kmsKey, "kms-key", "", "Cloud KMS CryptoKey the workload wraps the key with")
 	f.StringVar(&o.signingKeyFile, "signing-key-file", "", "StakePoolSigningKey_ed25519 file of the pool cold key")
 	f.StringVar(&o.vkeyFile, "vkey-file", "", "StakePoolVerificationKey_ed25519 file of the registered pool cold key")
-	f.StringVar(&o.authorityFile, "authority-key-file", "", "hex Ed25519 signing key of the offline provisioning authority")
+	f.StringVar(&o.authorityFile, "authority-key-file", "", "hex Ed25519 signing key of the provisioning authority")
 	f.StringArrayVar(&o.profiles, "profile", nil, "profile to serve and its next issue number, NAME=NEXT, repeatable")
 	for _, name := range []string{
 		"address", "tls-ca-file", "tls-client-cert-file", "tls-client-key-file",

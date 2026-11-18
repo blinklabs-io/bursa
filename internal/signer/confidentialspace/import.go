@@ -121,7 +121,7 @@ type ImportConfig struct {
 	Tokens   TokenSource
 	Wrapper  KeyWrapper
 	Store    ImportStore
-	// Authority is the offline Ed25519 provisioning authority. It must not be
+	// Authority is the Ed25519 provisioning authority. It must not be
 	// the key of the mTLS client that presents the request.
 	Authority ed25519.PublicKey
 }

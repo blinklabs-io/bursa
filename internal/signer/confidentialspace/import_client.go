@@ -53,7 +53,7 @@ type ImportParams struct {
 	// input independent of Seed.
 	VKey     []byte
 	Profiles []ImportProfile
-	// Authority is the offline provisioning authority's signing key.
+	// Authority is the provisioning authority's signing key.
 	Authority ed25519.PrivateKey
 }
 
@@ -89,7 +89,8 @@ func VerifyImportChallenge(
 }
 
 // BuildImportRequest verifies ch, then seals the key to the workload it
-// attests and has the provisioning authority authorize the exact request.
+// attests and has the provisioning authority sign the binding and the
+// ciphertext.
 func BuildImportRequest(
 	ctx context.Context,
 	verifier backend.AttestationVerifier,
