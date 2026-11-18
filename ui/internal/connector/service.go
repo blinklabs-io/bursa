@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"path/filepath"
 	"sync"
@@ -434,7 +435,11 @@ func (s *Service) IssueSignedChallenge(extensionID, nonce, signature string) (st
 	if err != nil || len(raw) != 32 {
 		return "", ErrRefused
 	}
-	issued := time.UnixMilli(int64(binary.BigEndian.Uint64(raw[:8])))
+	issuedMillis := binary.BigEndian.Uint64(raw[:8])
+	if issuedMillis > math.MaxInt64 {
+		return "", ErrRefused
+	}
+	issued := time.UnixMilli(int64(issuedMillis))
 	if issued.After(s.now().Add(time.Second)) || !issued.Add(requestChallengeTTL).After(s.now()) {
 		return "", ErrRefused
 	}
