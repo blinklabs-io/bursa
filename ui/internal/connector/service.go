@@ -294,14 +294,17 @@ func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
 	oldExtensionID, oldToken, paired := s.tokens.Pair()
-	token, err := s.tokens.Mint(extensionID)
-	if err == nil && paired {
+	token, committed, err := s.tokens.mint(extensionID)
+	if committed && paired {
 		s.queue.cancelAuthority(pairingAuthority{
 			extensionID: oldExtensionID,
 			token:       oldToken,
 		})
 	}
-	return token, err
+	if err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // prunePairCodesLocked removes expired pairing codes. Callers must hold pairMu.

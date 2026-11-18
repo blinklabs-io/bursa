@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -108,10 +107,9 @@ func (g *GrantStore) List(identity accountIdentity) []string {
 	return out
 }
 
-// mutate applies fn to a COPY of the grant set, persists the result, and only
-// swaps the live set in once the write succeeds. A failed Grant/Revoke therefore
-// leaves the in-memory authorization state unchanged (no phantom grant or
-// orphaned revocation when the disk write fails).
+// mutate applies fn to a copy of the grant set and persists it. A failure before
+// replacement leaves the live set unchanged. Once replacement commits, the live
+// set advances even if the subsequent durability sync fails.
 func (g *GrantStore) mutate(fn func(map[grant]bool)) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -139,20 +137,11 @@ func (g *GrantStore) mutate(fn func(map[grant]bool)) error {
 	if err != nil {
 		return err
 	}
-	tmp := g.path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(g.path), 0o700); err != nil {
-		return err
+	committed, err := replaceAuthFile(g.path, b, syncDirectory)
+	if committed {
+		g.set = next
 	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, g.path); err != nil {
-		return err
-	}
-
-	// Persistence succeeded — commit the new set.
-	g.set = next
-	return nil
+	return err
 }
 
 func validDAppOrigin(origin string) bool {

@@ -69,6 +69,84 @@ func TestTokenStoreMintDoesNotChangeMemoryOnPersistFailure(t *testing.T) {
 	}
 }
 
+func TestTokenStoreMintPublishesCommittedStateWhenDirectorySyncFails(
+	t *testing.T,
+) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	tokens := []string{"old-token", "new-token"}
+	ts := NewTokenStore(path, func() (string, error) {
+		token := tokens[0]
+		tokens = tokens[1:]
+		return token, nil
+	})
+	if _, err := ts.Mint("old-extension"); err != nil {
+		t.Fatalf("initial Mint: %v", err)
+	}
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	token, err := ts.Mint("new-extension")
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("Mint error = %v, want directory sync failure", err)
+	}
+	if token != "" {
+		t.Fatalf("Mint token = %q after error, want empty", token)
+	}
+	if ts.Verify("old-token", "old-extension") {
+		t.Fatal("old token remained valid after committed replacement")
+	}
+	if !ts.Verify("new-token", "new-extension") {
+		t.Fatal("committed replacement was not published")
+	}
+	reloaded := NewTokenStore(path, nil)
+	if !reloaded.Verify("new-token", "new-extension") {
+		t.Fatal("reloaded token store did not contain committed replacement")
+	}
+}
+
+func TestTokenStoreMintPreservesStateOnPrecommitFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	tokens := []string{"old-token", "new-token"}
+	ts := NewTokenStore(path, func() (string, error) {
+		token := tokens[0]
+		tokens = tokens[1:]
+		return token, nil
+	})
+	if _, err := ts.Mint("old-extension"); err != nil {
+		t.Fatalf("initial Mint: %v", err)
+	}
+
+	writeErr := errors.New("token replacement failed")
+	originalReplaceAuthFile := replaceAuthFile
+	replaceAuthFile = func(
+		string,
+		[]byte,
+		func(string) error,
+	) (bool, error) {
+		return false, writeErr
+	}
+	t.Cleanup(func() { replaceAuthFile = originalReplaceAuthFile })
+
+	if _, err := ts.Mint("new-extension"); !errors.Is(err, writeErr) {
+		t.Fatalf("Mint error = %v, want replacement failure", err)
+	}
+	if !ts.Verify("old-token", "old-extension") {
+		t.Fatal("old token was lost after pre-commit failure")
+	}
+	if ts.Verify("new-token", "new-extension") {
+		t.Fatal("new token was published after pre-commit failure")
+	}
+	if reloaded := NewTokenStore(path, nil); !reloaded.Verify(
+		"old-token",
+		"old-extension",
+	) {
+		t.Fatal("persisted token changed after pre-commit failure")
+	}
+}
+
 func TestTokenStoreRejectsInvalidExtensionIDs(t *testing.T) {
 	calls := 0
 	ts := NewTokenStore(t.TempDir()+"/token.json", func() (string, error) {
@@ -111,6 +189,64 @@ func TestTokenStoreClearRevokesMemoryOnRemoveFailure(t *testing.T) {
 	}
 	if _, _, paired := ts.Pair(); paired {
 		t.Fatal("failed Clear must not leave a pairing reported")
+	}
+}
+
+func TestTokenStoreClearReportsDirectorySyncFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
+	if _, err := ts.Mint("abc"); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	if err := ts.Clear(); !errors.Is(err, syncErr) {
+		t.Fatalf("Clear error = %v, want directory sync failure", err)
+	}
+	if ts.Verify("tok", "abc") {
+		t.Fatal("committed Clear left token valid in memory")
+	}
+	if _, _, paired := NewTokenStore(path, nil).Pair(); paired {
+		t.Fatal("removed token remained paired after reload")
+	}
+}
+
+func TestTokenStoreClearReportsTruncateSyncFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token.json")
+	ts := NewTokenStore(path, func() (string, error) { return "tok", nil })
+	if _, err := ts.Mint("abc"); err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+
+	removeErr := errors.New("remove failed")
+	syncErr := errors.New("token sync failed")
+	originalRemoveAuthFile := removeAuthFile
+	originalSyncTokenFile := syncTokenFile
+	removeAuthFile = func(
+		string,
+		func(string) error,
+	) (bool, error) {
+		return false, removeErr
+	}
+	syncTokenFile = func(*os.File) error { return syncErr }
+	t.Cleanup(func() {
+		removeAuthFile = originalRemoveAuthFile
+		syncTokenFile = originalSyncTokenFile
+	})
+
+	if err := ts.Clear(); !errors.Is(err, removeErr) ||
+		!errors.Is(err, syncErr) {
+		t.Fatalf("Clear error = %v, want remove and token sync failures", err)
+	}
+	if ts.Verify("tok", "abc") {
+		t.Fatal("failed Clear left token valid in memory")
+	}
+	if _, _, paired := NewTokenStore(path, nil).Pair(); paired {
+		t.Fatal("truncated token remained paired after reload")
 	}
 }
 

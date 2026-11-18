@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/Salvionied/apollo/v2/backend/utxorpc"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
 )
@@ -31,7 +34,7 @@ func (f *fakeSubmitter) DecodeTx(
 	return f.decode, f.err
 }
 
-func (f *fakeSubmitter) SubmitTxCbor(
+func (f *fakeSubmitter) SubmitTxCborContext(
 	ctx context.Context,
 	_ string,
 ) (spend.TxResult, error) {
@@ -44,6 +47,24 @@ func (f *fakeSubmitter) SubmitTxCbor(
 	defer f.mu.Unlock()
 	f.submits++
 	return spend.TxResult{TxHash: "abc123"}, f.err
+}
+
+type productionSubmitter struct {
+	service *spend.Service
+}
+
+func (p productionSubmitter) DecodeTx(
+	context.Context,
+	string,
+) (spend.TxSummary, error) {
+	return spend.TxSummary{IsComplete: true}, nil
+}
+
+func (p productionSubmitter) SubmitTxCborContext(
+	ctx context.Context,
+	txCbor string,
+) (spend.TxResult, error) {
+	return p.service.SubmitTxCborContext(ctx, txCbor)
 }
 
 func (f *fakeSubmitter) count() int {
@@ -275,6 +296,107 @@ func TestDisableCancelsSubmissionThatAlreadyLeftApproval(t *testing.T) {
 	}
 }
 
+func TestRevocationCancelsActiveNodeSubmission(t *testing.T) {
+	tests := []struct {
+		name   string
+		revoke func(*Service) error
+	}{
+		{
+			name: "disable",
+			revoke: func(s *Service) error {
+				_, err := s.Disable()
+				return err
+			},
+		},
+		{
+			name: "rotate",
+			revoke: func(s *Service) error {
+				_, err := s.Rotate()
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			accepted := make(chan struct{})
+			canceled := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			releaseNode := func() {
+				releaseOnce.Do(func() { close(release) })
+			}
+			node := httptest.NewUnstartedServer(http.HandlerFunc(
+				func(_ http.ResponseWriter, r *http.Request) {
+					close(accepted)
+					select {
+					case <-r.Context().Done():
+						close(canceled)
+					case <-release:
+					}
+				},
+			))
+			node.Config.Protocols = new(http.Protocols)
+			node.Config.Protocols.SetUnencryptedHTTP2(true)
+			node.Start()
+			t.Cleanup(func() {
+				releaseNode()
+				node.Close()
+			})
+
+			submitter := productionSubmitter{service: spend.NewService(
+				utxorpc.NewUtxoRpcChainContext(node.URL, 0, nil),
+				nil,
+				nil,
+			)}
+			svc, err := New(
+				t.TempDir()+"/state.json",
+				"https://wallet.example:8443",
+				submitter,
+				&fakeApprover{},
+			)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := svc.Enable(); err != nil {
+				t.Fatalf("Enable: %v", err)
+			}
+			path := endpointPath(t, svc)
+
+			done := make(chan int, 1)
+			go func() {
+				rec := httptest.NewRecorder()
+				svc.ServeHTTP(
+					rec,
+					submitRequest(path, "approved-transaction"),
+				)
+				done <- rec.Code
+			}()
+			select {
+			case <-accepted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("submission did not reach the node")
+			}
+
+			if err := test.revoke(svc); err != nil {
+				t.Fatalf("revoke: %v", err)
+			}
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				t.Fatal("revocation did not cancel the active node submission")
+			}
+			select {
+			case status := <-done:
+				if status != http.StatusForbidden {
+					t.Fatalf("revoked submission status = %d, want 403", status)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("revoked submission handler did not return")
+			}
+		})
+	}
+}
+
 func TestEnableAndRotatePersistOnlyCurrentCapability(t *testing.T) {
 	path := t.TempDir() + "/state.json"
 	submitter := &fakeSubmitter{decode: spend.TxSummary{IsComplete: true}}
@@ -313,5 +435,213 @@ func TestEnableAndRotatePersistOnlyCurrentCapability(t *testing.T) {
 	}
 	if _, err := reloaded.Rotate(); !errors.Is(err, ErrDisabled) {
 		t.Fatalf("Rotate after disable error = %v, want ErrDisabled", err)
+	}
+}
+
+func TestEnableRetryCompletesPendingDirectorySync(t *testing.T) {
+	svc, _ := newTestService(t, &fakeApprover{})
+	syncErr := errors.New("directory sync failed")
+	syncCalls := 0
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error {
+		syncCalls++
+		if syncCalls == 1 {
+			return syncErr
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	if _, err := svc.Enable(); !errors.Is(err, syncErr) {
+		t.Fatalf("first Enable error = %v, want directory sync failure", err)
+	}
+	first := svc.Status()
+	if !first.Enabled {
+		t.Fatal("committed enablement was not published")
+	}
+	second, err := svc.Enable()
+	if err != nil {
+		t.Fatalf("retry Enable: %v", err)
+	}
+	if second.Endpoint != first.Endpoint {
+		t.Fatal("retry Enable replaced the committed capability")
+	}
+	if syncCalls != 2 {
+		t.Fatalf("directory sync calls = %d, want 2", syncCalls)
+	}
+}
+
+func TestRotatePublishesCommittedStateWhenDirectorySyncFails(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	submitter := &fakeSubmitter{
+		decode:        spend.TxSummary{IsComplete: true},
+		submitEntered: make(chan struct{}),
+	}
+	svc, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	first, err := svc.Enable()
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	firstPath := endpointPath(t, svc)
+
+	done := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		svc.ServeHTTP(
+			rec,
+			submitRequest(firstPath, "approved-transaction"),
+		)
+		done <- rec.Code
+	}()
+	<-submitter.submitEntered
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	if _, err := svc.Rotate(); !errors.Is(err, syncErr) {
+		t.Fatalf("Rotate error = %v, want directory sync failure", err)
+	}
+	second := svc.Status()
+	if !second.Enabled || second.Endpoint == first.Endpoint {
+		t.Fatalf("committed rotation was not published: %+v", second)
+	}
+	if status := <-done; status != http.StatusForbidden {
+		t.Fatalf("revoked submission status = %d, want 403", status)
+	}
+
+	reloaded, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Status().Endpoint; got != second.Endpoint {
+		t.Fatalf("reloaded endpoint = %q, want %q", got, second.Endpoint)
+	}
+}
+
+func TestDisablePublishesCommittedStateWhenDirectorySyncFails(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	submitter := &fakeSubmitter{decode: spend.TxSummary{IsComplete: true}}
+	svc, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.Enable(); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	status, err := svc.Disable()
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("Disable error = %v, want directory sync failure", err)
+	}
+	if status.Enabled || svc.Status().Enabled {
+		t.Fatal("committed disablement was not published")
+	}
+	reloaded, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Status().Enabled {
+		t.Fatal("reloaded service remained enabled")
+	}
+}
+
+func TestDisableSyncsFallbackRemoval(t *testing.T) {
+	path := t.TempDir() + "/state.json"
+	submitter := &fakeSubmitter{decode: spend.TxSummary{IsComplete: true}}
+	svc, err := New(
+		path,
+		"https://wallet.example",
+		submitter,
+		&fakeApprover{},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := svc.Enable(); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	writeErr := errors.New("state replacement failed")
+	syncErr := errors.New("directory sync failed")
+	originalReplaceState := replaceState
+	originalSyncDirectory := syncDirectory
+	replaceState = func(
+		string,
+		[]byte,
+		func(string) error,
+	) (bool, error) {
+		return false, writeErr
+	}
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() {
+		replaceState = originalReplaceState
+		syncDirectory = originalSyncDirectory
+	})
+
+	if _, err := svc.Disable(); !errors.Is(err, writeErr) ||
+		!errors.Is(err, syncErr) {
+		t.Fatalf(
+			"Disable error = %v, want replacement and directory sync failures",
+			err,
+		)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state file still present after fallback removal: %v", err)
+	}
+}
+
+func TestRotatePreservesStateOnPrecommitFailure(t *testing.T) {
+	svc, _ := newTestService(t, &fakeApprover{})
+	first, err := svc.Enable()
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	writeErr := errors.New("state replacement failed")
+	originalReplaceState := replaceState
+	replaceState = func(
+		string,
+		[]byte,
+		func(string) error,
+	) (bool, error) {
+		return false, writeErr
+	}
+	t.Cleanup(func() { replaceState = originalReplaceState })
+
+	if _, err := svc.Rotate(); !errors.Is(err, writeErr) {
+		t.Fatalf("Rotate error = %v, want replacement failure", err)
+	}
+	if got := svc.Status(); got.Endpoint != first.Endpoint {
+		t.Fatalf("endpoint changed after pre-commit failure: %+v", got)
 	}
 }
