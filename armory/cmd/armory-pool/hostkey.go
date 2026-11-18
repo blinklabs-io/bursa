@@ -228,8 +228,17 @@ func adminRequest(
 		}
 	}
 
-	var resp json.RawMessage
+	if route == device.RouteReset {
+		resp, postErr := c.postResponse(route, json.RawMessage(body))
+		if postErr != nil {
+			return postErr
+		}
+		_, err = out.Write(resp)
 
+		return err
+	}
+
+	var resp json.RawMessage
 	if err = c.post(route, json.RawMessage(body), &resp); err != nil {
 		return err
 	}

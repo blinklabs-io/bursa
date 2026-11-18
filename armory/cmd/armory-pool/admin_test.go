@@ -44,6 +44,7 @@ func adminServer(t *testing.T) *httptest.Server {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("POST "+device.RouteReset, svc.ResetHandler(func() {}))
 	mux.Handle("/wipe/", svc.WipeHandler())
 	mux.Handle("/", svc.Handler())
 
@@ -122,6 +123,15 @@ func TestProvisionAndWipeSubcommandsSign(t *testing.T) {
 
 	if out, err = adminRun(srv, wipe, "-host-key", hostFile, "wipe", "signlog"); err != nil {
 		t.Fatalf("signed signing log wipe: %v", err)
+	}
+
+	if out, err = adminRun(srv, "", "reset"); err == nil {
+		t.Fatalf("unsigned reset accepted: %s", out)
+	}
+	if out, err = adminRun(srv, "", "-host-key", hostFile, "reset"); err != nil {
+		t.Fatalf("signed reset: %v", err)
+	} else if out != "resetting\n" {
+		t.Fatalf("reset response %q", out)
 	}
 
 	// the device wipe is never signed, even when a host key is given

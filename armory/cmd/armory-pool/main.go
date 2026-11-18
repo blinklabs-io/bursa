@@ -25,6 +25,7 @@
 //	armory-pool -identity HEX signlog [-head-seq N -head-hash HEX]
 //	armory-pool [-identity HEX] [-host-key F] provision profile|floor|reward|pins|cold|identity|host-key|host-key/revoke < request.json
 //	armory-pool [-host-key F] wipe objects|device|profile|signlog < request.json
+//	armory-pool [-host-key F] reset
 //	armory-pool reward-hex stake_test1...
 //	armory-pool pins-request -profile NAME -vrf-key-hash HEX [-metadata-hash HEX -metadata-url URL] [-relay R ...] [-unpinned-relays] -pledge-min N -pledge-max N -cost-max N -margin-max N/D
 //	armory-pool address -stake-vkey F [-payment-vkey F] [-type base|reward] [-network preview]
@@ -74,11 +75,11 @@ func newClient(base, source string) *client {
 	}
 }
 
-// post sends req as JSON and decodes the JSON answer into resp.
-func (c *client) post(path string, req, resp any) error {
+// postResponse sends req as JSON and returns the bounded response body.
+func (c *client) postResponse(path string, req any) ([]byte, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	res, err := c.http.Post(
@@ -87,23 +88,33 @@ func (c *client) post(path string, req, resp any) error {
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	defer res.Body.Close()
 
 	b, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"POST %s: %s: %s",
 			path,
 			res.Status,
 			bytes.TrimSpace(b),
 		)
+	}
+
+	return b, nil
+}
+
+// post sends req as JSON and decodes the JSON answer into resp.
+func (c *client) post(path string, req, resp any) error {
+	b, err := c.postResponse(path, req)
+	if err != nil {
+		return err
 	}
 
 	return json.Unmarshal(b, resp)
@@ -615,7 +626,7 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 		}
 
 		return newHostKey(*out, *hostScope, stdout)
-	case "provision", "wipe":
+	case "provision", "wipe", "reset":
 		hk := sf.String(
 			"host-key",
 			*hostKeyFile,
@@ -626,14 +637,20 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 			return err
 		}
 
-		if sf.NArg() != 1 {
+		if sub == "reset" && sf.NArg() != 0 {
+			return errors.New("usage: reset [-host-key FILE]")
+		}
+		if sub != "reset" && sf.NArg() != 1 {
 			return fmt.Errorf(
 				"usage: %s [-host-key FILE] <route> < request.json",
 				sub,
 			)
 		}
 
-		route := "/" + sub + "/" + sf.Arg(0)
+		route := device.RouteReset
+		if sub != "reset" {
+			route = "/" + sub + "/" + sf.Arg(0)
+		}
 		c := newClient(*base, *source)
 
 		var channel *device.AdminChannel
