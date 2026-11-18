@@ -40,6 +40,91 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 	return f(request)
 }
 
+func TestNewAPIClientUsesFiniteDefaultTimeout(t *testing.T) {
+	configuration := NewConfiguration()
+	client := NewAPIClient(configuration)
+	require.Positive(t, client.cfg.HTTPClient.Timeout)
+
+	custom := &http.Client{}
+	configuration = NewConfiguration()
+	configuration.HTTPClient = custom
+	client = NewAPIClient(configuration)
+	require.Same(t, custom, client.cfg.HTTPClient)
+	require.Zero(t, client.cfg.HTTPClient.Timeout)
+}
+
+func TestCallAPIBoundsResponseBody(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		size    int
+		wantErr bool
+	}{
+		{name: "at limit", size: 1 << 20},
+		{name: "over limit", size: 1<<20 + 1, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configuration := NewConfiguration()
+			configuration.HTTPClient = &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body: io.NopCloser(
+							strings.NewReader(strings.Repeat("x", tc.size)),
+						),
+						ContentLength: -1,
+					}, nil
+				}),
+			}
+			client := NewAPIClient(configuration)
+			request, err := http.NewRequestWithContext(
+				context.Background(), http.MethodGet, "http://wallet.test", nil,
+			)
+			require.NoError(t, err)
+			response, err := client.callAPI(request)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+
+			body, err := io.ReadAll(response.Body)
+			if tc.wantErr {
+				require.ErrorIs(t, err, ErrResponseBodyTooLarge)
+				require.Len(t, body, 1<<20)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, body, tc.size)
+		})
+	}
+}
+
+func TestGeneratedOperationRejectsOversizedErrorResponse(t *testing.T) {
+	configuration := NewConfiguration()
+	configuration.HTTPClient = &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusBadGateway,
+				Status:     "502 Bad Gateway",
+				Header: http.Header{
+					"Content-Type": []string{"application/json"},
+				},
+				Body: io.NopCloser(
+					strings.NewReader(strings.Repeat("x", maxResponseBodyBytes+1)),
+				),
+				ContentLength: -1,
+			}, nil
+		}),
+	}
+	client := NewAPIClient(configuration)
+
+	_, response, err := client.DefaultAPI.ApiWalletListGet(context.Background()).Execute()
+	require.ErrorIs(t, err, ErrResponseBodyTooLarge)
+	require.NotNil(t, response)
+	t.Cleanup(func() { require.NoError(t, response.Body.Close()) })
+	body, readErr := io.ReadAll(response.Body)
+	require.NoError(t, readErr)
+	require.Len(t, body, maxResponseBodyBytes)
+}
+
 func TestDebugLoggingUsesSafeMetadata(t *testing.T) {
 	const (
 		requestMnemonic  = "request-sensitive-value"
