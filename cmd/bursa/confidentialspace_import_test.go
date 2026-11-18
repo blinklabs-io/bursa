@@ -133,17 +133,21 @@ func TestServeConfidentialSpaceImportNeedsAnAuthority(t *testing.T) {
 	if err := os.WriteFile(short, []byte("abcd"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for name, file := range map[string]string{
-		"missing":  filepath.Join(dir, "none"),
-		"short":    short,
-		"all zero": zero,
+	// Every other input is valid, so only the authority can be refused.
+	cfg := confidentialspace.ImportConfig{
+		Audience: "a", KMSKey: "k", Tokens: staticTokens{},
+		Wrapper: identityWrapper{}, Store: &memoryImportStore{},
+	}
+	for name, tc := range map[string]struct{ file, want string }{
+		"missing":  {filepath.Join(dir, "none"), "no such file"},
+		"short":    {short, "import authority public key"},
+		"all zero": {zero, "provisioning authority"},
 	} {
 		err := serveConfidentialSpaceImport(
-			t.Context(), "127.0.0.1:0", nil, file,
-			confidentialspace.ImportConfig{},
+			t.Context(), "127.0.0.1:0", nil, tc.file, cfg,
 		)
-		if err == nil {
-			t.Errorf("%s authority accepted", name)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s authority: %v, want %q", name, err, tc.want)
 		}
 	}
 }
@@ -321,8 +325,12 @@ func (staticTokens) Token(context.Context, string, []string) ([]byte, error) {
 	return []byte("token"), nil
 }
 
-// directTransport reaches an Importer without a network.
-type directTransport struct{ importer *confidentialspace.Importer }
+// directTransport reaches an Importer without a network and counts the
+// import requests it sends.
+type directTransport struct {
+	importer *confidentialspace.Importer
+	imports  *int
+}
 
 func (d directTransport) Challenge(
 	ctx context.Context,
@@ -334,6 +342,7 @@ func (d directTransport) Import(
 	ctx context.Context,
 	req confidentialspace.ImportRequest,
 ) error {
+	*d.imports++
 	return d.importer.Import(ctx, req)
 }
 
@@ -367,12 +376,17 @@ func TestRunConfidentialSpaceImportReachesTheWorkload(t *testing.T) {
 	}
 
 	// A token the verifier refuses sends nothing.
+	var imports int
+	transport := directTransport{importer: importer, imports: &imports}
 	refused := runConfidentialSpaceImport(
-		t.Context(), directTransport{importer},
+		t.Context(), transport,
 		fakeVerifier{err: errors.New("bad token")}, params,
 	)
 	if refused == nil || !strings.Contains(refused.Error(), "bad token") {
 		t.Fatalf("unverified workload: %v", refused)
+	}
+	if imports != 0 {
+		t.Fatalf("%d import requests sent to an unverified workload", imports)
 	}
 	store.mu.Lock()
 	wrote := store.envelope != nil
@@ -382,9 +396,12 @@ func TestRunConfidentialSpaceImportReachesTheWorkload(t *testing.T) {
 	}
 
 	if err := runConfidentialSpaceImport(
-		t.Context(), directTransport{importer}, fakeVerifier{}, params,
+		t.Context(), transport, fakeVerifier{}, params,
 	); err != nil {
 		t.Fatal(err)
+	}
+	if imports != 1 {
+		t.Fatalf("%d import requests sent, want 1", imports)
 	}
 	select {
 	case <-importer.Done():
@@ -438,8 +455,19 @@ func TestServeConfidentialSpaceAnswersTheRequestThatEndsIt(t *testing.T) {
 	done := make(chan struct{})
 	handler := http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
 		close(done)
-		// Give the shutdown time to start before the response is written.
-		time.Sleep(50 * time.Millisecond)
+		// Shutdown closes the listener before it waits for this handler,
+		// so a refused dial shows the shutdown has started.
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			conn, err := net.DialTimeout(
+				"tcp", ln.Addr().String(), time.Second,
+			)
+			if err != nil {
+				break
+			}
+			_ = conn.Close()
+			time.Sleep(time.Millisecond)
+		}
 		_, _ = io.WriteString(rw, "imported")
 	})
 	errCh := make(chan error, 1)
