@@ -45,10 +45,13 @@ const (
 	envelopeActive    = "active"
 	maxRequestBody    = 64 << 10
 	maxRequestNonces  = 4096
-	// signRequestTimeout bounds a whole signing request, including its
-	// counter write. The serve command's HTTP write timeout is 30 seconds;
-	// the margin lets the response of a write that commits near this
-	// deadline still be sent.
+	// signRequestTimeout bounds a whole signing request from handler entry,
+	// counter write included. The server's read timeout bounds the body
+	// read, which a context cannot interrupt, and the budget starts at
+	// handler entry so body and signing together stay within it. The serve
+	// command's HTTP write timeout is 30 seconds and starts when the headers
+	// were read, just before the handler; the margin lets the response of a
+	// write that commits near this deadline still be sent.
 	signRequestTimeout = 20 * time.Second
 )
 
@@ -769,13 +772,15 @@ func (w *Workload) handleInventory(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Workload) handleSign(rw http.ResponseWriter, r *http.Request) {
+	// The budget starts here, before the body is read: the server's write
+	// timeout already runs while the body arrives.
+	ctx, cancel := context.WithTimeout(r.Context(), signRequestTimeout)
+	defer cancel()
 	var req backend.AttestedRequest
 	if err := decodeRequest(rw, r, &req); err != nil {
 		http.Error(rw, "invalid request", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), signRequestTimeout)
-	defer cancel()
 	resp, err := w.Sign(ctx, req)
 	if err != nil {
 		http.Error(rw, "signing unavailable", http.StatusServiceUnavailable)

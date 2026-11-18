@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -1300,6 +1301,72 @@ func signOverHandler(
 		}
 	}
 	return rw.Code, resp, elapsed
+}
+
+// delayedBody delivers data after delay, on its first read.
+type delayedBody struct {
+	delay time.Duration
+	data  []byte
+}
+
+func (b *delayedBody) Read(p []byte) (int, error) {
+	time.Sleep(b.delay)
+	b.delay = 0
+	if len(b.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, b.data)
+	b.data = b.data[n:]
+	return n, nil
+}
+
+// serveSignBody serves a signing request whose body arrives as body does and
+// returns the time since the handler was entered.
+func serveSignBody(w *Workload, body io.Reader) time.Duration {
+	r := httptest.NewRequest(http.MethodPost, "/v1/sign", body)
+	r.Header.Set("Content-Type", "application/json")
+	r.TLS = &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{{}},
+		VerifiedChains:   [][]*x509.Certificate{{{}}},
+	}
+	start := time.Now()
+	w.Handler().ServeHTTP(httptest.NewRecorder(), r)
+	return time.Since(start)
+}
+
+func TestSecretStateHandlerBoundsBodyDeliveryWithSigning(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := provisionedSecret(t)
+		w, _, err := stateWorkload(t, c, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := json.Marshal(explicitReq(w, "", 1, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.mu.Lock()
+		c.addDelay = handlerResponseBound - time.Second
+		c.mu.Unlock()
+
+		// The body takes 12s, within the server's read timeout, and the
+		// write 19s, within the signing budget: together they must still
+		// end by the budget.
+		elapsed := serveSignBody(w, &delayedBody{
+			delay: 12 * time.Second,
+			data:  body,
+		})
+		if elapsed > handlerResponseBound {
+			t.Fatalf(
+				"handler took %v, want at most %v: body delivery was not "+
+					"counted in the request budget",
+				elapsed,
+				handlerResponseBound,
+			)
+		}
+		c.settle()
+	})
 }
 
 // The serve command's HTTP write timeout is 30 seconds. A signing request
