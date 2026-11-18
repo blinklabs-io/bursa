@@ -15,6 +15,8 @@
 package confidentialspace
 
 import (
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -30,6 +32,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 )
 
 const tlsTestServerName = "workload.test"
@@ -147,7 +151,7 @@ func TestLoadTLSCertificateServesBundle(t *testing.T) {
 	}
 }
 
-func TestLoadTLSCertificateReadsNewestEnabledVersion(t *testing.T) {
+func TestLoadTLSCertificateReadsNewestVersion(t *testing.T) {
 	t.Parallel()
 	older := newTLSTestIdentity(t, 1)
 	newer := newTLSTestIdentity(t, 2)
@@ -248,6 +252,45 @@ func TestLoadTLSCertificateRefusesBadBundles(t *testing.T) {
 			wantErr: "not valid PEM",
 		},
 		{
+			name:   "leading text",
+			secret: testStateSecret,
+			setup: func(c *fakeSecretClient) {
+				c.seed(append([]byte("junk\n"), id.bundle()...))
+			},
+			wantErr: "not valid PEM",
+		},
+		{
+			name:   "malformed block before a valid one",
+			secret: testStateSecret,
+			setup: func(c *fakeSecretClient) {
+				c.seed(append([]byte(
+					"-----BEGIN CERTIFICATE-----\n!!\n-----END CERTIFICATE-----\n",
+				), id.bundle()...))
+			},
+			wantErr: "not valid PEM",
+		},
+		{
+			name:   "unexpected block type",
+			secret: testStateSecret,
+			setup: func(c *fakeSecretClient) {
+				c.seed(append(id.bundle(), pem.EncodeToMemory(
+					&pem.Block{Type: "X509 CRL", Bytes: []byte{1}},
+				)...))
+			},
+			wantErr: "unexpected \"X509 CRL\" PEM block",
+		},
+		{
+			name:   "oversized",
+			secret: testStateSecret,
+			setup: func(c *fakeSecretClient) {
+				c.seed(append(
+					id.bundle(),
+					bytes.Repeat([]byte("\n"), maxTLSBundleSize)...,
+				))
+			},
+			wantErr: "exceeds size limit",
+		},
+		{
 			name:    "bad secret name",
 			secret:  "pool-state",
 			setup:   func(c *fakeSecretClient) { c.seed(id.bundle()) },
@@ -276,5 +319,117 @@ func TestLoadTLSCertificateRefusesBadBundles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// stubTLSSecretClient answers every read with one response.
+type stubTLSSecretClient struct {
+	resp *secretmanagerpb.AccessSecretVersionResponse
+}
+
+func (c stubTLSSecretClient) AccessSecretVersion(
+	context.Context,
+	*secretmanagerpb.AccessSecretVersionRequest,
+) (*secretmanagerpb.AccessSecretVersionResponse, error) {
+	return c.resp, nil
+}
+
+func (stubTLSSecretClient) Close() error { return nil }
+
+func TestLoadTLSCertificateRefusesBadResponses(t *testing.T) {
+	t.Parallel()
+	id := newTLSTestIdentity(t, 1)
+	tests := []struct {
+		name    string
+		resp    func(*secretmanagerpb.AccessSecretVersionResponse)
+		wantErr string
+	}{
+		{
+			name: "checksum mismatch",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				bad := r.GetPayload().GetDataCrc32C() + 1
+				r.Payload.DataCrc32C = &bad
+			},
+			wantErr: "failed integrity check",
+		},
+		{
+			name: "another secret",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				r.Name = "projects/data/secrets/other/versions/1"
+			},
+			wantErr: "unexpected name",
+		},
+		{
+			name: "no version",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				r.Name = testStateSecret
+			},
+			wantErr: "unexpected name",
+		},
+		{
+			name: "alias version",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				r.Name = testStateSecret + "/versions/latest"
+			},
+			wantErr: "unexpected name",
+		},
+		{
+			name: "empty version",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				r.Name = testStateSecret + "/versions/"
+			},
+			wantErr: "unexpected name",
+		},
+		{
+			name: "version zero",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				r.Name = testStateSecret + "/versions/0"
+			},
+			wantErr: "unexpected name",
+		},
+		{
+			name: "nested version",
+			resp: func(r *secretmanagerpb.AccessSecretVersionResponse) {
+				r.Name = testStateSecret + "/versions/1/x"
+			},
+			wantErr: "unexpected name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := id.bundle()
+			crc := checksumValue(data)
+			resp := &secretmanagerpb.AccessSecretVersionResponse{
+				Name: testStateSecret + "/versions/1",
+				Payload: &secretmanagerpb.SecretPayload{
+					Data:       data,
+					DataCrc32C: &crc,
+				},
+			}
+			tt.resp(resp)
+			certificate, err := loadTLSCertificate(
+				t.Context(), stubTLSSecretClient{resp: resp}, testStateSecret,
+			)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error %v, want %q", err, tt.wantErr)
+			}
+			if len(certificate.Certificate) != 0 || certificate.PrivateKey != nil {
+				t.Fatal("a refused response returned a certificate")
+			}
+		})
+	}
+	// The control: the same response, unaltered, is accepted.
+	data := id.bundle()
+	crc := checksumValue(data)
+	if _, err := loadTLSCertificate(t.Context(), stubTLSSecretClient{
+		resp: &secretmanagerpb.AccessSecretVersionResponse{
+			Name: "projects/123/secrets/pool-state/versions/7",
+			Payload: &secretmanagerpb.SecretPayload{
+				Data: data, DataCrc32C: &crc,
+			},
+		},
+	}, testStateSecret); err != nil {
+		t.Fatalf("a well-formed response was refused: %v", err)
 	}
 }

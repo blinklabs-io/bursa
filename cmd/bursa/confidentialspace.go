@@ -256,7 +256,7 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().
-		StringVar(&tlsSecret, "tls-secret", "", "existing Secret Manager secret, projects/<project>/secrets/<secret>, whose newest enabled version holds one PEM bundle of the workload HTTPS certificate chain and its private key; replaces --tls-cert-file and --tls-key-file")
+		StringVar(&tlsSecret, "tls-secret", "", "existing Secret Manager secret, projects/<project>/secrets/<secret>, whose most recently created version, which must be enabled, holds one PEM bundle of the workload HTTPS certificate chain and its private key; replaces --tls-cert-file and --tls-key-file")
 	cmd.Flags().
 		StringVar(&tlsCertFile, "tls-cert-file", "", "PEM workload HTTPS certificate")
 	cmd.Flags().
@@ -304,8 +304,8 @@ func validateConfidentialSpaceStorage(
 	}
 }
 
-// validateConfidentialSpaceTLS requires exactly one TLS source: the secret, or
-// the certificate and key files together.
+// validateConfidentialSpaceTLS requires exactly one TLS source: a well-formed
+// secret name, or the certificate and key files together.
 func validateConfidentialSpaceTLS(secret, certFile, keyFile string) error {
 	files := []struct{ name, value string }{
 		{"--tls-cert-file", certFile},
@@ -321,7 +321,9 @@ func validateConfidentialSpaceTLS(secret, certFile, keyFile string) error {
 		}
 	}
 	switch {
-	case secret != "" || len(missing) == 0:
+	case secret != "":
+		return confidentialspace.ValidateTLSSecret(secret)
+	case len(missing) == 0:
 		return nil
 	case len(missing) == len(files):
 		return errors.New(

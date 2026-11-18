@@ -21,6 +21,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	secretmanagerclient "cloud.google.com/go/secretmanager/apiv1"
@@ -30,6 +31,8 @@ import (
 
 // maxTLSBundleSize is Secret Manager's payload limit.
 const maxTLSBundleSize = 64 << 10
+
+var pemBegin = []byte("-----BEGIN")
 
 // tlsSecretClient is the part of Secret Manager the TLS bundle read uses.
 type tlsSecretClient interface {
@@ -41,18 +44,21 @@ type tlsSecretClient interface {
 }
 
 // LoadTLSCertificate reads the workload's HTTPS certificate chain and private
-// key from the newest enabled version of an existing Secret Manager secret,
+// key from the most recently created version of an existing Secret Manager
+// secret,
 // through the measured workload's external-account credentials. The secret
 // holds one PEM bundle. Any read, shape or key-match failure is an error: the
 // workload must not serve with a certificate it could not verify.
 //
 // A stale read is harmless here, so the latest alias is used; the state store,
-// whose counters must not roll back, reads by version number instead.
+// whose counters must not roll back, reads by version number instead. The
+// alias does not skip a disabled version: a disabled newest version stops
+// startup.
 func LoadTLSCertificate(
 	ctx context.Context,
 	secret, credentialFile string,
 ) (tls.Certificate, error) {
-	if err := validateTLSSecret(secret); err != nil {
+	if err := ValidateTLSSecret(secret); err != nil {
 		return tls.Certificate{}, err
 	}
 	if err := validateWIFCredentials(credentialFile); err != nil {
@@ -70,7 +76,8 @@ func LoadTLSCertificate(
 	return loadTLSCertificate(ctx, cloudSecretStateClient{Client: client}, secret)
 }
 
-func validateTLSSecret(secret string) error {
+// ValidateTLSSecret checks the form of a TLS secret name without reading it.
+func ValidateTLSSecret(secret string) error {
 	if !stateSecretPattern.MatchString(secret) {
 		return errors.New(
 			"TLS secret must be projects/<project>/secrets/<secret>",
@@ -85,7 +92,7 @@ func loadTLSCertificate(
 	secret string,
 ) (tls.Certificate, error) {
 	defer client.Close()
-	if err := validateTLSSecret(secret); err != nil {
+	if err := ValidateTLSSecret(secret); err != nil {
 		return tls.Certificate{}, err
 	}
 	rpcCtx, cancel := context.WithTimeout(ctx, secretRPCTimeout)
@@ -113,8 +120,11 @@ func loadTLSCertificate(
 		*payload.DataCrc32C != checksumValue(data) { //nolint:protogetter
 		return tls.Certificate{}, errors.New("TLS secret failed integrity check")
 	}
-	if parent, _, ok := strings.Cut(resp.GetName(), "/versions/"); !ok ||
-		!stateSecretPattern.MatchString(parent) ||
+	// As in the state store, the project is not compared: Secret Manager names
+	// it by number in the names it returns.
+	parent, number, ok := strings.Cut(resp.GetName(), "/versions/")
+	if n, err := strconv.ParseUint(number, 10, 64); !ok || err != nil ||
+		n == 0 || !stateSecretPattern.MatchString(parent) ||
 		secretID(parent) != secretID(secret) {
 		return tls.Certificate{}, errors.New(
 			"TLS secret version has an unexpected name",
@@ -124,17 +134,28 @@ func loadTLSCertificate(
 }
 
 // parseTLSBundle accepts only certificate blocks and exactly one private key,
-// in any order. The tls package then checks the key against the leaf, and its
-// errors name no key material.
+// in any order, separated by nothing but white space. pem.Decode skips text
+// before a block and a malformed block, so each block must start where the
+// previous one ended and be the only one in the bytes it consumed. The tls
+// package then checks the key against the leaf, and its errors name no key
+// material.
 func parseTLSBundle(bundle []byte) (tls.Certificate, error) {
 	var certs, keys int
 	rest := bundle
 	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
+		rest = bytes.TrimLeft(rest, " \t\r\n")
+		if len(rest) == 0 {
 			break
 		}
+		block, next := pem.Decode(rest)
+		if block == nil || !bytes.HasPrefix(rest, pemBegin) ||
+			bytes.Count(rest[:len(rest)-len(next)], pemBegin) != 1 {
+			if block != nil {
+				wipe(block.Bytes)
+			}
+			return tls.Certificate{}, errors.New("TLS secret is not valid PEM")
+		}
+		rest = next
 		wipe(block.Bytes)
 		switch {
 		case block.Type == "CERTIFICATE":
@@ -146,9 +167,6 @@ func parseTLSBundle(bundle []byte) (tls.Certificate, error) {
 				"TLS secret holds an unexpected %q PEM block", block.Type,
 			)
 		}
-	}
-	if len(bytes.TrimSpace(rest)) != 0 {
-		return tls.Certificate{}, errors.New("TLS secret is not valid PEM")
 	}
 	switch {
 	case certs == 0 && keys == 0:

@@ -182,6 +182,10 @@ func TestConfidentialSpaceTLSSources(t *testing.T) {
 		{name: "secret", secret: secret},
 		{name: "files", cert: "/c", key: "/k"},
 		{
+			name: "malformed secret", secret: "tls",
+			wantErr: "must be projects/<project>/secrets/<secret>",
+		},
+		{
 			name: "both sources", secret: secret, cert: "/c", key: "/k",
 			wantErr: "--tls-secret excludes --tls-cert-file",
 		},
