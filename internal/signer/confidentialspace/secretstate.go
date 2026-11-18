@@ -31,6 +31,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,6 +81,9 @@ var (
 	ErrStateCreateRefused = errors.New(
 		"the state secret store never creates a wrapped key",
 	)
+	// ErrStateNotEmpty reports an import into a state secret that already
+	// holds data.
+	ErrStateNotEmpty = errors.New("state secret is not empty")
 	// ErrStateStopped reports a counter call after a failed save.
 	ErrStateStopped = errors.New(
 		"state secret store stopped after a failed save; restart the workload",
@@ -348,6 +352,87 @@ func (s *SecretStateStore) Replace(expected, data []byte) error {
 	}
 	s.envelope = bytes.Clone(data)
 	return nil
+}
+
+// Import writes envelope and the starting counter of each profile as the first
+// version of an empty state secret: one with no version, or whose newest
+// version has an empty payload. It refuses any other state, so an existing
+// envelope is never replaced. nextIssue maps each profile to the next issue
+// number its explicit path accepts. The store is not loaded afterwards; a
+// normal start loads what Import wrote.
+func (s *SecretStateStore) Import(
+	ctx context.Context,
+	envelopeBytes []byte,
+	nextIssue map[string]uint64,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loaded || s.stopped != nil {
+		return errors.New("state secret store is already in use")
+	}
+	e, err := parseStateEnvelope(envelopeBytes, s.kmsKey)
+	if err != nil {
+		return err
+	}
+	// A pending envelope would make a start create the counters of every
+	// profile it serves, which a starting counter must never be replaced by.
+	if e.Version != envelopeVersion || e.Phase != envelopeActive {
+		return errors.New("imported envelope must be active")
+	}
+	readCtx, cancel := s.rpcContext(ctx)
+	resp, err := s.readNewest(readCtx)
+	cancel()
+	switch {
+	case errors.Is(err, ErrStateNotProvisioned):
+	case err != nil:
+		return err
+	case len(resp.GetPayload().GetData()) != 0:
+		return ErrStateNotEmpty
+	}
+	sealKey, err := s.deriveSealKey(ctx, e)
+	if err != nil {
+		return err
+	}
+	pub := ed25519.PublicKey(bytes.Clone(e.PublicKey))
+	hash := backend.HashPublicKey(pub)
+	states := make(map[string]counterState, len(nextIssue))
+	for profile, next := range nextIssue {
+		if err := ValidateProfile(profile); err != nil {
+			wipe(sealKey)
+			return err
+		}
+		if next >= math.MaxUint64-1 {
+			wipe(sealKey)
+			return ErrCounterRegression
+		}
+		states[profile] = seededCounterState(hash, profile, next)
+	}
+	s.sealKey, s.pub = sealKey, pub
+	defer func() {
+		wipe(s.sealKey)
+		s.sealKey, s.pub = nil, nil
+	}()
+	return s.saveLocked(ctx, envelopeBytes, states)
+}
+
+// seededCounterState is the counter record of an imported pool whose next
+// issue number is next. The last issued number is the one before it, as the
+// opcert rules derive it for a record that has none.
+func seededCounterState(
+	hash backend.KeyHash,
+	profile string,
+	next uint64,
+) counterState {
+	state := counterState{
+		Version:         counterStateVersion,
+		KeyHash:         hash.String(),
+		NextIssueNumber: next,
+		Profile:         profile,
+	}
+	if next > 0 {
+		state.LastIssued = next - 1
+	}
+	return state
 }
 
 func (s *SecretStateStore) loadLocked() error {
@@ -750,6 +835,13 @@ func (s *SecretStateStore) addVersion(
 	)
 	if err != nil {
 		return fmt.Errorf("add state secret version: %w", err)
+	}
+	if s.parent == "" {
+		// The first version of an empty secret: Load never ran, so the
+		// service's name for the secret is learned from this response.
+		if _, ok := s.versionNumber(added.GetName()); ok {
+			s.parent, _, _ = strings.Cut(added.GetName(), "/versions/")
+		}
 	}
 	keep, ok := s.canonicalVersion(added.GetName())
 	if !ok {

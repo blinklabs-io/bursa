@@ -343,6 +343,17 @@ func createEnvelope(
 		return nil, fmt.Errorf("generate pool key: %w", err)
 	}
 	defer wipe(seed)
+	return wrapSeed(ctx, cfg, seed)
+}
+
+// wrapSeed envelope-encrypts the Ed25519 seed under a fresh data-encryption
+// key that Cloud KMS wraps. createEnvelope passes it a generated seed; an
+// import passes the seed the operator supplied.
+func wrapSeed(
+	ctx context.Context,
+	cfg Config,
+	seed []byte,
+) (*keyMaterial, error) {
 	priv := ed25519.NewKeyFromSeed(seed)
 	pub := append(ed25519.PublicKey(nil), priv.Public().(ed25519.PublicKey)...)
 
