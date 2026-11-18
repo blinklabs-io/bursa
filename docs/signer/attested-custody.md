@@ -240,7 +240,7 @@ The signer accepts a token only when all of these hold:
 - `eat_nonce` contains the inventory binding.
 
 The Workload Identity Pool provider that authorizes access to Cloud KMS and
-Cloud Storage must enforce the same hardware boundary in its
+Cloud Storage (or Secret Manager, with `--state-secret`) must enforce the same hardware boundary in its
 [attestation policy](https://cloud.google.com/confidential-computing/confidential-space/docs/create-grant-access-confidential-resources#create-an-attestation-policy).
 Use `assertion.hwmodel == "GCP_AMD_SEV"` for AMD or
 `assertion.hwmodel == "INTEL_TDX"` for Intel, matching Google's documented
@@ -342,8 +342,8 @@ Cloud KMS must unwrap the same data-encryption key before the public key is
 served. A denial, corrupt envelope, mismatched KMS resource, or changed public
 metadata stops startup.
 
-The command requires the following; the `--profile` lines are optional (see
-Profiles above):
+The command requires one storage mode, below, and the following; the
+`--profile` lines are optional (see Profiles above):
 
 ```text
 bursa confidential-space-workload \
@@ -359,6 +359,54 @@ bursa confidential-space-workload \
   --tls-key-file /etc/bursa/confidential-space-server-key.pem \
   --client-ca-file /etc/bursa/confidential-space-client-ca.pem
 ```
+
+#### Storage modes
+
+Exactly one storage mode is selected:
+
+- `--wrapped-key-file`, `--counter-bucket` and `--counter-object`, all three
+  (above): the wrapped key in a file and the counters in Cloud Storage.
+- `--state-secret projects/PROJECT/secrets/SECRET`: the wrapped key and every
+  counter in one existing Secret Manager secret, for a workload with no
+  persistent storage and no bucket. It excludes the three flags above.
+
+With `--state-secret` the secret holds one JSON document: the wrapped-key
+envelope, stored byte for byte, and one sealed counter record per profile (the
+unprofiled state is its own record). Each record is AES-256-GCM sealed under a
+key derived with HKDF from the envelope's data-encryption key, which the
+workload unwraps through Cloud KMS at startup, so only the measured workload
+can read or write counters. The additional data binds the record version, the
+pool public key, the KMS key name and the profile; a record moved to another
+profile, or altered, stops startup. Counter rules, including `opcert-next`,
+are those of the Cloud Storage counter.
+
+- The workload reads the secret once, at startup, and memory is authoritative
+  from then on. A request computes the next state and adds it as a new secret
+  version before any signature is returned. The older enabled versions are then
+  destroyed; a failed destroy is logged, does not fail the request, and is
+  retried by the next write.
+- A failed write stops the counter: every later request is refused until the
+  workload restarts and reloads the newest version.
+- Startup reads the newest version by number, since the `latest` alias and the
+  version list are eventually consistent. If the newest version is disabled or
+  destroyed, startup stops rather than load an older one.
+- Bursa never creates or deletes the secret. A missing secret, a secret without
+  a version, or an empty payload stops startup; the workload never generates a
+  pool key in this mode and refuses to create one. Provisioning must write the
+  first version.
+- A pending envelope creates the counters of the profiles being served, and
+  `--create-profile-counter` adds a profile later, as in the Cloud Storage mode.
+- There is no compare-and-swap. Run one workload per secret. The signer's
+  watermark, not the secret, is the authority against a secret restored to an
+  older version.
+- Grant the image's federated principal, on this secret only,
+  `secretmanager.versions.access`, `secretmanager.versions.add`,
+  `secretmanager.versions.list` and `secretmanager.versions.destroy`, and
+  Cloud KMS encrypt and decrypt on the wrapping key.
+
+This mode cannot be provisioned until pool key import exists: the workload
+generates a key only in the file mode, and nothing else writes the first
+version.
 
 Configure `tls_ca_file` on the signer with the CA that issued the workload
 server certificate. Configure `tls_client_cert_file` and
@@ -405,14 +453,18 @@ and require
 and the production support attribute. Grant encrypt and decrypt on only the
 wrapping key, and the three object permissions above on only the counter
 object or profile counter objects, to that digest-bound federated principal.
-The same condition makes Cloud KMS and Cloud Storage refuse an unapproved
+With `--state-secret`, grant the secret permissions above on only that secret
+instead. The same condition makes Cloud KMS and Cloud Storage (or Secret
+Manager) refuse an unapproved
 digest, a debug image, an expired default token, or a request without
 attestation. The signer
 independently verifies those properties on the custom inventory token before
 it accepts the public key.
 
-Persist the wrapped-key file and counter object, or each profile's counter
-object, across workload restarts.
+With `--wrapped-key-file`, persist the wrapped-key file and counter object, or
+each profile's counter object, across workload restarts. With `--state-secret`,
+the secret is the persistent state; never restore it to an older version or
+remove it for an existing pool key.
 Losing the wrapped-key file creates a new pool identity on the next boot;
 copying or rolling it back restores the same pool identity because the private
 key never leaves its envelope. Back up the wrapped file together with the Cloud
