@@ -333,6 +333,10 @@ func serveConfidentialSpace(
 	tlsConfig *tls.Config,
 	done <-chan struct{},
 ) error {
+	// http.Server.ListenAndServeTLS reads an empty address as :https.
+	if listenAddress == "" {
+		listenAddress = ":https"
+	}
 	ln, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("confidential space workload: %w", err)
