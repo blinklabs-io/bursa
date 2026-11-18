@@ -46,6 +46,7 @@ const (
 	RouteWipeProfile         = "/wipe/profile"
 	RouteWipeSignLog         = "/wipe/signlog"
 	RouteWipeCold            = "/wipe/cold"
+	RouteReset               = "/reset"
 )
 
 // HostAuth authenticates a provisioning or wipe request: the host key signs
@@ -66,6 +67,11 @@ type hostAuthed interface {
 
 // IdentityRequest asks the device to create or return its identity key.
 type IdentityRequest struct {
+	HostAuth
+}
+
+// ResetRequest asks the provisioning or wipe image to restart the device.
+type ResetRequest struct {
 	HostAuth
 }
 
@@ -97,6 +103,7 @@ var adminRequests = map[string]func() hostAuthed{
 	RouteWipeProfile:         func() hostAuthed { return &WipeProfileRequest{} },
 	RouteWipeSignLog:         func() hostAuthed { return &WipeSignLogRequest{} },
 	RouteWipeCold:            func() hostAuthed { return &WipeColdRequest{} },
+	RouteReset:               func() hostAuthed { return &ResetRequest{} },
 }
 
 // AdminRoutes returns the routes that take host authentication.
@@ -253,6 +260,28 @@ func handleAdmin[Req any, P interface {
 
 		return fn(req)
 	})
+}
+
+// ResetHandler authenticates a reset request and schedules reset under the
+// image's admin-route authentication rules.
+func (s *Service) ResetHandler(reset func()) http.HandlerFunc {
+	return handleWithResponse(
+		s,
+		func(req ResetRequest) (struct{}, error) {
+			defer func() { s.caller = caller{} }()
+
+			if err := s.authorizeAdmin(RouteReset, &req); err != nil {
+				return struct{}{}, err
+			}
+
+			reset()
+
+			return struct{}{}, nil
+		},
+		func(w http.ResponseWriter, _ struct{}) {
+			fmt.Fprintln(w, "resetting")
+		},
+	)
 }
 
 func handleEncryptedAdmin[Req any, P interface {

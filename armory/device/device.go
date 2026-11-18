@@ -510,6 +510,21 @@ func handle[Req, Resp any](
 	s *Service,
 	fn func(Req) (Resp, error),
 ) http.HandlerFunc {
+	return handleWithResponse(
+		s,
+		fn,
+		func(w http.ResponseWriter, resp Resp) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		},
+	)
+}
+
+func handleWithResponse[Req, Resp any](
+	s *Service,
+	fn func(Req) (Resp, error),
+	write func(http.ResponseWriter, Resp),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// before the body is read or the chip touched
 		if !allowed(w, r, Address) {
@@ -539,8 +554,7 @@ func handle[Req, Resp any](
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		write(w, resp)
 	}
 }
 

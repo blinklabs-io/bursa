@@ -17,12 +17,8 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"sync"
-	"time"
-
-	usbarmory "github.com/usbarmory/tamago/board/usbarmory/mk2"
 
 	"github.com/blinklabs-io/bursa/armory/device"
 )
@@ -35,7 +31,6 @@ var imageOpenRoutes = []string{
 	"/v1/challenge",
 	device.RouteIdentityProof,
 	"/pubkey",
-	"/reset",
 }
 
 // servesInventory is clear: this image does not serve /v1/inventory.
@@ -57,21 +52,8 @@ func routes(svc *device.Service, s *signer, mu *sync.Mutex) {
 	http.Handle("/v1/challenge", svc.ProvisioningHandler())
 	http.Handle(device.RouteIdentityProof, svc.ProvisioningHandler())
 
-	// a cold reset returns an unflashed board to USB recovery mode, ready
-	// for the next image
-	http.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "POST required", http.StatusMethodNotAllowed)
-			return
-		}
-
-		fmt.Fprintln(w, "resetting")
-
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			// never reset in the middle of an SE050 write
-			mu.Lock()
-			usbarmory.Reset()
-		}()
-	})
+	http.Handle(
+		"POST "+device.RouteReset,
+		svc.ResetHandler(scheduleReset(mu)),
+	)
 }

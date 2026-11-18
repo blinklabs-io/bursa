@@ -248,6 +248,8 @@ func requestFor(t *testing.T, s *Service, route string) any {
 		return WipeSignLogRequest{IdentityPublicKey: id}
 	case RouteWipeCold:
 		return WipeColdRequest{IdentityPublicKey: id, ColdKeyID: testColdID + 2}
+	case RouteReset:
+		return ResetRequest{}
 	}
 
 	t.Fatalf("no request for %s", route)
@@ -271,11 +273,64 @@ func chipState(c *fakeChip) map[uint32]string {
 }
 
 func handlerFor(s *Service, route string) http.Handler {
+	if route == RouteReset {
+		return resetHandlerFor(s, func() {})
+	}
+
 	if strings.HasPrefix(route, "/wipe/") {
 		return s.WipeHandler()
 	}
 
 	return s.ProvisioningHandler()
+}
+
+func resetHandlerFor(s *Service, reset func()) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("POST /v1/challenge", s.ProvisioningHandler())
+	mux.Handle("POST "+RouteReset, s.ResetHandler(reset))
+
+	return mux
+}
+
+func TestResetRequiresRegisteredHost(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newHostAuthService(t)
+	called := 0
+	h := resetHandlerFor(s, func() { called++ })
+
+	if code, body := rawPost(h, RouteReset, []byte("{}")); code == http.StatusOK {
+		t.Fatalf("unsigned reset accepted: %s", body)
+	}
+	if called != 0 {
+		t.Fatal("reset scheduled by an unsigned request")
+	}
+
+	if code, body := postAs(t, h, RouteReset, ResetRequest{}, testHostKey); code != http.StatusOK {
+		t.Fatalf("signed reset refused: %d %s", code, body)
+	} else if string(body) != "resetting\n" {
+		t.Fatalf("reset response %q, want %q", body, "resetting\\n")
+	}
+	if called != 1 {
+		t.Fatalf("reset scheduled %d times, want 1", called)
+	}
+}
+
+func TestResetAcceptedInBootstrap(t *testing.T) {
+	t.Parallel()
+
+	s, _ := newTestService(t)
+	called := 0
+	h := resetHandlerFor(s, func() { called++ })
+
+	if code, body := rawPost(h, RouteReset, []byte("{}")); code != http.StatusOK {
+		t.Fatalf("bootstrap reset refused: %d %s", code, body)
+	} else if string(body) != "resetting\n" {
+		t.Fatalf("reset response %q, want %q", body, "resetting\\n")
+	}
+	if called != 1 {
+		t.Fatalf("reset scheduled %d times, want 1", called)
+	}
 }
 
 // Once a host key is registered every provisioning and wipe route refuses an
