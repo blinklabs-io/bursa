@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -28,6 +29,14 @@ const durableMoveFlags = windows.MOVEFILE_REPLACE_EXISTING |
 	windows.MOVEFILE_WRITE_THROUGH
 
 func replacePath(oldPath, newPath string) error {
+	oldPath, err := extendedWindowsPath(oldPath)
+	if err != nil {
+		return err
+	}
+	newPath, err = extendedWindowsPath(newPath)
+	if err != nil {
+		return err
+	}
 	oldPtr, err := windows.UTF16PtrFromString(oldPath)
 	if err != nil {
 		return err
@@ -37,6 +46,20 @@ func replacePath(oldPath, newPath string) error {
 		return err
 	}
 	return windows.MoveFileEx(oldPtr, newPtr, durableMoveFlags)
+}
+
+func extendedWindowsPath(path string) (string, error) {
+	if strings.HasPrefix(path, `\\?\`) {
+		return path, nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(abs, `\\`) {
+		return `\\?\UNC\` + strings.TrimPrefix(abs, `\\`), nil
+	}
+	return `\\?\` + abs, nil
 }
 
 func removePath(path string) (bool, error) {

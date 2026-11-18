@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -81,15 +82,16 @@ type Service struct {
 	now       func() time.Time
 	random    func() (string, error)
 
-	mu         sync.Mutex
-	state      state
-	generation uint64
-	window     time.Time
-	requests   int
-	inFlight   int
-	seen       map[[sha256.Size]byte]time.Time
-	active     map[uint64]context.CancelFunc
-	nextActive uint64
+	mu                sync.Mutex
+	state             state
+	durabilityPending bool
+	generation        uint64
+	window            time.Time
+	requests          int
+	inFlight          int
+	seen              map[[sha256.Size]byte]time.Time
+	active            map[uint64]context.CancelFunc
+	nextActive        uint64
 }
 
 func New(
@@ -171,6 +173,12 @@ func (s *Service) Enable() (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state.Enabled {
+		if s.durabilityPending {
+			if err := syncDirectory(filepath.Dir(s.path)); err != nil {
+				return Status{}, err
+			}
+			s.durabilityPending = false
+		}
 		return s.statusLocked(), nil
 	}
 	token, err := s.random()
@@ -181,6 +189,7 @@ func (s *Service) Enable() (Status, error) {
 	committed, err := s.persistLocked(next)
 	if committed {
 		s.state = next
+		s.durabilityPending = err != nil
 		s.generation++
 	}
 	if err != nil {
@@ -198,6 +207,9 @@ func (s *Service) Disable() (Status, error) {
 	s.generation++
 	s.cancelActiveLocked()
 	committed, err := s.persistLocked(s.state)
+	if committed {
+		s.durabilityPending = err != nil
+	}
 	if err != nil && !committed {
 		// Removing the prior enabled snapshot preserves revocation across a
 		// restart when the atomic replacement itself could not be completed.
@@ -223,6 +235,7 @@ func (s *Service) Rotate() (Status, error) {
 	committed, err := s.persistLocked(next)
 	if committed {
 		s.state = next
+		s.durabilityPending = err != nil
 		s.generation++
 		s.cancelActiveLocked()
 	}

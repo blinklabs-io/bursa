@@ -17,6 +17,7 @@
 package atomicfile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,5 +53,38 @@ func TestReplaceCreatesOwnerOnlyState(t *testing.T) {
 	}
 	if got := fileInfo.Mode().Perm(); got != 0o600 {
 		t.Fatalf("state file mode = %o, want 600", got)
+	}
+}
+
+func TestRemoveRetriesDirectorySyncWhenPathIsAlreadyAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(path, []byte("state"), 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	syncErr := errors.New("directory sync failed")
+	syncCalls := 0
+	syncDir := func(got string) error {
+		if got != dir {
+			t.Fatalf("synced directory = %q, want %q", got, dir)
+		}
+		syncCalls++
+		if syncCalls == 1 {
+			return syncErr
+		}
+		return nil
+	}
+
+	removed, err := Remove(path, syncDir)
+	if !removed || !errors.Is(err, syncErr) {
+		t.Fatalf("first Remove = (%v, %v), want (true, sync error)", removed, err)
+	}
+	removed, err = Remove(path, syncDir)
+	if removed || err != nil {
+		t.Fatalf("retry Remove = (%v, %v), want (false, nil)", removed, err)
+	}
+	if syncCalls != 2 {
+		t.Fatalf("directory sync calls = %d, want 2", syncCalls)
 	}
 }

@@ -438,6 +438,39 @@ func TestEnableAndRotatePersistOnlyCurrentCapability(t *testing.T) {
 	}
 }
 
+func TestEnableRetryCompletesPendingDirectorySync(t *testing.T) {
+	svc, _ := newTestService(t, &fakeApprover{})
+	syncErr := errors.New("directory sync failed")
+	syncCalls := 0
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error {
+		syncCalls++
+		if syncCalls == 1 {
+			return syncErr
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	if _, err := svc.Enable(); !errors.Is(err, syncErr) {
+		t.Fatalf("first Enable error = %v, want directory sync failure", err)
+	}
+	first := svc.Status()
+	if !first.Enabled {
+		t.Fatal("committed enablement was not published")
+	}
+	second, err := svc.Enable()
+	if err != nil {
+		t.Fatalf("retry Enable: %v", err)
+	}
+	if second.Endpoint != first.Endpoint {
+		t.Fatal("retry Enable replaced the committed capability")
+	}
+	if syncCalls != 2 {
+		t.Fatalf("directory sync calls = %d, want 2", syncCalls)
+	}
+}
+
 func TestRotatePublishesCommittedStateWhenDirectorySyncFails(t *testing.T) {
 	path := t.TempDir() + "/state.json"
 	submitter := &fakeSubmitter{

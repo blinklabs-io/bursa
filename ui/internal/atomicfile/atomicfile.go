@@ -66,10 +66,20 @@ func Remove(
 	syncDir func(string) error,
 ) (removed bool, err error) {
 	removed, err = removePath(path)
-	if err != nil || !removed {
+	if err != nil {
 		return removed, err
 	}
-	return finishCommit(filepath.Dir(path), syncDir)
+	dir := filepath.Dir(path)
+	if !removed {
+		if _, err := os.Stat(dir); err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	_, err = finishCommit(dir, syncDir)
+	return removed, err
 }
 
 func finishCommit(
