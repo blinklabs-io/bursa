@@ -100,7 +100,7 @@ try {
   assert.equal(result.err?.code, -3, JSON.stringify(result));
   assert.match(result.err.info, /Not paired/);
 
-  // Pair through the popup, then confirm the token survives a popup reload.
+  // Pair through the popup, then confirm the identity survives a popup reload.
   const popup = await browser.open(`${browser.origin}/popup.html`);
   // The popup fills the port field once its storage read resolves, so keep setting it.
   await eventually(

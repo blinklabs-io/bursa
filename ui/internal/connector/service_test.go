@@ -247,7 +247,20 @@ func (s *Service) ConfirmPairForTest(extensionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.ConfirmPair(extensionID, code)
+	publicKey, err := defaultRand()
+	if err != nil {
+		return "", err
+	}
+	return s.ConfirmPair(extensionID, code, publicKey)
+}
+
+func testPairingPublicKey(t *testing.T) string {
+	t.Helper()
+	publicKey, err := defaultRand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return publicKey
 }
 
 // TestServiceEnableThenRead verifies the core enable→grant→read flow.
@@ -595,10 +608,11 @@ func TestServicePairCodeMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginPair: %v", err)
 	}
-	if _, err := s.ConfirmPair("ext2", code+"X"); err != ErrPairCodeMismatch {
+	publicKey := testPairingPublicKey(t)
+	if _, err := s.ConfirmPair("ext2", code+"X", publicKey); err != ErrPairCodeMismatch {
 		t.Fatalf("want ErrPairCodeMismatch, got %v", err)
 	}
-	if _, err := s.ConfirmPair("ext2", code); err != nil {
+	if _, err := s.ConfirmPair("ext2", code, publicKey); err != nil {
 		t.Fatalf("correct code after mismatch should still pair: %v", err)
 	}
 }
@@ -651,7 +665,7 @@ func TestServicePairCodeExpires(t *testing.T) {
 
 	// Advance past the TTL.
 	now = now.Add(pairCodeTTL + time.Second)
-	if _, err := s.ConfirmPair("ext-expire", code); !errors.Is(
+	if _, err := s.ConfirmPair("ext-expire", code, testPairingPublicKey(t)); !errors.Is(
 		err,
 		ErrPairCodeMismatch,
 	) {
@@ -676,7 +690,7 @@ func TestServicePairCodeAttemptCap(t *testing.T) {
 		wrong = "000000000001"
 	}
 	for i := 0; i < pairCodeMaxAttempts; i++ {
-		if _, err := s.ConfirmPair("ext-cap", wrong); !errors.Is(
+		if _, err := s.ConfirmPair("ext-cap", wrong, testPairingPublicKey(t)); !errors.Is(
 			err,
 			ErrPairCodeMismatch,
 		) {
@@ -684,7 +698,7 @@ func TestServicePairCodeAttemptCap(t *testing.T) {
 		}
 	}
 	// The correct code must now be rejected too: the entry was discarded.
-	if _, err := s.ConfirmPair("ext-cap", code); !errors.Is(
+	if _, err := s.ConfirmPair("ext-cap", code, testPairingPublicKey(t)); !errors.Is(
 		err,
 		ErrPairCodeMismatch,
 	) {
@@ -1052,7 +1066,7 @@ func TestServiceUnpair(t *testing.T) {
 	if err := s.Unpair(); err != nil {
 		t.Fatalf("unpair: %v", err)
 	}
-	if s.VerifyToken("anything", "ext") {
+	if s.VerifyAuthority("anything", "ext") {
 		t.Fatal("token should be invalid after unpair")
 	}
 }
@@ -1115,7 +1129,7 @@ func TestServiceUnpairWaitsForAuthorizedExecution(t *testing.T) {
 		pairingAuthorityContextKey{},
 		pairingAuthority{
 			extensionID: "chrome-extension://ext",
-			token:       token,
+			publicKey:   token,
 		},
 	)
 	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
@@ -1179,7 +1193,7 @@ func TestServiceApprovedRequestRefusedAfterUnpair(t *testing.T) {
 		pairingAuthorityContextKey{},
 		pairingAuthority{
 			extensionID: "chrome-extension://ext",
-			token:       token,
+			publicKey:   token,
 		},
 	)
 	req, err := s.submit(requestCtx, "https://pending.example", "enable", nil)
@@ -1354,7 +1368,7 @@ func TestServicePendingPairings(t *testing.T) {
 	}
 
 	// Confirming removes the pairing from the pending list.
-	if _, err := svc.ConfirmPair(extID, code); err != nil {
+	if _, err := svc.ConfirmPair(extID, code, testPairingPublicKey(t)); err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
 	}
 	if got := svc.PendingPairings(); len(got) != 0 {
@@ -1368,11 +1382,15 @@ func TestServiceNormalizesRawExtensionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginPair: %v", err)
 	}
-	token, err := s.ConfirmPair("abcdefghijklmnopabcdefghijklmnop", code)
+	token, err := s.ConfirmPair(
+		"abcdefghijklmnopabcdefghijklmnop",
+		code,
+		testPairingPublicKey(t),
+	)
 	if err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
 	}
-	if !s.VerifyToken(
+	if !s.VerifyAuthority(
 		token,
 		"chrome-extension://abcdefghijklmnopabcdefghijklmnop",
 	) {

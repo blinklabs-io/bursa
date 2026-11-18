@@ -1,3 +1,5 @@
+import { loadIdentity, signRequest } from './identity';
+
 /**
  * MV3 service workers can be suspended by the browser at any time.
  * An in-flight fetch will be dropped if the worker is killed mid-request.
@@ -24,10 +26,13 @@ export async function handleRequest(
   },
   senderOrigin?: string,
 ): Promise<{ id: string; result?: unknown; error?: unknown }> {
-  const { token, port = 8090 } = await chrome.storage.local.get(['token', 'port']);
+  const [{ port = 8090, paired = false }, identity] = await Promise.all([
+    chrome.storage.local.get(['port', 'paired']),
+    loadIdentity(),
+  ]);
   const parsedPort = parsePort(port);
 
-  if (!token) {
+  if (!identity || !paired) {
     return {
       id: message.id,
       error: { code: -3, info: 'Not paired with Bursa. Open the extension popup to pair.' },
@@ -43,19 +48,36 @@ export async function handleRequest(
   try {
     const baseURL = `http://127.0.0.1:${parsedPort}`;
     const requestURL = new URL('/connector/request', baseURL);
+    const requestBody = JSON.stringify({
+      // Use the browser-verified sender origin; fall back to 'unknown' only
+      // if the runtime did not provide one (should not happen for content scripts).
+      origin: senderOrigin ?? 'unknown',
+      method: message.method,
+      params: message.params,
+    });
+    const challengeResponse = await fetch(new URL('/connector/challenge', baseURL).toString(), {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    if (!challengeResponse.ok) {
+      return { id: message.id, error: { code: -3, info: 'Not paired with Bursa.' } };
+    }
+    const { challenge } = (await challengeResponse.json()) as { challenge: string };
+    const signature = await signRequest(
+      identity,
+      challenge,
+      'POST',
+      '/connector/request',
+      requestBody,
+    );
     const response = await fetch(requestURL.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Bursa-Token': token as string,
+        'X-Bursa-Challenge': challenge,
+        'X-Bursa-Signature': signature,
       },
-      body: JSON.stringify({
-        // Use the browser-verified sender origin; fall back to 'unknown' only
-        // if the runtime did not provide one (should not happen for content scripts).
-        origin: senderOrigin ?? 'unknown',
-        method: message.method,
-        params: message.params,
-      }),
+      body: requestBody,
       signal: controller.signal,
     });
 

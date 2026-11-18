@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { establishControlSession } from "./session";
+import { controlSessionHeaders, establishControlSession } from "./session";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,6 +18,7 @@ test("exchanges the launch fragment for a server session and removes it", async 
     headers: { "X-Bursa-Session": "secret-token" },
   });
   expect(window.location.hash).toBe("#/");
+  expect(controlSessionHeaders()).toEqual({ "X-Bursa-Session": "secret-token" });
 });
 
 test("does not exchange ordinary hash routes", async () => {

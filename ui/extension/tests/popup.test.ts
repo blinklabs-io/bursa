@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../src/identity', () => ({
+  loadIdentity: vi.fn(async () => ({ privateKey: {}, publicKey: 'test-public-key' })),
+  loadOrCreateIdentity: vi.fn(async () => ({ privateKey: {}, publicKey: 'test-public-key' })),
+}));
+
 // Chrome mock — set up BEFORE any module import so side effects see the mock
 const storageMock: Record<string, unknown> = {};
 const chromeMock = {
@@ -99,18 +104,21 @@ describe('popup UI', () => {
     expect(url).toBe('http://127.0.0.1:8090/connector/pair');
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body as string);
-    expect(body).toEqual({ extension_id: window.location.origin });
+    expect(body).toEqual({
+      extension_id: window.location.origin,
+      public_key: 'test-public-key',
+    });
 
     const codeSection = document.getElementById('code-section')!;
     expect(codeSection.hidden).toBe(false);
   });
 
-  it('confirm button click → step 2 POST with code, stores token', async () => {
+  it('confirm button click → step 2 POST with code, stores only pairing state', async () => {
     // No port stored: confirm handler falls back to the default port 8090.
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ token: 'abc123' }),
+      json: async () => ({ ok: true }),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -127,12 +135,16 @@ describe('popup UI', () => {
     expect(url).toBe('http://127.0.0.1:8090/connector/pair');
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body as string);
-    expect(body).toEqual({ extension_id: window.location.origin, code: '1234' });
+    expect(body).toEqual({
+      extension_id: window.location.origin,
+      code: '1234',
+      public_key: 'test-public-key',
+    });
 
-    expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ token: 'abc123' });
+    expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ paired: true });
 
-    // The confirm handler calls await init() after storing the token. The mock
-    // get() re-reads storageMock (now containing the token), so init() takes the
+    // The confirm handler calls await init() after storing pairing state. The
+    // mock get() re-reads storageMock, so init() takes the
     // connected branch and updates the UI.
     const statusBar = document.getElementById('status-bar')!;
     const pairSection = document.getElementById('pair-section')!;
@@ -201,7 +213,7 @@ describe('popup UI', () => {
     const confirmFetch = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ token: 'abc123' }),
+      json: async () => ({ ok: true }),
     }));
     vi.stubGlobal('fetch', confirmFetch);
     (document.getElementById('code-input') as HTMLInputElement).value = '1234';
@@ -230,7 +242,7 @@ describe('popup UI', () => {
     expect(codeError.textContent).toBe('Enter the pairing code from Bursa Settings.');
   });
 
-  it('does not store a token when the confirm response is not ok', async () => {
+  it('does not store pairing state when the confirm response is not ok', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: false,
       status: 401,

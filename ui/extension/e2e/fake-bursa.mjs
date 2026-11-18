@@ -1,16 +1,18 @@
 import { createServer } from 'node:http';
+import { createHash, createPublicKey, randomBytes, verify } from 'node:crypto';
 
 // The real service treats a bare ID as a Chromium extension ID.
 const normalize = (id) => (id.includes('://') ? id : `chrome-extension://${id}`);
 
 export const PAIRING_CODE = '123456';
-export const TOKEN = 'e2e-token';
 
 // A stand-in for the Bursa connector endpoints with the same observable rules the
-// extension depends on: no CORS headers until paired, the token must accompany the
-// paired extension's Origin, and every dApp origin needs its own enable() grant.
+// extension depends on: no CORS headers until paired, each request carries a
+// single-use signed challenge, and every dApp origin needs its own enable() grant.
 export class FakeBursa {
   paired = null;
+  publicKey = null;
+  challenges = new Set();
   grants = new Set();
   rejectEnable = false;
   requests = [];
@@ -42,7 +44,8 @@ export class FakeBursa {
         const headers = { 'Content-Type': 'application/json' };
         if (this.paired) {
           headers['Access-Control-Allow-Origin'] = this.paired;
-          headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Bursa-Token';
+          headers['Access-Control-Allow-Headers'] =
+            'Content-Type, X-Bursa-Challenge, X-Bursa-Signature';
         }
         response.writeHead(status, headers);
         response.end(JSON.stringify(body));
@@ -59,14 +62,35 @@ export class FakeBursa {
           return send(403, { error: 'pairing code mismatch' });
         }
         this.paired = this.pending;
-        return send(200, { token: TOKEN });
+        this.publicKey = createPublicKey({
+          key: Buffer.from(body.public_key, 'base64url'),
+          format: 'der',
+          type: 'spki',
+        });
+        return send(200, { ok: true });
       }
 
-      if (
-        request.url !== '/connector/request' ||
-        request.headers['x-bursa-token'] !== TOKEN ||
-        request.headers.origin !== this.paired
-      ) {
+      if (request.url === '/connector/challenge' && request.headers.origin === this.paired) {
+        const challenge = randomBytes(32).toString('base64url');
+        this.challenges.add(challenge);
+        return send(200, { challenge });
+      }
+
+      const challenge = request.headers['x-bursa-challenge'];
+      const signature = request.headers['x-bursa-signature'];
+      const bodyDigest = createHash('sha256').update(raw).digest('base64url');
+      const payload = `bursa-connector-v1\n${challenge}\n${request.method}\n${request.url}\n${bodyDigest}`;
+      const authorized =
+        request.url === '/connector/request' &&
+        request.headers.origin === this.paired &&
+        this.challenges.delete(challenge) &&
+        verify(
+          'sha256',
+          Buffer.from(payload),
+          { key: this.publicKey, dsaEncoding: 'ieee-p1363' },
+          Buffer.from(signature ?? '', 'base64url'),
+        );
+      if (!authorized) {
         return send(401, { error: 'unauthorized' });
       }
       this.requests.push({ origin: body.origin, method: body.method });

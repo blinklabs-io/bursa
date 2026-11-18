@@ -1,6 +1,11 @@
+import { loadIdentity, loadOrCreateIdentity } from './identity';
+
 // Read current state from storage on load.
 async function init() {
-  const { token, port = 8090 } = await chrome.storage.local.get(['token', 'port']);
+  const [{ port = 8090, paired = false }, identity] = await Promise.all([
+    chrome.storage.local.get(['port', 'paired']),
+    loadIdentity(),
+  ]);
 
   const statusBar = document.getElementById('status-bar')!;
   const pairSection = document.getElementById('pair-section')!;
@@ -8,7 +13,7 @@ async function init() {
 
   portInput.value = String(port);
 
-  if (token) {
+  if (identity && paired) {
     statusBar.textContent = 'Connected';
     statusBar.className = 'status connected';
     pairSection.hidden = true;
@@ -31,10 +36,11 @@ document.getElementById('pair-btn')!.addEventListener('click', async () => {
   pairError.hidden = true;
 
   try {
+    const identity = await loadOrCreateIdentity();
     const resp = await fetch(`http://127.0.0.1:${port}/connector/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extension_id: location.origin }),
+      body: JSON.stringify({ extension_id: location.origin, public_key: identity.publicKey }),
     });
 
     if (resp.status !== 202) {
@@ -49,7 +55,7 @@ document.getElementById('pair-btn')!.addEventListener('click', async () => {
   }
 });
 
-// Confirm button: step 2 — POST /connector/pair {extension_id, code} → token
+// Confirm button: step 2 — bind the extension key after code confirmation.
 document.getElementById('confirm-btn')!.addEventListener('click', async () => {
   const { port = 8090 } = await chrome.storage.local.get(['port']);
   const codeInput = document.getElementById('code-input') as HTMLInputElement;
@@ -65,18 +71,22 @@ document.getElementById('confirm-btn')!.addEventListener('click', async () => {
   }
 
   try {
+    const identity = await loadOrCreateIdentity();
     const resp = await fetch(`http://127.0.0.1:${port}/connector/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extension_id: location.origin, code }),
+      body: JSON.stringify({
+        extension_id: location.origin,
+        code,
+        public_key: identity.publicKey,
+      }),
     });
 
     if (!resp.ok) {
       throw new Error(`Pairing failed: ${resp.status}`);
     }
 
-    const { token } = await resp.json();
-    await chrome.storage.local.set({ token });
+    await chrome.storage.local.set({ paired: true });
 
     // Re-init to show connected state
     await init();

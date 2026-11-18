@@ -79,31 +79,39 @@ function emitRequest(req: ConnectorRequest) {
 }
 
 function emitSnapshot(pending: ConnectorRequest[]) {
-  act(() => {
-    FakeEventSource.instances[0].emit(JSON.stringify({ type: "snapshot", pending }));
-  });
+	void waitFor(() => expect(FakeEventSource.instances).toHaveLength(1)).then(() => {
+		act(() => {
+			FakeEventSource.instances[0].emit(JSON.stringify({ type: "snapshot", pending }));
+		});
+	});
 }
 
 function emitError() {
-  act(() => {
-    FakeEventSource.instances[0].emitError();
-  });
+	void waitFor(() => expect(FakeEventSource.instances).toHaveLength(1)).then(() => {
+		act(() => FakeEventSource.instances[0].emitError());
+	});
 }
 
 function emitOpen() {
-  act(() => {
-    FakeEventSource.instances[0].emitOpen();
-  });
+	void waitFor(() => expect(FakeEventSource.instances).toHaveLength(1)).then(() => {
+		act(() => FakeEventSource.instances[0].emitOpen());
+	});
 }
 
 beforeEach(() => {
   restoreEventSource = installFakeEventSource();
   emittedRequests = [];
+	vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+		ok: true,
+		status: 200,
+		json: async () => ({ ticket: "approval-ticket" }),
+	}));
   vi.spyOn(notify, "notifyPending").mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+	vi.unstubAllGlobals();
   restoreEventSource?.();
   restoreEventSource = undefined;
 });

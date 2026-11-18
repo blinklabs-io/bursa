@@ -16,7 +16,6 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9435,33 +9434,7 @@ func TestSessionGuardRejectsForgedLocalRequests(t *testing.T) {
 	}
 }
 
-func TestSessionCookieSecureOnlyOverTLS(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		tls    bool
-		secure bool
-	}{
-		{"plain loopback", false, false},
-		{"direct TLS", true, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := sessionGuard(testSessionToken, http.NotFoundHandler())
-			req := localReq(http.MethodPost, "/session", nil)
-			if tc.tls {
-				req.TLS = &tls.ConnectionState{}
-				req.Header.Set("Origin", "https://127.0.0.1:8090")
-			}
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			cookies := rec.Result().Cookies()
-			if len(cookies) != 1 || cookies[0].Secure != tc.secure {
-				t.Fatalf("cookie = %#v, want Secure=%v", cookies, tc.secure)
-			}
-		})
-	}
-}
-
-func TestSessionExchangeSetsAuthenticatedCookie(t *testing.T) {
+func TestSessionExchangeKeepsCapabilityOutOfSharedHostCookies(t *testing.T) {
 	h := NewHandler(
 		testSessionToken,
 		fakeStatuser{},
@@ -9489,26 +9462,59 @@ func TestSessionExchangeSetsAuthenticatedCookie(t *testing.T) {
 		)
 	}
 	cookies := rec.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != sessionCookieName ||
-		!cookies[0].HttpOnly ||
-		cookies[0].SameSite != http.SameSiteStrictMode {
-		t.Fatalf(
-			"session cookie = %#v, want one HttpOnly SameSite=Strict cookie",
-			cookies,
-		)
+	if len(cookies) != 0 {
+		t.Fatalf("session cookies = %#v, want none", cookies)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/vault/status", nil)
 	req.Host = "127.0.0.1:8090"
-	req.AddCookie(cookies[0])
+	req.AddCookie(&http.Cookie{Name: "bursa-control-session", Value: testSessionToken})
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf(
-			"GET /vault/status with session cookie = %d, want 200: %s",
+			"GET /vault/status with forged shared-host cookie = %d, want 401: %s",
 			rec.Code,
 			rec.Body.String(),
 		)
+	}
+}
+
+func TestSessionEventTicketIsSingleUse(t *testing.T) {
+	passed := false
+	h := sessionGuard(
+		testSessionToken,
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { passed = true }),
+	)
+	issue := localReq(http.MethodPost, "/session/events-ticket", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, issue)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("issue ticket = %d: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil || response.Ticket == "" {
+		t.Fatalf("decode ticket: %v, value=%q", err, response.Ticket)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/connector/events?ticket="+url.QueryEscape(response.Ticket),
+		nil,
+	)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, request)
+	if !passed {
+		t.Fatal("valid event ticket did not reach handler")
+	}
+
+	passed = false
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, request)
+	if rec.Code != http.StatusUnauthorized || passed {
+		t.Fatalf("replayed event ticket = %d, passed=%v", rec.Code, passed)
 	}
 }
 
@@ -9520,6 +9526,7 @@ func TestSessionGuardRoutePartition(t *testing.T) {
 		{"/health", true},
 		{"/assets/app.js", true},
 		{"/connector/pair", true},
+		{"/connector/challenge", true},
 		{"/connector/request", true},
 		{"/connector/self-revoke", true},
 		{"/connector/request/extra", false},
@@ -9558,7 +9565,7 @@ func TestSessionGuardRoutePartition(t *testing.T) {
 }
 
 // TestSameOriginGuardSkipsConnector verifies the mux-level guard does NOT
-// re-guard the /connector/* routes: they carry their own auth (bearer token /
+// re-guard the /connector/* routes: they carry their own auth (signed challenge /
 // in-handler same-origin) and an extension request legitimately presents a
 // chrome-extension:// Origin that would fail strictSameOrigin. A POST to the
 // token-exempt /connector/pair route with such an Origin must reach the

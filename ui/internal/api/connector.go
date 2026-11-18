@@ -14,10 +14,12 @@
 
 // Package api — connector.go holds all /connector/* HTTP wiring for the
 // CIP-30 dApp connector. Routes are registered in later tasks; this file
-// currently provides the token + CORS middleware that guards them.
+// currently provides the signed-request + CORS middleware that guards them.
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,15 +33,31 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/keystore"
 )
 
-// connectorTokenVerifier is the minimal surface of connector.Service that the
+// connectorRequestVerifier is the minimal surface of connector.Service that the
 // middleware needs. *connector.Service satisfies this interface.
-type connectorTokenVerifier interface {
-	VerifyToken(token, extensionID string) bool
+type connectorRequestVerifier interface {
+	AuthorizeRequest(
+		extensionID, challenge, method, path string,
+		body []byte,
+		signature string,
+	) (string, bool)
+}
+
+type connectorAuthorityContextKey struct{}
+
+func connectorAuthority(ctx context.Context) string {
+	authority, _ := ctx.Value(connectorAuthorityContextKey{}).(string)
+	return authority
 }
 
 // maxPairRequestBytes bounds the pairing body: an extension ID and a 12-digit
 // code fit in a small fraction of this.
 const maxPairRequestBytes = 4 << 10
+
+// maxConnectorRequestBytes is well above Cardano's transaction-size limits
+// while preventing an unauthenticated local caller from forcing an unbounded
+// allocation before request-signature verification.
+const maxConnectorRequestBytes = 16 << 20
 
 type connectorRouteConfig struct {
 	authorizePairingCode func(password string) error
@@ -59,12 +77,11 @@ func withConnectorPairingCodeAuthorizer(
 //  1. Sets CORS headers (Access-Control-Allow-Origin, -Headers, -Methods) on
 //     every response when a pairing exists (allowedExtensionID returns ok).
 //  2. Responds 204 to OPTIONS preflight requests (no body).
-//  3. For every path EXCEPT /connector/pair, reads the X-Bursa-Token and
-//     Origin headers and rejects the request with 401 if
-//     svc.VerifyToken(token, origin) is false.
+//  3. For every path except pairing and challenge issuance, verifies a
+//     single-use challenge signature over the complete request.
 //  4. Passes all other requests to next.
 func connectorMiddleware(
-	svc connectorTokenVerifier,
+	svc connectorRequestVerifier,
 	allowedExtensionID func() (string, bool),
 ) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -73,7 +90,7 @@ func connectorMiddleware(
 			if extID, ok := allowedExtensionID(); ok {
 				w.Header().Set("Access-Control-Allow-Origin", extID)
 				w.Header().
-					Set("Access-Control-Allow-Headers", "Content-Type, X-Bursa-Token")
+					Set("Access-Control-Allow-Headers", "Content-Type, X-Bursa-Challenge, X-Bursa-Signature")
 				w.Header().
 					Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			}
@@ -84,19 +101,39 @@ func connectorMiddleware(
 				return
 			}
 
-			// /connector/pair passes through: the extension has no token yet
-			// during the pairing handshake. Match the path exactly — a suffix
+			// Pairing and challenge issuance pass through without a signature.
+			// Match the path exactly — a suffix
 			// match would also exempt crafted paths like /evil/connector/pair,
 			// widening the unauthenticated surface.
-			if r.URL.Path == "/connector/pair" {
+			if r.URL.Path == "/connector/pair" ||
+				r.URL.Path == "/connector/challenge" {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// All other /connector/* paths require a valid bearer token.
-			token := r.Header.Get("X-Bursa-Token")
+			body, err := io.ReadAll(
+				http.MaxBytesReader(w, r.Body, maxConnectorRequestBytes),
+			)
+			if err != nil {
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+					return
+				}
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
 			origin := r.Header.Get("Origin")
-			if !svc.VerifyToken(token, origin) {
+			authority, ok := svc.AuthorizeRequest(
+				origin,
+				r.Header.Get("X-Bursa-Challenge"),
+				r.Method,
+				r.URL.Path,
+				body,
+				r.Header.Get("X-Bursa-Signature"),
+			)
+			if !ok {
 				writeJSON(
 					w,
 					http.StatusUnauthorized,
@@ -105,13 +142,18 @@ func connectorMiddleware(
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(
+				w,
+				r.WithContext(context.WithValue(
+					r.Context(), connectorAuthorityContextKey{}, authority,
+				)),
+			)
 		})
 	}
 }
 
-// Ensure *connector.Service satisfies connectorTokenVerifier at compile time.
-var _ connectorTokenVerifier = (*connector.Service)(nil)
+// Ensure *connector.Service satisfies connectorRequestVerifier at compile time.
+var _ connectorRequestVerifier = (*connector.Service)(nil)
 
 // isLoopbackHost returns true when host is a loopback address.
 // It accepts any port (mobile uses a dynamic loopback port) and handles IPv6
@@ -166,8 +208,8 @@ func strictSameOrigin(r *http.Request) bool {
 // registerConnector registers all /connector/* routes on mux.
 //
 // Extension-facing routes (pair, request, self-revoke) are wrapped by
-// connectorMiddleware, which applies CORS headers and token verification. The
-// /connector/pair route is exempt from the token check inside the middleware
+// connectorMiddleware, which applies CORS headers and request verification. The
+// /connector/pair route is exempt from signature verification
 // (pairing handshake). The mux-level patterns are registered without a method
 // so that OPTIONS preflight requests also reach the middleware before the
 // sub-mux dispatches.
@@ -177,7 +219,7 @@ func strictSameOrigin(r *http.Request) bool {
 // sameOrigin()/strictSameOrigin() checks.
 // grants/revoke and self-revoke both call svc.RevokeGrant — they exist
 // separately because the SPA and the extension popup reach the API under
-// different auth models (same-origin vs. bearer token).
+// different auth models (same-origin vs. request signature).
 func registerConnector(
 	mux *http.ServeMux,
 	svc *connector.Service,
@@ -188,9 +230,10 @@ func registerConnector(
 		opt(&cfg)
 	}
 
-	// Extension-facing: CORS + token (pair is token-exempt inside the middleware).
+	// Extension-facing: CORS + signed requests (pairing is exempt).
 	ext := http.NewServeMux()
 	ext.HandleFunc("POST /connector/pair", handleConnectorPair(svc))
+	ext.HandleFunc("POST /connector/challenge", handleConnectorChallenge(svc))
 	ext.HandleFunc("POST /connector/request", handleConnectorRequest(svc))
 	ext.HandleFunc(
 		"POST /connector/self-revoke",
@@ -198,6 +241,7 @@ func registerConnector(
 	)
 	wrapped := connectorMiddleware(svc, svc.PairedExtensionID)(ext)
 	mux.Handle("/connector/pair", wrapped)
+	mux.Handle("/connector/challenge", wrapped)
 	mux.Handle("/connector/request", wrapped)
 	mux.Handle("/connector/self-revoke", wrapped)
 
@@ -214,6 +258,18 @@ func registerConnector(
 		handleConnectorPendingPairings(svc, cfg.authorizePairingCode),
 	)
 	registerApprovalRoutes(mux, svc)
+}
+
+func handleConnectorChallenge(svc *connector.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		challenge, err := svc.IssueChallenge(r.Header.Get("Origin"))
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]string{"challenge": challenge})
+	}
 }
 
 // registerApprovalRoutes exposes only the wallet-side approval stream and
@@ -360,7 +416,7 @@ func handleConnectorDecide(svc *connector.Service) http.HandlerFunc {
 //
 // SPA-facing — requires strict same-origin browser request. Unpairs the current extension.
 // The operation is idempotent (Unpair tolerates absence). Storage failures are
-// returned instead of reporting success while the old token remains valid.
+// returned instead of reporting success while the old key remains valid.
 func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !strictSameOrigin(r) {
@@ -385,11 +441,11 @@ func handleConnectorUnpair(svc *connector.Service) http.HandlerFunc {
 
 // handleConnectorSelfRevoke handles POST /connector/self-revoke.
 //
-// Extension-facing — gated by connectorMiddleware's bearer-token check (same
+// Extension-facing — gated by connectorMiddleware's signed-request check (same
 // as /connector/request), NOT by same-origin. This is the
-// token-gated counterpart available to a future extension-side grants UI.
+// extension-gated counterpart available to a future extension-side grants UI.
 // (/connector/grants/revoke is the separate SPA-facing route, gated by
-// strictSameOrigin instead of a token; an extension fetch would fail that check
+// strictSameOrigin instead of a signature; an extension fetch would fail that check
 // since its Origin is the extension origin, not the API's own host.)
 // Body: {"origin": string}.
 func handleConnectorSelfRevoke(svc *connector.Service) http.HandlerFunc {
@@ -505,7 +561,7 @@ func handleConnectorPendingPairings(
 // handleConnectorEvents handles GET /connector/events.
 //
 // This is a Server-Sent Events (SSE) stream consumed by the Bursa SPA. It uses
-// the control-session cookie and sameOrigin(); the extension bearer token is
+// a short-lived event ticket and sameOrigin(); extension request signatures are
 // scoped to extension-facing routes only.
 //
 // On connect:
@@ -665,7 +721,7 @@ func handleConnectorRequest(svc *connector.Service) http.HandlerFunc {
 		result, err := svc.HandleAuthorized(
 			r.Context(),
 			r.Header.Get("Origin"),
-			r.Header.Get("X-Bursa-Token"),
+			connectorAuthority(r.Context()),
 			body.Origin,
 			body.Method,
 			body.Params,
@@ -693,13 +749,14 @@ func handleConnectorRequest(svc *connector.Service) http.HandlerFunc {
 //     The generated code is NOT returned — it is shown inside the Bursa app so the
 //     user can transfer it out-of-band to the extension. Returning it here would
 //     allow any local caller to self-pair without user interaction.
-//   - Confirm (code != ""): calls svc.ConfirmPair and responds 200 {"token":"..."}.
+//   - Confirm (code != ""): binds the extension public key and responds 200.
 //     Returns 403 on a code mismatch, 400 for other errors.
 func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ExtensionID string `json:"extension_id"`
 			Code        string `json:"code"`
+			PublicKey   string `json:"public_key"`
 		}
 		// Read the whole body through the limit: a decoder stops after the
 		// first JSON value and would accept any amount of trailing data.
@@ -742,7 +799,7 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 		// A browser sets Origin to the extension's own origin and a web page
 		// cannot choose it, so pairing is accepted only from the extension it
 		// names. Local processes can still forge the header; the pairing code
-		// shown in the app remains the capability that authorizes the token.
+		// shown in the app remains the capability that authorizes the key binding.
 		if !svc.TrustedPairingOrigin(r.Header.Get("Origin"), req.ExtensionID) {
 			writeJSON(
 				w,
@@ -772,8 +829,13 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			return
 		}
 
-		// Confirm: validate the code and mint a bearer token.
-		token, err := svc.ConfirmPair(req.ExtensionID, req.Code)
+		if req.PublicKey == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "public_key is required"})
+			return
+		}
+
+		// Confirm: validate the code and bind the extension's public key.
+		_, err = svc.ConfirmPair(req.ExtensionID, req.Code, req.PublicKey)
 		if err != nil {
 			if errors.Is(err, connector.ErrPairCodeMismatch) {
 				writeJSON(
@@ -790,6 +852,6 @@ func handleConnectorPair(svc *connector.Service) http.HandlerFunc {
 			)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"token": token})
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }

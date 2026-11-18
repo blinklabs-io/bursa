@@ -1,12 +1,55 @@
 package connector
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
+
+func TestTokenStoreVerifiesExactSignedRequest(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.RawURLEncoding.EncodeToString(encoded)
+	store := NewTokenStore(filepath.Join(t.TempDir(), "pairing.json"), nil)
+	if _, err := store.Mint("ext", publicKey); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"method":"getBalance"}`)
+	digest := sha256.Sum256(canonicalRequest("challenge", "POST", "/connector/request", body))
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := make([]byte, 64)
+	r.FillBytes(signature[:32])
+	s.FillBytes(signature[32:])
+	encodedSignature := base64.RawURLEncoding.EncodeToString(signature)
+
+	if authority, ok := store.VerifySignature(
+		"chrome-extension://ext", "challenge", "POST", "/connector/request", body, encodedSignature,
+	); !ok || authority != publicKey {
+		t.Fatal("exact signed request was not authorized")
+	}
+	if _, ok := store.VerifySignature(
+		"chrome-extension://ext", "challenge", "POST", "/connector/request", []byte(`{"method":"signTx"}`), encodedSignature,
+	); ok {
+		t.Fatal("signature authorized a substituted request body")
+	}
+}
 
 func TestTokenStoreMintVerify(t *testing.T) {
 	seq := 0
@@ -164,7 +207,7 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 	dir := t.TempDir()
 
 	validPath := filepath.Join(dir, "valid-token.json")
-	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","token":"tok"}`), 0o600); err != nil {
+	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","public_key":"key"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	valid := NewTokenStore(
@@ -172,13 +215,21 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 		func() (string, error) { return "unused", nil },
 	)
 	extID, tok, ok := valid.Pair()
-	if !ok || extID != "chrome-extension://abc" || tok != "tok" {
+	if !ok || extID != "chrome-extension://abc" || tok != "key" {
 		t.Fatalf(
 			"Pair() = (%q, %q, %v), want normalized valid persisted pair",
 			extID,
 			tok,
 			ok,
 		)
+	}
+
+	legacyPath := filepath.Join(dir, "legacy-token.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"extension_id":"abc","token":"captured-bearer"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, paired := NewTokenStore(legacyPath, nil).Pair(); paired {
+		t.Fatal("legacy bearer token must not authorize after upgrade")
 	}
 
 	invalidPath := filepath.Join(dir, "invalid-token.json")
