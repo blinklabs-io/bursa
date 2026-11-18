@@ -138,9 +138,15 @@ func loadTLSCertificate(
 // before a block and a malformed block, so each block must start where the
 // previous one ended and be the only one in the bytes it consumed. The tls
 // package then checks the key against the leaf, and its errors name no key
-// material.
+// material. It is given the blocks alone, since pem.Decode finds a block only
+// at the start of its input or of a line, and misses one indented by white
+// space that this loop accepts.
 func parseTLSBundle(bundle []byte) (tls.Certificate, error) {
 	var certs, keys int
+	// Only the last block can lack a closing newline, so blocks fits in the
+	// capacity and append never leaves an unwiped copy behind.
+	blocks := make([]byte, 0, len(bundle)+1)
+	defer func() { wipe(blocks) }()
 	rest := bundle
 	for {
 		rest = bytes.TrimLeft(rest, " \t\r\n")
@@ -154,6 +160,10 @@ func parseTLSBundle(bundle []byte) (tls.Certificate, error) {
 				wipe(block.Bytes)
 			}
 			return tls.Certificate{}, errors.New("TLS secret is not valid PEM")
+		}
+		blocks = append(blocks, rest[:len(rest)-len(next)]...)
+		if blocks[len(blocks)-1] != '\n' {
+			blocks = append(blocks, '\n')
 		}
 		rest = next
 		wipe(block.Bytes)
@@ -180,7 +190,7 @@ func parseTLSBundle(bundle []byte) (tls.Certificate, error) {
 			"TLS secret holds more than one private key",
 		)
 	}
-	certificate, err := tls.X509KeyPair(bundle, bundle)
+	certificate, err := tls.X509KeyPair(blocks, blocks)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not match") {
 			return tls.Certificate{}, errors.New(

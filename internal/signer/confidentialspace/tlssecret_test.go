@@ -130,9 +130,19 @@ func TestLoadTLSCertificateServesBundle(t *testing.T) {
 	t.Parallel()
 	id := newTLSTestIdentity(t, 1)
 	keyFirst := append(append([]byte{}, id.keyPEM...), id.certPEM...)
+	join := func(parts ...string) []byte {
+		return []byte(strings.Join(parts, ""))
+	}
 	for name, bundle := range map[string][]byte{
 		"certificate then key": id.bundle(),
 		"key then certificate": keyFirst,
+		"indented key": join(
+			string(id.certPEM), " \t", string(id.keyPEM),
+		),
+		"indented certificate": join(
+			string(id.keyPEM), "\t", string(id.certPEM),
+		),
+		"leading white space": join(" \r\n\t", string(id.bundle())),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
