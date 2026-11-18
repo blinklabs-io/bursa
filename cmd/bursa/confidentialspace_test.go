@@ -171,6 +171,140 @@ func TestConfidentialSpaceCommandChecksStorageFlags(t *testing.T) {
 	}
 }
 
+func TestConfidentialSpaceTLSSources(t *testing.T) {
+	t.Parallel()
+	const secret = "projects/p/secrets/tls"
+	tests := []struct {
+		name              string
+		secret, cert, key string
+		wantErr           string
+	}{
+		{name: "secret", secret: secret},
+		{name: "files", cert: "/c", key: "/k"},
+		{
+			name: "both sources", secret: secret, cert: "/c", key: "/k",
+			wantErr: "--tls-secret excludes --tls-cert-file",
+		},
+		{
+			name: "secret with key file", secret: secret, key: "/k",
+			wantErr: "--tls-secret excludes --tls-key-file",
+		},
+		{
+			name:    "neither",
+			wantErr: "one of --tls-secret or --tls-cert-file with --tls-key-file is required",
+		},
+		{
+			name: "certificate without key", cert: "/c",
+			wantErr: "--tls-key-file required without --tls-secret",
+		},
+		{
+			name: "key without certificate", key: "/k",
+			wantErr: "--tls-cert-file required without --tls-secret",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConfidentialSpaceTLS(tt.secret, tt.cert, tt.key)
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tt.wantErr != "" &&
+				(err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Fatalf("error %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestConfidentialSpaceCommandChecksTLSFlags runs the command: the TLS source
+// is validated before any file or service is touched.
+func TestConfidentialSpaceCommandChecksTLSFlags(t *testing.T) {
+	t.Parallel()
+	base := []string{
+		"--audience", "a",
+		"--kms-key", "k",
+		"--wif-credentials", "/nonexistent/wif.json",
+		"--client-ca-file", "/nonexistent/ca.pem",
+		"--state-secret", "projects/p/secrets/s",
+	}
+	tests := []struct {
+		name    string
+		extra   []string
+		wantErr string
+	}{
+		{
+			"both sources",
+			[]string{
+				"--tls-secret", "projects/p/secrets/tls",
+				"--tls-cert-file", "/c", "--tls-key-file", "/k",
+			},
+			"--tls-secret excludes --tls-cert-file",
+		},
+		{"neither", nil, "one of --tls-secret or --tls-cert-file"},
+		{
+			"partial file pair", []string{"--tls-cert-file", "/c"},
+			"--tls-key-file required without --tls-secret",
+		},
+		{
+			"malformed secret", []string{"--tls-secret", "tls"},
+			"must be projects/<project>/secrets/<secret>",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := confidentialSpaceCommand()
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs(append(append([]string{}, base...), tt.extra...))
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+	// Neither file flag is required by cobra, so a TLS secret alone is a
+	// complete command line. Execute is not used: it would configure the
+	// process-wide logger.
+	cmd := confidentialSpaceCommand()
+	if err := cmd.ParseFlags(append(
+		append([]string{}, base...), "--tls-secret", "projects/p/secrets/tls",
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.ValidateRequiredFlags(); err != nil {
+		t.Fatalf("a TLS secret alone is not accepted: %v", err)
+	}
+}
+
+func TestConfidentialSpaceTLSConfigForCertificateRequiresVerifiedClients(
+	t *testing.T,
+) {
+	t.Parallel()
+	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := confidentialSpaceTLSConfigFor(certificate, certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MinVersion != tls.VersionTLS13 ||
+		config.ClientAuth != tls.RequireAndVerifyClientCert ||
+		config.ClientCAs == nil || len(config.Certificates) != 1 {
+		t.Fatalf("TLS config does not require TLS 1.3 mTLS: %+v", config)
+	}
+	if _, err := confidentialSpaceTLSConfigFor(
+		certificate, "/nonexistent/ca.pem",
+	); err == nil {
+		t.Fatal("a missing client CA was accepted")
+	}
+}
+
 func writeConfidentialSpaceTLSFixture(t *testing.T) (string, string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
