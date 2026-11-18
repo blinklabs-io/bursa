@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -323,9 +324,8 @@ func validateConfidentialSpaceImport(
 	return nil
 }
 
-// serveConfidentialSpace serves handler over TLS until the context ends or,
-// when done is not nil, until it is closed. Shutdown lets a request in flight
-// finish, so the response that closed done is still sent.
+// serveConfidentialSpace serves handler over TLS on listenAddress until the
+// context ends or, when done is not nil, until it is closed.
 func serveConfidentialSpace(
 	ctx context.Context,
 	listenAddress string,
@@ -333,8 +333,23 @@ func serveConfidentialSpace(
 	tlsConfig *tls.Config,
 	done <-chan struct{},
 ) error {
+	ln, err := net.Listen("tcp", listenAddress)
+	if err != nil {
+		return fmt.Errorf("confidential space workload: %w", err)
+	}
+	return serveConfidentialSpaceOn(ctx, ln, handler, tlsConfig, done)
+}
+
+// serveConfidentialSpaceOn serves on ln. Shutdown lets a request in flight
+// finish, so the response that closed done is still sent.
+func serveConfidentialSpaceOn(
+	ctx context.Context,
+	ln net.Listener,
+	handler http.Handler,
+	tlsConfig *tls.Config,
+	done <-chan struct{},
+) error {
 	server := &http.Server{
-		Addr:              listenAddress,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -345,7 +360,7 @@ func serveConfidentialSpace(
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.ListenAndServeTLS("", "")
+		errCh <- server.ServeTLS(ln, "", "")
 	}()
 	select {
 	case err := <-errCh:

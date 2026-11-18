@@ -19,18 +19,23 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/bip32"
@@ -412,5 +417,58 @@ func TestConfidentialSpaceImportCommandRequiresItsFlags(t *testing.T) {
 		if !strings.Contains(err.Error(), name[2:]) {
 			t.Errorf("%s is not required", name)
 		}
+	}
+}
+
+// The import's response closes done, which starts the shutdown; the response
+// must still reach the client, over HTTP/2 as over HTTP/1.1.
+func TestServeConfidentialSpaceAnswersTheRequestThatEndsIt(t *testing.T) {
+	t.Parallel()
+	fixture := httptest.NewUnstartedServer(http.NotFoundHandler())
+	fixture.EnableHTTP2 = true
+	fixture.StartTLS()
+	cert := fixture.TLS.Certificates[0]
+	client := fixture.Client()
+	fixture.Close()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	handler := http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		close(done)
+		// Give the shutdown time to start before the response is written.
+		time.Sleep(50 * time.Millisecond)
+		_, _ = io.WriteString(rw, "imported")
+	})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveConfidentialSpaceOn(
+			t.Context(), ln, handler,
+			&tls.Config{
+				MinVersion:   tls.VersionTLS13,
+				Certificates: []tls.Certificate{cert},
+			},
+			done,
+		)
+	}()
+	resp, err := client.Post(
+		"https://"+ln.Addr().String()+"/", "application/json", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "imported" ||
+		resp.ProtoMajor != 2 {
+		t.Fatalf("response %s %d %q", resp.Proto, resp.StatusCode, body)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("serve returned %v", err)
 	}
 }
