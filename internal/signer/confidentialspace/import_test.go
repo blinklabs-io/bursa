@@ -699,6 +699,28 @@ func TestImportRefusesNonEmptySecret(t *testing.T) {
 			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
 		}
 	})
+	t.Run("disabled version the list does not show", func(t *testing.T) {
+		t.Parallel()
+		// The list is eventually consistent, and a version can be disabled
+		// after it is read: a version the read cannot open and the list
+		// does not show as destroyed is refused.
+		c := &fakeSecretClient{}
+		c.seed([]byte{})
+		c.seed(provisionedSecret(t).latest())
+		c.seed([]byte{})
+		c.mu.Lock()
+		c.versions[1].state = secretmanagerpb.SecretVersion_DISABLED
+		c.visible = 1
+		c.mu.Unlock()
+		h := newImportHarnessOn(t, c)
+		err := h.importer.Import(t.Context(), h.request(h.challenge()))
+		if !errors.Is(err, ErrStateNotEmpty) {
+			t.Fatalf("import beside an unlisted disabled version: %v", err)
+		}
+		if adds, destroys := c.counts(); adds != 0 || destroys != 0 {
+			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
+		}
+	})
 	t.Run("destroyed older version", func(t *testing.T) {
 		t.Parallel()
 		c := provisionedSecret(t)

@@ -421,12 +421,13 @@ func (s *SecretStateStore) Import(
 	return s.saveLocked(ctx, envelopeBytes, states)
 }
 
-// requireEnabledVersionsEmpty refuses unless every enabled version of the
-// secret has an empty payload and no version is disabled. The cleanup after a
-// write destroys every older enabled version, so one holding a wrapped key
-// would be lost, and a disabled version, whose payload cannot be read, could
-// be enabled again before a later cleanup. Versions are read by number, which
-// unlike the version list is strongly consistent.
+// requireEnabledVersionsEmpty refuses unless every version of the secret is
+// destroyed or enabled with an empty payload. The cleanup after a write
+// destroys every older enabled version, so one holding a wrapped key would be
+// lost, and a disabled version, whose payload cannot be read, could be enabled
+// again before a later cleanup. Versions are read by number, which unlike the
+// version list is strongly consistent; a version the read cannot open is
+// skipped only when the list shows it destroyed.
 func (s *SecretStateStore) requireEnabledVersionsEmpty(
 	parent context.Context,
 ) error {
@@ -436,6 +437,7 @@ func (s *SecretStateStore) requireEnabledVersionsEmpty(
 		ctx,
 		&secretmanagerpb.ListSecretVersionsRequest{Parent: s.secret},
 	)
+	destroyed := make(map[uint64]bool)
 	for {
 		v, err := it.Next()
 		if errors.Is(err, iterator.Done) || status.Code(err) == codes.NotFound {
@@ -447,16 +449,22 @@ func (s *SecretStateStore) requireEnabledVersionsEmpty(
 		if v.GetState() == secretmanagerpb.SecretVersion_DISABLED {
 			return ErrStateNotEmpty
 		}
+		n, ok := s.versionNumber(v.GetName())
+		if ok && v.GetState() == secretmanagerpb.SecretVersion_DESTROYED {
+			destroyed[n] = true
+		}
 	}
 	for n := uint64(1); ; n++ {
 		resp, err := s.accessVersion(ctx, n)
 		if status.Code(err) == codes.NotFound {
 			return nil
 		}
-		// Destroyed, or disabled after the list above: the cleanup lists
-		// enabled versions only.
 		if status.Code(err) == codes.FailedPrecondition {
-			continue
+			if destroyed[n] {
+				continue
+			}
+			// Disabled since the list, or not yet listed.
+			return ErrStateNotEmpty
 		}
 		if err != nil {
 			return fmt.Errorf("read state secret version %d: %w", n, err)
