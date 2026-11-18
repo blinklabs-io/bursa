@@ -34,7 +34,7 @@ The recovery-phrase screen contains the invalid placeholder word `preview` in ev
 
 ## Local preview
 
-From `ui/web`, run `npm ci`, `npm run build`, then `node design-preview.mjs`. Open http://127.0.0.1:4174 and enter any demo password.
+From `ui/web`, run `npm ci`, `npm run build`, then `node design-preview.mjs`. Open http://127.0.0.1:4174/#session=design-preview and enter any demo password.
 
 The preview has two wallets, separate accounts, sample tokens, NFT photography, pool data and synthetic quotes. Wallet/account selection and media preference changes are held in memory. Transaction and persistent-settings writes return 403. It uses no real wallets, keys or node connections; the script and fixtures are outside the production bundle.
 

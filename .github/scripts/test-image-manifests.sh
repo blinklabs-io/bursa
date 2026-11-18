@@ -161,6 +161,8 @@ assert_contains "$publish_contents" 'PRIMARY_VERSION: ${{ steps.meta.outputs.ver
   'the publish workflow passes the primary version to the script'
 assert_contains "$publish_contents" 'latest=false' \
   'the per-architecture build publishes no floating tag of its own'
+assert_not_contains "$publish_contents" 'type=match,pattern=v(.*)-(.*),group=1' \
+  'a prerelease tag is never stripped to a stable container version'
 # The script composes "<tag>-amd64"/"<tag>-arm64"; if the matrix stopped
 # suffixing its tags those inputs would not exist, and this test would still
 # pass while the release failed. Assert the other half of the wiring too.

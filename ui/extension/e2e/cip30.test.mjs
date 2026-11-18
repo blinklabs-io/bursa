@@ -7,7 +7,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zipSync } from 'fflate';
 import { launchChrome, launchFirefox } from './browsers.mjs';
-import { FakeBursa, PAIRING_CODE } from './fake-bursa.mjs';
+import { FakeBursa } from './fake-bursa.mjs';
 
 const target = process.argv[2];
 assert.ok(['chrome', 'firefox'].includes(target), 'usage: cip30.test.mjs chrome|firefox');
@@ -100,21 +100,35 @@ try {
   assert.equal(result.err?.code, -3, JSON.stringify(result));
   assert.match(result.err.info, /Not paired/);
 
-  // Pair through the popup, then confirm the token survives a popup reload.
+  // Pair through the popup, then confirm the identity survives a popup reload.
   const popup = await browser.open(`${browser.origin}/popup.html`);
-  // The popup fills the port field once its storage read resolves, so keep setting it.
-  await eventually(
-    popup,
-    `(() => {
-      document.getElementById('port-input').value = '${bursa.port}';
-      document.getElementById('pair-btn').click();
-      return !document.getElementById('code-section').hidden;
-    })()`,
-    'the code prompt',
-  );
-  await popup.run(`
-    document.getElementById('code-input').value = '${PAIRING_CODE}';
-    document.getElementById('confirm-btn').click();`);
+  // Hold key generation until both popup contexts have read the empty store.
+  const competingPopup = await browser.open(`${browser.origin}/popup.html`);
+  for (const page of [popup, competingPopup]) {
+    await page.run(`
+      const generate = crypto.subtle.generateKey.bind(crypto.subtle);
+      crypto.subtle.generateKey = async (...args) => {
+        window.__generatingIdentity = true;
+        await new Promise(resolve => { window.__releaseIdentity = resolve; });
+        return generate(...args);
+      };
+    `);
+    await eventually(page, `document.getElementById('port-input').value !== ''`, 'popup initialization');
+    await page.run(`document.getElementById('port-input').value = '${bursa.port}'; document.getElementById('pair-btn').click();`);
+  }
+  for (const page of [popup, competingPopup]) {
+    await eventually(page, `window.__generatingIdentity === true`, 'concurrent identity creation');
+  }
+  for (const page of [popup, competingPopup]) {
+    await page.run(`window.__releaseIdentity();`);
+    await eventually(page, `!document.getElementById('code-section').hidden`, 'the verification code');
+  }
+  const firstCode = (await popup.run(`return document.getElementById('code-input').value;`)).ok;
+  const secondCode = (await competingPopup.run(`return document.getElementById('code-input').value;`)).ok;
+  assert.equal(firstCode, secondCode, 'concurrent popups must retain the same identity');
+  await competingPopup.close();
+  bursa.confirmDesktop((await popup.run(`return document.getElementById('code-input').value;`)).ok);
+  await popup.run(`document.getElementById('confirm-btn').click();`);
   await eventually(
     popup,
     `document.getElementById('status-bar').textContent === 'Connected'`,

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+vi.mock('../src/identity', () => ({
+  challengeHeaders: vi.fn(async () => ({ 'X-Bursa-Challenge': 'nonce', 'X-Bursa-Signature': 'proof' })),
+  loadIdentity: vi.fn(async () => ({ privateKey: {}, publicKey: 'test-public-key' })),
+  signRequest: vi.fn(async () => 'test-signature'),
+}));
+
 // Set up chrome mock BEFORE any module import so side effects see the mock
 const storageMock: Record<string, unknown> = {};
 const chromeMock = {
@@ -9,6 +15,7 @@ const chromeMock = {
       get: vi.fn(async (keys: string[]) => {
         const result: Record<string, unknown> = {};
         for (const k of keys) if (k in storageMock) result[k] = storageMock[k];
+        if (keys.includes('paired') && storageMock['token']) result['paired'] = true;
         return result;
       }),
       set: vi.fn(async (data: Record<string, unknown>) => {
@@ -56,11 +63,14 @@ function invokeListener(
 }
 
 function okFetch(result: unknown) {
-  return vi.fn(async () => ({ ok: true, json: async () => ({ result }) }));
+  return vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ challenge: 'test-challenge' }) })
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ result }) });
 }
 
 function postedBody(fetchMock: ReturnType<typeof okFetch>): Record<string, unknown> {
-  const [, opts] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  const [, opts] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
   return JSON.parse(opts.body as string);
 }
 
@@ -76,6 +86,7 @@ describe('background worker', () => {
     chromeMock.storage.local.get.mockImplementation(async (keys: string[]) => {
       const result: Record<string, unknown> = {};
       for (const k of keys) if (k in storageMock) result[k] = storageMock[k];
+      if (keys.includes('paired') && storageMock['token']) result['paired'] = true;
       return result;
     });
     chromeMock.storage.local.set.mockImplementation(async (data: Record<string, unknown>) => {
@@ -86,10 +97,7 @@ describe('background worker', () => {
   it('sends a POST request with correct URL, method, headers, and body shape', async () => {
     storageMock['token'] = 'test-token';
 
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ result: 1 }),
-    }));
+    const fetchMock = okFetch(1);
     vi.stubGlobal('fetch', fetchMock);
 
     // senderOrigin is passed as the second argument (browser-verified); no
@@ -99,12 +107,14 @@ describe('background worker', () => {
       'https://app.example.com',
     );
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const callArgs = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const callArgs = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
     const [url, opts] = callArgs;
     expect(url).toBe('http://127.0.0.1:8090/connector/request');
     expect(opts.method).toBe('POST');
-    expect((opts.headers as Record<string, string>)['X-Bursa-Token']).toBe('test-token');
+    expect((opts.headers as Record<string, string>)['X-Bursa-Challenge']).toBe('test-challenge');
+    expect((opts.headers as Record<string, string>)['X-Bursa-Signature']).toBe('test-signature');
+    expect((opts.headers as Record<string, string>)['X-Bursa-Token']).toBeUndefined();
     const body = JSON.parse(opts.body as string);
     expect(body.origin).toBe('https://app.example.com');
     expect(body.method).toBe('getNetworkId');
@@ -131,10 +141,13 @@ describe('background worker', () => {
   it('resolves with {id, error} when backend returns {error_code: -3}', async () => {
     storageMock['token'] = 'test-token';
 
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      json: async () => ({ error_code: -3, info: 'User refused' }),
-    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ challenge: 'test-challenge' }) })
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ error_code: -3, info: 'User refused' }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const response = await handleRequest(
@@ -173,8 +186,8 @@ describe('background worker', () => {
       'https://app.example.com',
     );
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:9999/connector/request');
   });
 
@@ -216,8 +229,8 @@ describe('background worker', () => {
       'https://dapp.example', // senderOrigin — the only trusted origin source
     );
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [, opts] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, opts] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
     const body = JSON.parse(opts.body as string);
     // Must be the sender origin, never "unknown" or any page-supplied value.
     expect(body.origin).toBe('https://dapp.example');
@@ -240,8 +253,8 @@ describe('background worker', () => {
       undefined, // senderOrigin absent
     );
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [, opts] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, opts] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
     const body = JSON.parse(opts.body as string);
     expect(body.origin).toBe('unknown');
   });
@@ -250,11 +263,10 @@ describe('background worker', () => {
   it('reports HTTP status when a failing response carries no error_code or info', async () => {
     storageMock['token'] = 'test-token';
 
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 502,
-      json: async () => ({}),
-    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ challenge: 'test-challenge' }) })
+      .mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) });
     vi.stubGlobal('fetch', fetchMock);
 
     const response = await handleRequest(
@@ -457,7 +469,7 @@ describe('background worker', () => {
 
       await handleRequest({ id: 'p', method: 'getNetworkId', params: [] }, 'https://dapp.example');
 
-      const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      const [url] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit];
       expect(url).toBe(expected);
     });
 

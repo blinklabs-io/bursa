@@ -368,30 +368,33 @@ func TestVerifyInventoryRefusals(t *testing.T) {
 	nonce := bytes.Repeat([]byte{1}, 32)
 	k1, k2 := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
 
-	signed := func(version string, keys []device.KeyInfo, n []byte) device.Inventory {
+	signed := func(version string, keys []device.KeyInfo, n []byte, profile string) device.Inventory {
 		return device.Inventory{
 			Version:     version,
 			Keys:        keys,
-			Attestation: ed25519.Sign(priv, device.InventoryBinding(n, keys)),
+			Attestation: ed25519.Sign(priv, device.InventoryBindingForProfile(n, profile, keys)),
 		}
 	}
+	profile := "otg@preview"
 	both := []device.KeyInfo{
 		{Role: "pool", PublicKey: k1},
 		{Role: "stake", PublicKey: k2},
 	}
 
-	if _, err := verifyInventory(id, nonce, signed(device.Protocol, both, nonce)); err != nil {
+	if _, err := verifyInventory(id, nonce, profile, signed(device.Protocol, both, nonce, profile)); err != nil {
 		t.Fatalf("valid inventory refused: %v", err)
 	}
 
 	for name, inv := range map[string]device.Inventory{
-		"version":      signed("other/1", both, nonce),
-		"nonce":        signed(device.Protocol, both, []byte("another nonce")),
-		"missing role": signed(device.Protocol, both[:1], nonce),
-		"duplicate":    signed(device.Protocol, append([]device.KeyInfo{both[0]}, both...), nonce),
-		"short key":    signed(device.Protocol, []device.KeyInfo{{Role: "pool", PublicKey: k1[:5]}, both[1]}, nonce),
+		"version":        signed("other/1", both, nonce, profile),
+		"nonce":          signed(device.Protocol, both, []byte("another nonce"), profile),
+		"profile":        signed(device.Protocol, both, nonce, "otg@mainnet"),
+		"missing role":   signed(device.Protocol, both[:1], nonce, profile),
+		"duplicate":      signed(device.Protocol, append([]device.KeyInfo{both[0]}, both...), nonce, profile),
+		"short key":      signed(device.Protocol, []device.KeyInfo{{Role: "pool", PublicKey: k1[:5]}, both[1]}, nonce, profile),
+		"legacy binding": {Version: device.Protocol, Keys: both, Attestation: ed25519.Sign(priv, device.InventoryBinding(nonce, both))},
 	} {
-		if _, err := verifyInventory(id, nonce, inv); err == nil {
+		if _, err := verifyInventory(id, nonce, profile, inv); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}

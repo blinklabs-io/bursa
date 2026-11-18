@@ -176,11 +176,17 @@ signer:
       # cip8_policy: { ... }   # optional typed CIP-8 policy
 
   # --- Caller ACL (optional). When present, unlisted subjects are denied all
-  # keys; each subject is restricted to the listed key hashes. ---
+  # keys; each subject is restricted to the listed key hashes. Operational
+  # certificates additionally require an explicit cold-key/KES-key grant. ---
   callers:
     - subject: "spo-ops@example.com"    # JWT `sub`
       keys:
         - "0000000000000000000000000000000000000000000000000000000000"
+      opcerts:
+        - key: "0000000000000000000000000000000000000000000000000000000000"
+          kes_vkeys:
+            # Add each staged KES verification key before requesting its opcert.
+            - "0000000000000000000000000000000000000000000000000000000000000000"
 
 # The SOPS backend uses this project for GCP Secret Manager access.
 google:

@@ -144,6 +144,23 @@ func TestBuildRejectsTTLMarginOverflow(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestBuildRejectsFeeAboveMaximum(t *testing.T) {
+	chain := guardChain()
+	chain.PpFee.TxFeeFixed = DefaultMaxFee + 1
+
+	_, err := Build(context.Background(), chain, BuildOptions{
+		ChangeAddress: guardAddr,
+	})
+	require.ErrorContains(t, err, "transaction fee")
+	require.ErrorContains(t, err, "exceeds maximum")
+
+	_, err = Build(context.Background(), chain, BuildOptions{
+		ChangeAddress: guardAddr,
+		MaxFee:        DefaultMaxFee + 1_000_000,
+	})
+	require.NoError(t, err)
+}
+
 // balance returns inputs + refunds - (outputs + fee) for a built tx, which
 // is the deposit the builder charged.
 func chargedDeposit(t *testing.T, built *BuiltTx, inputs uint64) uint64 {

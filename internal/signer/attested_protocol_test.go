@@ -52,7 +52,8 @@ func newArmoryProtocolDevice(
 			switch r.URL.Path {
 			case "/v1/inventory":
 				var in struct {
-					Nonce []byte `json:"nonce"`
+					Nonce   []byte `json:"nonce"`
+					Profile string `json:"profile"`
 				}
 				_ = json.NewDecoder(r.Body).Decode(&in)
 				keys := []backend.AttestedKeyInfo{
@@ -62,7 +63,11 @@ func newArmoryProtocolDevice(
 					Version: backend.AttestedProtocol, Keys: keys,
 					Attestation: ed25519.Sign(
 						identityPriv,
-						backend.InventoryBinding(in.Nonce, keys),
+						backend.InventoryBindingForProfile(
+							in.Nonce,
+							in.Profile,
+							keys,
+						),
 					),
 				})
 			case "/v1/sign":

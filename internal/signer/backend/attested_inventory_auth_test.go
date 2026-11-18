@@ -40,6 +40,28 @@ func TestAttestedInventoryRequestBindingVector(t *testing.T) {
 	}
 }
 
+// TestProfiledInventoryBindingVector pins the bytes the armory firmware signs
+// too (armory/device TestProfiledInventoryBindingVector).
+func TestProfiledInventoryBindingVector(t *testing.T) {
+	t.Parallel()
+	nonce := bytes.Repeat([]byte{1}, 32)
+	keys := []AttestedKeyInfo{
+		{Role: KeyTypePool, PublicKey: bytes.Repeat([]byte{2}, 32)},
+		{Role: KeyTypeStake, PublicKey: bytes.Repeat([]byte{3}, 32)},
+	}
+	const want = "c168a88d08e9c571c67fb4eaafb8e6f1056b73a602af4037d8ee8bdf4ea80435"
+	if got := hex.EncodeToString(
+		InventoryBindingForProfile(nonce, "otg@preview", keys),
+	); got != want {
+		t.Fatalf("profiled inventory binding = %s, want %s", got, want)
+	}
+	got := InventoryBindingForProfile(nonce, "", keys)
+	legacy := InventoryBinding(nonce, keys)
+	if !bytes.Equal(got, legacy) {
+		t.Fatal("empty profile changed the unprofiled inventory binding")
+	}
+}
+
 // A device that refuses an unauthenticated inventory request (a multi image
 // of the armory) is asked again with the host key's signature.
 func TestHostKeyEnclaveInventoryRetriesSigned(t *testing.T) {

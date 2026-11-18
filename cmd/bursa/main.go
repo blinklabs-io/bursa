@@ -55,6 +55,7 @@ func newRootCommand() *cobra.Command {
 		signerCommand(),
 		nitroCommand(),
 		confidentialSpaceCommand(),
+		confidentialSpaceClientCommand(),
 		kesAgentCommand(),
 		scriptCommand(),
 		txCommand(),

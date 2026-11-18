@@ -219,6 +219,13 @@ func controlConfig() config.KESAgentConfig {
 	}
 }
 
+func signConfig() config.KESAgentConfig {
+	kc := controlConfig()
+	kc.ControlClientSPKISHA256 = nil
+	kc.SignClientSPKISHA256 = []string{testControlSPKI}
+	return kc
+}
+
 func TestKESAgentProfilesControlListNeedsClientCertVerification(t *testing.T) {
 	t.Parallel()
 	ok, err := kesAgentProfiles(controlConfig())
@@ -275,6 +282,31 @@ func TestKESAgentProfilesRefusesMalformedControlSPKI(t *testing.T) {
 	}
 }
 
+func TestKESAgentProfilesSignListNeedsClientCertVerification(t *testing.T) {
+	t.Parallel()
+	ok, err := kesAgentProfiles(signConfig())
+	if err != nil {
+		t.Fatalf("sign list with a client CA: %v", err)
+	}
+	if len(ok) != 1 || len(ok[0].SignClientSPKI) != 1 {
+		t.Fatalf("sign list not carried to the profile: %+v", ok)
+	}
+
+	kc := signConfig()
+	kc.AttestedClientCAFile = ""
+	if _, err := kesAgentProfiles(kc); err == nil ||
+		!strings.Contains(err.Error(), "sign_client_spki_sha256") {
+		t.Fatalf("err = %v, want a sign_client_spki_sha256 refusal", err)
+	}
+
+	kc = signConfig()
+	kc.SignClientSPKISHA256 = []string{"abcd"}
+	if _, err := kesAgentProfiles(kc); err == nil ||
+		!strings.Contains(err.Error(), "must be 64 hex characters") {
+		t.Fatalf("malformed signing SPKI: %v", err)
+	}
+}
+
 func TestKESAgentProfilesRefusesTopLevelControlListWithProfiles(t *testing.T) {
 	t.Parallel()
 	kc := controlConfig()
@@ -287,7 +319,7 @@ func TestKESAgentProfilesRefusesTopLevelControlListWithProfiles(t *testing.T) {
 		GuardFile:         "/var/lib/bursa/guard.json",
 	}}
 	_, err := kesAgentProfiles(kc)
-	if err == nil || !strings.Contains(err.Error(), "control_client_spki_sha256; set them in each profile") {
+	if err == nil || !strings.Contains(err.Error(), "control_client_spki_sha256 and sign_client_spki_sha256; set them in each profile") {
 		t.Fatalf("err = %v", err)
 	}
 }

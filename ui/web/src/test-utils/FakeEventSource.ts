@@ -23,8 +23,8 @@ export class FakeEventSource {
     this.onmessage?.({ data });
   }
 
-  // emitError simulates a transient/persistent connection error. The browser's
-  // EventSource auto-reconnects, so this does NOT flip readyState to CLOSED.
+  // emitError simulates a transient/persistent connection error. EventSource
+  // itself does not close until the consumer decides whether to reconnect.
   // A closed stream is inert: a real EventSource delivers no events after
   // close(), so neither do we.
   emitError() {

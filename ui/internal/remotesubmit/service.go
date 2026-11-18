@@ -20,8 +20,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blinklabs-io/bursa/ui/internal/atomicfile"
 	"github.com/blinklabs-io/bursa/ui/internal/connector"
 	"github.com/blinklabs-io/bursa/ui/internal/spend"
+	"github.com/blinklabs-io/bursa/ui/internal/submissionctx"
 )
 
 const (
@@ -41,11 +43,15 @@ var (
 	)
 	ErrIncomplete    = errors.New("transaction is not fully signed")
 	ErrStaleApproval = errors.New("remote submission access was revoked")
+
+	syncDirectory   = atomicfile.SyncDir
+	replaceState    = atomicfile.Replace
+	removeStateFile = atomicfile.Remove
 )
 
 type Submitter interface {
 	DecodeTx(context.Context, string) (spend.TxSummary, error)
-	SubmitTxCbor(context.Context, string) (spend.TxResult, error)
+	SubmitTxCborContext(context.Context, string) (spend.TxResult, error)
 }
 
 type Approver interface {
@@ -76,15 +82,16 @@ type Service struct {
 	now       func() time.Time
 	random    func() (string, error)
 
-	mu         sync.Mutex
-	state      state
-	generation uint64
-	window     time.Time
-	requests   int
-	inFlight   int
-	seen       map[[sha256.Size]byte]time.Time
-	active     map[uint64]context.CancelFunc
-	nextActive uint64
+	mu                sync.Mutex
+	state             state
+	durabilityPending bool
+	generation        uint64
+	window            time.Time
+	requests          int
+	inFlight          int
+	seen              map[[sha256.Size]byte]time.Time
+	active            map[uint64]context.CancelFunc
+	nextActive        uint64
 }
 
 func New(
@@ -166,6 +173,12 @@ func (s *Service) Enable() (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state.Enabled {
+		if s.durabilityPending {
+			if err := syncDirectory(filepath.Dir(s.path)); err != nil {
+				return Status{}, err
+			}
+			s.durabilityPending = false
+		}
 		return s.statusLocked(), nil
 	}
 	token, err := s.random()
@@ -173,11 +186,15 @@ func (s *Service) Enable() (Status, error) {
 		return Status{}, err
 	}
 	next := state{Enabled: true, Token: token}
-	if err := s.persistLocked(next); err != nil {
+	committed, err := s.persistLocked(next)
+	if committed {
+		s.state = next
+		s.durabilityPending = err != nil
+		s.generation++
+	}
+	if err != nil {
 		return Status{}, err
 	}
-	s.state = next
-	s.generation++
 	return s.statusLocked(), nil
 }
 
@@ -189,12 +206,15 @@ func (s *Service) Disable() (Status, error) {
 	s.state = state{}
 	s.generation++
 	s.cancelActiveLocked()
-	err := s.persistLocked(s.state)
-	if err != nil {
+	committed, err := s.persistLocked(s.state)
+	if committed {
+		s.durabilityPending = err != nil
+	}
+	if err != nil && !committed {
 		// Removing the prior enabled snapshot preserves revocation across a
 		// restart when the atomic replacement itself could not be completed.
-		if removeErr := os.Remove(s.path); removeErr != nil &&
-			!errors.Is(removeErr, os.ErrNotExist) {
+		_, removeErr := removeStateFile(s.path, syncDirectory)
+		if removeErr != nil {
 			err = errors.Join(err, removeErr)
 		}
 	}
@@ -212,45 +232,25 @@ func (s *Service) Rotate() (Status, error) {
 		return Status{}, err
 	}
 	next := state{Enabled: true, Token: token}
-	if err := s.persistLocked(next); err != nil {
+	committed, err := s.persistLocked(next)
+	if committed {
+		s.state = next
+		s.durabilityPending = err != nil
+		s.generation++
+		s.cancelActiveLocked()
+	}
+	if err != nil {
 		return Status{}, err
 	}
-	s.state = next
-	s.generation++
-	s.cancelActiveLocked()
 	return s.statusLocked(), nil
 }
 
-func (s *Service) persistLocked(next state) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
+func (s *Service) persistLocked(next state) (committed bool, err error) {
 	blob, err := json.Marshal(next)
 	if err != nil {
-		return err
+		return false, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".remote-submission-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer func() { _ = os.Remove(name) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(blob); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, s.path)
+	return replaceState(s.path, blob, syncDirectory)
 }
 
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -351,7 +351,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return "", ErrStaleApproval
 			}
-			result, err := s.submitter.SubmitTxCbor(submitCtx, txHex)
+			result, err := s.submitter.SubmitTxCborContext(submitCtx, txHex)
 			if !s.finishSubmission(activeID, generation, token) {
 				return "", ErrStaleApproval
 			}
@@ -413,9 +413,17 @@ func (s *Service) beginSubmission(
 	if !s.generationActiveLocked(generation, token) {
 		return nil, 0, false
 	}
-	ctx, cancel := context.WithCancel(parent)
+	// Ignore requester disconnects once approval has completed, while retaining
+	// a bounded lifetime. The cancellable child is created afterwards so access
+	// revocation still reaches the node submission.
+	baseCtx, baseCancel := submissionctx.New(parent)
+	ctx, cancel := context.WithCancel(baseCtx)
+	cancelSubmission := func() {
+		cancel()
+		baseCancel()
+	}
 	s.nextActive++
-	s.active[s.nextActive] = cancel
+	s.active[s.nextActive] = cancelSubmission
 	return ctx, s.nextActive, true
 }
 

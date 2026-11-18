@@ -70,29 +70,71 @@ export function subscribePending(
   onSnapshot: (pending: ConnectorRequest[]) => void,
   onError?: (degraded: boolean) => void,
 ): () => void {
-  const es = new EventSource("/connector/events");
+  let es: EventSource | undefined;
+  let stopped = false;
+  let degraded = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-  es.onmessage = (evt) => {
+  const setDegraded = (next: boolean) => {
+    if (degraded === next) return;
+    degraded = next;
+    onError?.(next);
+  };
+
+  const scheduleRetry = () => {
+    if (stopped || retryTimer !== undefined) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined;
+      void connect();
+    }, 1_000);
+  };
+
+  const connect = async () => {
     try {
-      const event = JSON.parse(evt.data) as PendingSnapshotEvent;
-      if (event.type === "snapshot" && Array.isArray(event.pending)) {
-        onSnapshot(event.pending);
-      }
+      const { ticket } = await apiPost<{ ticket: string }>("/session/events-ticket");
+      if (stopped) return;
+
+      const stream = new EventSource(`/connector/events?ticket=${encodeURIComponent(ticket)}`);
+      es = stream;
+
+      stream.onmessage = (evt) => {
+        try {
+          const event = JSON.parse(evt.data) as PendingSnapshotEvent;
+          if (event.type === "snapshot" && Array.isArray(event.pending)) {
+            onSnapshot(event.pending);
+          }
+        } catch {
+          // Ignore malformed events (keepalive comments never produce onmessage).
+        }
+      };
+
+      stream.onerror = () => {
+        if (stopped || es !== stream) return;
+        stream.close();
+        es = undefined;
+        setDegraded(true);
+        scheduleRetry();
+      };
+      stream.onopen = () => {
+        if (!stopped && es === stream) setDegraded(false);
+      };
     } catch {
-      // Ignore malformed events (keepalive comments never produce onmessage).
+      if (!stopped) {
+        setDegraded(true);
+        scheduleRetry();
+      }
     }
   };
 
-  // EventSource fires onerror on any disconnect — including transient blips —
-  // and then reconnects on its own, so we must NOT close the stream here.
-  // Instead surface a degraded state to the caller and let the browser recover;
-  // the matching onopen clears the degraded flag once the stream is back.
-  es.onerror = () => {
-    onError?.(true);
-  };
-  es.onopen = () => {
-    onError?.(false);
-  };
+  void connect();
 
-  return () => es.close();
+  return () => {
+    stopped = true;
+    if (retryTimer !== undefined) clearTimeout(retryTimer);
+    es?.close();
+  };
+}
+
+export function confirmPairing(extensionID: string, code: string, password: string): Promise<void> {
+  return apiPost<void>("/connector/confirm-pair", { extension_id: extensionID, code, password });
 }

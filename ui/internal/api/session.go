@@ -20,12 +20,49 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
-const (
-	sessionCookieName = "bursa-control-session"
-	sessionHeaderName = "X-Bursa-Session"
-)
+const sessionHeaderName = "X-Bursa-Session"
+
+const eventTicketTTL = 15 * time.Second
+
+type eventTicketStore struct {
+	mu      sync.Mutex
+	tickets map[string]time.Time
+}
+
+func newEventTicketStore() *eventTicketStore {
+	return &eventTicketStore{tickets: make(map[string]time.Time)}
+}
+
+func (s *eventTicketStore) issue() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate event ticket: %w", err)
+	}
+	ticket := base64.RawURLEncoding.EncodeToString(raw)
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for value, expires := range s.tickets {
+		if !expires.After(now) {
+			delete(s.tickets, value)
+		}
+	}
+	s.tickets[ticket] = now.Add(eventTicketTTL)
+	return ticket, nil
+}
+
+func (s *eventTicketStore) consume(ticket string) bool {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expires, ok := s.tickets[ticket]
+	delete(s.tickets, ticket)
+	return ok && expires.After(now)
+}
 
 // NewSessionToken returns a process-local capability for the wallet control
 // surface. It is delivered to the trusted frontend in the launch URL fragment,
@@ -44,19 +81,12 @@ func sessionTokenMatches(got, want string) bool {
 }
 
 func requestSessionToken(r *http.Request) string {
-	if token := r.Header.Get(sessionHeaderName); token != "" {
-		return token
-	}
-	cookie, err := r.Cookie(sessionCookieName)
-	if err != nil {
-		return ""
-	}
-	return cookie.Value
+	return r.Header.Get(sessionHeaderName)
 }
 
 func isExtensionConnectorRoute(path string) bool {
 	switch path {
-	case "/connector/pair", "/connector/request", "/connector/self-revoke":
+	case "/connector/pair", "/connector/challenge", "/connector/request", "/connector/self-revoke":
 		return true
 	default:
 		return false
@@ -79,6 +109,7 @@ func sessionGuard(token string, next http.Handler) http.Handler {
 	if token == "" {
 		panic("api: empty control session token")
 	}
+	eventTickets := newEventTicketStore()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" {
 			if r.Method != http.MethodPost {
@@ -94,28 +125,49 @@ func sessionGuard(token string, next http.Handler) http.Handler {
 				)
 				return
 			}
-			cookie := &http.Cookie{
-				Name:     sessionCookieName,
-				Value:    token,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: http.SameSiteStrictMode,
-			}
-			// The control surface listens on plain-HTTP loopback by default, where
-			// WebKit-based webviews refuse to store a Secure cookie. Mark it Secure
-			// whenever the request arrived over TLS so it never travels in cleartext
-			// on a listener that terminates TLS itself.
-			if r.TLS != nil {
-				cookie.Secure = true
-			}
-			http.SetCookie(w, cookie)
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 			return
 		}
+		if r.URL.Path == "/session/events-ticket" {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			if !strictSameOrigin(r) ||
+				!sessionTokenMatches(requestSessionToken(r), token) {
+				writeJSON(
+					w,
+					http.StatusUnauthorized,
+					map[string]string{"error": "unauthorized"},
+				)
+				return
+			}
+			ticket, err := eventTickets.issue()
+			if err != nil {
+				writeJSON(
+					w,
+					http.StatusInternalServerError,
+					map[string]string{"error": "event authorization unavailable"},
+				)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]string{"ticket": ticket})
+			return
+		}
+		if r.URL.Path == "/connector/events" &&
+			r.Method == http.MethodGet &&
+			eventTickets.consume(r.URL.Query().Get("ticket")) {
+			query := r.URL.Query()
+			query.Del("ticket")
+			r.URL.RawQuery = query.Encode()
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// Health checks and static SPA files carry no wallet data. The extension
-		// routes retain their independently paired bearer-token boundary.
+		// routes retain their independently paired signature boundary.
 		if r.URL.Path == "/health" || isExtensionConnectorRoute(r.URL.Path) ||
 			!isControlRoute(r.URL.Path) {
 			next.ServeHTTP(w, r)

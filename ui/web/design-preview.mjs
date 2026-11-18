@@ -59,6 +59,8 @@ createServer(async (req, res) => {
     for await (const chunk of req) { size += chunk.length; if (size > 16384) return json({ error: 'Request too large.' }, 413); chunks.push(chunk); }
     try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch { return json({ error: 'Invalid JSON.' }, 400); }
   }
+  if (path === '/session' && req.method === 'POST' && req.headers['x-bursa-session'] === 'design-preview') return json({ ok: true });
+  if (path === '/session/events-ticket' && req.method === 'POST') return json({ ticket: 'preview-event-ticket' });
   if (path === '/connector/events' && req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write('data: {"type":"snapshot","pending":[]}\n\n'); return; }
   if (req.method === 'POST' && path === '/vault' && scenario === 'vault-create') return json({ exists: true, locked: false, wallet_count: 0 });
   if (req.method === 'POST' && path === '/vault/unlock') return json(wallets.map(view));
@@ -110,4 +112,4 @@ createServer(async (req, res) => {
     if (extname(file) === '.html') content = content.toString().replace('<body>', '<body><div style="position:sticky;top:0;z-index:120;background:#272218;color:#ecd09a;text-align:center;padding:7px 12px;font:11px sans-serif">Design preview · Synthetic assets · Transactions disabled</div>');
     res.writeHead(200, { 'Content-Type': mime[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-store' }); res.end(content);
   } catch { res.writeHead(404); res.end('Not found'); }
-}).listen(port, '127.0.0.1', function () { console.log(`Bursa design preview: http://127.0.0.1:${this.address().port} (use any demo password)`); });
+}).listen(port, '127.0.0.1', function () { console.log(`Bursa design preview: http://127.0.0.1:${this.address().port} (open /#session=design-preview; use any demo password)`); });

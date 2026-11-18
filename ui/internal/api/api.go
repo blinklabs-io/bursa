@@ -2651,7 +2651,7 @@ func limitRequestBody(next http.Handler) http.Handler {
 // middleware is where that class of request is rejected.
 //
 // The /connector/* routes are skipped: they already carry their own guards — a
-// bearer token for the extension-facing routes and in-handler
+// signed challenges for the extension-facing routes and in-handler
 // sameOrigin/strictSameOrigin for the SPA-facing ones — and an extension request
 // legitimately carries a chrome-extension:// or moz-extension:// Origin that
 // would fail strictSameOrigin here. Re-guarding them would break the connector.

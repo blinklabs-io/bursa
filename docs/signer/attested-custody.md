@@ -27,9 +27,9 @@ Because the proxy remains untrusted for response integrity, correctness rests
 on four checks the signer performs itself:
 
 1. The key inventory is accepted only when its attestation evidence verifies and
-   commits to the signer's fresh nonce and to the exact key list
-   (`InventoryBinding`). Evidence cannot be replayed for another nonce or paired
-   with a different key list.
+   commits to the signer's fresh nonce, the exact key list and, when selected,
+   the requested profile (`InventoryBindingForProfile`). Evidence cannot be
+   replayed for another nonce or paired with a different profile or key list.
 2. Every sign request carries a fresh random nonce that the response must echo;
    a stale or replayed response is refused.
 3. Every signature is verified against the attested public key before it is
@@ -94,14 +94,23 @@ and returns:
  "attestation": "<platform evidence>"}
 ```
 
-The evidence must commit to
+For an unprofiled workload, the evidence must commit to
 `sha256("bursa-attested-signer/1" || nonce || for each key: decimal(len(role)) || ":" || role || public_key)`.
-Nitro carries it in the document's `user_data`; Confidential Space carries
-`hex(binding)` in the token's `eat_nonce`. Keys are identified by their Cardano
-key hash (blake2b-224 of the public key) and carry the role the enclave
-attests: `payment`, `stake`, `drep`, `cc-hot`, `cc-cold`, `pool`, or `policy`.
+For a non-empty profile, let `LP(x)` be `decimal(len(x)) || ":" || x`; the
+evidence must instead commit to
+`sha256(LP("bursa-attested-inventory-profile/1") || LP("bursa-attested-signer/1") || LP(nonce) || LP(profile) || for each key: decimal(len(role)) || ":" || role || public_key)`.
+Nitro is legacy/unprofiled only and carries the unprofiled digest in the
+document's `user_data`. Confidential Space carries the selected digest as
+`hex(binding)` in the token's `eat_nonce`; Armory signs the profile-bound digest
+with the device identity key. Keys are identified by their Cardano key hash
+(blake2b-224 of the public key) and carry the role the enclave attests:
+`payment`, `stake`, `drep`, `cc-hot`, `cc-cold`, `pool`, or `policy`.
 An unknown role, a malformed public key, or a duplicate key fails the load, and
 a failed load leaves the backend serving no keys.
+
+The JSON request and response shapes and protocol version remain unchanged.
+Profiled producers and consumers must be upgraded together: mixing the legacy
+unprofiled digest with the profile-bound digest fails inventory attestation.
 
 `POST /v1/sign` takes:
 
@@ -210,7 +219,9 @@ the enclave image, outside the signer:
 The production workload, host proxy, provisioning/reload flow, KMS policy, and
 PCR build and rotation procedure are documented in
 [`nitro-custody.md`](nitro-custody.md). That enclave signs only `opcert`
-requests with an explicit issue counter and implements no profile.
+requests with an explicit issue counter. It implements no profile, so a Nitro
+backend must leave `profile` empty and uses only the legacy unprofiled inventory
+digest.
 
 ## GCP Confidential Space
 
@@ -313,9 +324,9 @@ workload can serve a pool on several networks to signer backends that each set
   and the Cardano signature). The signer rejects a response whose binding does
   not match the profile it asked for, so an untrusted proxy cannot move a
   request to another profile.
-- The attestation token is bound to the nonce and key list, not the profile,
-  and the key is the same under every profile; profiles are separated by the
-  signing request binding and the counters.
+- The attestation token is bound to the nonce, selected profile and key list.
+  The key is the same under every profile, while inventory attribution,
+  signing requests and counters remain separated by profile.
 - First boot, and a restart that finishes a pending bootstrap, create every
   profile's counter object, as they create the unprofiled one. With an active
   envelope a missing profile counter stops startup, so a deleted object is not
@@ -447,9 +458,9 @@ are those of the Cloud Storage counter.
   version list are eventually consistent. If the newest version is disabled or
   destroyed, startup stops rather than load an older one.
 - Bursa never creates or deletes the secret. A missing secret, a secret without
-  a version, or an empty payload stops startup; the workload never generates a
-  pool key in this mode and refuses to create one. Provisioning must write the
-  first version.
+  a version, or an empty payload stops a normal start; the workload never
+  generates a pool key in this mode and refuses to create one. Only the import
+  below writes a wrapped key into it.
 - A pending envelope creates the counters of the profiles being served, and
   `--create-profile-counter` adds a profile later, as in the Cloud Storage mode.
 - There is no compare-and-swap. Run one workload per secret. The signer's
@@ -460,9 +471,114 @@ are those of the Cloud Storage counter.
   `secretmanager.versions.list` and `secretmanager.versions.destroy`, and
   Cloud KMS encrypt and decrypt on the wrapping key.
 
-This mode cannot be provisioned until pool key import exists: the workload
-generates a key only in the file mode, and nothing else writes the first
-version.
+#### Importing an existing pool cold key
+
+A registered pool cannot take a new key, so `--state-secret` is provisioned by
+importing its existing cold key into the empty secret. The workload never
+generates a key in this mode; the import is the only way the secret gets one.
+
+Start the workload in import mode, against a secret whose newest version is
+enabled or absent, whose enabled versions all have an empty payload, and which
+has no disabled version:
+
+```text
+bursa confidential-space-workload \
+  --import \
+  --import-authority-file /etc/bursa/import-authority.pub \
+  --state-secret projects/PROJECT/secrets/SECRET \
+  --audience https://signer.example.internal \
+  --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
+  --wif-credentials /etc/bursa/confidential-space-wif.json \
+  --tls-cert-file /etc/bursa/confidential-space-server.pem \
+  --tls-key-file /etc/bursa/confidential-space-server-key.pem \
+  --client-ca-file /etc/bursa/confidential-space-client-ca.pem
+```
+
+`--import` requires `--state-secret` and `--import-authority-file`, and excludes
+`--profile` and `--create-profile-counter`: the profiles come from the request.
+`--import-authority-file` holds the hex Ed25519 public key of the
+provisioning authority. It must be a different key from the signer client's
+mTLS identity: the workload refuses a request whose client certificate carries
+the authority's key, and the import client refuses to run with one. Import mode
+keeps mutual TLS, serves only `POST /v1/import/challenge` and
+`POST /v1/import`, and never serves `/v1/sign` or `/v1/inventory`.
+
+Run the client on the machine that holds the cold key. It connects to the
+workload and, unless `--jwks-url` names another source, fetches Google's token
+signing keys:
+
+```text
+bursa confidential-space import \
+  --address https://workload.example.internal:8080 \
+  --tls-ca-file ca.pem --tls-client-cert-file client.pem --tls-client-key-file client-key.pem \
+  --audience https://signer.example.internal \
+  --image-digest sha256:IMAGE_DIGEST \
+  --kms-key projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY \
+  --signing-key-file pool-cold.skey \
+  --vkey-file pool-cold.vkey \
+  --authority-key-file import-authority.key \
+  --profile pool@mainnet=8 --profile pool@preview=0
+```
+
+- `--signing-key-file` is the non-extended `StakePoolSigningKey_ed25519` file
+  (`cborHex` is `5820` and the 32-byte seed), as `cardano-cli` and
+  `bursa key pool-cold` write it. The seed is the workload's Ed25519 seed. An
+  extended key is refused: its first 32 bytes are a scalar, not the seed.
+- `--vkey-file` is the pool's registered `StakePoolVerificationKey_ed25519`
+  file. The client checks that the signing key derives it, and the workload
+  checks it again before it wraps anything.
+- `--authority-key-file` is the authority's hex Ed25519 seed (or 64-byte private
+  key).
+- Each `--profile` is `NAME=NEXT`: the next issue number that profile may sign.
+  Stop issuing certificates with the old signer first. `NEXT` is one above the
+  highest issue number the key has signed, whether or not that certificate is
+  on chain, and never below the pool's on-chain operational-certificate counter
+  plus one. Take that highest number from the old signer's records; do not
+  import while it cannot be established. Use `0` for a pool that has never issued. Every profile signs with
+  the one imported key. `NEXT` seeds `NextIssueNumber`. For a positive `NEXT`,
+  both the last issued number and the `opcert-next` floor are `NEXT - 1`, so the
+  explicit-counter path cannot issue below `NEXT` and `opcert-next` refuses a
+  chain counter below `NEXT - 1`. `NEXT = 0` records no issued certificate and
+  no floor. The workload cannot correct `NEXT` after the import.
+
+The import runs in three steps.
+
+1. The challenge. `POST /v1/import/challenge` makes a one-use X25519 key pair
+   and a fresh 32-byte challenge, and returns the public key with an attestation
+   token whose nonces are `hex(challenge)` and `hex(SHA-256(public key))`.
+2. The client check. The client verifies the token with the signer's
+   Confidential Space verifier: Google's signature, the audience, the image
+   digest, the production image (`disabled-since-boot`, secure boot, a stable
+   image), and that the token carries both nonces. It builds nothing, and sends
+   nothing, if any check fails.
+3. The request. The client seals the key and the profile list to the workload's
+   key with X25519, HKDF-SHA-256 and XChaCha20-Poly1305, the construction of the
+   Armory provisioning channel. The HKDF salt and the AEAD additional data are a
+   binding over the protocol version, the route, the challenge, the token nonce,
+   both X25519 public keys, the KMS key name and the sorted profile names. The
+   authority signs, with Ed25519, a digest of that binding and the SHA-256 of the
+   ciphertext, as Nitro provisioning signs its binding.
+
+`POST /v1/import` verifies the authority's signature, opens the request, and
+spends the challenge, which is used once. It then checks that the key derives
+the expected verification key and refuses a mismatch, wraps the key into an
+`active` envelope exactly as a generated key is wrapped, and adds the envelope
+and one sealed counter record per profile as a new version of the secret,
+refusing if any enabled version already holds data or any version is
+disabled. The check and the write are not atomic: run one import-mode workload
+per secret. A request is refused if it is altered, replayed, built for another
+route, signed by another authority, or sent while the secret is not empty.
+After a successful import the workload wipes the ephemeral key and the
+plaintext and exits. A refused import leaves it running; the client requests a
+fresh challenge for the next attempt.
+
+Start the workload without `--import` and with the `--profile` flags of the
+imported profiles to serve the key. The envelope is `active`, so a start
+creates no counter: a profile that was not imported stops startup.
+
+An import into an empty secret is the whole of this mode. It does not add a
+pool to a secret that holds a key, and it holds one key: every profile signs
+with it.
 
 Configure `tls_ca_file` on the signer with the CA that issued the workload
 server certificate. Configure `tls_client_cert_file` and
@@ -477,7 +593,7 @@ and reads its text subject token only from
 launcher's automatically refreshed default token for the Workload Identity
 Federation provider. The custom token returned to the signer is separate: the
 workload requests it for the configured signer audience with
-`hex(InventoryBinding)` as its nonce on every inventory request.
+`hex(InventoryBindingForProfile)` as its nonce on every inventory request.
 
 Use direct resource access for the Cloud KMS key and counter object. Before a
 signature is made, the workload commits the operational-certificate issue
@@ -665,9 +781,9 @@ a host-key enclave whose unauthenticated `/v1/inventory` request is refused
 asks again with `challenge`, `host_key` and `host_signature`, signed over
 `AttestedInventoryRequestBinding` (the domain `bursa-armory-inventory-request/1`,
 the nonce, the profile and the challenge, length-prefixed). The inventory
-attestation itself encodes no network or chain, so the pinned identity key
-verifies a multi image as any other. Point `host_key_file` at the key of the
-profile's scope.
+attestation binds the selected profile but does not separately encode a network
+or chain, so the pinned identity key verifies a multi image as any other. Point
+`host_key_file` at the key of the profile's scope.
 
 ### Cold key provisioning
 

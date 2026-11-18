@@ -22,7 +22,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blinklabs-io/bursa/internal/txbuilder"
 )
+
+func TestTxBuildDefaultsToBoundedFee(t *testing.T) {
+	got, err := txBuildCommand().Flags().GetUint64("max-fee")
+	if err != nil {
+		t.Fatalf("read max-fee flag: %v", err)
+	}
+	if got != txbuilder.DefaultMaxFee {
+		t.Fatalf("max-fee default = %d, want %d", got, txbuilder.DefaultMaxFee)
+	}
+}
 
 func TestTxSignRequiresSigningKeyFile(t *testing.T) {
 	cmd := txSignCommand()

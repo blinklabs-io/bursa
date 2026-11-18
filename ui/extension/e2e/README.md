@@ -95,8 +95,8 @@ The Chrome tree is written to `ui/extension/dist/chrome/` and the Firefox tree t
 ## Step 3 — Start Bursa with the connector enabled
 
 Build and start the Bursa wallet with the connector opt-in enabled. The
-connector listens on `localhost` and requires a pairing code to authorise
-dApps:
+connector listens on loopback and requires desktop confirmation of the
+extension key before dApps can request access:
 
 ```sh
 # From the repository root:
@@ -110,9 +110,11 @@ BURSA_CONNECTOR=1 ./ui/bursa-wallet
 
 1. Click the Bursa extension icon in the browser toolbar to open the popup.
 2. In the popup, confirm the Bursa port and click **Pair with Bursa**.
-3. In the Bursa app, open **Settings → dApp Connector**, reveal the pending
-   pairing code, then enter that code in the extension popup.
-4. Click **Confirm Pairing** in the popup.
+3. In the Bursa app, open **Settings → dApp Connector** and reveal the pending
+   verification code using the vault password. Compare every character with the
+   code displayed in the extension popup.
+4. If the codes match, click **Codes match — confirm pairing** in Settings,
+   then **Check desktop confirmation** in the popup.
 5. The popup should display a "Connected" status.
 
 ---

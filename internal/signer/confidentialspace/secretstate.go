@@ -31,6 +31,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,6 +81,9 @@ var (
 	ErrStateCreateRefused = errors.New(
 		"the state secret store never creates a wrapped key",
 	)
+	// ErrStateNotEmpty reports an import into a state secret that already
+	// holds data.
+	ErrStateNotEmpty = errors.New("state secret is not empty")
 	// ErrStateStopped reports a counter call after a failed save.
 	ErrStateStopped = errors.New(
 		"state secret store stopped after a failed save; restart the workload",
@@ -348,6 +352,149 @@ func (s *SecretStateStore) Replace(expected, data []byte) error {
 	}
 	s.envelope = bytes.Clone(data)
 	return nil
+}
+
+// Import writes envelope and the starting counter of each profile into an
+// empty state secret: one whose newest version is enabled or absent and whose
+// every enabled version has an empty payload. It refuses any other state, so
+// an existing envelope is never replaced or destroyed. nextIssue maps each
+// profile to the next issue number its explicit path accepts. The store is not
+// loaded afterwards; a normal start loads what Import wrote.
+func (s *SecretStateStore) Import(
+	ctx context.Context,
+	envelopeBytes []byte,
+	nextIssue map[string]uint64,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped != nil {
+		return s.stopped
+	}
+	if s.loaded {
+		return errors.New("state secret store is already in use")
+	}
+	e, err := parseStateEnvelope(envelopeBytes, s.kmsKey)
+	if err != nil {
+		return err
+	}
+	// A pending envelope would make a start create the counters of every
+	// profile it serves, which a starting counter must never be replaced by.
+	if e.Version != envelopeVersion || e.Phase != envelopeActive {
+		return errors.New("imported envelope must be active")
+	}
+	readCtx, cancel := s.rpcContext(ctx)
+	resp, err := s.readNewest(readCtx)
+	cancel()
+	switch {
+	case errors.Is(err, ErrStateNotProvisioned):
+	case err != nil:
+		return err
+	case len(resp.GetPayload().GetData()) != 0:
+		return ErrStateNotEmpty
+	}
+	if err := s.requireEnabledVersionsEmpty(ctx); err != nil {
+		return err
+	}
+	sealKey, err := s.deriveSealKey(ctx, e)
+	if err != nil {
+		return err
+	}
+	pub := ed25519.PublicKey(bytes.Clone(e.PublicKey))
+	hash := backend.HashPublicKey(pub)
+	states := make(map[string]counterState, len(nextIssue))
+	for profile, next := range nextIssue {
+		if err := ValidateProfile(profile); err != nil {
+			wipe(sealKey)
+			return err
+		}
+		if next >= math.MaxUint64-1 {
+			wipe(sealKey)
+			return ErrCounterRegression
+		}
+		states[profile] = seededCounterState(hash, profile, next)
+	}
+	s.sealKey, s.pub = sealKey, pub
+	defer func() {
+		wipe(s.sealKey)
+		s.sealKey, s.pub = nil, nil
+	}()
+	return s.saveLocked(ctx, envelopeBytes, states)
+}
+
+// requireEnabledVersionsEmpty refuses unless every version of the secret is
+// destroyed or enabled with an empty payload. The cleanup after a write
+// destroys every older enabled version, so one holding a wrapped key would be
+// lost, and a disabled version, whose payload cannot be read, could be enabled
+// again before a later cleanup. Versions are read by number, which unlike the
+// version list is strongly consistent; a version the read cannot open is
+// skipped only when the list shows it destroyed.
+func (s *SecretStateStore) requireEnabledVersionsEmpty(
+	parent context.Context,
+) error {
+	ctx, cancel := s.rpcContext(parent)
+	defer cancel()
+	it := s.client.ListSecretVersions(
+		ctx,
+		&secretmanagerpb.ListSecretVersionsRequest{Parent: s.secret},
+	)
+	destroyed := make(map[uint64]bool)
+	for {
+		v, err := it.Next()
+		if errors.Is(err, iterator.Done) || status.Code(err) == codes.NotFound {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("list state secret versions: %w", err)
+		}
+		if v.GetState() == secretmanagerpb.SecretVersion_DISABLED {
+			return ErrStateNotEmpty
+		}
+		n, ok := s.versionNumber(v.GetName())
+		if ok && v.GetState() == secretmanagerpb.SecretVersion_DESTROYED {
+			destroyed[n] = true
+		}
+	}
+	for n := uint64(1); ; n++ {
+		resp, err := s.accessVersion(ctx, n)
+		if status.Code(err) == codes.NotFound {
+			return nil
+		}
+		if status.Code(err) == codes.FailedPrecondition {
+			if destroyed[n] {
+				continue
+			}
+			// Disabled since the list, or not yet listed.
+			return ErrStateNotEmpty
+		}
+		if err != nil {
+			return fmt.Errorf("read state secret version %d: %w", n, err)
+		}
+		if len(resp.GetPayload().GetData()) != 0 {
+			return ErrStateNotEmpty
+		}
+	}
+}
+
+// seededCounterState is the counter record of an imported pool whose next
+// issue number is next. The number before it is the highest the key has
+// signed, at least the pool's on-chain counter: it is both the last issued
+// number and the opcert-next floor, so a lower chain report cannot reissue it
+// at an unrecorded KES period.
+func seededCounterState(
+	hash backend.KeyHash,
+	profile string,
+	next uint64,
+) counterState {
+	state := counterState{
+		Version:         counterStateVersion,
+		KeyHash:         hash.String(),
+		NextIssueNumber: next,
+		Profile:         profile,
+	}
+	if next > 0 {
+		state.LastIssued, state.OpCertFloor = next-1, next-1
+	}
+	return state
 }
 
 func (s *SecretStateStore) loadLocked() error {
@@ -750,6 +897,13 @@ func (s *SecretStateStore) addVersion(
 	)
 	if err != nil {
 		return fmt.Errorf("add state secret version: %w", err)
+	}
+	if s.parent == "" {
+		// The first version of an empty secret: Load never ran, so the
+		// service's name for the secret is learned from this response.
+		if _, ok := s.versionNumber(added.GetName()); ok {
+			s.parent, _, _ = strings.Cut(added.GetName(), "/versions/")
+		}
 	}
 	keep, ok := s.canonicalVersion(added.GetName())
 	if !ok {
