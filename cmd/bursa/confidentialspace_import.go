@@ -121,8 +121,9 @@ key) whose public key the workload was started with in --import-authority-file;
 it must not be the TLS client identity.
 
 Each --profile is NAME=NEXT, where NEXT is the next operational-certificate
-issue number the profile may sign: the pool's on-chain counter plus one, or 0
-for a pool that has never issued.`,
+issue number the profile may sign: one above the highest issue number the key
+has signed, on chain or not, and never below the pool's on-chain counter plus
+one; 0 for a pool that has never issued. Stop the old signer issuing first.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runConfidentialSpaceImportCommand(cmd.Context(), o)

@@ -411,7 +411,8 @@ importing its existing cold key into the empty secret. The workload never
 generates a key in this mode; the import is the only way the secret gets one.
 
 Start the workload in import mode, against a secret whose newest version is
-enabled or absent and whose enabled versions all have an empty payload:
+enabled or absent, whose enabled versions all have an empty payload, and which
+has no disabled version:
 
 ```text
 bursa confidential-space-workload \
@@ -461,12 +462,16 @@ bursa confidential-space import \
   checks it again before it wraps anything.
 - `--authority-key-file` is the authority's hex Ed25519 seed (or 64-byte private
   key).
-- Each `--profile` is `NAME=NEXT`: the next issue number that profile may sign,
-  the pool's on-chain operational-certificate counter plus one, or `0` for a
-  pool that never issued. Every profile signs with the one imported key. It
-  seeds `NextIssueNumber`, and both the last issued number and the
-  `opcert-next` floor are `NEXT - 1`, so the explicit-counter path cannot issue
-  below `NEXT` and `opcert-next` refuses a chain counter below `NEXT - 1`.
+- Each `--profile` is `NAME=NEXT`: the next issue number that profile may sign.
+  Stop issuing certificates with the old signer first. `NEXT` is one above the
+  highest issue number the key has signed, whether or not that certificate is
+  on chain, and never below the pool's on-chain operational-certificate counter
+  plus one. Use `0` for a pool that has never issued. Every profile signs with
+  the one imported key. `NEXT` seeds `NextIssueNumber`. For a positive `NEXT`,
+  both the last issued number and the `opcert-next` floor are `NEXT - 1`, so the
+  explicit-counter path cannot issue below `NEXT` and `opcert-next` refuses a
+  chain counter below `NEXT - 1`. `NEXT = 0` records no issued certificate and
+  no floor. The workload cannot correct `NEXT` after the import.
 
 The import runs in three steps.
 
@@ -491,11 +496,13 @@ spends the challenge, which is used once. It then checks that the key derives
 the expected verification key and refuses a mismatch, wraps the key into an
 `active` envelope exactly as a generated key is wrapped, and adds the envelope
 and one sealed counter record per profile as a new version of the secret,
-refusing if any enabled version already holds data. The check and the write are
-not atomic: run one import-mode workload per secret. A request is refused if it
-is altered, replayed, built for another route, signed by another authority, or
-sent while the secret is not empty. The workload wipes the ephemeral key and
-the plaintext and exits.
+refusing if any enabled version already holds data or any version is
+disabled. The check and the write are not atomic: run one import-mode workload
+per secret. A request is refused if it is altered, replayed, built for another
+route, signed by another authority, or sent while the secret is not empty.
+After a successful import the workload wipes the ephemeral key and the
+plaintext and exits. A refused import leaves it running; the client requests a
+fresh challenge for the next attempt.
 
 Start the workload without `--import` and with the `--profile` flags of the
 imported profiles to serve the key. The envelope is `active`, so a start
