@@ -500,3 +500,49 @@ func TestServeConfidentialSpaceAnswersTheRequestThatEndsIt(t *testing.T) {
 		t.Fatalf("serve returned %v", err)
 	}
 }
+
+// A TLS secret is a complete TLS source in import mode: TLS validation
+// accepts it and the run reaches the import validation after it.
+func TestConfidentialSpaceCommandImportAcceptsTLSSecret(t *testing.T) {
+	t.Parallel()
+	base := []string{
+		"--audience", "a", "--kms-key", "k",
+		"--wif-credentials", "/nonexistent/wif.json",
+		"--client-ca-file", "/nonexistent/ca.pem",
+		"--state-secret", "projects/p/secrets/s", "--import",
+	}
+	tests := []struct {
+		name    string
+		extra   []string
+		wantErr string
+	}{
+		{
+			"secret reaches import validation",
+			[]string{"--tls-secret", "projects/p/secrets/tls"},
+			"--import requires --import-authority-file",
+		},
+		{
+			"secret with files",
+			[]string{
+				"--tls-secret", "projects/p/secrets/tls",
+				"--tls-cert-file", "/c",
+			},
+			"--tls-secret excludes --tls-cert-file",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := confidentialSpaceCommand()
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs(append(append([]string{}, base...), tt.extra...))
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

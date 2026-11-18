@@ -365,11 +365,67 @@ bursa confidential-space-workload \
   --counter-bucket POOL_COUNTER_BUCKET \
   --counter-object pool-cold/counter.json \
   --profile pool@mainnet --profile pool@preview \
-  --wif-credentials /etc/bursa/confidential-space-wif.json \
-  --tls-cert-file /etc/bursa/confidential-space-server.pem \
-  --tls-key-file /etc/bursa/confidential-space-server-key.pem \
-  --client-ca-file /etc/bursa/confidential-space-client-ca.pem
+  --wif-credentials /etc/bursa/wif.json \
+  --tls-secret projects/PROJECT/secrets/WORKLOAD_TLS \
+  --client-ca-file /etc/bursa/client-ca.pem
 ```
+
+#### Workload inputs
+
+A Confidential Space VM has no persistent storage, so every input reaches the
+container either inside the measured image or from a cloud store read through
+the attested federated identity.
+
+| Input | Flag | How it reaches the VM |
+| --- | --- | --- |
+| Client CA | `--client-ca-file` | File in a deployment image derived from the Bursa image |
+| WIF credential configuration | `--wif-credentials` | File in the same derived image |
+| Server certificate chain and private key | `--tls-secret` | One PEM bundle in Secret Manager, read at startup |
+
+The client CA and the WIF configuration are not secret. The client CA is the
+workload's only caller-authorization root, since the workload verifies no host
+signature, so it must be integrity-protected: inside the image, whose digest the
+WIF provider and KMS bindings require, it is. The WIF configuration is needed
+before any cloud call, so it cannot come from a cloud store. Build both into a
+small image derived from the Bursa image and deploy that image:
+
+```dockerfile
+FROM ghcr.io/blinklabs-io/bursa@sha256:BURSA_IMAGE_DIGEST
+COPY confidential-space-client-ca.pem /etc/bursa/client-ca.pem
+COPY confidential-space-wif.json /etc/bursa/wif.json
+```
+
+Pass `--client-ca-file /etc/bursa/client-ca.pem` and
+`--wif-credentials /etc/bursa/wif.json`. The WIF provider and the KMS bindings
+must name the digest of the derived image, not of the Bursa image.
+
+The TLS private key never ships in an image. `--tls-secret
+projects/PROJECT/secrets/SECRET` names an existing Secret Manager secret whose
+most recently created version holds one PEM bundle: the certificate chain, leaf
+first, and one private key, in any order, with nothing but white space between
+the blocks. The workload reads it through the same external-account
+credentials as `--state-secret`, and it excludes `--tls-cert-file` and
+`--tls-key-file`; exactly one TLS source is required, and a certificate file
+without a key file (or the reverse) is refused. A malformed secret name is
+refused before the workload starts. Startup stops if the read fails, the
+version is empty or not PEM, the bundle has text outside its PEM blocks, a block
+of another type, no certificate, no private key or more than one key, or the key
+does not match the leaf certificate. Errors and logs carry no key material. The
+workload clears its own copy of the bundle after parsing; the parsed key stays
+in process memory while the workload serves.
+
+The workload reads the secret once at startup, through the `latest` alias,
+since a stale read of a certificate is harmless. The alias names the most
+recently created version and does not skip a disabled one: disabling the newest
+version stops the next start rather than falling back to an older one. Rotating
+the certificate takes a new version and a restart.
+
+Grant the image's federated principal `secretmanager.versions.access` on that
+secret only. It needs no other permission on it, and the TLS secret is a
+different secret from the `--state-secret` one.
+
+The file flags `--tls-cert-file` and `--tls-key-file` still work as before, for
+a host that has a persistent, protected file system.
 
 #### Storage modes
 
@@ -445,7 +501,9 @@ provisioning authority. It must be a different key from the signer client's
 mTLS identity: the workload refuses a request whose client certificate carries
 the authority's key, and the import client refuses to run with one. Import mode
 keeps mutual TLS, serves only `POST /v1/import/challenge` and
-`POST /v1/import`, and never serves `/v1/sign` or `/v1/inventory`.
+`POST /v1/import`, and never serves `/v1/sign` or `/v1/inventory`. It accepts
+`--tls-secret` in place of `--tls-cert-file` and `--tls-key-file`, as a
+signing start does.
 
 Run the client on the machine that holds the cold key. It connects to the
 workload and, unless `--jwks-url` names another source, fetches Google's token

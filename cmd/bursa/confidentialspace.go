@@ -44,6 +44,7 @@ func confidentialSpaceCommand() *cobra.Command {
 		counterBucket  string
 		counterObject  string
 		wifCredentials string
+		tlsSecret      string
 		tlsCertFile    string
 		tlsKeyFile     string
 		clientCAFile   string
@@ -65,6 +66,13 @@ func confidentialSpaceCommand() *cobra.Command {
 			); err != nil {
 				return err
 			}
+			if err := validateConfidentialSpaceTLS(
+				tlsSecret,
+				tlsCertFile,
+				tlsKeyFile,
+			); err != nil {
+				return err
+			}
 			if err := validateConfidentialSpaceImport(
 				importMode,
 				importAuthFile,
@@ -75,20 +83,23 @@ func confidentialSpaceCommand() *cobra.Command {
 				return err
 			}
 			logging.ConfigureJSON()
-			tlsConfig, err := confidentialSpaceTLSConfig(
-				tlsCertFile,
-				tlsKeyFile,
-				clientCAFile,
-			)
-			if err != nil {
-				return err
-			}
 			ctx, stop := signal.NotifyContext(
 				context.Background(),
 				syscall.SIGINT,
 				syscall.SIGTERM,
 			)
 			defer stop()
+			tlsConfig, err := confidentialSpaceTLSConfigFromSource(
+				ctx,
+				tlsSecret,
+				tlsCertFile,
+				tlsKeyFile,
+				clientCAFile,
+				wifCredentials,
+			)
+			if err != nil {
+				return err
+			}
 
 			tokens, err := confidentialspace.NewLauncherTokenSource(
 				confidentialspace.LauncherSocket,
@@ -249,6 +260,8 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringVar(&wifCredentials, "wif-credentials", "", "validated external-account credential configuration")
 	cmd.Flags().
+		StringVar(&tlsSecret, "tls-secret", "", "existing Secret Manager secret, projects/<project>/secrets/<secret>, whose most recently created version, which must be enabled, holds one PEM bundle of the workload HTTPS certificate chain and its private key; replaces --tls-cert-file and --tls-key-file")
+	cmd.Flags().
 		StringVar(&tlsCertFile, "tls-cert-file", "", "PEM workload HTTPS certificate")
 	cmd.Flags().
 		StringVar(&tlsKeyFile, "tls-key-file", "", "PEM private key for the workload HTTPS certificate")
@@ -257,8 +270,6 @@ func confidentialSpaceCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("audience")
 	_ = cmd.MarkFlagRequired("kms-key")
 	_ = cmd.MarkFlagRequired("wif-credentials")
-	_ = cmd.MarkFlagRequired("tls-cert-file")
-	_ = cmd.MarkFlagRequired("tls-key-file")
 	_ = cmd.MarkFlagRequired("client-ca-file")
 	return cmd
 }
@@ -295,6 +306,59 @@ func validateConfidentialSpaceStorage(
 			strings.Join(missing, ", "),
 		)
 	}
+}
+
+// validateConfidentialSpaceTLS requires exactly one TLS source: a well-formed
+// secret name, or the certificate and key files together.
+func validateConfidentialSpaceTLS(secret, certFile, keyFile string) error {
+	files := []struct{ name, value string }{
+		{"--tls-cert-file", certFile},
+		{"--tls-key-file", keyFile},
+	}
+	var missing []string
+	for _, f := range files {
+		if secret != "" && f.value != "" {
+			return fmt.Errorf("--tls-secret excludes %s", f.name)
+		}
+		if f.value == "" {
+			missing = append(missing, f.name)
+		}
+	}
+	switch {
+	case secret != "":
+		return confidentialspace.ValidateTLSSecret(secret)
+	case len(missing) == 0:
+		return nil
+	case len(missing) == len(files):
+		return errors.New(
+			"one of --tls-secret or --tls-cert-file with --tls-key-file is required",
+		)
+	default:
+		return fmt.Errorf(
+			"%s required without --tls-secret",
+			strings.Join(missing, ", "),
+		)
+	}
+}
+
+// confidentialSpaceTLSConfigFromSource builds the TLS configuration from the
+// secret when one is named, and from the files otherwise.
+func confidentialSpaceTLSConfigFromSource(
+	ctx context.Context,
+	secret, certFile, keyFile, clientCAFile, wifCredentials string,
+) (*tls.Config, error) {
+	if secret == "" {
+		return confidentialSpaceTLSConfig(certFile, keyFile, clientCAFile)
+	}
+	certificate, err := confidentialspace.LoadTLSCertificate(
+		ctx,
+		secret,
+		wifCredentials,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load workload TLS secret: %w", err)
+	}
+	return confidentialSpaceTLSConfigFor(certificate, clientCAFile)
 }
 
 // validateConfidentialSpaceImport checks the import-mode flags. Import mode
@@ -403,6 +467,12 @@ func confidentialSpaceTLSConfig(
 	if err != nil {
 		return nil, fmt.Errorf("load workload TLS certificate: %w", err)
 	}
+	return confidentialSpaceTLSConfigFor(certificate, clientCAFile)
+}
+
+func confidentialSpaceTLSConfigFor(
+	certificate tls.Certificate, clientCAFile string,
+) (*tls.Config, error) {
 	clientCAs, err := signerapi.LoadClientCAPool(clientCAFile)
 	if err != nil {
 		return nil, fmt.Errorf("load workload client CA: %w", err)
