@@ -501,7 +501,9 @@ provisioning authority. It must be a different key from the signer client's
 mTLS identity: the workload refuses a request whose client certificate carries
 the authority's key, and the import client refuses to run with one. Import mode
 keeps mutual TLS, serves only `POST /v1/import/challenge` and
-`POST /v1/import`, and never serves `/v1/sign` or `/v1/inventory`.
+`POST /v1/import`, and never serves `/v1/sign` or `/v1/inventory`. It accepts
+`--tls-secret` in place of `--tls-cert-file` and `--tls-key-file`, as a
+signing start does.
 
 Run the client on the machine that holds the cold key. It connects to the
 workload and, unless `--jwks-url` names another source, fetches Google's token
