@@ -2,7 +2,8 @@ name: storage-windows
 
 # go-test runs on Linux only and cross-builds just ./cmd/bursa, so nothing else
 # executes the Windows SQLite permission code or the owner-only checks it relies
-# on. Run their tests natively.
+# on, or the Winsock error matching of the Postgres dial retry. Run their tests
+# natively.
 on:
   pull_request:
 
@@ -34,3 +35,6 @@ jobs:
       - name: go test (secret file permissions)
         if: ${{ !cancelled() }}
         run: go test -v -count=1 -run "^(TestWriteSecretKeyFileWindowsCreatesOwnerOnlyFile|TestLoadSecretKeyFromFileWindowsAllowsOwner|TestCheckSecurityDescriptorAcceptsTheUserSDDLAlias)$" .
+      - name: go test (Postgres dial errors)
+        if: ${{ !cancelled() }}
+        run: go test -v -count=1 -run "^TestIsTransientDialError_RealRefusedDial$" ./internal/signer/watermark/
