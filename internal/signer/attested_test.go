@@ -490,6 +490,7 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	pub := priv.Public().(ed25519.PublicKey)
 	digest := "sha256:" + strings.Repeat("a", 64)
+	const evidenceProfile = "pool@mainnet"
 	profiles := make(chan string, 2)
 	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -558,7 +559,11 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 				"hwmodel": "GCP_AMD_SEV",
 				"eat_nonce": []string{
 					hex.EncodeToString(
-						backend.InventoryBinding(in.Nonce, keys),
+						backend.InventoryBindingForProfile(
+							in.Nonce,
+							evidenceProfile,
+							keys,
+						),
 					),
 				},
 				"dbgstat": "disabled-since-boot", "swname": "CONFIDENTIAL_SPACE", "secboot": true,
@@ -593,7 +598,7 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 		Name: "gcp", Type: "confidential-space", Address: workload.URL,
 		Audience: "https://signer.example", ImageDigest: digest, JWKSURL: jwks.URL,
 		TLSCAFile: serverCAFile, TLSClientCertFile: clientCertFile, TLSClientKeyFile: clientKeyFile,
-		Profile: "pool@mainnet",
+		Profile: evidenceProfile,
 	}
 	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
 	if err != nil {
@@ -612,6 +617,15 @@ func TestBuildBackendsConfidentialSpace(t *testing.T) {
 	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil {
 		t.Fatal("boot succeeded with a mismatched image digest")
 	}
+
+	bad = cfg
+	bad.Profile = "pool@preview"
+	if _, err := BuildBackends(
+		t.Context(),
+		[]config.SignerBackendConfig{bad},
+	); !errors.Is(err, backend.ErrAttestation) {
+		t.Fatalf("profile-mismatched inventory: got %v, want ErrAttestation", err)
+	}
 }
 
 func TestBuildBackendsArmory(t *testing.T) {
@@ -619,6 +633,7 @@ func TestBuildBackendsArmory(t *testing.T) {
 	identity, identityPriv, _ := ed25519.GenerateKey(nil)
 	pool, _, _ := ed25519.GenerateKey(nil)
 	stake, _, _ := ed25519.GenerateKey(nil)
+	const evidenceProfile = "pool@preview"
 	profiles := make(chan string, 2)
 	device := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -634,7 +649,11 @@ func TestBuildBackendsArmory(t *testing.T) {
 			}
 			att := ed25519.Sign(
 				identityPriv,
-				backend.InventoryBinding(in.Nonce, keys),
+				backend.InventoryBindingForProfile(
+					in.Nonce,
+					evidenceProfile,
+					keys,
+				),
 			)
 			_ = json.NewEncoder(w).
 				Encode(backend.AttestedInventory{Version: backend.AttestedProtocol, Keys: keys, Attestation: att})
@@ -644,7 +663,7 @@ func TestBuildBackendsArmory(t *testing.T) {
 
 	cfg := config.SignerBackendConfig{
 		Name: "armory", Type: "armory", Address: device.URL,
-		Profile: "pool@preview", IdentityPublicKey: hex.EncodeToString(identity),
+		Profile: evidenceProfile, IdentityPublicKey: hex.EncodeToString(identity),
 	}
 	bs, err := BuildBackends(t.Context(), []config.SignerBackendConfig{cfg})
 	if err != nil {
@@ -666,6 +685,15 @@ func TestBuildBackendsArmory(t *testing.T) {
 	bad.IdentityPublicKey = hex.EncodeToString(other)
 	if _, err := BuildBackends(t.Context(), []config.SignerBackendConfig{bad}); err == nil {
 		t.Fatal("boot succeeded with another identity key pinned")
+	}
+
+	bad = cfg
+	bad.Profile = "pool@mainnet"
+	if _, err := BuildBackends(
+		t.Context(),
+		[]config.SignerBackendConfig{bad},
+	); !errors.Is(err, backend.ErrAttestation) {
+		t.Fatalf("profile-mismatched inventory: got %v, want ErrAttestation", err)
 	}
 }
 
@@ -771,7 +799,14 @@ func TestBuildBackendsArmoryHostKey(t *testing.T) {
 	device, challenges := hostKeyDevice(
 		t, pool, poolPriv, host,
 		func(nonce []byte, keys []backend.AttestedKeyInfo) []byte {
-			return ed25519.Sign(identityPriv, backend.InventoryBinding(nonce, keys))
+			return ed25519.Sign(
+				identityPriv,
+				backend.InventoryBindingForProfile(
+					nonce,
+					"pool@preview",
+					keys,
+				),
+			)
 		},
 	)
 
@@ -912,7 +947,7 @@ func TestBuildBackendsNitroHostKey(t *testing.T) {
 	)
 
 	cfg := config.SignerBackendConfig{
-		Name: "nitro", Type: "nitro", Address: device.URL, Profile: "pool@preview",
+		Name: "nitro", Type: "nitro", Address: device.URL,
 		RootCAFile: rootFile,
 		PCRs:       map[uint]string{0: hex.EncodeToString(pcr0)},
 		HostKeyFile: writeHostKeyFile(
@@ -935,6 +970,15 @@ func TestBuildBackendsNitroHostKey(t *testing.T) {
 	}
 	if n := challenges(); n != 1 {
 		t.Fatalf("challenges = %d, want 1", n)
+	}
+
+	bad := cfg
+	bad.Profile = "pool@preview"
+	if _, err := BuildBackends(
+		t.Context(),
+		[]config.SignerBackendConfig{bad},
+	); !errors.Is(err, backend.ErrAttestation) {
+		t.Fatalf("profiled Nitro inventory: got %v, want ErrAttestation", err)
 	}
 }
 

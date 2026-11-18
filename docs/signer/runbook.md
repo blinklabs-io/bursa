@@ -394,8 +394,8 @@ several holders it is not read, and those rows are migrated before a second
 profile is added. The floor written before profile scoping is left alone, as
 the new floor under the profile is read in its place.
 
-`--profile` must be the `profile` of a nitro, confidential-space, armory or
-sops backend in the config. When the config has any such backend, the command
+`--profile` must be the `profile` of a confidential-space, armory or sops
+backend in the config. When the config has any such backend, the command
 refuses to run without `--profile`, since an unprofiled reset would neither
 clear the key's records nor fence its requests. For a key served by a backend
 without a profile in such a config, pass `--unprofiled` instead. Configs with
