@@ -169,11 +169,18 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		tag     string
-		allowed bool
+		tag        string
+		allowed    bool
+		prerelease bool
 	}{
 		{tag: "v0.21.0", allowed: true},
-		{tag: "v0.22.0-rc.2", allowed: true},
+		{tag: "v0.22.0-rc.2", allowed: true, prerelease: true},
+		{tag: "v0.22.0-rc.02"},
+		{tag: "v01.2.3"},
+		{tag: "v1.02.3"},
+		{tag: "v1.2.03"},
+		{tag: "v1.2.3-"},
+		{tag: "v1.2.3-rc..2"},
 		{tag: "v1.2.3+build.4"},
 		{tag: "v1.2.3$(id)"},
 		{tag: "v1.2.3;id"},
@@ -181,6 +188,7 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 		t.Run(tc.tag, func(t *testing.T) {
 			foundRelease := false
 			var rejected bool
+			envFile := filepath.Join(t.TempDir(), "github-env")
 			for _, step := range job.Steps {
 				if step.ID == "create-release" {
 					foundRelease = true
@@ -200,7 +208,7 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 				)
 				cmd.Env = append(os.Environ(),
 					"GITHUB_REF=refs/tags/"+tc.tag,
-					"GITHUB_ENV="+filepath.Join(t.TempDir(), "github-env"),
+					"GITHUB_ENV="+envFile,
 				)
 				output, err := cmd.CombinedOutput()
 				if err != nil {
@@ -227,6 +235,21 @@ func TestReleaseTagRejectedBeforeReleaseCreation(t *testing.T) {
 					!rejected,
 					tc.tag,
 				)
+			}
+			if !tc.allowed {
+				return
+			}
+
+			env, err := os.ReadFile(envFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "RELEASE_PRERELEASE=false\n"
+			if tc.prerelease {
+				want = "RELEASE_PRERELEASE=true\n"
+			}
+			if !strings.Contains(string(env), want) {
+				t.Fatalf("release environment %q lacks %q", env, want)
 			}
 		})
 	}
@@ -260,11 +283,16 @@ func TestPrereleaseTagCreatesPrerelease(t *testing.T) {
 		if step.ID != "create-release" {
 			continue
 		}
-		if !strings.Contains(
-			step.With.Script,
-			`prerelease: process.env.RELEASE_TAG.includes('-')`,
-		) {
-			t.Fatal("release creation does not classify prerelease tags")
+		const want = `prerelease: process.env.RELEASE_PRERELEASE === 'true',`
+		var properties []string
+		for line := range strings.SplitSeq(step.With.Script, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "prerelease:") {
+				properties = append(properties, line)
+			}
+		}
+		if len(properties) != 1 || properties[0] != want {
+			t.Fatalf("release creation prerelease properties = %q, want %q", properties, want)
 		}
 		return
 	}
