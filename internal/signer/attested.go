@@ -84,7 +84,24 @@ func buildConfidentialSpaceBackend(
 	ctx context.Context,
 	c config.SignerBackendConfig,
 ) (backend.Backend, error) {
-	jwksURL := c.JWKSURL
+	verifier, err := NewConfidentialSpaceVerifier(
+		c.JWKSURL,
+		c.Audience,
+		c.ImageDigest,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return loadAttestedBackend(ctx, c, verifier)
+}
+
+// NewConfidentialSpaceVerifier returns the verifier of Confidential Space
+// attestation tokens issued for audience to the container image imageDigest.
+// Token signing keys are fetched from jwksURL, or Google's published set when
+// it is empty.
+func NewConfidentialSpaceVerifier(
+	jwksURL, audience, imageDigest string,
+) (*backend.ConfidentialSpaceVerifier, error) {
 	if jwksURL == "" {
 		jwksURL = backend.ConfidentialSpaceJWKSURL
 	}
@@ -95,15 +112,13 @@ func buildConfidentialSpaceBackend(
 	if err := checkJWKSURL(u); err != nil {
 		return nil, err
 	}
-	verifier, err := backend.NewConfidentialSpaceVerifier(
-		func(ctx context.Context) (jose.JSONWebKeySet, error) { return fetchJWKS(ctx, jwksURL) },
-		c.Audience,
-		c.ImageDigest,
+	return backend.NewConfidentialSpaceVerifier(
+		func(ctx context.Context) (jose.JSONWebKeySet, error) {
+			return fetchJWKS(ctx, jwksURL)
+		},
+		audience,
+		imageDigest,
 	)
-	if err != nil {
-		return nil, err
-	}
-	return loadAttestedBackend(ctx, c, verifier)
 }
 
 // buildArmoryBackend wires a USB armory custody backend. The device answers
