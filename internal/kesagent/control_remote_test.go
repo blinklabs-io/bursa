@@ -296,8 +296,9 @@ func TestRemoteSignOnlyClientCannotRunControlCommands(t *testing.T) {
 	t.Parallel()
 	pki := newControlPKI(t)
 	_, ctrlFP := pki.client("controller")
-	signer, _ := pki.client("signer") // admitted to sign, not listed to control
+	signer, signerFP := pki.client("signer")
 	a, _ := poolWithControl(t, ctrlFP)
+	sole(t, a).cfg.SignClientSPKI = []spki{signerFP}
 	rig := pki.serve(t, a)
 
 	conn := rig.open(t, signer)
@@ -324,6 +325,48 @@ func TestRemoteSignOnlyClientCannotRunControlCommands(t *testing.T) {
 	if !sole(t, a).hasActiveVKey(activeVKey(t, a, "pool")) {
 		t.Fatal("sign session changed the active key")
 	}
+}
+
+func TestRemoteSigningStaysWithinListedProfiles(t *testing.T) {
+	t.Parallel()
+	pki := newControlPKI(t)
+	signer, signerFP := pki.client("pool-a signer")
+	shared, sharedFP := pki.client("shared signer")
+	controller, controllerFP := pki.client("controller")
+	stranger, _ := pki.client("unlisted signer")
+	coldA, coldB := newColdKey(t), newColdKey(t)
+	pcA := profileOn(t, networkA, "pool-a", coldA)
+	pcA.SignClientSPKI = []spki{signerFP, sharedFP}
+	pcA.ControlClientSPKI = []spki{controllerFP}
+	pcB := profileOn(t, networkB, "pool-b", coldB)
+	pcB.SignClientSPKI = []spki{sharedFP}
+	a := newMultiAgent(t, pcA, pcB)
+	install(t, a, "pool-a", coldA, 3, 52, 5)
+	install(t, a, "pool-b", coldB, 0, 25, 1)
+	rig := pki.serve(t, a)
+
+	denied := rig.open(t, signer)
+	resp := challenge(t, denied, RoleSign, "pool-b")
+	if resp.Error != ErrRoleNotPermitted.Error() || len(resp.OpCert) != 0 ||
+		len(resp.KESVKey) != 0 || len(resp.Attestation) != 0 || resp.Role != "" {
+		t.Fatalf("profile-scoped signer admitted to another profile: %+v", resp)
+	}
+	if n := rig.attester.calls.Load(); n != 0 {
+		t.Fatalf("evidence produced %d times for a refused signer", n)
+	}
+	unlisted := rig.open(t, stranger)
+	if got := challenge(t, unlisted, RoleSign, "pool-a"); got.Error != ErrRoleNotPermitted.Error() || len(got.OpCert) != 0 {
+		t.Fatalf("CA-valid unlisted signer admitted: %+v", got)
+	}
+
+	controlOnly := rig.open(t, controller)
+	if got := challenge(t, controlOnly, RoleSign, "pool-a"); got.Error != ErrRoleNotPermitted.Error() || len(got.OpCert) != 0 {
+		t.Fatalf("control authority implied signing authority: %+v", got)
+	}
+
+	admit(t, rig.open(t, signer), RoleSign, "pool-a")
+	admit(t, rig.open(t, shared), RoleSign, "pool-a")
+	admit(t, rig.open(t, shared), RoleSign, "pool-b")
 }
 
 func TestRemoteControlSessionRefusesSignFrames(t *testing.T) {
@@ -429,8 +472,8 @@ func TestServeAttestedServiceRefusesControlWithoutClientCertVerification(t *test
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 			defer cancel()
 			err = a.ServeAttestedService(ctx, ln, cfg)
-			if !errors.Is(err, ErrControlNeedsClientCert) {
-				t.Fatalf("err = %v, want ErrControlNeedsClientCert", err)
+			if !errors.Is(err, ErrClientAuthorizationNeedsClientCert) {
+				t.Fatalf("err = %v, want ErrClientAuthorizationNeedsClientCert", err)
 			}
 		})
 	}

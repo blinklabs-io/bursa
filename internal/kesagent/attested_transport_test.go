@@ -24,53 +24,27 @@ import (
 	"time"
 )
 
-// attestAndSign runs the attested exchange on conn with the none provider and
-// then one sign request.
-func attestAndSign(
-	t *testing.T,
-	conn net.Conn,
-	cold coldKeyPair,
-	spec headerSpec,
-) {
+func attestSignRefused(t *testing.T, conn net.Conn) {
 	t.Helper()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	var hello Hello
 	if err := readFrame(conn, &hello); err != nil {
 		t.Fatalf("read hello: %v", err)
 	}
-	if hello.Protocol != AttestedProtocolID {
-		t.Fatalf("hello protocol = %q", hello.Protocol)
-	}
 	req, err := NewAttestationRequest()
 	if err != nil {
-		t.Fatalf("NewAttestationRequest: %v", err)
+		t.Fatal(err)
 	}
 	if err := writeFrame(conn, req); err != nil {
 		t.Fatalf("write challenge: %v", err)
 	}
 	var resp AttestationResponse
 	if err := readFrame(conn, &resp); err != nil {
-		t.Fatalf("read attestation: %v", err)
+		t.Fatalf("read refusal: %v", err)
 	}
-	if resp.Error != "" || resp.Provider != NoEvidenceProvider {
-		t.Fatalf("attestation = %q provider %q", resp.Error, resp.Provider)
-	}
-	if err := VerifyAttestation(
-		t.Context(), req, resp, NoEvidenceProvider, cold.pub, resp.OpCert, nil,
-	); err != nil {
-		t.Fatalf("VerifyAttestation: %v", err)
-	}
-	if err := writeFrame(conn, SignRequest{
-		Type: "sign_request", Period: 5, Message: spec.encode(t),
-	}); err != nil {
-		t.Fatalf("write sign request: %v", err)
-	}
-	var signed SignResponse
-	if err := readFrame(conn, &signed); err != nil {
-		t.Fatalf("read sign response: %v", err)
-	}
-	if signed.Error != "" || len(signed.Signature) == 0 {
-		t.Fatalf("signing refused: %q", signed.Error)
+	if resp.Error != ErrRoleNotPermitted.Error() || len(resp.KESVKey) != 0 ||
+		len(resp.OpCert) != 0 {
+		t.Fatalf("unauthorized signing response: %+v", resp)
 	}
 }
 
@@ -94,9 +68,9 @@ func serveAttested(
 	})
 }
 
-func TestAttestedPlaintextRoundTrip(t *testing.T) {
+func TestAttestedPlaintextCannotOpenSigningSession(t *testing.T) {
 	t.Parallel()
-	a, cold, spec := newHeaderAgent(t)
+	a, _, _ := newHeaderAgent(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -110,7 +84,7 @@ func TestAttestedPlaintextRoundTrip(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	attestAndSign(t, conn, cold, spec)
+	attestSignRefused(t, conn)
 }
 
 // A non-plaintext service still refuses a plain TCP connection.
@@ -192,15 +166,15 @@ func dialNoClientCert(t *testing.T, addr string) (*tls.Conn, error) {
 	)
 }
 
-func TestAttestedTLSWithoutClientCAAcceptsNoClientCert(t *testing.T) {
+func TestAttestedTLSWithoutClientCACannotOpenSigningSession(t *testing.T) {
 	t.Parallel()
-	_, cold, spec, addr, _ := tlsServerSetup(t, true, false)
+	_, _, _, addr, _ := tlsServerSetup(t, true, false)
 	conn, err := dialNoClientCert(t, addr)
 	if err != nil {
 		t.Fatalf("tls dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	attestAndSign(t, conn, cold, spec)
+	attestSignRefused(t, conn)
 }
 
 func TestAttestedTLSWithClientCARefusesNoClientCert(t *testing.T) {

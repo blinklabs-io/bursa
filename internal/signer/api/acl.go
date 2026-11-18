@@ -14,27 +14,45 @@
 
 package api
 
-import "github.com/blinklabs-io/bursa/internal/signer/backend"
+import (
+	"github.com/blinklabs-io/bursa/internal/signer"
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
+)
 
-// CallerACL maps authenticated JWT subjects to the key hashes they may use.
+// CallerACL maps authenticated caller identities to the grants they may use.
 // A nil or empty ACL is unrestricted (single trust domain). When restricted,
 // unlisted callers are denied all keys (fail closed).
 type CallerACL struct {
-	byCaller map[string]map[backend.KeyHash]bool
+	byCaller map[string]callerGrant
 }
 
-// NewCallerACL builds an ACL from subject → permitted key hashes.
-func NewCallerACL(entries map[string][]backend.KeyHash) *CallerACL {
+type callerGrant struct {
+	keys    map[backend.KeyHash]bool
+	opcerts map[backend.KeyHash]map[[32]byte]bool
+}
+
+// NewCallerACL builds an ACL from subject → permitted grants.
+func NewCallerACL(entries map[string]signer.CallerGrant) *CallerACL {
 	if len(entries) == 0 {
 		return &CallerACL{}
 	}
-	m := make(map[string]map[backend.KeyHash]bool, len(entries))
-	for sub, hashes := range entries {
-		set := make(map[backend.KeyHash]bool, len(hashes))
-		for _, h := range hashes {
-			set[h] = true
+	m := make(map[string]callerGrant, len(entries))
+	for sub, entry := range entries {
+		grant := callerGrant{
+			keys:    make(map[backend.KeyHash]bool, len(entry.Keys)),
+			opcerts: make(map[backend.KeyHash]map[[32]byte]bool, len(entry.OpCerts)),
 		}
-		m[sub] = set
+		for _, h := range entry.Keys {
+			grant.keys[h] = true
+		}
+		for h, vkeys := range entry.OpCerts {
+			set := make(map[[32]byte]bool, len(vkeys))
+			for _, vkey := range vkeys {
+				set[vkey] = true
+			}
+			grant.opcerts[h] = set
+		}
+		m[sub] = grant
 	}
 	return &CallerACL{byCaller: m}
 }
@@ -49,5 +67,24 @@ func (a *CallerACL) Allows(caller string, hash backend.KeyHash) bool {
 	if a == nil || len(a.byCaller) == 0 {
 		return true
 	}
-	return a.byCaller[caller][hash]
+	return a.byCaller[caller].keys[hash]
+}
+
+// AllowsOpCert reports whether caller may certify kesVKey with hash. Unlike
+// the general key ACL, opcert issuance always requires an explicit grant.
+func (a *CallerACL) AllowsOpCert(
+	caller string,
+	hash backend.KeyHash,
+	kesVKey []byte,
+) bool {
+	if a == nil || len(kesVKey) != 32 {
+		return false
+	}
+	grant, ok := a.byCaller[caller]
+	if !ok || !grant.keys[hash] {
+		return false
+	}
+	var vkey [32]byte
+	copy(vkey[:], kesVKey)
+	return grant.opcerts[hash][vkey]
 }

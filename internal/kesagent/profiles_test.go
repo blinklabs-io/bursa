@@ -208,7 +208,7 @@ func TestRoutingDoesNotWaitOnAnotherProfilesLock(t *testing.T) {
 		done <- err
 	}()
 	go func() {
-		_, err := a.selectProfile("", pb.vkey)
+		_, err := selectProfileFrom(a.profiles, "", pb.vkey)
 		done <- err
 	}()
 	for range 2 {
@@ -294,7 +294,7 @@ func TestSelectProfile(t *testing.T) {
 		{name: "key and other name", profile: "pool-b", kesVKey: pa.vkey, wantErr: ErrProfileMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := a.selectProfile(tc.profile, tc.kesVKey)
+			p, err := selectProfileFrom(a.profiles, tc.profile, tc.kesVKey)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tc.wantErr)

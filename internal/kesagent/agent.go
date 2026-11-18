@@ -132,6 +132,10 @@ type ProfileConfig struct {
 	// the DER SubjectPublicKeyInfo) that may open a control session for this
 	// profile on the attested listener. Empty means none may.
 	ControlClientSPKI [][sha256.Size]byte
+	// SignClientSPKI lists the client certificate public keys (SHA-256 of the
+	// DER SubjectPublicKeyInfo) that may open a signing session for this
+	// profile on the attested listener. Empty means none may.
+	SignClientSPKI [][sha256.Size]byte
 }
 
 // keyState is the in-memory state of a KES key. The raw secret key bytes live

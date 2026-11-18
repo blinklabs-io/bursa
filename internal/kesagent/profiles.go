@@ -247,18 +247,31 @@ func (a *Agent) profileByName(name string) (*profile, error) {
 	return p, nil
 }
 
-// selectProfile picks the profile a remote session is for. With kesVKey set it
+// selectProfileFrom picks a profile from profiles. With kesVKey set it
 // is the profile whose active key has that verification key, and name, when
 // also set, must name the same profile; with only name it is the named
-// profile; with neither it is the sole profile. It does no I/O and changes no
-// guard or key state, so it is safe to call before the caller is authorized
-// for the profile it selects.
-func (a *Agent) selectProfile(name string, kesVKey []byte) (*profile, error) {
+// profile; with neither it is the sole profile.
+func selectProfileFrom(
+	profiles []*profile,
+	name string,
+	kesVKey []byte,
+) (*profile, error) {
 	if len(kesVKey) == 0 {
-		return a.profileByName(name)
+		if name == "" {
+			if len(profiles) != 1 {
+				return nil, ErrAmbiguousProfile
+			}
+			return profiles[0], nil
+		}
+		for _, p := range profiles {
+			if p.cfg.Name == name {
+				return p, nil
+			}
+		}
+		return nil, fmt.Errorf("%w: %q", ErrUnknownProfile, name)
 	}
 	var match *profile
-	for _, p := range a.profiles {
+	for _, p := range profiles {
 		if !p.hasActiveVKey(kesVKey) {
 			continue
 		}

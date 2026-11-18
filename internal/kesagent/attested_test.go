@@ -65,13 +65,15 @@ func TestAttestedServiceBindsStateAndSignsOnlyHeaders(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	go func() {
 		defer server.Close()
-		a.serveAttestedConn(
+		a.serveAttestedConnAuthorized(
 			t.Context(),
 			server,
 			AttestedServiceConfig{
 				Provider: "nitro",
 				Attester: bindingAttester{},
 			},
+			a.profiles,
+			nil,
 		)
 	}()
 
@@ -131,7 +133,7 @@ func TestAttestedServiceFailsClosedWhenProviderFails(t *testing.T) {
 	// fully delivered refusal as an error depending on when the server closes.
 	server, client := tcpConnPair(t)
 	go func() {
-		a.serveAttestedConn(
+		a.serveAttestedConnAuthorized(
 			t.Context(),
 			server,
 			AttestedServiceConfig{
@@ -140,6 +142,8 @@ func TestAttestedServiceFailsClosedWhenProviderFails(t *testing.T) {
 					err: errors.New("provider unavailable"),
 				},
 			},
+			a.profiles,
+			nil,
 		)
 		_ = server.Close()
 	}()
@@ -232,7 +236,11 @@ func TestAttestedRestartCannotInstallBelowDurableFloor(t *testing.T) {
 	) {
 		t.Fatalf("restart install error = %v, want ErrPeriodRollback", err)
 	}
-	if _, _, err := restarted.attestedKeyState("", nil); !errors.Is(err, ErrNoActiveKey) {
+	p, err := restarted.soleProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.attestedKeyState(); !errors.Is(err, ErrNoActiveKey) {
 		t.Fatalf("restarted agent exposed state after rollback: %v", err)
 	}
 }
