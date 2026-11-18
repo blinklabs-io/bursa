@@ -38,6 +38,7 @@ func opCertNextKey(
 	t.Helper()
 	b := NewAttestedBackend("enclave", e, stubVerifier{})
 	if profile != "" {
+		e.inventoryProfile = profile
 		b = NewProfiledAttestedBackend("enclave", profile, e, stubVerifier{})
 	}
 	if err := b.Load(t.Context()); err != nil {

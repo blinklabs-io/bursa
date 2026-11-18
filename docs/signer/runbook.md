@@ -120,6 +120,13 @@ takes precedence over an ACL error when selecting the response status. Key
 list/detail filtering hides unauthorized keys (detail returns 404 to prevent
 existence probing).
 
+Operational-certificate issuance is always fail closed. The caller must list
+the cold key in `keys` and the exact staged KES verification key under the
+cold key's `opcerts[].kes_vkeys`. Add the next staged KES verification key to
+that list before a rotation, then submit the opcert request. An absent caller
+ACL or a cold-key grant without the requested KES key does not authorize an
+opcert.
+
 ## 4. TLS
 
 The signer serves server-side TLS when both `tls_cert_file` and `tls_key_file`
@@ -387,8 +394,8 @@ several holders it is not read, and those rows are migrated before a second
 profile is added. The floor written before profile scoping is left alone, as
 the new floor under the profile is read in its place.
 
-`--profile` must be the `profile` of a nitro, confidential-space, armory or
-sops backend in the config. When the config has any such backend, the command
+`--profile` must be the `profile` of a confidential-space, armory or sops
+backend in the config. When the config has any such backend, the command
 refuses to run without `--profile`, since an unprofiled reset would neither
 clear the key's records nor fence its requests. For a key served by a backend
 without a profile in such a config, pass `--unprofiled` instead. Configs with
@@ -475,10 +482,12 @@ affected keys sign for the first time.
 Unauthenticated endpoints on the signer's listener:
 
 - `GET /healthz` - liveness (always 200 while the process runs).
-- `GET /readyz` - pings the configured SQLite or PostgreSQL watermark store
+- `GET /readyz` - reports the latest background writeability check of the
+  configured SQLite or PostgreSQL watermark store. Checks run every ten seconds
   with a three-second timeout. It returns 503 while that dependency is
-  unreachable and 200 for a healthy store. The in-memory store has no external
-  dependency and is always ready after startup.
+  unreachable or before the first check completes, and 200 for a healthy store.
+  The in-memory store has no external dependency and is always ready after
+  startup. Requests read the latest result and do not initiate database writes.
 
 Prometheus exposition is available at `/metrics` on the dedicated metrics
 listener. The listener accepts only a loopback host, with the port set by

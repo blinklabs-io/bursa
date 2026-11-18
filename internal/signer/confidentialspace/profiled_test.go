@@ -564,7 +564,7 @@ func TestProfiledInventory(t *testing.T) {
 			t.Fatalf("%s: inventory %+v", profile, inv)
 		}
 		if tokens.nonces[0] != hex.EncodeToString(
-			backend.InventoryBinding(nonce, inv.Keys),
+			backend.InventoryBindingForProfile(nonce, profile, inv.Keys),
 		) {
 			t.Fatalf("%s: token not bound to the inventory", profile)
 		}

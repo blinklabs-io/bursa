@@ -370,8 +370,8 @@ func (s *Service) ConfirmPair(
 	defer s.pairingMu.Unlock()
 	oldExtensionID, _, paired := s.tokens.Pair()
 	oldPublicKey := s.tokens.Authority()
-	_, err := s.tokens.Mint(extensionID, publicKey)
-	if err == nil {
+	_, committed, err := s.tokens.mint(extensionID, publicKey)
+	if committed {
 		s.clearChallenges(oldExtensionID)
 		if paired {
 			s.queue.cancelAuthority(pairingAuthority{
@@ -380,7 +380,10 @@ func (s *Service) ConfirmPair(
 			})
 		}
 	}
-	return s.tokens.Authority(), err
+	if err != nil {
+		return "", err
+	}
+	return s.tokens.Authority(), nil
 }
 
 func (s *Service) clearChallenges(extensionID string) {

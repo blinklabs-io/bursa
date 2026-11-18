@@ -32,6 +32,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/opcertrule"
@@ -44,6 +45,14 @@ const (
 	envelopeActive    = "active"
 	maxRequestBody    = 64 << 10
 	maxRequestNonces  = 4096
+	// signRequestTimeout bounds a whole signing request from handler entry,
+	// counter write included. The server's read timeout bounds the body
+	// read, which a context cannot interrupt, and the budget starts at
+	// handler entry so body and signing together stay within it. The serve
+	// command's HTTP write timeout is 30 seconds and starts when the headers
+	// were read, just before the handler; the margin lets the response of a
+	// write that commits near this deadline still be sent.
+	signRequestTimeout = 20 * time.Second
 )
 
 // TokenSource requests a custom-audience attestation token from the
@@ -565,9 +574,8 @@ var errProfileNotServed = errors.New("profile is not served by this workload")
 
 // Inventory returns the public key and a custom token bound to the caller's
 // nonce and the exact inventory. profile must be one the workload serves, ""
-// for an unprofiled workload. The attested binding does not cover the profile:
-// every key is the same under all profiles, and each profiled signature is
-// bound to its profile by its own binding signature.
+// for an unprofiled workload. A profiled inventory attestation covers the
+// selected profile even when every profile exposes the same public key.
 func (w *Workload) Inventory(
 	ctx context.Context,
 	nonce []byte,
@@ -584,7 +592,7 @@ func (w *Workload) Inventory(
 	keys := []backend.AttestedKeyInfo{
 		{Role: backend.KeyTypePool, PublicKey: append([]byte(nil), w.pub...)},
 	}
-	binding := backend.InventoryBinding(nonce, keys)
+	binding := backend.InventoryBindingForProfile(nonce, profile, keys)
 	token, err := w.tokens.Token(
 		ctx,
 		w.audience,
@@ -763,12 +771,16 @@ func (w *Workload) handleInventory(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Workload) handleSign(rw http.ResponseWriter, r *http.Request) {
+	// The budget starts here, before the body is read: the server's write
+	// timeout already runs while the body arrives.
+	ctx, cancel := context.WithTimeout(r.Context(), signRequestTimeout)
+	defer cancel()
 	var req backend.AttestedRequest
 	if err := decodeRequest(rw, r, &req); err != nil {
 		http.Error(rw, "invalid request", http.StatusBadRequest)
 		return
 	}
-	resp, err := w.Sign(r.Context(), req)
+	resp, err := w.Sign(ctx, req)
 	if err != nil {
 		http.Error(rw, "signing unavailable", http.StatusServiceUnavailable)
 		return

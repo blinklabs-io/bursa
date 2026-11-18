@@ -146,8 +146,10 @@ header request.
 ## Attested remote sign extension
 
 The remote server hello uses protocol `bursa-attested-kes/1` and mode `sign`.
-The listener serves TLS 1.3 or, with `attested_plaintext`, plain TCP. It
-requires a TLS client certificate only when `attested_client_ca_file` is set.
+The listener serves TLS 1.3 or, with `attested_plaintext`, plain TCP. Remote
+signing requires `attested_client_ca_file` and a verified client certificate
+pinned for the selected profile; the other transport configurations cannot
+admit a signing session.
 A TLS connection must complete the handshake, with a verified client
 certificate where one is required, within 10 seconds. Connections still in the
 handshake have their own budget, 64 in total and 4 per source (an IPv4 address
@@ -234,10 +236,19 @@ nothing; transport authentication, such as a client pinning the SHA-256 SPKI
 fingerprint of the agent's TLS server certificate, is separate from the
 provider.
 
+## Remote client authorization
+
+The attested listener admits a signing session only when the verified TLS
+client certificate is pinned in the selected profile's
+`sign_client_spki_sha256`. The same certificate may be listed in several
+profiles. A valid certificate chain alone grants no profile, and a control pin
+does not grant signing authority. Plain TCP and TLS without a verified client
+certificate cannot open a signing session.
+
 ## Remote control role
 
 The attested listener serves `gen-staged-key`, `install-key` and `info` to a
-client whose verified TLS client certificate is pinned in a profile's
+client whose verified TLS client certificate is separately pinned in a profile's
 `control_client_spki_sha256`. It requires mutual TLS: no control role is
 offered on plain TCP or on TLS without client certificate verification. The
 client declares the role in the attestation request; `role` is `"sign"` or

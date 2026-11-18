@@ -101,6 +101,7 @@ func TestAttestedRequestEncodesByronEra(t *testing.T) {
 func TestProfiledHTTPEnclaveEndToEnd(t *testing.T) {
 	t.Parallel()
 	e := newFakeEnclave(t, KeyTypePayment)
+	e.inventoryProfile = "pool@preview"
 	inventoryProfiles := make(chan string, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc(

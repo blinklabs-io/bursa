@@ -11,12 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"math/big"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/blinklabs-io/bursa/ui/internal/atomicfile"
 )
 
 type tokenData struct {
@@ -25,7 +25,13 @@ type tokenData struct {
 	Binding     string `json:"binding"`
 }
 
-var ErrInvalidExtensionID = errors.New("connector: invalid extension id")
+var (
+	ErrInvalidExtensionID = errors.New("connector: invalid extension id")
+	syncDirectory         = atomicfile.SyncDir
+	replaceAuthFile       = atomicfile.Replace
+	removeAuthFile        = atomicfile.Remove
+	syncTokenFile         = func(f *os.File) error { return f.Sync() }
+)
 
 // TokenStore holds the single paired extension's public key, persisted
 // atomically. The extension's private key never leaves browser-managed storage.
@@ -69,35 +75,42 @@ func NewTokenStore(path string, rnd func() (string, error)) *TokenStore {
 }
 
 func (s *TokenStore) Mint(extensionID string, suppliedPublicKey ...string) (string, error) {
+	key, _, err := s.mint(extensionID, suppliedPublicKey...)
+	if err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+func (s *TokenStore) mint(extensionID string, suppliedPublicKey ...string) (publicKey string, committed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	extensionID = NormalizeExtensionID(extensionID)
 	if !validExtensionID(extensionID) {
-		return "", ErrInvalidExtensionID
+		return "", false, ErrInvalidExtensionID
 	}
-	publicKey := ""
 	if len(suppliedPublicKey) > 0 {
 		publicKey = suppliedPublicKey[0]
 		if _, err := parsePublicKey(publicKey); err != nil {
-			return "", err
+			return "", false, err
 		}
 	} else {
 		var err error
 		publicKey, err = s.rnd()
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 	binding := make([]byte, 32)
 	if _, err := rand.Read(binding); err != nil {
-		return "", err
+		return "", false, err
 	}
 	next := tokenData{ExtensionID: extensionID, PublicKey: publicKey, Binding: base64.RawURLEncoding.EncodeToString(binding)}
-	if err := s.persist(next); err != nil {
-		return "", err
+	committed, err = s.persist(next)
+	if committed {
+		s.data = next
 	}
-	s.data = next
-	return s.data.PublicKey, nil
+	return next.PublicKey, committed, err
 }
 
 func (s *TokenStore) Verify(publicKey, extensionID string) bool {
@@ -156,17 +169,28 @@ func (s *TokenStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data = tokenData{}
-	err := os.Remove(s.path)
-	if err == nil || errors.Is(err, fs.ErrNotExist) {
+	removed, err := removeAuthFile(s.path, syncDirectory)
+	if err == nil {
 		return nil
 	}
-	if truncErr := os.Truncate(s.path, 0); truncErr != nil {
-		return fmt.Errorf(
-			"connector: pairing revoked but key file not removed: %w",
-			errors.Join(err, truncErr),
-		)
+	if removed {
+		return err
+	}
+	if truncErr := truncateTokenFile(s.path); truncErr != nil {
+		return fmt.Errorf("connector: pairing revoked but key file not removed: %w", errors.Join(err, truncErr))
 	}
 	return nil
+}
+
+func truncateTokenFile(path string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if err := syncTokenFile(f); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 func parsePublicKey(encoded string) (*ecdsa.PublicKey, error) {
@@ -193,32 +217,12 @@ func canonicalRequest(challenge, method, path string, body []byte) []byte {
 	)
 }
 
-func (s *TokenStore) persist(data tokenData) error {
+func (s *TokenStore) persist(data tokenData) (committed bool, err error) {
 	b, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".token-*")
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(f.Name())
-		return err
-	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
-		_ = os.Remove(f.Name())
-		return err
-	}
-	return nil
+	return replaceAuthFile(s.path, b, syncDirectory)
 }
 
 // NormalizeExtensionID accepts raw Chromium IDs and full extension origins.

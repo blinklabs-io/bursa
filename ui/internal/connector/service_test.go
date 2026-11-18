@@ -1118,6 +1118,65 @@ func TestServiceUnpairRefusesPendingAuthorizedRequest(t *testing.T) {
 	}
 }
 
+func TestServiceRePairCancelsOldAuthorityWhenDirectorySyncFails(t *testing.T) {
+	dir := t.TempDir()
+	s := NewService(dir, &fakeBackend{}, nil)
+	bindTestIdentity(s)
+	oldToken, err := s.ConfirmPairForTest("old-extension")
+	if err != nil {
+		t.Fatalf("initial pair: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.HandleAuthorized(
+			ctx(t),
+			"old-extension",
+			oldToken,
+			"https://pending.example",
+			"enable",
+			nil,
+		)
+		done <- err
+	}()
+	waitForPendingID(t, s)
+
+	syncErr := errors.New("directory sync failed")
+	originalSyncDirectory := syncDirectory
+	syncDirectory = func(string) error { return syncErr }
+	t.Cleanup(func() { syncDirectory = originalSyncDirectory })
+
+	newToken, err := s.ConfirmPairForTest("new-extension")
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("replacement pair error = %v, want directory sync failure", err)
+	}
+	if newToken != "" {
+		t.Fatalf("replacement token = %q after error, want empty", newToken)
+	}
+	if err := <-done; !errors.Is(err, ErrRefused) {
+		t.Fatalf("pending request error = %v, want ErrRefused", err)
+	}
+	if s.VerifyAuthority(oldToken, "old-extension") {
+		t.Fatal("old pairing remained valid after committed replacement")
+	}
+	pairedExtension, _, paired := s.tokens.Pair()
+	newToken = s.tokens.Authority()
+	if !paired || pairedExtension != "chrome-extension://new-extension" {
+		t.Fatalf(
+			"committed pairing = (%q, %v), want new extension",
+			pairedExtension,
+			paired,
+		)
+	}
+	if !s.VerifyAuthority(newToken, "new-extension") {
+		t.Fatal("committed replacement was not published")
+	}
+	reloaded := NewService(dir, &fakeBackend{}, nil)
+	if !reloaded.VerifyAuthority(newToken, "new-extension") {
+		t.Fatal("reloaded service did not retain committed replacement")
+	}
+}
+
 func TestServiceUnpairWaitsForAuthorizedExecution(t *testing.T) {
 	s := NewService(t.TempDir(), &fakeBackend{}, nil)
 	token, err := s.ConfirmPairForTest("ext")

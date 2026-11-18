@@ -268,15 +268,24 @@ func BuildBackends(
 	return backends, nil
 }
 
-// BuildCallerACL parses the configured caller list into subject → key hashes.
-// Returns nil when no callers are configured (unrestricted).
+// CallerGrant is one authenticated caller's cold-key and opcert authority.
+// OpCerts maps a cold-key hash to the exact KES verification keys it may
+// certify.
+type CallerGrant struct {
+	Keys    []backend.KeyHash
+	OpCerts map[backend.KeyHash][][32]byte
+}
+
+// BuildCallerACL parses the configured caller list into caller grants.
+// Returns nil when no callers are configured (unrestricted for operations
+// other than opcert issuance).
 func BuildCallerACL(
 	callers []config.SignerCallerConfig,
-) (map[string][]backend.KeyHash, error) {
+) (map[string]CallerGrant, error) {
 	if len(callers) == 0 {
 		return nil, nil
 	}
-	out := make(map[string][]backend.KeyHash, len(callers))
+	out := make(map[string]CallerGrant, len(callers))
 	for _, c := range callers {
 		if c.Subject == "" {
 			return nil, errors.New("signer.callers entry missing subject")
@@ -288,6 +297,7 @@ func BuildCallerACL(
 			)
 		}
 		hashes := make([]backend.KeyHash, 0, len(c.Keys))
+		keySet := make(map[backend.KeyHash]struct{}, len(c.Keys))
 		for _, k := range c.Keys {
 			h, err := backend.ParseKeyHash(k)
 			if err != nil {
@@ -299,8 +309,68 @@ func BuildCallerACL(
 				)
 			}
 			hashes = append(hashes, h)
+			keySet[h] = struct{}{}
 		}
-		out[c.Subject] = hashes
+		opcerts := make(map[backend.KeyHash][][32]byte, len(c.OpCerts))
+		for _, opcert := range c.OpCerts {
+			h, err := backend.ParseKeyHash(opcert.Key)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"caller %q opcert key %q: %w",
+					c.Subject,
+					opcert.Key,
+					err,
+				)
+			}
+			if _, ok := keySet[h]; !ok {
+				return nil, fmt.Errorf(
+					"caller %q opcert key %q is not listed in keys",
+					c.Subject,
+					opcert.Key,
+				)
+			}
+			if _, dup := opcerts[h]; dup {
+				return nil, fmt.Errorf(
+					"caller %q has duplicate opcert key %q",
+					c.Subject,
+					opcert.Key,
+				)
+			}
+			if len(opcert.KESVKeys) == 0 {
+				return nil, fmt.Errorf(
+					"caller %q opcert key %q has no kes_vkeys",
+					c.Subject,
+					opcert.Key,
+				)
+			}
+			vkeys := make([][32]byte, 0, len(opcert.KESVKeys))
+			seen := make(map[[32]byte]struct{}, len(opcert.KESVKeys))
+			for _, encoded := range opcert.KESVKeys {
+				raw, err := hex.DecodeString(encoded)
+				if err != nil || len(raw) != 32 {
+					return nil, fmt.Errorf(
+						"caller %q opcert key %q has invalid KES verification key %q",
+						c.Subject,
+						opcert.Key,
+						encoded,
+					)
+				}
+				var vkey [32]byte
+				copy(vkey[:], raw)
+				if _, dup := seen[vkey]; dup {
+					return nil, fmt.Errorf(
+						"caller %q opcert key %q has duplicate KES verification key %q",
+						c.Subject,
+						opcert.Key,
+						encoded,
+					)
+				}
+				seen[vkey] = struct{}{}
+				vkeys = append(vkeys, vkey)
+			}
+			opcerts[h] = vkeys
+		}
+		out[c.Subject] = CallerGrant{Keys: hashes, OpCerts: opcerts}
 	}
 	return out, nil
 }

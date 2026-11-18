@@ -33,11 +33,19 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	maxResponseBodyBytes = 1 << 20
+	defaultHTTPTimeout   = 2 * time.Minute
+)
+
 var (
-	JsonCheck       = regexp.MustCompile(`(?i:(?:application|text)/(?:[^;]+\+)?json)`)
-	XmlCheck        = regexp.MustCompile(`(?i:(?:application|text)/(?:[^;]+\+)?xml)`)
-	queryParamSplit = regexp.MustCompile(`(^|&)([^&]+)`)
-	queryDescape    = strings.NewReplacer("%5B", "[", "%5D", "]")
+	// ErrResponseBodyTooLarge indicates that an API response exceeded the
+	// client's bounded in-memory buffer.
+	ErrResponseBodyTooLarge = errors.New("API response body too large")
+	JsonCheck               = regexp.MustCompile(`(?i:(?:application|text)/(?:[^;]+\+)?json)`)
+	XmlCheck                = regexp.MustCompile(`(?i:(?:application|text)/(?:[^;]+\+)?xml)`)
+	queryParamSplit         = regexp.MustCompile(`(^|&)([^&]+)`)
+	queryDescape            = strings.NewReplacer("%5B", "[", "%5D", "]")
 )
 
 // APIClient manages communication with the bursa API vv0
@@ -59,7 +67,11 @@ type service struct {
 // optionally a custom http.Client to allow for advanced features such as caching.
 func NewAPIClient(cfg *Configuration) *APIClient {
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = http.DefaultClient
+		defaultClient := *http.DefaultClient
+		if defaultClient.Timeout <= 0 {
+			defaultClient.Timeout = defaultHTTPTimeout
+		}
+		cfg.HTTPClient = &defaultClient
 	}
 
 	c := &APIClient{}
@@ -253,11 +265,41 @@ func (c *APIClient) callAPI(request *http.Request) (*http.Response, error) {
 	if err != nil {
 		return resp, err
 	}
+	resp.Body = &boundedResponseBody{
+		ReadCloser: resp.Body,
+		remaining:  maxResponseBodyBytes,
+	}
 
 	if c.cfg.Debug {
 		log.Printf("HTTP response status=%d", resp.StatusCode)
 	}
 	return resp, err
+}
+
+type boundedResponseBody struct {
+	io.ReadCloser
+	remaining int64
+}
+
+func (b *boundedResponseBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if b.remaining > 0 {
+		if int64(len(p)) > b.remaining {
+			p = p[:b.remaining]
+		}
+		n, err := b.ReadCloser.Read(p)
+		b.remaining -= int64(n)
+		return n, err
+	}
+
+	var probe [1]byte
+	n, err := b.ReadCloser.Read(probe[:])
+	if n > 0 {
+		return 0, ErrResponseBodyTooLarge
+	}
+	return 0, err
 }
 
 // Allow modification of underlying config for alternate implementations and testing

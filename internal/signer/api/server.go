@@ -544,30 +544,34 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid kes_vkey hex")
 			return
 		}
-		// Enforce the caller ACL against the cold key exactly like the cip8 path.
-		if s.acl.Restricted() {
-			h, err := backend.ParseKeyHash(req.Key)
-			if err == nil && !s.acl.Allows(caller, h) {
-				s.coord.Metrics().ObserveDeny("acl")
-				s.audit(
-					r,
-					caller,
-					"opcert",
-					"denied",
-					"audit_id",
-					auditID,
-					"key",
-					req.Key,
-					"reason",
-					"caller ACL",
-				)
-				writeErr(
-					w,
-					http.StatusForbidden,
-					"caller is not authorized for this key",
-				)
-				return
-			}
+		if len(kesVkey) != 32 {
+			writeErr(w, http.StatusBadRequest, "kes_vkey must be 32 bytes")
+			return
+		}
+		// Operational certificates require an explicit caller grant for the
+		// exact cold-key and KES-key pair. This remains fail closed even when
+		// the general key ACL is otherwise unrestricted.
+		h, hashErr := backend.ParseKeyHash(req.Key)
+		if hashErr == nil && !s.acl.AllowsOpCert(caller, h, kesVkey) {
+			s.coord.Metrics().ObserveDeny("acl")
+			s.audit(
+				r,
+				caller,
+				"opcert",
+				"denied",
+				"audit_id",
+				auditID,
+				"key",
+				req.Key,
+				"reason",
+				"caller opcert ACL",
+			)
+			writeErr(
+				w,
+				http.StatusForbidden,
+				"caller is not authorized for this opcert",
+			)
+			return
 		}
 		var (
 			res  *signer.OpCertResult
@@ -806,10 +810,9 @@ const readinessTimeout = 3 * time.Second
 // HealthHandler returns the unauthenticated health/readiness mux.
 //
 // /healthz is a static liveness endpoint: it returns 200 as long as the process
-// is running. /readyz is a real readiness probe: it invokes ready (typically a
-// ping of the watermark store plus a check that backends were built) and returns
-// 503 when the dependency is unreachable, 200 otherwise. A nil ready means no
-// dependency to check and /readyz always returns 200.
+// is running. /readyz evaluates ready and returns 503 when a dependency is
+// unavailable, 200 otherwise. A nil ready means no dependency to check and
+// /readyz always returns 200.
 func HealthHandler(ready func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(
