@@ -290,7 +290,9 @@ func loadImportColdKey(
 		)
 	}
 	seed = bytes.Clone(sk.SKey[:ed25519.SeedSize])
-	derived := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	priv := ed25519.NewKeyFromSeed(seed)
+	derived := priv.Public().(ed25519.PublicKey)
+	clear(priv)
 	if !bytes.Equal(derived, vk.VKey) {
 		clear(seed)
 		return nil, nil, errors.New(
