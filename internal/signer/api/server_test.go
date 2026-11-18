@@ -488,6 +488,20 @@ func newOpCertServer(
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
+	if acl == nil {
+		var common, policyDenied, malformed [32]byte
+		copy(common[:], bytes.Repeat([]byte{0xAB}, 32))
+		copy(policyDenied[:], bytes.Repeat([]byte{0x02}, 32))
+		copy(malformed[:], bytes.Repeat([]byte{0x01}, 32))
+		acl = NewCallerACL(map[string]signer.CallerGrant{
+			"": {
+				Keys: []backend.KeyHash{h},
+				OpCerts: map[backend.KeyHash][][32]byte{
+					h: {common, policyDenied, malformed},
+				},
+			},
+		})
+	}
 	srv := NewServer(
 		coord,
 		backend.NewResolver(b),
@@ -717,8 +731,8 @@ func TestHandleSignOpCert_PolicyDenied(t *testing.T) {
 	}
 }
 
-// TestHandleSignOpCert_ACLDenied verifies the caller ACL gates opcert exactly
-// like the other sign types: an unlisted caller gets 403.
+// TestHandleSignOpCert_ACLDenied verifies opcert issuance is bound to the exact
+// caller, cold key, and KES verification key configured for it.
 func TestHandleSignOpCert_ACLDenied(t *testing.T) {
 	// Build with a placeholder ACL, then rebuild with an ACL keyed on the real
 	// cold key hash.
@@ -742,7 +756,13 @@ func TestHandleSignOpCert_ACLDenied(t *testing.T) {
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	authorizedKES := [32]byte(bytes.Repeat([]byte{0x03}, 32))
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {
+			Keys:    []backend.KeyHash{h},
+			OpCerts: map[backend.KeyHash][][32]byte{h: {authorizedKES}},
+		},
+	})
 	srv := NewServer(
 		coord,
 		backend.NewResolver(b),
@@ -754,7 +774,55 @@ func TestHandleSignOpCert_ACLDenied(t *testing.T) {
 	body, _ := json.Marshal(SignRequest{
 		Type:    "opcert",
 		Key:     h.String(),
-		KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x03}, 32)),
+		KesVkey: hex.EncodeToString(authorizedKES[:]),
+	})
+
+	t.Run("unconfigured opcert authority denied", func(t *testing.T) {
+		unconfigured := NewServer(
+			coord,
+			backend.NewResolver(b),
+			eng,
+			NewCallerACL(nil),
+			func(string) (string, error) { return "tester", nil },
+		)
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(body),
+		)
+		req = withCaller(req, "alice")
+		rr := httptest.NewRecorder()
+		unconfigured.handleSign(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf(
+				"expected 403 without an opcert grant, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
+		}
+	})
+
+	t.Run("alice denied for an unlisted KES key", func(t *testing.T) {
+		attackerBody, _ := json.Marshal(SignRequest{
+			Type:    "opcert",
+			Key:     h.String(),
+			KesVkey: hex.EncodeToString(bytes.Repeat([]byte{0x04}, 32)),
+		})
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/v1/sign",
+			bytes.NewReader(attackerBody),
+		)
+		req = withCaller(req, "alice")
+		rr := httptest.NewRecorder()
+		srv.handleSign(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf(
+				"expected 403 for an unlisted KES key, got %d: %s",
+				rr.Code,
+				rr.Body.String(),
+			)
+		}
 	})
 
 	t.Run("bob denied", func(t *testing.T) {
@@ -854,7 +922,9 @@ func TestCallerACLEnforcement(t *testing.T) {
 	coord.Metrics().Register(metricsReg)
 
 	// ACL: only "alice" may use the test key; "bob" is unlisted.
-	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {Keys: []backend.KeyHash{h}},
+	})
 	srv := NewServer(
 		coord,
 		backend.NewResolver(b),
@@ -1054,7 +1124,9 @@ func TestCallerACL_PartialAllow(t *testing.T) {
 	deniedHash[1] = 0xad
 
 	// ACL: alice may use h but NOT deniedHash.
-	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {Keys: []backend.KeyHash{h}},
+	})
 	srv := NewServer(
 		coord,
 		backend.NewResolver(b),
@@ -1140,7 +1212,9 @@ func TestSignTx_StatusFromCoordinatorNotACL(t *testing.T) {
 	deniedHash[0] = 0xde
 	deniedHash[1] = 0xad
 
-	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {allowedMissing}})
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {Keys: []backend.KeyHash{allowedMissing}},
+	})
 	srv := NewServer(
 		coord,
 		backend.NewResolver(b),
@@ -1366,14 +1440,22 @@ func TestHandleSign_ProfileRouting(t *testing.T) {
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	srv := NewServer(coord, resolver, eng, nil, func(string) (string, error) { return "tester", nil })
+	var kesVKey [32]byte
+	copy(kesVKey[:], bytes.Repeat([]byte{0xAB}, 32))
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"": {
+			Keys:    []backend.KeyHash{h},
+			OpCerts: map[backend.KeyHash][][32]byte{h: {kesVKey}},
+		},
+	})
+	srv := NewServer(coord, resolver, eng, acl, func(string) (string, error) { return "tester", nil })
 
 	post := func(profile string, chain uint64) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(SignRequest{
 			Type:         "opcert",
 			Key:          h.String(),
 			Profile:      profile,
-			KesVkey:      hex.EncodeToString(bytes.Repeat([]byte{0xAB}, 32)),
+			KesVkey:      hex.EncodeToString(kesVKey[:]),
 			ChainCounter: &chain,
 		})
 		rr := httptest.NewRecorder()

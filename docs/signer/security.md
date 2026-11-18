@@ -92,7 +92,9 @@ anything that can read the process memory or the key directory.
 - Prefer mTLS client certificates (with `require_client_cert`) or
   authorized-keys request signing for machine callers. When using JWT, use
   JWKS with `iss` and `aud` enforced and rotate signing keys at the IdP.
-- Configure a caller ACL so each subject reaches only the keys it needs.
+- Configure a caller ACL so each subject reaches only the keys it needs. For
+  opcert issuance, also grant only the staged KES verification keys that caller
+  may certify with each cold key; opcert requests have no unrestricted mode.
 - Prefer the `pkcs11` (HSM) or `vault` backend so keys never enter the process;
   reserve `software`/`file` for development.
 - Run the watermark in `enforce` mode with a durable `file` (SQLite) store for

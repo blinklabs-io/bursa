@@ -120,6 +120,13 @@ takes precedence over an ACL error when selecting the response status. Key
 list/detail filtering hides unauthorized keys (detail returns 404 to prevent
 existence probing).
 
+Operational-certificate issuance is always fail closed. The caller must list
+the cold key in `keys` and the exact staged KES verification key under the
+cold key's `opcerts[].kes_vkeys`. Add the next staged KES verification key to
+that list before a rotation, then submit the opcert request. An absent caller
+ACL or a cold-key grant without the requested KES key does not authorize an
+opcert.
+
 ## 4. TLS
 
 The signer serves server-side TLS when both `tls_cert_file` and `tls_key_file`

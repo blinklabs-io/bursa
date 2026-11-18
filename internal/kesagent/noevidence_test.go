@@ -74,11 +74,14 @@ func TestNoEvidenceAttestationRoundTrip(t *testing.T) {
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
-	_, _, clientCert := tlsTestCert(t, ca, caKey, &x509.Certificate{
+	clientLeaf, _, clientCert := tlsTestCert(t, ca, caKey, &x509.Certificate{
 		Subject:     pkix.Name{CommonName: "client"},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
+	sole(t, a).cfg.SignClientSPKI = []spki{
+		sha256.Sum256(clientLeaf.RawSubjectPublicKeyInfo),
+	}
 	pool := x509.NewCertPool()
 	pool.AddCert(ca)
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
@@ -200,7 +203,13 @@ func TestVerifyAttestationEmptyEvidenceOnlyForNone(t *testing.T) {
 	respFor := func(provider string, att Attester) (AttestationRequest, AttestationResponse) {
 		server, client := tcpConnPair(t)
 		go func() {
-			a.serveAttestedConn(t.Context(), server, AttestedServiceConfig{Provider: provider, Attester: att})
+			a.serveAttestedConnAuthorized(
+				t.Context(),
+				server,
+				AttestedServiceConfig{Provider: provider, Attester: att},
+				a.profiles,
+				nil,
+			)
 		}()
 		_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 		var hello Hello

@@ -66,7 +66,9 @@ func newACLServerNoAuth(t *testing.T) (*Server, backend.KeyHash) {
 		Watermark: watermark.NewMemWatermark(),
 		Cardano:   operation.Cardano(fakeCardano{pub: pub}),
 	})
-	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h}})
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {Keys: []backend.KeyHash{h}},
+	})
 	// No JWT validator: exercise only the mTLS and request-signing chain entries.
 	return NewServer(coord, backend.NewResolver(b), eng, acl, nil), h
 }

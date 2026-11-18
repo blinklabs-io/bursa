@@ -96,10 +96,11 @@ default `0600` regardless of how `service_socket_mode` is configured.
 
 Sign mode can additionally listen on `attested_listen_address` for a remote
 Dingo producer. This listener speaks `bursa-attested-kes/1`. It never
-offers serve-key mode. By default it serves sign sessions only; a client whose
-certificate is pinned in a profile's `control_client_spki_sha256` can also open
-a control session (see [Remote control role](#remote-control-role)). Dropping
-keys stays on the local control socket.
+offers serve-key mode. A client may open a sign session only for profiles whose
+`sign_client_spki_sha256` list pins its verified certificate. A separately
+pinned `control_client_spki_sha256` client can open a control session (see
+[Remote control role](#remote-control-role)); control authority does not imply
+signing authority. Dropping keys stays on the local control socket.
 
 Before accepting a header request, Dingo sends a fresh 32-byte challenge. With
 the `nitro` or `confidential-space` provider, the agent asks its workload-local
@@ -130,8 +131,10 @@ example by a sidecar or the network.
 
 `attested_plaintext` cannot be combined with the TLS certificate, key or client
 CA files; the agent refuses to start. All modes speak the same protocol: hello,
-the attestation exchange, then sign frames. The agent logs which mode it is
-serving at startup.
+the attestation exchange, then sign frames. Only mutual TLS establishes the
+verified client identity required by a `sign_client_spki_sha256` grant; the
+other modes cannot admit a signing or control session. The agent logs which
+mode it is serving at startup.
 
 ### none provider
 
@@ -153,6 +156,27 @@ serves TLS (message "attested KES server certificate public key"). `nitro` and
 `confidential-space` are unchanged and still require `attester_address`. With
 `attested_listen_address` set and no provider configured, the agent refuses to
 start; without the attested listener no provider is needed.
+
+## Remote signing authorization
+
+Remote signing and control both require the TLS listener with client
+certificate verification. List each producer certificate in
+`sign_client_spki_sha256` for every profile it may sign for. The same
+certificate can be listed in several profiles for a deliberate multi-profile
+producer:
+
+```yaml
+kes_agent:
+  attested_client_ca_file: /etc/bursa/client-ca.pem
+  profiles:
+    - name: pool-a
+      sign_client_spki_sha256:
+        - "<hex sha256 of the producer certificate SPKI>"
+```
+
+With a single pool, set `sign_client_spki_sha256` (or
+`KESAGENT_SIGN_CLIENT_SPKI_SHA256`, comma-separated) at the `kes_agent` level.
+An empty list authorizes no remote sign client.
 
 ## Remote control role
 
@@ -178,13 +202,13 @@ With a single pool, set `control_client_spki_sha256` (or
 `KESAGENT_CONTROL_CLIENT_SPKI_SHA256`, comma-separated) at the `kes_agent`
 level.
 
-The control role requires the TLS listener with client certificate
-verification. A control list is refused at startup when
+The remote role lists require the TLS listener with client certificate
+verification. A signing or control list is refused at startup when
 `attested_listen_address` or `attested_client_ca_file` is unset or
 `attested_plaintext` is set, and malformed entries are refused too. A client
 is admitted to the control role only when its verified client certificate is
-pinned in the list of the profile it is attested for; there is no setting that
-admits a control client without a pinned certificate.
+pinned in the role-specific list of the profile it is attested for; there is no
+setting that admits a remote client without a pinned certificate.
 
 The client chooses the session with the `role` field of its attestation
 request: `"control"` opens a control session, and `"sign"` or no role opens a

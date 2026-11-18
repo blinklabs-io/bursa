@@ -17,6 +17,7 @@ package api
 import (
 	"testing"
 
+	"github.com/blinklabs-io/bursa/internal/signer"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 )
 
@@ -37,7 +38,9 @@ func TestCallerACL(t *testing.T) {
 		t.Fatal("empty ACL must be unrestricted")
 	}
 
-	acl := NewCallerACL(map[string][]backend.KeyHash{"alice": {h1}})
+	acl := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {Keys: []backend.KeyHash{h1}},
+	})
 	if !acl.Restricted() {
 		t.Fatal("expected restricted")
 	}
@@ -52,11 +55,28 @@ func TestCallerACL(t *testing.T) {
 	}
 
 	// A subject explicitly listed with an empty key set must be locked out.
-	carol := NewCallerACL(map[string][]backend.KeyHash{"carol": {}})
+	carol := NewCallerACL(map[string]signer.CallerGrant{"carol": {}})
 	if !carol.Restricted() {
 		t.Fatal("expected restricted")
 	}
 	if carol.Allows("carol", h1) {
 		t.Fatal("subject with empty keys list must be locked out")
+	}
+
+	var kesVKey [32]byte
+	kesVKey[0] = 3
+	opcertACL := NewCallerACL(map[string]signer.CallerGrant{
+		"alice": {
+			Keys:    []backend.KeyHash{h1},
+			OpCerts: map[backend.KeyHash][][32]byte{h1: {kesVKey}},
+		},
+	})
+	if !opcertACL.AllowsOpCert("alice", h1, kesVKey[:]) {
+		t.Fatal("explicit cold-key and KES-key grant should be allowed")
+	}
+	if opcertACL.AllowsOpCert("alice", h2, kesVKey[:]) ||
+		opcertACL.AllowsOpCert("bob", h1, kesVKey[:]) ||
+		empty.AllowsOpCert("alice", h1, kesVKey[:]) {
+		t.Fatal("opcert authority must fail closed")
 	}
 }

@@ -695,7 +695,7 @@ func kesAgentStoreDSN(sc config.KESAgentStoreConfig) (string, error) {
 func kesAgentProfiles(
 	kc config.KESAgentConfig,
 ) ([]kesagent.ProfileConfig, error) {
-	if err := validateControlTransport(kc); err != nil {
+	if err := validateRemoteClientTransport(kc); err != nil {
 		return nil, err
 	}
 	if len(kc.Profiles) == 0 {
@@ -713,6 +713,7 @@ func kesAgentProfiles(
 			GuardFile:         kc.GuardFile,
 
 			ControlClientSPKISHA256: kc.ControlClientSPKISHA256,
+			SignClientSPKISHA256:    kc.SignClientSPKISHA256,
 		}, "kes_agent")
 		if err != nil {
 			return nil, err
@@ -723,9 +724,10 @@ func kesAgentProfiles(
 		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
 		kc.GuardFile != "" || kc.ShelleyStartTime != "" ||
 		kc.ShelleyStartSlot != 0 || kc.MaxClockSkew != "" ||
-		len(kc.ControlClientSPKISHA256) > 0 {
+		len(kc.ControlClientSPKISHA256) > 0 ||
+		len(kc.SignClientSPKISHA256) > 0 {
 		return nil, errors.New(
-			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew, guard_file and control_client_spki_sha256; set them in each profile",
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew, guard_file, control_client_spki_sha256 and sign_client_spki_sha256; set them in each profile",
 		)
 	}
 	// slot_length and max_kes_evolutions carry config defaults, so only a
@@ -819,9 +821,17 @@ func kesAgentProfile(
 	if err != nil {
 		return kesagent.ProfileConfig{}, err
 	}
+	sign, err := parseSPKIList(
+		field+".sign_client_spki_sha256",
+		pc.SignClientSPKISHA256,
+	)
+	if err != nil {
+		return kesagent.ProfileConfig{}, err
+	}
 	return kesagent.ProfileConfig{
 		Name:              pc.Name,
 		ControlClientSPKI: control,
+		SignClientSPKI:    sign,
 		SystemStart:       systemStart,
 		ShelleyStartSlot:  pc.ShelleyStartSlot,
 		ShelleyStartTime:  shelleyStart,
@@ -951,20 +961,29 @@ func validateControlSocketMode(mode os.FileMode) error {
 	return nil
 }
 
-// validateControlTransport refuses a control client list unless the attested
-// listener is TLS with client certificate verification, the only transport on
-// which a client can be pinned.
-func validateControlTransport(kc config.KESAgentConfig) error {
+// validateRemoteClientTransport refuses a remote client list unless the
+// attested listener is TLS with client certificate verification, the only
+// transport on which a client can be pinned.
+func validateRemoteClientTransport(kc config.KESAgentConfig) error {
 	field := ""
 	switch {
+	case len(kc.SignClientSPKISHA256) > 0:
+		field = "kes_agent.sign_client_spki_sha256"
 	case len(kc.ControlClientSPKISHA256) > 0:
 		field = "kes_agent.control_client_spki_sha256"
 	default:
 		for i, pc := range kc.Profiles {
-			if len(pc.ControlClientSPKISHA256) > 0 {
+			switch {
+			case len(pc.SignClientSPKISHA256) > 0:
+				field = fmt.Sprintf(
+					"kes_agent.profiles[%d].sign_client_spki_sha256", i,
+				)
+			case len(pc.ControlClientSPKISHA256) > 0:
 				field = fmt.Sprintf(
 					"kes_agent.profiles[%d].control_client_spki_sha256", i,
 				)
+			}
+			if field != "" {
 				break
 			}
 		}

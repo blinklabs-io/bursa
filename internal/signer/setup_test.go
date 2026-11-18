@@ -324,14 +324,22 @@ func TestBuildBackends_Sops(t *testing.T) {
 
 func TestBuildCallerACL(t *testing.T) {
 	hash := strings.Repeat("ab", 28)
+	kesVKey := strings.Repeat("cd", 32)
 	m, err := BuildCallerACL(
-		[]config.SignerCallerConfig{{Subject: "alice", Keys: []string{hash}}},
+		[]config.SignerCallerConfig{{
+			Subject: "alice",
+			Keys:    []string{hash},
+			OpCerts: []config.SignerCallerOpCertConfig{{
+				Key:      hash,
+				KESVKeys: []string{kesVKey},
+			}},
+		}},
 	)
 	if err != nil {
 		t.Fatalf("BuildCallerACL: %v", err)
 	}
-	if len(m["alice"]) != 1 {
-		t.Fatalf("expected 1 key for alice, got %d", len(m["alice"]))
+	if len(m["alice"].Keys) != 1 || len(m["alice"].OpCerts) != 1 {
+		t.Fatalf("unexpected alice grant: %#v", m["alice"])
 	}
 	if _, err := BuildCallerACL([]config.SignerCallerConfig{{Subject: "", Keys: nil}}); err == nil {
 		t.Fatal("expected error for empty subject")
@@ -343,6 +351,26 @@ func TestBuildCallerACL(t *testing.T) {
 	}
 	if _, err := BuildCallerACL([]config.SignerCallerConfig{{Subject: "a", Keys: []string{"zz"}}}); err == nil {
 		t.Fatal("expected error for bad hash")
+	}
+	if _, err := BuildCallerACL([]config.SignerCallerConfig{{
+		Subject: "a",
+		Keys:    []string{hash},
+		OpCerts: []config.SignerCallerOpCertConfig{{
+			Key:      strings.Repeat("ef", 28),
+			KESVKeys: []string{kesVKey},
+		}},
+	}}); err == nil {
+		t.Fatal("expected error for opcert key outside keys")
+	}
+	if _, err := BuildCallerACL([]config.SignerCallerConfig{{
+		Subject: "a",
+		Keys:    []string{hash},
+		OpCerts: []config.SignerCallerOpCertConfig{{
+			Key:      hash,
+			KESVKeys: []string{"abcd"},
+		}},
+	}}); err == nil {
+		t.Fatal("expected error for bad KES verification key")
 	}
 	if m, _ := BuildCallerACL(nil); m != nil {
 		t.Fatal("expected nil map for no callers")

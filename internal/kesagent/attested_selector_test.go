@@ -36,10 +36,12 @@ func attestWith(
 	t.Helper()
 	server, client := tcpConnPair(t)
 	go func() {
-		a.serveAttestedConn(
+		a.serveAttestedConnAuthorized(
 			t.Context(),
 			server,
 			AttestedServiceConfig{Provider: NoEvidenceProvider},
+			a.profiles,
+			nil,
 		)
 		_ = server.Close()
 	}()
