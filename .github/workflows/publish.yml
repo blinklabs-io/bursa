@@ -162,6 +162,7 @@ env:
 jobs:
   create-draft-release:
     runs-on: ubuntu-latest
+    environment: release-signing
     permissions:
       contents: write
     outputs:
@@ -176,7 +177,8 @@ jobs:
       # write access could push a branch with this step deleted and dispatch
       # that. Signing jobs use the release-signing environment. Its external
       # deployment_branch_policy sets protected_branches false and
-      # custom_branch_policies true for main and v*.*.* tags.
+      # custom_branch_policies true for main and v*.*.* tags, and requires a
+      # core-team review that the deployment initiator cannot provide.
       #
       # A tag ref is rejected outright: a manual run there would take the
       # tag-only branches all the way through, creating a second draft release
@@ -1135,6 +1137,7 @@ jobs:
     # publishes or finalises release output, so it stays on the push triggers.
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    environment: release-signing
     permissions:
       contents: write
     needs: [create-draft-release, build-binaries, build-wallet-binaries, build-images, build-image-manifest]

@@ -19,13 +19,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
-func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
+func TestPublicationJobsUseProtectedEnvironment(t *testing.T) {
 	workflowPaths, err := filepath.Glob(
 		filepath.Join(".github", "workflows", "*.yml"),
 	)
@@ -34,13 +35,14 @@ func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
 	}
 
 	markers := []string{
+		"contents: write",
 		"secrets.APPLE_",
 		"secrets.CERTIFICATE_",
 		"secrets.ANDROID_KEY",
 		"uses: actions/attest@",
 	}
 	const environment = "release-signing"
-	signingJobs := 0
+	protectedJobs := 0
 	for _, workflowPath := range workflowPaths {
 		data, err := os.ReadFile(workflowPath)
 		if err != nil {
@@ -58,22 +60,22 @@ func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
 				t.Fatalf("render %s job %s: %v", workflowPath, jobName, err)
 			}
 			jobText := string(jobData)
-			isSigningJob := false
+			requiresProtection := false
 			for _, marker := range markers {
 				if strings.Contains(jobText, marker) {
-					isSigningJob = true
+					requiresProtection = true
 					break
 				}
 			}
-			if !isSigningJob {
+			if !requiresProtection {
 				continue
 			}
 
-			signingJobs++
+			protectedJobs++
 			if got, ok := job["environment"].(string); !ok ||
 				got != environment {
 				t.Errorf(
-					"%s job %s uses signing material without environment %q",
+					"%s job %s can publish without environment %q",
 					workflowPath,
 					jobName,
 					environment,
@@ -81,8 +83,8 @@ func TestSigningJobsUseProtectedEnvironment(t *testing.T) {
 			}
 		}
 	}
-	if signingJobs == 0 {
-		t.Fatal("no signing-capable workflow jobs found")
+	if protectedJobs == 0 {
+		t.Fatal("no publication-capable workflow jobs found")
 	}
 }
 
@@ -91,7 +93,13 @@ func TestReleaseSigningEnvironmentPolicy(t *testing.T) {
 		ProtectedBranches    bool `json:"protected_branches"`
 		CustomBranchPolicies bool `json:"custom_branch_policies"`
 	}
+	type reviewer struct {
+		Type string `json:"type"`
+		ID   int64  `json:"id"`
+	}
 	type environmentPolicy struct {
+		PreventSelfReview      bool         `json:"prevent_self_review"`
+		Reviewers              []reviewer   `json:"reviewers"`
 		DeploymentBranchPolicy branchPolicy `json:"deployment_branch_policy"`
 	}
 	type refPolicy struct {
@@ -120,6 +128,17 @@ func TestReleaseSigningEnvironmentPolicy(t *testing.T) {
 		t.Fatalf(
 			"release-signing must use custom deployment branch policies: %+v",
 			environment.DeploymentBranchPolicy,
+		)
+	}
+	if !environment.PreventSelfReview {
+		t.Fatal("release-signing must prevent self-review")
+	}
+	wantReviewers := []reviewer{{Type: "Team", ID: 7889900}}
+	if !reflect.DeepEqual(environment.Reviewers, wantReviewers) {
+		t.Fatalf(
+			"release-signing reviewers = %+v, want %+v",
+			environment.Reviewers,
+			wantReviewers,
 		)
 	}
 
