@@ -462,9 +462,9 @@ bursa confidential-space import \
 - Each `--profile` is `NAME=NEXT`: the next issue number that profile may sign,
   the pool's on-chain operational-certificate counter plus one, or `0` for a
   pool that never issued. Every profile signs with the one imported key. It
-  seeds `NextIssueNumber`, and the last issued number is `NEXT - 1`, so the
-  explicit-counter path cannot issue below the chain and `opcert-next` still
-  raises its floor from the chain counter.
+  seeds `NextIssueNumber`, and both the last issued number and the
+  `opcert-next` floor are `NEXT - 1`, so the explicit-counter path cannot issue
+  below `NEXT` and `opcert-next` refuses a chain counter below `NEXT - 1`.
 
 The import runs in three steps.
 

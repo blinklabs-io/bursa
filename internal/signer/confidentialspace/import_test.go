@@ -285,6 +285,18 @@ func TestImportSeedsOpCertNextFromStartingCounter(t *testing.T) {
 	), importStart)
 }
 
+// The starting counter is the chain counter plus one, so the chain counter
+// seeds the floor: a lower report would reissue the on-chain number at a KES
+// period nothing recorded.
+func TestImportSeedsOpCertNextFloorFromStartingCounter(t *testing.T) {
+	t.Parallel()
+	c, _ := importedSecret(t, &fakeSecretClient{})
+	w := mustStateWorkload(t, c, profileMainnet, profilePreview)
+	requireRefusedResp(t, w, profiledRequest(
+		w, profilePreview, backend.PurposeOpCertNext, 1, importStart-2, 1,
+	))
+}
+
 func TestImportedSecretRefusesUnimportedProfile(t *testing.T) {
 	t.Parallel()
 	c, _ := importedSecret(t, &fakeSecretClient{})

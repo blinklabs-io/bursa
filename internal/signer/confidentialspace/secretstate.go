@@ -416,8 +416,9 @@ func (s *SecretStateStore) Import(
 }
 
 // seededCounterState is the counter record of an imported pool whose next
-// issue number is next. The last issued number is the one before it, as the
-// opcert rules derive it for a record that has none.
+// issue number is next. The pool's on-chain counter is the number before it:
+// it is both the last issued number and the opcert-next floor, so a lower
+// chain report cannot reissue the on-chain number at an unrecorded KES period.
 func seededCounterState(
 	hash backend.KeyHash,
 	profile string,
@@ -430,7 +431,7 @@ func seededCounterState(
 		Profile:         profile,
 	}
 	if next > 0 {
-		state.LastIssued = next - 1
+		state.LastIssued, state.OpCertFloor = next-1, next-1
 	}
 	return state
 }
