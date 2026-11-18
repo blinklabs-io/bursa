@@ -367,7 +367,10 @@ func (s *SecretStateStore) Import(
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.loaded || s.stopped != nil {
+	if s.stopped != nil {
+		return s.stopped
+	}
+	if s.loaded {
 		return errors.New("state secret store is already in use")
 	}
 	e, err := parseStateEnvelope(envelopeBytes, s.kmsKey)
@@ -419,20 +422,39 @@ func (s *SecretStateStore) Import(
 }
 
 // requireEnabledVersionsEmpty refuses unless every enabled version of the
-// secret has an empty payload. The cleanup after a write destroys every older
-// enabled version, so one holding a wrapped key would be lost. Versions are
-// read by number, which unlike the version list is strongly consistent.
+// secret has an empty payload and no version is disabled. The cleanup after a
+// write destroys every older enabled version, so one holding a wrapped key
+// would be lost, and a disabled version, whose payload cannot be read, could
+// be enabled again before a later cleanup. Versions are read by number, which
+// unlike the version list is strongly consistent.
 func (s *SecretStateStore) requireEnabledVersionsEmpty(
 	parent context.Context,
 ) error {
 	ctx, cancel := s.rpcContext(parent)
 	defer cancel()
+	it := s.client.ListSecretVersions(
+		ctx,
+		&secretmanagerpb.ListSecretVersionsRequest{Parent: s.secret},
+	)
+	for {
+		v, err := it.Next()
+		if errors.Is(err, iterator.Done) || status.Code(err) == codes.NotFound {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("list state secret versions: %w", err)
+		}
+		if v.GetState() == secretmanagerpb.SecretVersion_DISABLED {
+			return ErrStateNotEmpty
+		}
+	}
 	for n := uint64(1); ; n++ {
 		resp, err := s.accessVersion(ctx, n)
 		if status.Code(err) == codes.NotFound {
 			return nil
 		}
-		// Disabled or destroyed: the cleanup destroys only enabled ones.
+		// Destroyed, or disabled after the list above: the cleanup lists
+		// enabled versions only.
 		if status.Code(err) == codes.FailedPrecondition {
 			continue
 		}
@@ -446,9 +468,10 @@ func (s *SecretStateStore) requireEnabledVersionsEmpty(
 }
 
 // seededCounterState is the counter record of an imported pool whose next
-// issue number is next. The pool's on-chain counter is the number before it:
-// it is both the last issued number and the opcert-next floor, so a lower
-// chain report cannot reissue the on-chain number at an unrecorded KES period.
+// issue number is next. The number before it is the highest the key has
+// signed, at least the pool's on-chain counter: it is both the last issued
+// number and the opcert-next floor, so a lower chain report cannot reissue it
+// at an unrecorded KES period.
 func seededCounterState(
 	hash backend.KeyHash,
 	profile string,

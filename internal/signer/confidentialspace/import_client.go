@@ -40,8 +40,8 @@ import (
 )
 
 // maxImportResponse bounds a challenge response: an attestation token of at
-// most maxTokenSize and a few small fields.
-const maxImportResponse = maxTokenSize + 4<<10
+// most maxTokenSize, which JSON carries base64-encoded, and a few small fields.
+const maxImportResponse = (maxTokenSize+2)/3*4 + 4<<10
 
 // ImportParams is what the operator seals to the workload.
 type ImportParams struct {
@@ -133,6 +133,12 @@ func buildImportRequest(
 	counters, err := json.Marshal(entries)
 	if err != nil {
 		return ImportRequest{}, err
+	}
+	// Validated profiles keep this far below the bound; the bound makes the
+	// capacity below provably small. The capacity is exact so the seed is
+	// never copied by a reallocation that wipe would miss.
+	if len(counters) > maxRequestBody {
+		return ImportRequest{}, errors.New("import profiles exceed size limit")
 	}
 	body := make([]byte, 0, importBodyFixedSize+len(counters))
 	body = append(body, p.Seed...)

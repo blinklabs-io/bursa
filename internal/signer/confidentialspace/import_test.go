@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
@@ -617,6 +618,21 @@ func TestImportRefusesSealedProfilesOutsideTheBinding(t *testing.T) {
 			names: []string{profileMainnet},
 			body:  fixed,
 		},
+		{
+			name:  "missing next issue number",
+			names: []string{profileMainnet},
+			body: func(h *importHarness) []byte {
+				return append(fixed(h), `[{"profile":"pool@mainnet"}]`...)
+			},
+		},
+		{
+			name:  "null next issue number",
+			names: []string{profileMainnet},
+			body: func(h *importHarness) []byte {
+				return append(fixed(h),
+					`[{"profile":"pool@mainnet","next_issue_number":null}]`...)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -665,6 +681,39 @@ func TestImportRefusesNonEmptySecret(t *testing.T) {
 			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
 		}
 	})
+	t.Run("disabled older version", func(t *testing.T) {
+		t.Parallel()
+		// A disabled version's payload cannot be read, and re-enabling it
+		// would let a later cleanup destroy the key it holds.
+		c := provisionedSecret(t)
+		c.mu.Lock()
+		c.versions[0].state = secretmanagerpb.SecretVersion_DISABLED
+		c.mu.Unlock()
+		c.seed([]byte{})
+		h := newImportHarnessOn(t, c)
+		err := h.importer.Import(t.Context(), h.request(h.challenge()))
+		if !errors.Is(err, ErrStateNotEmpty) {
+			t.Fatalf("import beside a disabled version: %v", err)
+		}
+		if adds, destroys := c.counts(); adds != 0 || destroys != 0 {
+			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
+		}
+	})
+	t.Run("destroyed older version", func(t *testing.T) {
+		t.Parallel()
+		c := provisionedSecret(t)
+		c.mu.Lock()
+		c.versions[0].state = secretmanagerpb.SecretVersion_DESTROYED
+		c.versions[0].data = nil
+		c.mu.Unlock()
+		c.seed([]byte{})
+		h := newImportHarnessOn(t, c)
+		if err := h.importer.Import(
+			t.Context(), h.request(h.challenge()),
+		); err != nil {
+			t.Fatalf("import beside a destroyed version: %v", err)
+		}
+	})
 	t.Run("provisioned after the challenge", func(t *testing.T) {
 		t.Parallel()
 		c := &fakeSecretClient{}
@@ -688,6 +737,25 @@ func TestImportRefusesNonEmptySecret(t *testing.T) {
 			t.Fatalf("second import: %v", err)
 		}
 	})
+}
+
+// After a failed write the store reports the stop, which tells the operator to
+// restart, rather than a generic refusal.
+func TestImportAfterAFailedWriteReportsTheStop(t *testing.T) {
+	t.Parallel()
+	h := newImportHarness(t)
+	h.secret.mu.Lock()
+	h.secret.addErr = errors.New("unavailable")
+	h.secret.mu.Unlock()
+	if err := h.importer.Import(
+		t.Context(), h.request(h.challenge()),
+	); err == nil {
+		t.Fatal("import with a failing write succeeded")
+	}
+	err := h.importer.Import(t.Context(), h.request(h.challenge()))
+	if !errors.Is(err, ErrStateStopped) {
+		t.Fatalf("import after a failed write: %v", err)
+	}
 }
 
 func TestImportNeverGeneratesKey(t *testing.T) {
@@ -1014,6 +1082,34 @@ func TestImportClientTalksToTheWorkload(t *testing.T) {
 	err = c.Import(t.Context(), ImportRequest{})
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") {
 		t.Fatalf("refused import: %v", err)
+	}
+}
+
+// The token travels base64-encoded, so a token of the launcher's largest size
+// must still fit the response limit.
+func TestImportClientAcceptsTheLargestToken(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(rw).Encode(ImportChallenge{
+			Version:     ImportProtocol,
+			Challenge:   make([]byte, importChallengeSize),
+			PublicKey:   make([]byte, curve25519.PointSize),
+			Attestation: bytes.Repeat([]byte("t"), maxTokenSize),
+		})
+	}))
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	authority, _ := newEd25519(t)
+	c, err := newImportClient(srv.URL, authority, &tls.Config{
+		MinVersion: tls.VersionTLS13, RootCAs: roots,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := c.Challenge(t.Context())
+	if err != nil || len(ch.Attestation) != maxTokenSize {
+		t.Fatalf("largest token: %v", err)
 	}
 }
 

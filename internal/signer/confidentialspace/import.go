@@ -83,8 +83,9 @@ type ImportChallenge struct {
 }
 
 // ImportProfile is one profile the import serves and the next operational
-// certificate issue number it may sign: the pool's on-chain counter plus one,
-// or 0 for a pool that never issued.
+// certificate issue number it may sign: one above the highest number the key
+// has signed and at least the pool's on-chain counter plus one, or 0 for a
+// pool that never issued.
 type ImportProfile struct {
 	Profile         string `json:"profile"`
 	NextIssueNumber uint64 `json:"next_issue_number"`
@@ -431,7 +432,11 @@ func parseImportCounters(
 	data []byte,
 	profiles []string,
 ) (map[string]uint64, error) {
-	var entries []ImportProfile
+	// A pointer tells an omitted or null counter from an explicit 0.
+	var entries []struct {
+		Profile         string  `json:"profile"`
+		NextIssueNumber *uint64 `json:"next_issue_number"`
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&entries); err != nil {
@@ -443,11 +448,12 @@ func parseImportCounters(
 	names := make([]string, 0, len(entries))
 	next := make(map[string]uint64, len(entries))
 	for _, e := range entries {
-		if e.NextIssueNumber >= math.MaxUint64-1 {
+		if e.NextIssueNumber == nil ||
+			*e.NextIssueNumber >= math.MaxUint64-1 {
 			return nil, errImportRequest
 		}
 		names = append(names, e.Profile)
-		next[e.Profile] = e.NextIssueNumber
+		next[e.Profile] = *e.NextIssueNumber
 	}
 	slices.Sort(names)
 	if !slices.Equal(names, profiles) || len(next) != len(profiles) {
