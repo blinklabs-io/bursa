@@ -3,11 +3,15 @@ package connector
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"path/filepath"
 	"sync"
@@ -19,6 +23,7 @@ import (
 
 // Sentinel errors returned by Service.
 var (
+	ErrChallengeCapacity   = errors.New("connector: challenge capacity reached")
 	ErrRefused             = errors.New("connector: refused")
 	ErrUserDeclined        = errors.New("connector: user declined")
 	ErrNotGranted          = errors.New("connector: origin not granted")
@@ -44,15 +49,18 @@ const (
 	pairCodeMaxAttempts = 5
 	// maxPendingPairCodes bounds the pending-pairing map so a flood of distinct
 	// extension IDs cannot grow it without limit.
-	maxPendingPairCodes = 32
+	maxPendingPairCodes  = 32
+	requestChallengeTTL  = 30 * time.Second
+	maxRequestChallenges = 128
 )
 
 // pairEntry is a pending pairing code plus the metadata needed to expire it and
 // cap confirmation attempts.
 type pairEntry struct {
-	code     string
-	created  time.Time
-	attempts int
+	code      string
+	publicKey string
+	created   time.Time
+	attempts  int
 }
 
 // Paginate is used by the Utxos backend method.
@@ -89,7 +97,7 @@ type Backend interface {
 	UnregisteredPubStakeKeys(password string) ([]string, error)
 }
 
-// Service orchestrates the three connector stores (token, grants, queue) and
+// Service orchestrates the three connector stores (pairing, grants, queue) and
 // routes incoming CIP-30 / CIP-95 method calls to the Backend.
 type Service struct {
 	tokens *TokenStore
@@ -104,18 +112,30 @@ type Service struct {
 	// while rebinding the backend, closing the authorization-to-use race.
 	bindingMu sync.RWMutex
 	identity  accountIdentity
-	// pairingMu linearizes token replacement/revocation with admission and final
-	// execution of token-bound queued work.
+	// pairingMu linearizes key replacement/revocation with admission and final
+	// execution of key-bound queued work.
 	pairingMu sync.RWMutex
 
 	// pending pair codes: extensionID → entry (code + expiry/attempt metadata)
 	pairMu    sync.Mutex
 	pairCodes map[string]*pairEntry
+
+	challengeMu sync.Mutex
+	challenges  map[string]challengeEntry
+}
+
+type challengeEntry struct {
+	issuanceNonce string
+	authority     string
+	redeemed      bool
+	extensionID   string
+	value         string
+	expires       time.Time
 }
 
 type pairingAuthority struct {
 	extensionID string
-	token       string
+	publicKey   string
 }
 
 type pairingAuthorityContextKey struct{}
@@ -136,12 +156,13 @@ func NewService(dir string, be Backend, networkPrompt func()) *Service {
 			filepath.Join(dir, "connector-token.json"),
 			nil,
 		),
-		grants:    NewGrantStore(filepath.Join(dir, "connector-grants.json")),
-		queue:     NewQueue(time.Now, mkID, 120*time.Second),
-		be:        be,
-		prompt:    networkPrompt,
-		now:       time.Now,
-		pairCodes: map[string]*pairEntry{},
+		grants:     NewGrantStore(filepath.Join(dir, "connector-grants.json")),
+		queue:      NewQueue(time.Now, mkID, 120*time.Second),
+		be:         be,
+		prompt:     networkPrompt,
+		now:        time.Now,
+		pairCodes:  map[string]*pairEntry{},
+		challenges: map[string]challengeEntry{},
 	}
 }
 
@@ -232,7 +253,7 @@ func (s *Service) withExpectedIdentity(
 // returns its existing code, so a competing claimant cannot invalidate an
 // in-progress browser pairing.
 func (s *Service) BeginPair(extensionID string) (string, error) {
-	extensionID = normalizeExtensionID(extensionID)
+	extensionID = NormalizeExtensionID(extensionID)
 	if !validExtensionID(extensionID) {
 		return "", ErrInvalidExtensionID
 	}
@@ -258,23 +279,77 @@ func (s *Service) BeginPair(extensionID string) (string, error) {
 	return code, nil
 }
 
+// BeginKeyPair binds a pending request to the extension key. The verification
+// code must be compared in the extension and confirmed on the control surface.
+func (s *Service) BeginKeyPair(extensionID, publicKey string) error {
+	extensionID = NormalizeExtensionID(extensionID)
+	if !validExtensionID(extensionID) {
+		return ErrInvalidExtensionID
+	}
+	if _, err := parsePublicKey(publicKey); err != nil {
+		return err
+	}
+	digest := sha256.Sum256([]byte("bursa-pair-v1\n" + publicKey))
+	code := hex.EncodeToString(digest[:16])
+	s.pairMu.Lock()
+	defer s.pairMu.Unlock()
+	s.prunePairCodesLocked()
+	if entry, ok := s.pairCodes[extensionID]; ok {
+		if entry.publicKey != publicKey {
+			return ErrRefused
+		}
+		return nil
+	}
+	if len(s.pairCodes) >= maxPendingPairCodes {
+		return ErrTooManyPairings
+	}
+	s.pairCodes[extensionID] = &pairEntry{code: code, publicKey: publicKey, created: s.now()}
+	return nil
+}
+
+// ConfirmDesktopPair approves the exact key whose verification code the user
+// compared with the independently displayed code in the extension.
+func (s *Service) ConfirmDesktopPair(extensionID, code string) error {
+	s.pairMu.Lock()
+	entry := s.pairCodes[NormalizeExtensionID(extensionID)]
+	key := ""
+	if entry != nil {
+		key = entry.publicKey
+	}
+	s.pairMu.Unlock()
+	if key == "" {
+		return ErrPairCodeMismatch
+	}
+	_, err := s.ConfirmPair(extensionID, code, key)
+	return err
+}
+
 // TrustedPairingOrigin reports whether origin is the extension origin that
 // extensionID names, after the same normalization BeginPair applies.
 func (s *Service) TrustedPairingOrigin(origin, extensionID string) bool {
-	extensionID = normalizeExtensionID(extensionID)
+	extensionID = NormalizeExtensionID(extensionID)
 	return validExtensionID(extensionID) && origin == extensionID
 }
 
-// ConfirmPair validates the code for extensionID, then mints and returns a
-// bearer token. Returns ErrPairCodeMismatch if the code is wrong, expired, or
+// ConfirmPair validates the code for extensionID, then binds the supplied
+// public key to the extension. Returns ErrPairCodeMismatch if the code is wrong, expired, or
 // has exhausted its attempt budget. The code is compared in constant time so a
 // caller cannot learn a prefix from response timing.
-func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
-	extensionID = normalizeExtensionID(extensionID)
+func (s *Service) ConfirmPair(
+	extensionID, code, publicKey string,
+) (string, error) {
+	extensionID = NormalizeExtensionID(extensionID)
+	if _, err := parsePublicKey(publicKey); err != nil {
+		return "", err
+	}
 	s.pairMu.Lock()
 	entry, ok := s.pairCodes[extensionID]
 	match := false
 	if ok {
+		if entry.publicKey != "" && entry.publicKey != publicKey {
+			s.pairMu.Unlock()
+			return "", ErrPairCodeMismatch
+		}
 		if s.now().Sub(entry.created) > pairCodeTTL {
 			delete(s.pairCodes, extensionID)
 		} else {
@@ -293,18 +368,143 @@ func (s *Service) ConfirmPair(extensionID, code string) (string, error) {
 	}
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
-	oldExtensionID, oldToken, paired := s.tokens.Pair()
-	token, committed, err := s.tokens.mint(extensionID)
-	if committed && paired {
-		s.queue.cancelAuthority(pairingAuthority{
-			extensionID: oldExtensionID,
-			token:       oldToken,
-		})
+	oldExtensionID, _, paired := s.tokens.Pair()
+	oldPublicKey := s.tokens.Authority()
+	_, committed, err := s.tokens.mint(extensionID, publicKey)
+	if committed {
+		s.clearChallenges(oldExtensionID)
+		if paired {
+			s.queue.cancelAuthority(pairingAuthority{
+				extensionID: oldExtensionID,
+				publicKey:   oldPublicKey,
+			})
+		}
 	}
 	if err != nil {
 		return "", err
 	}
-	return token, nil
+	return s.tokens.Authority(), nil
+}
+
+func (s *Service) clearChallenges(extensionID string) {
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+	for value, entry := range s.challenges {
+		if entry.extensionID == extensionID {
+			entry.redeemed = true
+			s.challenges[value] = entry
+		}
+	}
+}
+
+// IssueChallenge creates a short-lived, single-use request challenge for the
+// currently paired extension.
+func (s *Service) IssueChallenge(extensionID string) (string, error) {
+	extensionID = NormalizeExtensionID(extensionID)
+	pairedID, _, ok := s.tokens.Pair()
+	if !ok || pairedID != extensionID {
+		return "", ErrRefused
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("connector: challenge entropy: %w", err)
+	}
+	challenge := base64.RawURLEncoding.EncodeToString(raw)
+	s.challengeMu.Lock()
+	now := s.now()
+	for value, entry := range s.challenges {
+		if !entry.expires.After(now) {
+			delete(s.challenges, value)
+		}
+	}
+	if len(s.challenges) >= maxRequestChallenges {
+		s.challengeMu.Unlock()
+		return "", ErrChallengeCapacity
+	}
+	s.challenges[challenge] = challengeEntry{
+		authority:   s.tokens.Authority(),
+		extensionID: extensionID,
+		value:       challenge,
+		expires:     now.Add(requestChallengeTTL),
+	}
+	s.challengeMu.Unlock()
+	return challenge, nil
+}
+
+// IssueSignedChallenge requires proof of the paired key before allocating a
+// challenge. Repeated issuance proofs reuse their outstanding challenge.
+func (s *Service) IssueSignedChallenge(extensionID, nonce, signature string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(nonce)
+	if err != nil || len(raw) != 32 {
+		return "", ErrRefused
+	}
+	issuedMillis := binary.BigEndian.Uint64(raw[:8])
+	if issuedMillis > math.MaxInt64 {
+		return "", ErrRefused
+	}
+	issued := time.UnixMilli(int64(issuedMillis))
+	if issued.After(s.now().Add(time.Second)) || !issued.Add(requestChallengeTTL).After(s.now()) {
+		return "", ErrRefused
+	}
+	authority, valid := s.tokens.VerifySignature(extensionID, nonce, "POST", "/connector/challenge", nil, signature)
+	if !valid {
+		return "", ErrRefused
+	}
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+	now := s.now()
+	for value, entry := range s.challenges {
+		if !entry.expires.After(now) {
+			delete(s.challenges, value)
+		}
+	}
+	for _, entry := range s.challenges {
+		if entry.issuanceNonce != nonce {
+			continue
+		}
+		if entry.redeemed || entry.authority != authority {
+			return "", ErrRefused
+		}
+		return entry.value, nil
+	}
+	if len(s.challenges) >= maxRequestChallenges {
+		return "", ErrChallengeCapacity
+	}
+	randomChallenge := make([]byte, 32)
+	if _, err := rand.Read(randomChallenge); err != nil {
+		return "", fmt.Errorf("connector: challenge entropy: %w", err)
+	}
+	challenge := base64.RawURLEncoding.EncodeToString(randomChallenge)
+	s.challenges[challenge] = challengeEntry{issuanceNonce: nonce, authority: authority, extensionID: NormalizeExtensionID(extensionID), value: challenge, expires: issued.Add(requestChallengeTTL)}
+	return challenge, nil
+}
+
+// AuthorizeRequest verifies and consumes an extension request challenge. A
+// challenge is valid for one exact method, path, and body only.
+func (s *Service) AuthorizeRequest(
+	extensionID, challenge, method, path string,
+	body []byte,
+	signature string,
+) (string, bool) {
+	extensionID = NormalizeExtensionID(extensionID)
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+	entry, ok := s.challenges[challenge]
+	if !ok {
+		return "", false
+	}
+	if entry.redeemed {
+		return "", false
+	}
+	entry.redeemed = true
+	s.challenges[challenge] = entry
+	if entry.extensionID != extensionID || entry.value != challenge || !entry.expires.After(s.now()) {
+		return "", false
+	}
+	authority, valid := s.tokens.VerifySignature(
+		extensionID, challenge, method, path, body, signature,
+	)
+	return authority, valid && authority == entry.authority
 }
 
 // prunePairCodesLocked removes expired pairing codes. Callers must hold pairMu.
@@ -317,9 +517,9 @@ func (s *Service) prunePairCodesLocked() {
 	}
 }
 
-// VerifyToken checks whether the bearer token is valid for the given extensionID.
-func (s *Service) VerifyToken(token, extensionID string) bool {
-	return s.tokens.Verify(token, normalizeExtensionID(extensionID))
+// VerifyAuthority checks whether an admitted binding is still current.
+func (s *Service) VerifyAuthority(publicKey, extensionID string) bool {
+	return s.tokens.VerifyAuthority(publicKey, NormalizeExtensionID(extensionID))
 }
 
 // PairedExtensionID returns the currently paired extension ID and whether a
@@ -329,16 +529,18 @@ func (s *Service) PairedExtensionID() (string, bool) {
 	return extID, ok
 }
 
-// Unpair clears the paired token, effectively disconnecting the extension.
+// Unpair clears the paired key, effectively disconnecting the extension.
 func (s *Service) Unpair() error {
 	s.pairingMu.Lock()
 	defer s.pairingMu.Unlock()
-	extensionID, token, paired := s.tokens.Pair()
+	extensionID, _, paired := s.tokens.Pair()
+	publicKey := s.tokens.Authority()
 	err := s.tokens.Clear()
+	s.clearChallenges(extensionID)
 	if paired {
 		s.queue.cancelAuthority(pairingAuthority{
 			extensionID: extensionID,
-			token:       token,
+			publicKey:   publicKey,
 		})
 	}
 	return err
@@ -801,16 +1003,16 @@ func (s *Service) Handle(
 }
 
 // HandleAuthorized dispatches a connector request under the exact pairing
-// token admitted by the HTTP boundary. Queued work revalidates that token after
+// key admitted by the HTTP boundary. Queued work revalidates that key after
 // approval so unpairing or re-pairing cannot leave an older request executable.
 func (s *Service) HandleAuthorized(
 	ctx context.Context,
-	extensionID, token, origin, method string,
+	extensionID, publicKey, origin, method string,
 	params json.RawMessage,
 ) (json.RawMessage, error) {
-	extensionID = normalizeExtensionID(extensionID)
+	extensionID = NormalizeExtensionID(extensionID)
 	s.pairingMu.RLock()
-	if !s.tokens.Verify(token, extensionID) {
+	if !s.tokens.VerifyAuthority(publicKey, extensionID) {
 		s.pairingMu.RUnlock()
 		return nil, ErrRefused
 	}
@@ -818,7 +1020,7 @@ func (s *Service) HandleAuthorized(
 	ctx = context.WithValue(
 		ctx,
 		pairingAuthorityContextKey{},
-		pairingAuthority{extensionID: extensionID, token: token},
+		pairingAuthority{extensionID: extensionID, publicKey: publicKey},
 	)
 	return s.Handle(ctx, origin, method, params)
 }
@@ -859,11 +1061,11 @@ func (s *Service) withPairingAuthority(
 	if !ok {
 		return fn()
 	}
-	// Keep the read lock through the protected operation so token revocation
-	// cannot return while work admitted under that token is still running.
+	// Keep the read lock through the protected operation so key revocation
+	// cannot return while work admitted under that key is still running.
 	s.pairingMu.RLock()
 	defer s.pairingMu.RUnlock()
-	if !s.tokens.Verify(authority.token, authority.extensionID) {
+	if !s.tokens.VerifyAuthority(authority.publicKey, authority.extensionID) {
 		return nil, ErrRefused
 	}
 	return fn()
@@ -880,7 +1082,7 @@ func (s *Service) submit(
 	}
 	s.pairingMu.RLock()
 	defer s.pairingMu.RUnlock()
-	if !s.tokens.Verify(authority.token, authority.extensionID) {
+	if !s.tokens.VerifyAuthority(authority.publicKey, authority.extensionID) {
 		return nil, ErrRefused
 	}
 	return s.queue.submitAuthorized(origin, method, params, authority)
@@ -897,7 +1099,7 @@ func (s *Service) reserve(
 	}
 	s.pairingMu.RLock()
 	defer s.pairingMu.RUnlock()
-	if !s.tokens.Verify(authority.token, authority.extensionID) {
+	if !s.tokens.VerifyAuthority(authority.publicKey, authority.extensionID) {
 		return nil, ErrRefused
 	}
 	return s.queue.reserveAuthorized(origin, method, params, authority)

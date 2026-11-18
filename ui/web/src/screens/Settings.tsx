@@ -33,7 +33,7 @@ import {
   enableTPM,
   disableTPM,
 } from "../api/client";
-import { getConnectorState, revokeGrant, unpair, pendingPairings } from "../api/connector";
+import { getConnectorState, revokeGrant, unpair, pendingPairings, confirmPairing } from "../api/connector";
 import {
   disableRemoteSubmission,
   enableRemoteSubmission,
@@ -787,6 +787,22 @@ function GeneralSettings({
     }
   }
 
+  async function handleConfirmPair(extensionID: string, code: string) {
+    if (!pairingPassword || connectorMutation !== null) return;
+    setConnectorMutation("pair");
+    setPairingRevealError(null);
+    try {
+      await confirmPairing(extensionID, code, pairingPassword);
+      pendingPairs.refresh();
+      connectorState.refresh();
+    } catch (e) {
+      setPairingRevealError(e instanceof Error ? e.message : "Unable to confirm pairing");
+    } finally {
+      setPairingPassword("");
+      setConnectorMutation(null);
+    }
+  }
+
   async function handleRevealPairCode(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!pairingPassword || revealingPairCode) return;
@@ -799,7 +815,6 @@ function GeneralSettings({
         if (pairing.code) codes[pairing.extension_id] = pairing.code;
       }
       setRevealedPairCodes(codes);
-      setPairingPassword("");
     } catch (e) {
       setPairingRevealError(
         e instanceof ApiError ? e.message : "Unable to reveal pairing code",
@@ -1076,15 +1091,22 @@ function GeneralSettings({
                         {code ? (
                           <>
                             <p
-                              className="connector-pair-code"
+                              className="connector-pair-code mono"
+                              style={{ overflowWrap: "anywhere" }}
                               aria-label="Pairing code"
                             >
                               {code}
                             </p>
                             <p>
-                              Enter this code in the Bursa extension to complete
-                              pairing.
+                              Compare this code with the code shown in the Bursa extension.
+                              Confirm only if every character matches.
                             </p>
+                            <Button
+                              disabled={!pairingPassword || connectorMutation !== null}
+                              onClick={() => void handleConfirmPair(pairing.extension_id, code)}
+                            >
+                              Codes match — confirm pairing
+                            </Button>
                           </>
                         ) : (
                           <p>Reveal the code to complete pairing.</p>

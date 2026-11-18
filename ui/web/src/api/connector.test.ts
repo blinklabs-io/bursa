@@ -149,6 +149,7 @@ let restoreEventSource: (() => void) | undefined;
 
 beforeEach(() => {
   restoreEventSource = installFakeEventSource();
+  mockFetch(200, { ticket: "event-ticket" });
 });
 
 afterEach(() => {
@@ -157,16 +158,18 @@ afterEach(() => {
   restoreEventSource = undefined;
 });
 
-test("subscribePending opens an EventSource at /connector/events", () => {
+test("subscribePending opens an EventSource with a one-use ticket", async () => {
   const unsub = subscribePending(() => {});
-  expect(FakeEventSource.instances).toHaveLength(1);
-  expect(FakeEventSource.instances[0].url).toBe("/connector/events");
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  expect(FakeEventSource.instances[0].url).toBe("/connector/events?ticket=event-ticket");
   unsub();
 });
 
-test("subscribePending supplies authoritative pending snapshots", () => {
+test("subscribePending supplies authoritative pending snapshots", async () => {
   const received: ConnectorRequest[][] = [];
   subscribePending((pending) => received.push(pending));
+
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
   const req: ConnectorRequest = {
     id: "r1",
@@ -183,8 +186,9 @@ test("subscribePending supplies authoritative pending snapshots", () => {
   expect(received[0]).toEqual([req]);
 });
 
-test("subscribePending closes the EventSource when unsubscribed", () => {
+test("subscribePending closes the EventSource when unsubscribed", async () => {
   const unsub = subscribePending(() => {});
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
   const es = FakeEventSource.instances[0];
   expect(es.readyState).toBe(FakeEventSource.OPEN);
   expect(es.closed).toBe(false);
@@ -194,42 +198,47 @@ test("subscribePending closes the EventSource when unsubscribed", () => {
   expect(FakeEventSource.instances).not.toContain(es);
 });
 
-test("subscribePending silently ignores malformed data", () => {
+test("subscribePending silently ignores malformed data", async () => {
   const received: ConnectorRequest[][] = [];
-  expect(() => {
-    subscribePending((req) => received.push(req));
-    FakeEventSource.instances[0].emit("not-valid-json{{{");
-  }).not.toThrow();
+  subscribePending((req) => received.push(req));
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  expect(() => FakeEventSource.instances[0].emit("not-valid-json{{{")).not.toThrow();
   expect(received).toHaveLength(0);
 });
 
-test("subscribePending reports degraded state on error and recovery on reopen", () => {
+test("subscribePending reports degraded state on error and recovery on reopen", async () => {
   const states: boolean[] = [];
   const unsub = subscribePending(
     () => {},
     (degraded) => states.push(degraded),
   );
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
   const es = FakeEventSource.instances[0];
 
-  // A connection error surfaces degraded=true, but the stream stays open so the
-  // browser can auto-reconnect (we must not tear it down).
+  // The ticket was consumed by the first connection, so recovery must close
+  // that stream and obtain a fresh ticket instead of reusing its URL.
   es.emitError();
   expect(states).toEqual([true]);
-  expect(es.closed).toBe(false);
+  expect(es.closed).toBe(true);
+  await vi.waitFor(() => {
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0]).not.toBe(es);
+  }, { timeout: 2_000 });
 
   // Reconnecting clears the degraded state.
-  es.emitOpen();
+  FakeEventSource.instances[0].emitOpen();
   expect(states).toEqual([true, false]);
 
   unsub();
 });
 
-test("subscribePending delivers no onError callbacks after unsubscribe", () => {
+test("subscribePending delivers no onError callbacks after unsubscribe", async () => {
   const states: boolean[] = [];
   const unsub = subscribePending(
     () => {},
     (degraded) => states.push(degraded),
   );
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
   const es = FakeEventSource.instances[0];
 
   unsub();
@@ -241,12 +250,11 @@ test("subscribePending delivers no onError callbacks after unsubscribe", () => {
   expect(states).toEqual([]);
 });
 
-test("subscribePending tolerates an error with no onError callback", () => {
-  expect(() => {
-    const unsub = subscribePending(() => {});
-    FakeEventSource.instances[0].emitError();
-    unsub();
-  }).not.toThrow();
+test("subscribePending tolerates an error with no onError callback", async () => {
+  const unsub = subscribePending(() => {});
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+  expect(() => FakeEventSource.instances[0].emitError()).not.toThrow();
+  unsub();
 });
 
 test("FakeEventSource exposes browser-compatible readyState constants", () => {

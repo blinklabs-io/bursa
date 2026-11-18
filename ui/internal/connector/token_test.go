@@ -1,12 +1,57 @@
 package connector
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
+
+func TestTokenStoreVerifiesExactSignedRequest(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.RawURLEncoding.EncodeToString(encoded)
+	store := NewTokenStore(filepath.Join(t.TempDir(), "pairing.json"), nil)
+	if _, err := store.Mint("ext", publicKey); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"method":"getBalance"}`)
+	digest := sha256.Sum256(canonicalRequest("challenge", "POST", "/connector/request", body))
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := make([]byte, 64)
+	r.FillBytes(signature[:32])
+	s.FillBytes(signature[32:])
+	encodedSignature := base64.RawURLEncoding.EncodeToString(signature)
+
+	if authority, ok := store.VerifySignature(
+		"chrome-extension://ext", "challenge", "POST", "/connector/request", body, encodedSignature,
+	); !ok || authority != store.Authority() {
+		t.Fatal("exact signed request was not authorized")
+	}
+	if _, ok := store.VerifySignature(
+		"chrome-extension://ext", "challenge", "POST", "/connector/request", []byte(`{"method":"signTx"}`), encodedSignature,
+	); ok {
+		t.Fatal("signature authorized a substituted request body")
+	}
+}
 
 func TestTokenStoreMintVerify(t *testing.T) {
 	seq := 0
@@ -300,7 +345,7 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 	dir := t.TempDir()
 
 	validPath := filepath.Join(dir, "valid-token.json")
-	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","token":"tok"}`), 0o600); err != nil {
+	if err := os.WriteFile(validPath, []byte(`{"extension_id":"abc","public_key":"key"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	valid := NewTokenStore(
@@ -308,13 +353,21 @@ func TestTokenStoreLoadsOnlyValidPersistedPairings(t *testing.T) {
 		func() (string, error) { return "unused", nil },
 	)
 	extID, tok, ok := valid.Pair()
-	if !ok || extID != "chrome-extension://abc" || tok != "tok" {
+	if !ok || extID != "chrome-extension://abc" || tok != "key" {
 		t.Fatalf(
 			"Pair() = (%q, %q, %v), want normalized valid persisted pair",
 			extID,
 			tok,
 			ok,
 		)
+	}
+
+	legacyPath := filepath.Join(dir, "legacy-token.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"extension_id":"abc","token":"captured-bearer"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, paired := NewTokenStore(legacyPath, nil).Pair(); paired {
+		t.Fatal("legacy bearer token must not authorize after upgrade")
 	}
 
 	invalidPath := filepath.Join(dir, "invalid-token.json")
@@ -343,5 +396,141 @@ func TestTokenStoreClearWhenAbsent(t *testing.T) {
 	)
 	if err := ts.Clear(); err != nil {
 		t.Fatalf("Clear on never-minted store should return nil, got %v", err)
+	}
+}
+
+func TestApprovedWorkCannotSurviveSameKeyRepairing(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	identity := bindTestIdentity(s)
+	key := testPairingPublicKey(t)
+	code, err := s.BeginPair("ext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := s.ConfirmPair("ext", code, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const origin = "https://same-key.example"
+	s.prompt = func() {
+		pending := s.Pending()
+		if len(pending) != 1 {
+			t.Fatalf("pending requests = %d", len(pending))
+		}
+		if err := s.Decide(pending[0].ID, Decision{Approved: true}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Unpair(); err != nil {
+			t.Fatal(err)
+		}
+		code, err := s.BeginPair("ext")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ConfirmPair("ext", code, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.HandleAuthorized(t.Context(), "ext", authority, origin, "enable", nil); !errors.Is(err, ErrRefused) {
+		t.Fatal("revoked approval executed after repairing the same key")
+	}
+	if s.grants.IsGranted(origin, identity) {
+		t.Fatal("revoked approval created a grant")
+	}
+}
+
+func TestSignedChallengeRequiresKeyAndCannotBeReissued(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.RawURLEncoding.EncodeToString(encoded)
+	dir := t.TempDir()
+	s := NewService(dir, &fakeBackend{}, nil)
+	code, err := s.BeginPair("ext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ConfirmPair("ext", code, publicKey); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(nonce, method, path string) string {
+		digest := sha256.Sum256(canonicalRequest(nonce, method, path, nil))
+		r, v, err := ecdsa.Sign(rand.Reader, key, digest[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := make([]byte, 64)
+		r.FillBytes(raw[:32])
+		v.FillBytes(raw[32:])
+		return base64.RawURLEncoding.EncodeToString(raw)
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatal(err)
+	}
+	binary.BigEndian.PutUint64(raw[:8], uint64(time.Now().UnixMilli()))
+	nonce := base64.RawURLEncoding.EncodeToString(raw)
+	proof := sign(nonce, "POST", "/connector/challenge")
+	for range maxRequestChallenges + 1 {
+		if _, err := s.IssueSignedChallenge("ext", nonce, "invalid"); !errors.Is(err, ErrRefused) {
+			t.Fatal("unauthenticated challenge accepted")
+		}
+	}
+	challenge, err := s.IssueSignedChallenge("ext", nonce, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate, err := s.IssueSignedChallenge("ext", nonce, proof); err != nil || duplicate != challenge {
+		t.Fatal("duplicate issuance did not reuse its challenge")
+	}
+	signature := sign(challenge, "GET", "/connector/request")
+	if _, ok := s.AuthorizeRequest("ext", challenge, "GET", "/connector/request", nil, signature); !ok {
+		t.Fatal("valid signed request rejected")
+	}
+	if _, err := s.IssueSignedChallenge("ext", nonce, proof); !errors.Is(err, ErrRefused) {
+		t.Fatal("redeemed challenge reissued")
+	}
+	if _, ok := s.AuthorizeRequest("ext", challenge, "GET", "/connector/request", nil, signature); ok {
+		t.Fatal("redeemed request replayed")
+	}
+	restarted := NewService(dir, &fakeBackend{}, nil)
+	next, err := restarted.IssueSignedChallenge("ext", nonce, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == challenge {
+		t.Fatal("server restart reused the request challenge")
+	}
+	if _, ok := restarted.AuthorizeRequest("ext", challenge, "GET", "/connector/request", nil, signature); ok {
+		t.Fatal("request replay survived server restart")
+	}
+	if _, ok := restarted.AuthorizeRequest("ext", next, "GET", "/connector/request", nil, sign(next, "GET", "/connector/request")); !ok {
+		t.Fatal("new challenge rejected after restart")
+	}
+}
+
+func TestDesktopPairingBindsComparedKey(t *testing.T) {
+	s := NewService(t.TempDir(), &fakeBackend{}, nil)
+	key := testPairingPublicKey(t)
+	if err := s.BeginKeyPair("ext", key); err != nil {
+		t.Fatal(err)
+	}
+	code := s.PendingPairings()[0].Code
+	if err := s.BeginKeyPair("ext", testPairingPublicKey(t)); !errors.Is(err, ErrRefused) {
+		t.Fatal("pending key replaced")
+	}
+	if err := s.ConfirmDesktopPair("ext", code+"0"); !errors.Is(err, ErrPairCodeMismatch) {
+		t.Fatal("wrong compared code accepted")
+	}
+	if err := s.ConfirmDesktopPair("ext", code); err != nil {
+		t.Fatal(err)
+	}
+	if !s.tokens.Verify(key, "ext") {
+		t.Fatal("compared key was not bound")
 	}
 }

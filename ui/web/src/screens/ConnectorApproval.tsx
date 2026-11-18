@@ -106,8 +106,8 @@ export function ConnectorApproval() {
   // open, so a click intended for the request the user was reading cannot land
   // on a substituted one. See the swap-detection layout effect below.
   const [needsReReview, setNeedsReReview] = useState(false);
-  // degraded tracks the SSE stream's health: true while the browser reports a
-  // connection error (and is auto-reconnecting), false once it (re)opens. When
+  // degraded tracks the SSE stream's health: true while a replacement stream
+  // is connecting, false once it opens. When
   // true we show an unobtrusive "reconnecting" pill so a stalled queue does not
   // look like an empty one.
   const [degraded, setDegraded] = useState(false);

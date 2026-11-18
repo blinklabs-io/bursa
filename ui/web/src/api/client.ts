@@ -80,6 +80,7 @@ import type {
   SurveyRevealRequest,
   SurveyStatus,
 } from "./types";
+import { controlSessionHeaders } from "./session";
 
 export class ApiError extends Error {
   constructor(
@@ -118,7 +119,10 @@ async function request<T>(method: string, path: string, body?: unknown, cache?: 
     try {
       res = await fetch(path, {
         method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
+        headers: {
+          ...controlSessionHeaders(),
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
         ...(cache ? { cache } : {}),

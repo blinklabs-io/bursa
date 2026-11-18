@@ -86,6 +86,15 @@ export async function launchFirefox(packagePath) {
   const driver = await new Builder().forBrowser('firefox').setFirefoxOptions(options).build();
   try {
     await driver.installAddon(packagePath, true);
+    await driver.setContext(Context.CHROME);
+    const startupError = await driver.executeAsyncScript(`
+      const done = arguments[arguments.length - 1];
+      WebExtensionPolicy.getByID(arguments[0]).extension.wakeupBackground().then(
+        () => done(null), error => done(String(error)),
+      );
+    `, FIREFOX_ID);
+    if (startupError) throw new Error(startupError);
+    await driver.setContext(Context.CONTENT);
   } catch (err) {
     await driver.quit().catch(() => undefined);
     throw err;

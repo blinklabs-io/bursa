@@ -15,16 +15,25 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +42,58 @@ import (
 	"github.com/blinklabs-io/bursa/ui/internal/vault"
 	"github.com/blinklabs-io/bursa/ui/internal/wallet"
 )
+
+var testConnectorKeys sync.Map
+
+func newTestConnectorKey(t *testing.T) (*ecdsa.PrivateKey, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key, base64.RawURLEncoding.EncodeToString(encoded)
+}
+
+func authorizeTestConnectorRequest(
+	t *testing.T,
+	svc *connector.Service,
+	authority string,
+	req *http.Request,
+) {
+	t.Helper()
+	keyValue, ok := testConnectorKeys.Load(authority)
+	if !ok {
+		t.Fatal("missing test connector private key")
+	}
+	challenge, err := svc.IssueChallenge(req.Header.Get("Origin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	bodyDigest := sha256.Sum256(body)
+	payload := []byte(
+		"bursa-connector-v1\n" + challenge + "\n" + req.Method + "\n" + req.URL.Path + "\n" +
+			base64.RawURLEncoding.EncodeToString(bodyDigest[:]),
+	)
+	digest := sha256.Sum256(payload)
+	r, s, err := ecdsa.Sign(rand.Reader, keyValue.(*ecdsa.PrivateKey), digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := make([]byte, 64)
+	r.FillBytes(signature[:32])
+	s.FillBytes(signature[32:])
+	req.Header.Set("X-Bursa-Challenge", challenge)
+	req.Header.Set("X-Bursa-Signature", base64.RawURLEncoding.EncodeToString(signature))
+}
 
 // fakeConnectorBackend is a minimal Backend implementation for tests in this package.
 type fakeConnectorBackend struct{}
@@ -133,7 +194,7 @@ func (f *fakeConnectorBackend) UnregisteredPubStakeKeys(
 }
 
 // newTestService creates a real connector.Service, pairs it with the given
-// extensionID, and returns the service along with the bearer token minted.
+// extensionID, and returns the service with its public-key authority.
 func newTestService(
 	t *testing.T,
 	extensionID string,
@@ -145,10 +206,13 @@ func newTestService(
 	if err != nil {
 		t.Fatalf("BeginPair: %v", err)
 	}
-	token, err := svc.ConfirmPair(extensionID, code)
+	key, publicKey := newTestConnectorKey(t)
+	token, err := svc.ConfirmPair(extensionID, code, publicKey)
 	if err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
 	}
+	testConnectorKeys.Store(token, key)
+	t.Cleanup(func() { testConnectorKeys.Delete(token) })
 	return svc, token
 }
 
@@ -178,7 +242,8 @@ func TestConnectorPairRoute(t *testing.T) {
 		mux := http.NewServeMux()
 		registerConnector(mux, svc)
 
-		body := `{"extension_id":"` + extID + `","code":""}`
+		_, publicKey := newTestConnectorKey(t)
+		body := `{"extension_id":"` + extID + `","public_key":"` + publicKey + `"}`
 		req := httptest.NewRequest(
 			http.MethodPost,
 			"/connector/pair",
@@ -209,23 +274,27 @@ func TestConnectorPairRoute(t *testing.T) {
 	})
 
 	t.Run(
-		"confirm: correct code → 200 with non-empty token",
+		"confirm: correct code → 200 without a bearer secret",
 		func(t *testing.T) {
 			svc := newSvc(t)
 			mux := http.NewServeMux()
-			registerConnector(mux, svc)
+			registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(string) error { return nil }))
 
 			// Learn the code directly (simulates in-app display).
-			code, _ := svc.BeginPair(extID)
-
-			body := `{"extension_id":"` + extID + `","code":"` + code + `"}`
+			_, publicKey := newTestConnectorKey(t)
+			if err := svc.BeginKeyPair(extID, publicKey); err != nil {
+				t.Fatal(err)
+			}
+			code := svc.PendingPairings()[0].Code
+			body := `{"extension_id":"` + extID + `","code":"` + code + `","public_key":"` + publicKey + `"}`
 			req := httptest.NewRequest(
 				http.MethodPost,
-				"/connector/pair",
+				"/connector/confirm-pair",
 				strings.NewReader(body),
 			)
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Origin", extID)
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set("Origin", "http://127.0.0.1:8090")
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
 
@@ -236,12 +305,12 @@ func TestConnectorPairRoute(t *testing.T) {
 					rec.Body.String(),
 				)
 			}
-			var resp map[string]string
+			var resp map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("response is not valid JSON: %v", err)
 			}
-			if resp["token"] == "" {
-				t.Error("expected non-empty token in response, got empty")
+			if resp["ok"] != true || resp["token"] != nil {
+				t.Fatalf("response = %#v, want ok without token", resp)
 			}
 		},
 	)
@@ -254,7 +323,8 @@ func TestConnectorPairRoute(t *testing.T) {
 		// Start a pair so the extension_id is known to the service.
 		svc.BeginPair(extID)
 
-		body := `{"extension_id":"` + extID + `","code":"000000"}`
+		_, publicKey := newTestConnectorKey(t)
+		body := `{"extension_id":"` + extID + `","code":"000000","public_key":"` + publicKey + `"}`
 		req := httptest.NewRequest(
 			http.MethodPost,
 			"/connector/pair",
@@ -375,7 +445,9 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 				&fakeConnectorBackend{},
 				nil,
 			)
-			code, err := svc.BeginPair(extID)
+			_, publicKey := newTestConnectorKey(t)
+			err := svc.BeginKeyPair(extID, publicKey)
+			code := svc.PendingPairings()[0].Code
 			if err != nil {
 				t.Fatalf("BeginPair: %v", err)
 			}
@@ -383,7 +455,7 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 				t,
 				svc,
 				"https://evil.example",
-				`{"extension_id":"`+extID+`","code":"`+code+`"}`,
+				`{"extension_id":"`+extID+`","code":"`+code+`","public_key":"`+publicKey+`"}`,
 			)
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf(
@@ -392,18 +464,8 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 					rec.Body.String(),
 				)
 			}
-			rec = post(
-				t,
-				svc,
-				extID,
-				`{"extension_id":"`+extID+`","code":"`+code+`"}`,
-			)
-			if rec.Code != http.StatusOK {
-				t.Fatalf(
-					"matching origin status = %d, want 200; body: %s",
-					rec.Code,
-					rec.Body.String(),
-				)
+			if err := svc.ConfirmDesktopPair(extID, code); err != nil {
+				t.Fatal(err)
 			}
 		},
 	)
@@ -417,7 +479,8 @@ func TestConnectorPairOriginPolicy(t *testing.T) {
 				&fakeConnectorBackend{},
 				nil,
 			)
-			rec := post(t, svc, extID, `{"extension_id":"testpair"}`)
+			_, publicKey := newTestConnectorKey(t)
+			rec := post(t, svc, extID, `{"extension_id":"testpair","public_key":"`+publicKey+`"}`)
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf(
 					"status = %d, want 202; body: %s",
@@ -637,7 +700,7 @@ func TestConnectorRequest(t *testing.T) {
 
 	// newSvcServer creates a paired service and an httptest.Server with
 	// registerConnector wired up and the middleware applied. Returns the service,
-	// server, and the bearer token.
+	// server, and the public-key authority.
 	newSvcServer := func(t *testing.T) (*connector.Service, *httptest.Server, string) {
 		t.Helper()
 		svc, token := newTestService(t, extID)
@@ -650,7 +713,7 @@ func TestConnectorRequest(t *testing.T) {
 
 	// post sends a POST /connector/request with the given JSON body (no auth headers).
 	// The returned *http.Response body is already read and closed.
-	postRequest := func(t *testing.T, srv *httptest.Server, token, body string) *http.Response {
+	postRequest := func(t *testing.T, svc *connector.Service, srv *httptest.Server, token, body string) *http.Response {
 		t.Helper()
 		req, err := http.NewRequest(
 			http.MethodPost,
@@ -662,7 +725,7 @@ func TestConnectorRequest(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", extID)
-		req.Header.Set("X-Bursa-Token", token)
+		authorizeTestConnectorRequest(t, svc, token, req)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Do: %v", err)
@@ -671,10 +734,10 @@ func TestConnectorRequest(t *testing.T) {
 	}
 
 	t.Run("ungranted origin → 403 error_code -3", func(t *testing.T) {
-		_, srv, token := newSvcServer(t)
+		svc, srv, token := newSvcServer(t)
 
 		body := `{"origin":"https://a.io","method":"getBalance","params":null}`
-		resp := postRequest(t, srv, token, body)
+		resp := postRequest(t, svc, srv, token, body)
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusForbidden {
@@ -693,9 +756,9 @@ func TestConnectorRequest(t *testing.T) {
 	})
 
 	t.Run("malformed body → 400 error_code -1", func(t *testing.T) {
-		_, srv, token := newSvcServer(t)
+		svc, srv, token := newSvcServer(t)
 
-		resp := postRequest(t, srv, token, "{bad json")
+		resp := postRequest(t, svc, srv, token, "{bad json")
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusBadRequest {
@@ -713,10 +776,10 @@ func TestConnectorRequest(t *testing.T) {
 	})
 
 	t.Run("empty method → 400 error_code -1", func(t *testing.T) {
-		_, srv, token := newSvcServer(t)
+		svc, srv, token := newSvcServer(t)
 
 		body := `{"origin":"https://a.io","method":"","params":null}`
-		resp := postRequest(t, srv, token, body)
+		resp := postRequest(t, svc, srv, token, body)
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusBadRequest {
@@ -743,7 +806,7 @@ func TestConnectorRequest(t *testing.T) {
 		ch := make(chan result, 1)
 		go func() {
 			body := `{"origin":"https://b.io","method":"enable","params":null}`
-			resp := postRequest(t, srv, token, body)
+			resp := postRequest(t, svc, srv, token, body)
 			ch <- result{resp: resp}
 		}()
 
@@ -775,7 +838,7 @@ func TestConnectorRequest(t *testing.T) {
 		go func() {
 			defer close(enableDone)
 			body := `{"origin":"https://c.io","method":"enable","params":null}`
-			resp := postRequest(t, srv, token, body)
+			resp := postRequest(t, svc, srv, token, body)
 			resp.Body.Close()
 		}()
 		decideWhenPending(t, svc, connector.Decision{Approved: true})
@@ -788,7 +851,7 @@ func TestConnectorRequest(t *testing.T) {
 		ch := make(chan result, 1)
 		go func() {
 			body := `{"origin":"https://c.io","method":"signTx","params":{"tx":"aabbcc","partialSign":false}}`
-			resp := postRequest(t, srv, token, body)
+			resp := postRequest(t, svc, srv, token, body)
 			ch <- result{resp: resp}
 		}()
 
@@ -832,7 +895,7 @@ func TestConnectorRequestUnpairRevokesPendingAuthorization(t *testing.T) {
 		),
 	)
 	request.Header.Set("Origin", extID)
-	request.Header.Set("X-Bursa-Token", token)
+	authorizeTestConnectorRequest(t, svc, token, request)
 	requestResult := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -870,7 +933,8 @@ func TestConnectorRequestUnpairRevokesPendingAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginPair: %v", err)
 	}
-	if _, err := svc.ConfirmPair(extID, code); err != nil {
+	_, publicKey := newTestConnectorKey(t)
+	if _, err := svc.ConfirmPair(extID, code, publicKey); err != nil {
 		t.Fatalf("ConfirmPair: %v", err)
 	}
 
@@ -929,7 +993,7 @@ func TestConnectorSelfRevoke(t *testing.T) {
 		return svc, srv, token
 	}
 
-	postSelfRevoke := func(t *testing.T, srv *httptest.Server, token, body string) *http.Response {
+	postSelfRevoke := func(t *testing.T, svc *connector.Service, srv *httptest.Server, token, body string) *http.Response {
 		t.Helper()
 		req, err := http.NewRequest(
 			http.MethodPost,
@@ -941,7 +1005,9 @@ func TestConnectorSelfRevoke(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", extID)
-		req.Header.Set("X-Bursa-Token", token)
+		if _, ok := testConnectorKeys.Load(token); ok {
+			authorizeTestConnectorRequest(t, svc, token, req)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Do: %v", err)
@@ -979,6 +1045,7 @@ func TestConnectorSelfRevoke(t *testing.T) {
 
 		resp := postSelfRevoke(
 			t,
+			svc,
 			srv,
 			token,
 			`{"origin":"https://selfrevoke.io"}`,
@@ -1017,6 +1084,7 @@ func TestConnectorSelfRevoke(t *testing.T) {
 
 		resp := postSelfRevoke(
 			t,
+			svc,
 			srv,
 			"wrong-token",
 			`{"origin":"https://stillgranted.io"}`,
@@ -1038,9 +1106,9 @@ func TestConnectorSelfRevoke(t *testing.T) {
 	})
 
 	t.Run("empty origin → 400", func(t *testing.T) {
-		_, srv, token := newSvcServer(t)
+		svc, srv, token := newSvcServer(t)
 
-		resp := postSelfRevoke(t, srv, token, `{"origin":""}`)
+		resp := postSelfRevoke(t, svc, srv, token, `{"origin":""}`)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400", resp.StatusCode)
@@ -1550,10 +1618,13 @@ func TestConnectorGrants(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BeginPair: %v", err)
 		}
-		token, err := svc.ConfirmPair(extID, code)
+		key, publicKey := newTestConnectorKey(t)
+		token, err := svc.ConfirmPair(extID, code, publicKey)
 		if err != nil {
 			t.Fatalf("ConfirmPair: %v", err)
 		}
+		testConnectorKeys.Store(token, key)
+		t.Cleanup(func() { testConnectorKeys.Delete(token) })
 		// Replace the token file with a non-empty directory so removal fails.
 		tokenPath := filepath.Join(dir, "connector-token.json")
 		if err := os.Remove(tokenPath); err != nil {
@@ -1579,7 +1650,7 @@ func TestConnectorGrants(t *testing.T) {
 				rec.Body.String(),
 			)
 		}
-		if svc.VerifyToken(token, extID) {
+		if svc.VerifyAuthority(token, extID) {
 			t.Fatal("failed unpair must still revoke the in-memory token")
 		}
 	})
@@ -1857,7 +1928,14 @@ func TestConnectorMiddleware(t *testing.T) {
 				req.Header.Set("Origin", tc.origin)
 			}
 			if tc.tokenHdr != "" {
-				req.Header.Set("X-Bursa-Token", tc.tokenHdr)
+				if _, ok := testConnectorKeys.Load(tc.tokenHdr); ok {
+					req.Header.Set("Origin", extID)
+					authorizeTestConnectorRequest(t, svc, tc.tokenHdr, req)
+					req.Header.Set("Origin", tc.origin)
+				} else {
+					req.Header.Set("X-Bursa-Challenge", "invalid")
+					req.Header.Set("X-Bursa-Signature", "invalid")
+				}
 			}
 
 			var nextCalled bool
@@ -1896,7 +1974,7 @@ func TestConnectorMiddlewareNormalizesRawPairedExtensionID(t *testing.T) {
 	var nextCalled bool
 	req := httptest.NewRequest(http.MethodGet, "/connector/utxos", nil)
 	req.Header.Set("Origin", "chrome-extension://abc123")
-	req.Header.Set("X-Bursa-Token", token)
+	authorizeTestConnectorRequest(t, svc, token, req)
 	rec := httptest.NewRecorder()
 
 	mw(newOKHandler(&nextCalled)).ServeHTTP(rec, req)
@@ -1924,7 +2002,7 @@ func TestConnectorMiddlewareAcceptsFirefoxExtensionOrigin(t *testing.T) {
 	var nextCalled bool
 	req := httptest.NewRequest(http.MethodGet, "/connector/utxos", nil)
 	req.Header.Set("Origin", origin)
-	req.Header.Set("X-Bursa-Token", token)
+	authorizeTestConnectorRequest(t, svc, token, req)
 	rec := httptest.NewRecorder()
 	mw(newOKHandler(&nextCalled)).ServeHTTP(rec, req)
 
@@ -1938,6 +2016,30 @@ func TestConnectorMiddlewareAcceptsFirefoxExtensionOrigin(t *testing.T) {
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+	}
+}
+
+func TestConnectorMiddlewareConsumesSignedChallenge(t *testing.T) {
+	const origin = "chrome-extension://single-use"
+	svc, authority := newTestService(t, origin)
+	mw := connectorMiddleware(svc, svc.PairedExtensionID)
+	called := false
+	handler := mw(newOKHandler(&called))
+	req := httptest.NewRequest(http.MethodPost, "/connector/request", strings.NewReader(`{"method":"getBalance"}`))
+	req.Header.Set("Origin", origin)
+	authorizeTestConnectorRequest(t, svc, authority, req)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !called {
+		t.Fatalf("first request = %d, called=%v", rec.Code, called)
+	}
+
+	called = false
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatalf("replayed request = %d, called=%v, want 401 and not called", rec.Code, called)
 	}
 }
 
@@ -2181,4 +2283,82 @@ func TestHandlePendingPairings(t *testing.T) {
 			t.Fatalf("status = %d, want 403", rec.Code)
 		}
 	})
+}
+
+type observedConnectorBody struct{ read bool }
+
+func (b *observedConnectorBody) Read([]byte) (int, error) { b.read = true; return 0, io.EOF }
+func (*observedConnectorBody) Close() error               { return nil }
+
+func TestConnectorRejectsBeforeReadingUnauthorizedBody(t *testing.T) {
+	const origin = "chrome-extension://paired"
+	svc, authority := newTestService(t, origin)
+	called := false
+	handler := connectorMiddleware(svc, svc.PairedExtensionID)(newOKHandler(&called))
+	req := httptest.NewRequest(http.MethodPost, "/connector/request", nil)
+	req.Header.Set("Origin", origin)
+	body := &observedConnectorBody{}
+	req.Body = body
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || body.read || called {
+		t.Fatal("unsigned body was read or admitted")
+	}
+	authorizeTestConnectorRequest(t, svc, authority, req)
+	body.read = false
+	req.Body = body
+	req.Header.Set("Origin", "chrome-extension://evil")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || body.read || called {
+		t.Fatal("wrong-origin body was read or admitted")
+	}
+	req.Header.Set("Origin", origin)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || called {
+		t.Fatal("wrong-origin challenge was reusable")
+	}
+}
+
+func TestDesktopPairingRequiresSessionAndPassword(t *testing.T) {
+	const extID = "chrome-extension://desktop-confirm"
+	svc := connector.NewService(t.TempDir(), &fakeConnectorBackend{}, nil)
+	_, key := newTestConnectorKey(t)
+	if err := svc.BeginKeyPair(extID, key); err != nil {
+		t.Fatal(err)
+	}
+	code := svc.PendingPairings()[0].Code
+	mux := http.NewServeMux()
+	registerConnector(mux, svc, withConnectorPairingCodeAuthorizer(func(password string) error {
+		if password != "correct" {
+			return vault.ErrWrongPassword
+		}
+		return nil
+	}))
+	handler := sessionGuard(testSessionToken, mux)
+	for _, tc := range []struct {
+		name, session, password string
+		want                    int
+	}{
+		{"no session", "", "correct", http.StatusUnauthorized},
+		{"wrong password", testSessionToken, "wrong", http.StatusUnauthorized},
+		{"valid", testSessionToken, "correct", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/connector/confirm-pair", strings.NewReader(`{"extension_id":"`+extID+`","code":"`+code+`","password":"`+tc.password+`"}`))
+			req.Host = "127.0.0.1:8090"
+			req.Header.Set("Origin", "http://127.0.0.1:8090")
+			req.Header.Set("X-Bursa-Session", tc.session)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status=%d want=%d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+			_, paired := svc.PairedExtensionID()
+			if paired != (tc.want == http.StatusOK) {
+				t.Fatal("pairing changed without authorized confirmation")
+			}
+		})
+	}
 }
