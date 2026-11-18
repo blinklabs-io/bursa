@@ -105,7 +105,7 @@ type ImportRequest struct {
 	Authorization []byte `json:"authorization"`
 }
 
-// ImportStore writes the first version of an empty state secret.
+// ImportStore writes the first state of an empty state secret.
 type ImportStore interface {
 	Import(
 		ctx context.Context,

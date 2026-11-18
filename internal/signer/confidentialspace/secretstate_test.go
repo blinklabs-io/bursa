@@ -362,8 +362,8 @@ func (c *fakeSecretClient) DestroySecretVersion(
 
 func (*fakeSecretClient) Close() error { return nil }
 
-// provisionedSecret returns a secret provisioned the way key import will: one
-// version holding a pending envelope and no counters.
+// provisionedSecret returns a secret with one version holding a pending
+// envelope and no counters.
 func provisionedSecret(t *testing.T) *fakeSecretClient {
 	t.Helper()
 	key, err := createEnvelope(t.Context(), Config{

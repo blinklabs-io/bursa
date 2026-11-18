@@ -354,12 +354,12 @@ func (s *SecretStateStore) Replace(expected, data []byte) error {
 	return nil
 }
 
-// Import writes envelope and the starting counter of each profile as the first
-// version of an empty state secret: one with no version, or whose newest
-// version has an empty payload. It refuses any other state, so an existing
-// envelope is never replaced. nextIssue maps each profile to the next issue
-// number its explicit path accepts. The store is not loaded afterwards; a
-// normal start loads what Import wrote.
+// Import writes envelope and the starting counter of each profile into an
+// empty state secret: one whose newest version is enabled or absent and whose
+// every enabled version has an empty payload. It refuses any other state, so
+// an existing envelope is never replaced or destroyed. nextIssue maps each
+// profile to the next issue number its explicit path accepts. The store is not
+// loaded afterwards; a normal start loads what Import wrote.
 func (s *SecretStateStore) Import(
 	ctx context.Context,
 	envelopeBytes []byte,
@@ -389,6 +389,9 @@ func (s *SecretStateStore) Import(
 	case len(resp.GetPayload().GetData()) != 0:
 		return ErrStateNotEmpty
 	}
+	if err := s.requireEnabledVersionsEmpty(ctx); err != nil {
+		return err
+	}
 	sealKey, err := s.deriveSealKey(ctx, e)
 	if err != nil {
 		return err
@@ -413,6 +416,33 @@ func (s *SecretStateStore) Import(
 		s.sealKey, s.pub = nil, nil
 	}()
 	return s.saveLocked(ctx, envelopeBytes, states)
+}
+
+// requireEnabledVersionsEmpty refuses unless every enabled version of the
+// secret has an empty payload. The cleanup after a write destroys every older
+// enabled version, so one holding a wrapped key would be lost. Versions are
+// read by number, which unlike the version list is strongly consistent.
+func (s *SecretStateStore) requireEnabledVersionsEmpty(
+	parent context.Context,
+) error {
+	ctx, cancel := s.rpcContext(parent)
+	defer cancel()
+	for n := uint64(1); ; n++ {
+		resp, err := s.accessVersion(ctx, n)
+		if status.Code(err) == codes.NotFound {
+			return nil
+		}
+		// Disabled or destroyed: the cleanup destroys only enabled ones.
+		if status.Code(err) == codes.FailedPrecondition {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read state secret version %d: %w", n, err)
+		}
+		if len(resp.GetPayload().GetData()) != 0 {
+			return ErrStateNotEmpty
+		}
+	}
 }
 
 // seededCounterState is the counter record of an imported pool whose next

@@ -393,7 +393,7 @@ are those of the Cloud Storage counter.
 - Bursa never creates or deletes the secret. A missing secret, a secret without
   a version, or an empty payload stops a normal start; the workload never
   generates a pool key in this mode and refuses to create one. Only the import
-  below writes the first version.
+  below writes a wrapped key into it.
 - A pending envelope creates the counters of the profiles being served, and
   `--create-profile-counter` adds a profile later, as in the Cloud Storage mode.
 - There is no compare-and-swap. Run one workload per secret. The signer's
@@ -410,8 +410,8 @@ A registered pool cannot take a new key, so `--state-secret` is provisioned by
 importing its existing cold key into the empty secret. The workload never
 generates a key in this mode; the import is the only way the secret gets one.
 
-Start the workload in import mode, against a secret with no version or an empty
-payload:
+Start the workload in import mode, against a secret whose newest version is
+enabled or absent and whose enabled versions all have an empty payload:
 
 ```text
 bursa confidential-space-workload \
@@ -488,9 +488,10 @@ The import runs in three steps.
 spends the challenge, which is used once. It then checks that the key derives
 the expected verification key and refuses a mismatch, wraps the key into an
 `active` envelope exactly as a generated key is wrapped, and adds the envelope
-and one sealed counter record per profile as the first version of the secret,
-refusing if the secret already holds data. A request is refused if it is
-altered, replayed, built for another route, signed by another authority, or
+and one sealed counter record per profile as a new version of the secret,
+refusing if any enabled version already holds data. The check and the write are
+not atomic: run one import-mode workload per secret. A request is refused if it
+is altered, replayed, built for another route, signed by another authority, or
 sent while the secret is not empty. The workload wipes the ephemeral key and
 the plaintext and exits.
 

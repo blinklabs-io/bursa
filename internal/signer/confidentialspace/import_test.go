@@ -650,6 +650,21 @@ func TestImportRefusesNonEmptySecret(t *testing.T) {
 		default:
 		}
 	})
+	t.Run("older version under an empty newest", func(t *testing.T) {
+		t.Parallel()
+		// The write's cleanup destroys every older enabled version, so the
+		// older envelope would be lost.
+		c := provisionedSecret(t)
+		c.seed([]byte{})
+		h := newImportHarnessOn(t, c)
+		err := h.importer.Import(t.Context(), h.request(h.challenge()))
+		if !errors.Is(err, ErrStateNotEmpty) {
+			t.Fatalf("import over an older envelope: %v", err)
+		}
+		if adds, destroys := c.counts(); adds != 0 || destroys != 0 {
+			t.Fatalf("%d versions added and %d destroyed", adds, destroys)
+		}
+	})
 	t.Run("provisioned after the challenge", func(t *testing.T) {
 		t.Parallel()
 		c := &fakeSecretClient{}
