@@ -466,7 +466,8 @@ bursa confidential-space import \
   Stop issuing certificates with the old signer first. `NEXT` is one above the
   highest issue number the key has signed, whether or not that certificate is
   on chain, and never below the pool's on-chain operational-certificate counter
-  plus one. Use `0` for a pool that has never issued. Every profile signs with
+  plus one. Take that highest number from the old signer's records; do not
+  import while it cannot be established. Use `0` for a pool that has never issued. Every profile signs with
   the one imported key. `NEXT` seeds `NextIssueNumber`. For a positive `NEXT`,
   both the last issued number and the `opcert-next` floor are `NEXT - 1`, so the
   explicit-counter path cannot issue below `NEXT` and `opcert-next` refuses a
