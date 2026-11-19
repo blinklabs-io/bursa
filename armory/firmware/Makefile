@@ -50,9 +50,9 @@ CHAIN ?=
 #   multi    see above.
 # On every image /, /v1/challenge and, on single-scope signing images,
 # /v1/inventory take no host key; the provisioning image also serves
-# /v1/identity, /pubkey and /reset without one, and the wipe image
-# /wipe/device (confirmed by the identity public key), /wipe/objects and
-# /reset; a TESTNET=1 image adds /sign and /pubkey. The link is plain HTTP
+# /v1/identity and /pubkey without one, and the wipe image /wipe/device
+# (confirmed by the identity public key) and /wipe/objects; a TESTNET=1 image
+# adds /sign and /pubkey. The link is plain HTTP
 # over USB CDC-ECM, with no TLS and no peer filter; the firmware logs its
 # host auth mode, transport and these routes at boot.
 

@@ -44,6 +44,7 @@ func adminServer(t *testing.T) *httptest.Server {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("POST "+device.RouteReset, svc.ResetHandler(func() {}))
 	mux.Handle("/wipe/", svc.WipeHandler())
 	mux.Handle("/", svc.Handler())
 
@@ -122,6 +123,15 @@ func TestProvisionAndWipeSubcommandsSign(t *testing.T) {
 
 	if out, err = adminRun(srv, wipe, "-host-key", hostFile, "wipe", "signlog"); err != nil {
 		t.Fatalf("signed signing log wipe: %v", err)
+	}
+
+	if out, err = adminRun(srv, "", "reset"); err == nil {
+		t.Fatalf("unsigned reset accepted: %s", out)
+	}
+	if out, err = adminRun(srv, "", "-host-key", hostFile, "reset"); err != nil {
+		t.Fatalf("signed reset: %v", err)
+	} else if out != "resetting\n" {
+		t.Fatalf("reset response %q", out)
 	}
 
 	// the device wipe is never signed, even when a host key is given
@@ -366,5 +376,31 @@ func TestAdminRequestChecksRouteFirst(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "unknown route") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestResetDoesNotReadStdin(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"", "{}", "not a request"} {
+		t.Run(input, func(t *testing.T) {
+			srv := adminServer(t)
+			in := &countingReader{r: strings.NewReader(input)}
+			var out bytes.Buffer
+			err := runIO([]string{
+				"-signer", srv.URL, "-source", "", "reset",
+			}, in, &out)
+			if reads := in.reads.Load(); reads != 0 {
+				t.Fatalf(
+					"reset read stdin %d times; it takes no request input",
+					reads,
+				)
+			}
+			if err != nil {
+				t.Fatalf("reset: %v", err)
+			}
+			if out.String() != "resetting\n" {
+				t.Fatalf("reset response %q", out.String())
+			}
+		})
 	}
 }

@@ -36,6 +36,7 @@ device wipe it is in bootstrap again.
 | signing: `/v1/inventory` | unsigned | unsigned | a host key of the profile's scope |
 | provisioning: `/provision/*` | unsigned in bootstrap; then a host key of the image's scope | as testnet | the first host key unsigned in bootstrap; every other request a host key of the scope acted on (`/provision/identity`: of a mainnet scope) |
 | wipe: `/wipe/profile`, `/wipe/signlog`, `/wipe/cold` | unsigned in bootstrap; then a host key of the image's scope | as testnet | `/wipe/profile`: a host key of the profile's scope, or of a mainnet scope for a testnet profile; `/wipe/cold`: of the key's owner scope, or of a mainnet scope for a testnet or unowned key; `/wipe/signlog`: of a mainnet scope |
+| provisioning and wipe: `/reset` | unsigned in bootstrap; then a host key of the image's scope | as testnet | always a host key of a scope the image trusts |
 
 With a host key of another scope on the device, a single-scope image is not
 in bootstrap: its signing, provisioning and wipe routes above take no
@@ -45,10 +46,10 @@ Some routes take no host key on any image, by design:
 
 - every image: `/` (the bring-up report) and `/v1/challenge`;
 - provisioning image: `/v1/identity` (the identity proof that encrypts key
-  imports), `/pubkey` and `/reset`;
+  imports) and `/pubkey`;
 - wipe image: `/wipe/device`, confirmed by the identity public key, which is
   public, and the way out when every host key is lost; `/wipe/objects`,
-  which lists object IDs; and `/reset`;
+  which lists object IDs;
 - `TESTNET=1` image: `/sign` and `/pubkey`, with the bring-up raw key, never
   a cold key.
 

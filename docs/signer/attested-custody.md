@@ -902,12 +902,14 @@ trusts it. The provisioning and wipe images serve `POST /v1/challenge`.
 
 - While no host key of any network or chain is registered, the provisioning
   routes take unsigned requests, so a fresh device can be set up. This is the
-  only time `POST /provision/host-key` adds a key unsigned.
+  only time `POST /provision/host-key` adds a key unsigned, and the
+  provisioning and wipe images accept `POST /reset` unsigned only in this
+  bootstrap state.
 - Once any host key is registered, `/provision/profile`, `/provision/floor`,
   `/provision/reward`, `/provision/pins`, `/provision/cold`,
   `/provision/identity`, `/provision/host-key`, `/provision/host-key/revoke`,
-  `/wipe/profile`, `/wipe/cold` and
-  `/wipe/signlog` need `challenge`, `host_key` and `host_signature` fields
+  `/wipe/profile`, `/wipe/cold`, `/wipe/signlog` and `/reset` need `challenge`,
+  `host_key` and `host_signature` fields
   from a host key of the image's network and chain. A key of another network
   or chain does not qualify, and does not let the image's first key in
   unsigned. Private-key requests also use the identity-authenticated encrypted

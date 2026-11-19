@@ -405,9 +405,9 @@ func (w *Writer) Append(rec Record) (Entry, error) {
 	return e, nil
 }
 
-// recheck confirms the head store and the medium's latest entry still match
-// the writer's head, so a card swapped while running is caught before a
-// write.
+// recheck confirms the head store and the medium's chain still match the
+// writer's head, so a card swapped or changed while running is caught before
+// a write.
 func (w *Writer) recheck() error {
 	stored, err := w.heads.Load()
 	if err != nil {
@@ -418,35 +418,40 @@ func (w *Writer) recheck() error {
 		return ErrHeadStore
 	}
 
-	if w.head.Seq == 0 {
-		block := make([]byte, BlockSize)
-		if err = w.medium.ReadBlocks(0, block); err != nil {
-			return fmt.Errorf("%w: read header: %w", ErrMedium, err)
-		}
-
-		if sha256.Sum256(block) != w.head.Hash {
-			return ErrHashMismatch
-		}
-
-		return nil
+	block := make([]byte, BlockSize)
+	if err = w.medium.ReadBlocks(0, block); err != nil {
+		return fmt.Errorf("%w: read header: %w", ErrMedium, err)
+	}
+	if sha256.Sum256(block) != w.hdr.Hash {
+		return ErrHashMismatch
 	}
 
-	buf := make([]byte, RecordSize)
-	if err = w.medium.ReadBlocks(slotLBA(w.head.Seq), buf); err != nil {
-		return fmt.Errorf("%w: read entry %d: %w", ErrMedium, w.head.Seq, err)
-	}
-
-	e, err := decodeRecord(buf, w.hdr.Version)
+	entries, _, err := scan(w.medium, w.hdr, false, false)
 	if err != nil {
-		return fmt.Errorf(
-			"%w: entry %d unreadable: %w",
-			ErrRollback,
-			w.head.Seq,
-			err,
-		)
+		return err
 	}
 
-	if e.Seq != w.head.Seq || e.Hash != w.head.Hash {
+	actual := headOf(w.hdr, entries)
+	switch {
+	case actual.Seq < w.head.Seq:
+		return fmt.Errorf(
+			"%w: medium at entry %d, head at %d",
+			ErrRollback,
+			actual.Seq,
+			w.head.Seq,
+		)
+	case actual.Seq == w.head.Seq+1 && entries[w.head.Seq].Prev == w.head.Hash:
+		// A failed Sync may leave the next complete entry visible but not
+		// durable. Append rewrites that slot before advancing the head.
+		return nil
+	case actual.Seq > w.head.Seq:
+		return fmt.Errorf(
+			"%w: medium at entry %d, head at %d",
+			ErrAhead,
+			actual.Seq,
+			w.head.Seq,
+		)
+	case actual.Hash != w.head.Hash:
 		return ErrHashMismatch
 	}
 

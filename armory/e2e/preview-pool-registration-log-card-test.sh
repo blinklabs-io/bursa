@@ -57,7 +57,10 @@ case \$1 in
 address) echo stake_test1stub; exit 0 ;;
 reward-hex) echo e0aa; exit 0 ;;
 esac
-for a in "\$@"; do [ "\$a" = keys ] && { touch "$T/keys.reached"; exit 42; }; done
+for a in "\$@"; do
+	[ "\$a" = reset ] && { echo reset >> "$T/events"; echo resetting; exit 0; }
+	[ "\$a" = keys ] && { touch "$T/keys.reached"; exit 42; }
+done
 echo "unexpected armory-pool \$*" >&2
 exit 99
 STUB
@@ -83,7 +86,6 @@ STUB
 cat > "$T/bin/curl" << STUB
 #!/usr/bin/env bash
 case "\$*" in
-*/reset*) echo reset >> "$T/events"; exit 0 ;;
 *POST*) echo "unexpected curl \$*" >&2; exit 99 ;;
 esac
 n=\$((\$(cat "$T/gets" 2> /dev/null || echo 0) + 1))

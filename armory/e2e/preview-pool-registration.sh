@@ -130,7 +130,8 @@ need_build() {
 	[ "$have" = provisioning ] || fail "device runs the ${have:-unknown} image, not the provisioning image"
 	[ -n "${SIGNING_IMX:-}" ] || fail "device runs the provisioning image; set SIGNING_IMX, or load the signing image with the log card in and rerun"
 	(: < /dev/tty) 2> /dev/null || fail "no terminal to wait for the signing log card; load the signing image with the card in and rerun"
-	curl -sf -m 5 --interface "$SOURCE" -H 'Content-Type: application/json' -X POST "$SIGNER/reset" > /dev/null || true
+	"$ARMORY_POOL" -signer "$SIGNER" -source "$SOURCE" \
+		${HOST_KEY:+-host-key "$HOST_KEY"} reset > /dev/null
 	sleep 3
 	# the board now waits in USB recovery mode, which a card in the slot
 	# would have blocked at power-up; the signing image reads the card when

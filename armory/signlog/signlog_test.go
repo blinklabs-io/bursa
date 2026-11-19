@@ -512,6 +512,31 @@ func TestOlderCopySwappedUnderWriterRefusedAtAppend(t *testing.T) {
 	}
 }
 
+func TestEarlierEntryChangedUnderWriterRefusedAtAppend(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, 8)
+	w := f.open(t)
+	f.fill(t, w, 3)
+	f.mutate(t, func(img []byte) {
+		img[slotOffset(2)+40] ^= 0x01
+		refix(img, 2)
+	})
+
+	if _, err := w.Append(bodyRecord(5)); !errors.Is(err, ErrChain) {
+		t.Fatalf("got %v, want ErrChain", err)
+	}
+
+	if head, _ := f.heads.Load(); head.Seq != 3 {
+		t.Errorf("head moved to %d", head.Seq)
+	}
+
+	img := f.medium.Image()
+	if !isZero(img[slotOffset(4) : slotOffset(4)+RecordSize]) {
+		t.Fatal("append wrote after the changed entry")
+	}
+}
+
 func TestBlankCardWithHeadRefused(t *testing.T) {
 	t.Parallel()
 
