@@ -29,7 +29,7 @@ printf '%s\n' "$support_fn" | rg -U -q 'NSHomeDirectory\(\)'
 # The node database is kept out of the wallet tree on both platforms.
 node_fn=$(sed -n '/private func nodeDataDirectory(/,/^    }/p' "$ios")
 printf '%s\n' "$node_fn" | rg -U -q 'appendingPathComponent\("BursaNode", isDirectory: true\)'
-printf '%s\n' "$node_fn" | rg -U -q 'noteBackupExclusionFailure\(Self\.excludeFromBackup\(nodeDir\)\)'
+printf '%s\n' "$node_fn" | rg -U -q 'excludeDirectoryFromBackup\(nodeDir\)'
 printf '%s\n' "$node_fn" | rg -U -q '\.protectionKey'
 # Go moves an existing database into the node directory only while that
 # directory does not exist, so the app must hand over a child of the directory
@@ -50,12 +50,12 @@ printf '%s\n' "$marker_branch" | rg -U -q 'Self\.removeMigratedLegacyEntries'
 # first creation.
 rg -q 'values\.isExcludedFromBackup = true' "$ios"
 create_branch=$(sed -n '/try fileManager.createDirectory(/,/^            if let documentsDir,/p' "$ios")
-printf '%s\n' "$create_branch" | rg -U -q 'Self\.excludeFromBackup\(dataDir\)'
+printf '%s\n' "$create_branch" | rg -U -q 'excludeDirectoryFromBackup\(dataDir, containsContacts: true\)'
 # Documents is backed up too, and the legacy tree outlives the copy: it survives
 # the copy window, a deferred cleanup, and a name a later launch cannot remove.
 # So it is excluded before the copy starts, not only on the fallback path.
 pre_copy=$(sed -n '/try fileManager.createDirectory(/,/let entries = try fileManager.contentsOfDirectory(/p' "$ios")
-printf '%s\n' "$pre_copy" | rg -U -q 'Self\.excludeFromBackup\(documentsDir\)'
+printf '%s\n' "$pre_copy" | rg -U -q 'excludeDirectoryFromBackup\(documentsDir, containsContacts: true\)'
 # A setResourceValues failure leaves the tree backup-eligible, which is the
 # condition the exclusion exists to remove, so it is reported to the user and
 # not only logged.
@@ -70,31 +70,33 @@ printf '%s\n' "$presenter" | rg -U -q 'present\(alert, animated: true\)'
 # Every exclusion call has to route its failure to that report, so a new call
 # site cannot reintroduce the log-only path.
 exclusion_calls=$(rg -c 'Self\.excludeFromBackup\(' "$ios")
-reported_calls=$(rg -c '^\s*noteBackupExclusionFailure\(' "$ios")
-fatal_calls=$(rg -c '^\s*let detail = Self\.excludeFromBackup\(' "$ios")
-if [ "$exclusion_calls" -ne $((reported_calls + fatal_calls)) ]; then
-    printf '%s\n' 'every Self.excludeFromBackup call must report its failure' >&2
+if [ "$exclusion_calls" -ne 2 ]; then
+    printf '%s\n' 'backup exclusions must use the directory reporter or contact protection' >&2
     exit 1
 fi
 # The failed-migration fallback runs from the legacy Documents tree, which is
 # backed up too, so it has to carry the exclusion and has to be reported.
 migration_catch=$(sed -n '/wallet data migration failed/,/^    }/p' "$ios")
-printf '%s\n' "$migration_catch" | rg -U -q 'Self\.excludeFromBackup\('
+printf '%s\n' "$migration_catch" | rg -U -q 'excludeDirectoryFromBackup\(fallback, containsContacts: true\)'
 printf '%s\n' "$migration_catch" | rg -U -q 'migrationFailureDetail = '
 
 # Plaintext contacts may only be persisted while the selected wallet tree is
 # excluded from backup. A failed exclusion keeps the wallet available but the
 # binding must receive the fail-closed contact-persistence setting before boot.
 rg -q 'private var contactsPersistenceEnabled = true' "$ios"
-backup_failure=$(sed -n '/private func noteBackupExclusionFailure(/,/^    }/p' "$ios")
-printf '%s\n' "$backup_failure" | rg -U -q 'disablesContactPersistence[\s\S]*contactsPersistenceEnabled = false'
-printf '%s\n' "$backup_failure" | rg -U -q 'contactDirectory[\s\S]*contactDirectoriesRequiringFileExclusion\.append'
-printf '%s\n' "$create_branch" | rg -U -q 'Self\.excludeFromBackup\(dataDir\)[\s\S]*disablesContactPersistence: true'
-printf '%s\n' "$migration_catch" | rg -U -q 'Self\.excludeFromBackup\(fallback\)[\s\S]*disablesContactPersistence: true'
+backup_failure=$(sed -n '/private func excludeDirectoryFromBackup(/,/^    }/p' "$ios")
+printf '%s\n' "$backup_failure" | rg -U -q 'guard let detail = Self\.excludeFromBackup\(directory\) else \{ return \}'
+printf '%s\n' "$backup_failure" | rg -U -q '_ directory: URL,'
+printf '%s\n' "$backup_failure" | rg -U -q 'if containsContacts \{[\s\S]*contactsPersistenceEnabled = false[\s\S]*contactDirectoriesRequiringFileExclusion\.append\(directory\)'
+printf '%s\n' "$backup_failure" | rg -U -q 'backupExclusionFailureDetail = detail'
+printf '%s\n' "$migration_catch" | rg -U -q 'excludeDirectoryFromBackup\(fallback, containsContacts: true\)'
 contact_protection=$(sed -n '/private func protectExistingContactsFromBackup(/,/^    }/p' "$ios")
-printf '%s\n' "$contact_protection" | rg -U -q 'contacts\.json[\s\S]*Self\.excludeFromBackup\(contacts\)[\s\S]*throw'
+printf '%s\n' "$contact_protection" | rg -U -q 'try fileManager\.attributesOfItem\(atPath: contacts\.path\)'
+printf '%s\n' "$contact_protection" | rg -U -q 'lookupError.domain == NSCocoaErrorDomain,[\s\S]*fileReadNoSuchFile.rawValue[\s\S]*fileNoSuchFile.rawValue[\s\S]*continue'
+printf '%s\n' "$contact_protection" | rg -U -q 'firstFailure = error.localizedDescription'
+printf '%s\n' "$contact_protection" | rg -U -q 'let detail = Self\.excludeFromBackup\(contacts\)\n            if firstFailure == nil \{\n                firstFailure = detail\n            \}\n        \}\n        if let firstFailure \{\n            throw NSError'
 view_load=$(sed -n '/override func viewDidLoad(/,/^    }/p' "$ios")
-printf '%s\n' "$view_load" | rg -U -q 'protectExistingContactsFromBackup\(\)[\s\S]*startWallet\('
+printf '%s\n' "$view_load" | rg -U -q 'try protectExistingContactsFromBackup\(\)\n        \} catch \{\n            migrationFailureDetail = nil\n            backupExclusionFailureDetail = nil\n[^\n]*\n            showStartupError\([^\n]*\n            return\n        \}[\s\S]*startWallet\('
 start_fn=$(sed -n '/private func startWallet(/,/^    }/p' "$ios")
 printf '%s\n' "$start_fn" | rg -U -q 'setContactsPersistenceEnabled\(contactsPersistenceEnabled\)[\s\S]*app\?\.start\('
 

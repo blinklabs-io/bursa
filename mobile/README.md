@@ -207,16 +207,17 @@ and a name a later launch could not remove.
 while the multi-gigabyte chain database is being copied is the likely case —
 and the result is a wallet tree that is still backup-eligible. That failure is
 reported to the user in a one-time alert rather than only written to the system
-log, because the user is the only one who can clear the condition. It is not
-fatal: the wallet's data is intact, the next launch retries, and refusing to
-launch would deny access to a working wallet over something the app cannot fix.
+log, because the user is the only one who can clear the condition. A directory
+exclusion failure is nonfatal only if each existing contact file can be excluded
+separately or confirmed absent. The next launch retries the directory exclusion.
 When the selected wallet tree cannot be excluded, the iOS shell disables
 contact persistence before boot. The address book stays empty and contact
 mutations return a service-unavailable error for that launch, so plaintext
-names, addresses, and notes are never added to backup-eligible storage. Any
-existing `contacts.json` is separately excluded from backup before startup. If
-the system also rejects that file-level exclusion, startup stops instead of
-leaving plaintext contacts eligible for the next device backup.
+names, addresses, and notes are never added to backup-eligible storage. The
+shell attempts protection of every existing contact copy, even after a failure.
+If a contact file cannot be excluded or its existence cannot be determined,
+startup stops. Stopping does not itself exclude an existing file: that file may
+remain eligible for device backup until a subsequent exclusion succeeds.
 
 Android sets `android:allowBackup="false"`, which opts out of cloud backup and
 restore. That attribute does not govern Android 12+ device-to-device transfer,
