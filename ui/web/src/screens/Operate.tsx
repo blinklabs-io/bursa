@@ -7,19 +7,21 @@ import { Credentials } from "./operate/Credentials";
 import { OperationalCert } from "./operate/OperationalCert";
 import { Registration } from "./operate/Registration";
 import { Retirement } from "./operate/Retirement";
+import { Vote } from "./operate/Vote";
 import { MetadataBuilder } from "./operate/MetadataBuilder";
 
 interface OperateProps {
   account: Account;
 }
 
-type Tab = "credentials" | "opcert" | "registration" | "retirement" | "metadata";
+type Tab = "credentials" | "opcert" | "registration" | "retirement" | "vote" | "metadata";
 
 const TABS: readonly TabDef<Tab>[] = [
   { key: "credentials", label: "Credentials" },
   { key: "opcert", label: "Operational cert" },
   { key: "registration", label: "Registration" },
   { key: "retirement", label: "Retirement" },
+  { key: "vote", label: "Vote" },
   { key: "metadata", label: "Metadata" },
 ];
 
@@ -41,6 +43,8 @@ export function Operate({ account }: OperateProps) {
         return <Registration account={account} />;
       case "retirement":
         return <Retirement />;
+      case "vote":
+        return <Vote />;
       case "metadata":
         return <MetadataBuilder />;
     }
