@@ -45,7 +45,9 @@ bursa-wallet
 The desktop build opens a native window. The headless build prints an authenticated
 launch URL for the interface on `127.0.0.1:8090`; open that complete URL in a
 browser. The fragment contains a process-local session capability and is removed
-from browser history after the page establishes its session.
+from browser history after the page establishes its session. The capability stays
+only in page memory. After reloading, reopen the complete launch URL (headless)
+or relaunch the desktop wallet to authorize the new page.
 
 **The first launch syncs a node.** By default the wallet bootstraps from a
 [Mithril](https://mithril.network) snapshot rather than replaying the chain from
@@ -187,9 +189,16 @@ on.
 The desktop binary serves on `127.0.0.1:8090`. Wallet API routes require the
 process-local session capability carried in the launch URL. Loopback, Host, and
 Origin checks are additional browser protections and do not authorize a local
-client by themselves. The session cookie is marked `Secure` only when the
-listener itself serves TLS; on the default plain-HTTP loopback listener WebKit
-webviews would refuse to store a `Secure` cookie.
+client by themselves. Control requests send the capability in `X-Bursa-Session`;
+event streams use single-use tickets. No control credential is stored in cookies
+or browser storage.
+
+Extension pairing starts in the extension popup. Compare the full key fingerprint
+shown there with the fingerprint revealed in Settings, then confirm the matching
+code in Settings using the vault password. The extension checks the completed
+binding with a signed challenge; it never sends a desktop authorization code to
+the loopback listener. Each subsequent request signs a single-use challenge over
+its method, path, and body.
 
 ### Remote transaction submission
 

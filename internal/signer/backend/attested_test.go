@@ -33,6 +33,8 @@ import (
 type fakeEnclave struct {
 	mu   sync.Mutex
 	keys []fakeEnclaveKey
+	// inventoryProfile selects the profile committed to by inventory evidence.
+	inventoryProfile string
 	// seen holds request nonces already served; a repeat is refused, as a
 	// real enclave must.
 	seen      map[string]bool
@@ -95,7 +97,9 @@ func (e *fakeEnclave) Inventory(
 		Version: AttestedProtocol,
 		Keys:    keys,
 		Attestation: []byte(
-			"evidence:" + hex.EncodeToString(InventoryBinding(nonce, keys)),
+			"evidence:" + hex.EncodeToString(
+				InventoryBindingForProfile(nonce, e.inventoryProfile, keys),
+			),
 		),
 	}
 	if e.tamperInv != nil {
@@ -124,6 +128,39 @@ func (e *fakeEnclave) Sign(
 		e.tamperResp(req, &resp)
 	}
 	return resp, nil
+}
+
+func TestProfiledAttestedBackendBindsInventoryProfile(t *testing.T) {
+	t.Parallel()
+
+	const expectedProfile = "pool@preview"
+	for _, profile := range []string{"", "pool@mainnet"} {
+		profile := profile
+		name := profile
+		if name == "" {
+			name = "legacy unprofiled binding"
+		}
+		t.Run(name, func(t *testing.T) {
+			e := newFakeEnclave(t, KeyTypePool)
+			e.inventoryProfile = profile
+			b := NewProfiledAttestedBackend(
+				"enclave",
+				expectedProfile,
+				e,
+				stubVerifier{},
+			)
+
+			if err := b.Load(t.Context()); !errors.Is(err, ErrAttestation) {
+				t.Fatalf("Load: got %v, want ErrAttestation", err)
+			}
+			if _, err := b.GetKey(t.Context(), e.hashOf(0)); !errors.Is(
+				err,
+				ErrKeyNotFound,
+			) {
+				t.Fatalf("GetKey after refused inventory: got %v, want ErrKeyNotFound", err)
+			}
+		})
+	}
 }
 
 func (e *fakeEnclave) signLocked(
@@ -432,6 +469,7 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newFakeEnclave(t, KeyTypePayment)
+	e.inventoryProfile = "pool@mainnet"
 	b := NewProfiledAttestedBackend(
 		"enclave",
 		"pool@mainnet",
@@ -495,6 +533,7 @@ func TestAttestedKeySignsEncodedTxBody(t *testing.T) {
 func TestAttestedKeySendsFixedProfileAndEra(t *testing.T) {
 	t.Parallel()
 	e := newFakeEnclave(t, KeyTypePayment)
+	e.inventoryProfile = "pool@preview"
 	b := NewProfiledAttestedBackend(
 		"enclave",
 		"pool@preview",
@@ -620,6 +659,7 @@ func TestProfiledAttestedKeyRequiresBindingSignature(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newFakeEnclave(t, KeyTypePayment)
+			e.inventoryProfile = "profile-a"
 			e.tamperResp = func(_ AttestedRequest, resp *AttestedResponse) { tc.tamper(resp) }
 			b := NewProfiledAttestedBackend(
 				"enclave",

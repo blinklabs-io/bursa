@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -40,6 +41,109 @@ import (
 )
 
 const signerReadTimeout = 30 * time.Second
+
+const (
+	signerReadinessInterval = 10 * time.Second
+	signerReadinessTimeout  = 3 * time.Second
+)
+
+var (
+	errSignerReadinessPending = errors.New("watermark readiness check pending")
+	errSignerReadinessStale   = errors.New("watermark readiness result is stale")
+)
+
+type signerReadinessState struct {
+	mu           sync.RWMutex
+	now          func() time.Time
+	err          error
+	haveResult   bool
+	probing      bool
+	probeStarted time.Time
+}
+
+func newSignerReadinessState(now func() time.Time) *signerReadinessState {
+	return &signerReadinessState{now: now}
+}
+
+func (s *signerReadinessState) run(
+	ctx context.Context,
+	pinger watermark.Pinger,
+	ticks <-chan time.Time,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		s.mu.Lock()
+		s.probing = true
+		probeStarted := s.now()
+		s.probeStarted = probeStarted
+		s.mu.Unlock()
+
+		probeCtx, cancel := context.WithTimeout(ctx, signerReadinessTimeout)
+		err := pinger.Ping(probeCtx)
+		cancel()
+		if !s.now().Before(probeStarted.Add(signerReadinessTimeout)) {
+			err = errSignerReadinessStale
+		}
+
+		s.mu.Lock()
+		s.err = err
+		s.haveResult = true
+		s.probing = false
+		s.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+		}
+	}
+}
+
+func (s *signerReadinessState) check(context.Context) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.probing && !s.now().Before(
+		s.probeStarted.Add(signerReadinessTimeout),
+	) {
+		return errSignerReadinessStale
+	}
+	if !s.haveResult {
+		return errSignerReadinessPending
+	}
+	return s.err
+}
+
+// newSignerReadinessCheck keeps one writeability probe on a fixed cadence so
+// unauthenticated readiness traffic cannot drive watermark database writes.
+func newSignerReadinessCheck(
+	ctx context.Context,
+	pinger watermark.Pinger,
+) func(context.Context) error {
+	state := newSignerReadinessState(time.Now)
+	ticker := time.NewTicker(signerReadinessInterval)
+	go func() {
+		defer ticker.Stop()
+		state.run(ctx, pinger, ticker.C)
+	}()
+	return state.check
+}
+
+func newSignerServiceMux(
+	ctx context.Context,
+	signerHandler http.Handler,
+	pinger watermark.Pinger,
+) *http.ServeMux {
+	var readyCheck func(context.Context) error
+	if pinger != nil {
+		readyCheck = newSignerReadinessCheck(ctx, pinger)
+	}
+	return newSignerMux(signerHandler, api.HealthHandler(readyCheck))
+}
 
 func shutdownSignerServers(
 	ctx context.Context,
@@ -358,16 +462,14 @@ key.`,
 			// Readiness probe: verify the process's runtime dependencies are
 			// usable. Backends were validated at boot (the process exits above
 			// if none are configured); the durable watermark store is the
-			// dependency that can become unreachable at runtime, so ping it
-			// when it has a remote/file backend.
-			readyCheck := func(rctx context.Context) error {
-				if p, ok := wm.(watermark.Pinger); ok {
-					return p.Ping(rctx)
-				}
-				return nil
+			// dependency that can become unreachable at runtime, so probe it on
+			// a fixed cadence when it has a remote/file backend.
+			var readinessPinger watermark.Pinger
+			if p, ok := wm.(watermark.Pinger); ok {
+				readinessPinger = p
 			}
 
-			mux := newSignerMux(srv.Handler(), api.HealthHandler(readyCheck))
+			mux := newSignerServiceMux(ctx, srv.Handler(), readinessPinger)
 
 			addr := fmt.Sprintf(
 				"%s:%d",

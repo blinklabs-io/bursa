@@ -665,7 +665,8 @@ test("connector surfaces a failed extension unpair", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Unpair failed");
 });
 
-test("connector reveals a pending pairing code after password confirmation", async () => {
+test("connector confirms the compared key after password confirmation", async () => {
+ const confirm = vi.spyOn(connectorApi, "confirmPairing").mockResolvedValue(undefined);
   mockStatus("ready", 12345, true);
   vi.mocked(connectorApi.pendingPairings).mockImplementation(async (password?: string) =>
     password
@@ -683,6 +684,8 @@ test("connector reveals a pending pairing code after password confirmation", asy
   });
   fireEvent.click(screen.getByRole("button", { name: /reveal code/i }));
   await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /codes match.*confirm pairing/i }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledWith("chrome-extension://ext1", "123456", "vault-password"));
 });
 
 test("connector card recovers after a transient missing endpoint", async () => {

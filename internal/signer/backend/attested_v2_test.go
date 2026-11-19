@@ -99,7 +99,8 @@ func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/inventory":
 		d.inventory++
 		var in struct {
-			Nonce []byte `json:"nonce"`
+			Nonce   []byte `json:"nonce"`
+			Profile string `json:"profile"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		keys := []AttestedKeyInfo{
@@ -109,7 +110,7 @@ func (d *v2Device) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Version: AttestedProtocol, Keys: keys,
 			Attestation: ed25519.Sign(
 				d.identity,
-				InventoryBinding(in.Nonce, keys),
+				InventoryBindingForProfile(in.Nonce, in.Profile, keys),
 			),
 		})
 	case "/v1/challenge":

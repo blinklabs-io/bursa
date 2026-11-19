@@ -629,7 +629,10 @@ func (s *Service) inventory(req InventoryRequest) (Inventory, error) {
 		},
 	}
 
-	if inv.Attestation, err = s.chip.SignEd25519(profile.IdentityKeyID, InventoryBinding(req.Nonce, inv.Keys)); err != nil {
+	if inv.Attestation, err = s.chip.SignEd25519(
+		profile.IdentityKeyID,
+		InventoryBindingForProfile(req.Nonce, req.Profile, inv.Keys),
+	); err != nil {
 		s.logf("attest: %v", err)
 		return Inventory{}, errDevice
 	}

@@ -199,9 +199,15 @@ jobs:
       - name: Validate release tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          if [[ ! "${GITHUB_REF#refs/tags/}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          tag="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$ ]]; then
             echo "::error::Invalid release tag"
             exit 1
+          fi
+          if [[ "$tag" == *-* ]]; then
+            echo "RELEASE_PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_PRERELEASE=false" >> "$GITHUB_ENV"
           fi
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0 https://github.com/actions/github-script/releases/tag/v9.0.0
         id: create-release
@@ -216,7 +222,7 @@ jobs:
                 generate_release_notes: true,
                 name: process.env.RELEASE_TAG,
                 owner: context.repo.owner,
-                prerelease: false,
+                prerelease: process.env.RELEASE_PRERELEASE === 'true',
                 repo: context.repo.repo,
                 tag_name: process.env.RELEASE_TAG,
               });
@@ -710,6 +716,11 @@ jobs:
             $msys2Loc = "$env:MSYS2_LOC_AMD64"
             $env:CC = "$msys2Loc\mingw64\bin\gcc.exe"
             $env:CXX = "$msys2Loc\mingw64\bin\g++.exe"
+            # gcc spawns cc1 from lib\gcc\..., not bin\, so Windows resolves
+            # cc1's DLL imports (libz-1.dll, libgmp-10.dll, ...) through PATH.
+            # Without this, cc1 loads them from whichever other MinGW is first
+            # on the runner PATH, or fails to start when that one lacks a DLL.
+            $env:PATH = "$msys2Loc\mingw64\bin;$env:PATH"
           } else {
             $msys2Loc = "$env:MSYS2_LOC_ARM64"
             $env:CC = "$msys2Loc\clangarm64\bin\clang.exe"
@@ -1030,8 +1041,6 @@ jobs:
             latest=false
             suffix=-${{ matrix.arch }}
           tags: |
-            # Only version, no revision
-            type=match,pattern=v(.*)-(.*),group=1
             # branch
             type=ref,event=branch
             # semver
@@ -1091,8 +1100,6 @@ jobs:
             blinklabs/bursa
             ghcr.io/${{ github.repository }}
           tags: |
-            # Only version, no revision
-            type=match,pattern=v(.*)-(.*),group=1
             # branch
             type=ref,event=branch
             # semver

@@ -74,8 +74,9 @@ SIGNER_DEV_KEYS="$SIGNER_DEV_DIR/keys"
 #     vault-prod backend); add one back for `local-dev`, keyed on the real
 #     key's hash, once you've dropped a *.skey into the software backend's
 #     `path` - see the runbook's `bursa key` guidance
-#   - drop the `callers:` list (an absent ACL is unrestricted, which is fine
-#     for a local smoke test)
+#   - drop the `callers:` list (an absent general ACL is unrestricted, which is
+#     fine for a local tx/CIP-8 smoke test; opcert issuance still requires an
+#     explicit caller/cold-key/KES-key grant)
 #   - drop the top-level `google:` block (only read by the sops backend)
 #   - change `watermark.type` to `mem` and `watermark.mode` to `warn` (drops
 #     the requirement for a pre-existing `/var/lib/bursa/signer` directory;

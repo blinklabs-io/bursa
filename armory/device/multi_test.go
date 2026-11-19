@@ -1335,7 +1335,11 @@ func inventoryAs(
 func TestMultiInventoryNeedsKeyOfProfileScope(t *testing.T) {
 	t.Parallel()
 
-	_, s := seedMulti(t)
+	chip, s := seedMulti(t)
+	identity, err := chip.PublicKeyEd25519(profile.IdentityKeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, p := range multiProfiles {
 		code, body := inventoryAs(t, s, p, nil)
@@ -1346,6 +1350,24 @@ func TestMultiInventoryNeedsKeyOfProfileScope(t *testing.T) {
 
 			if p.scope == k.scope {
 				mustOK(t, p.name+" by "+k.scope, code, body)
+				var inv Inventory
+				if err := json.Unmarshal(body, &inv); err != nil {
+					t.Fatal(err)
+				}
+				if !ed25519.Verify(
+					identity,
+					InventoryBindingForProfile(nonce(0x31), p.name, inv.Keys),
+					inv.Attestation,
+				) {
+					t.Fatalf("%s: inventory attestation does not bind its profile", p.name)
+				}
+				if ed25519.Verify(
+					identity,
+					InventoryBindingForProfile(nonce(0x31), p.name+"-other", inv.Keys),
+					inv.Attestation,
+				) {
+					t.Fatalf("%s: inventory attestation verifies for another profile", p.name)
+				}
 				continue
 			}
 
@@ -1368,6 +1390,28 @@ func TestInventoryRequestBindingVector(t *testing.T) {
 	const want = "25a68ec406d4ac5178c76c4362792d33c7bf8330af3efe1028db60d03a11860e"
 	if got != want {
 		t.Fatalf("binding %s", got)
+	}
+}
+
+// TestProfiledInventoryBindingVector pins the bytes Bursa's signer computes
+// too (backend TestProfiledInventoryBindingVector).
+func TestProfiledInventoryBindingVector(t *testing.T) {
+	t.Parallel()
+	nonce := bytes.Repeat([]byte{1}, 32)
+	keys := []KeyInfo{
+		{Role: "pool", PublicKey: bytes.Repeat([]byte{2}, 32)},
+		{Role: "stake", PublicKey: bytes.Repeat([]byte{3}, 32)},
+	}
+	const want = "c168a88d08e9c571c67fb4eaafb8e6f1056b73a602af4037d8ee8bdf4ea80435"
+	if got := hex.EncodeToString(
+		InventoryBindingForProfile(nonce, "otg@preview", keys),
+	); got != want {
+		t.Fatalf("profiled inventory binding = %s, want %s", got, want)
+	}
+	got := InventoryBindingForProfile(nonce, "", keys)
+	legacy := InventoryBinding(nonce, keys)
+	if !bytes.Equal(got, legacy) {
+		t.Fatal("empty profile changed the unprofiled inventory binding")
 	}
 }
 

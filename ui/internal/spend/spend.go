@@ -2242,7 +2242,11 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 	// disconnect must not cancel the node broadcast and strand it.
 	submissionContext, cancel := submissionctx.New(ctx)
 	defer cancel()
-	txHash, err := backend.SubmitTxContext(submissionContext, s.chain, txBytes)
+	return s.submit(submissionContext, txBytes)
+}
+
+func (s *Service) submit(ctx context.Context, txBytes []byte) (string, error) {
+	txHash, err := backend.SubmitTxContext(ctx, s.chain, txBytes)
 	if err != nil {
 		return "", submissionerror.Wrap(
 			err,
@@ -2254,8 +2258,28 @@ func (s *Service) Submit(ctx context.Context, txBytes []byte) (string, error) {
 }
 
 // SubmitTxCbor hex-decodes a full (already-signed) tx CBOR and broadcasts it
-// via Submit. It does not sign or hold key material.
+// with the same detached lifetime policy as Submit. It does not sign or hold
+// key material.
 func (s *Service) SubmitTxCbor(
+	ctx context.Context,
+	txCbor string,
+) (TxResult, error) {
+	submissionContext, cancel := submissionctx.New(ctx)
+	defer cancel()
+	return s.submitTxCbor(submissionContext, txCbor)
+}
+
+// SubmitTxCborContext broadcasts a full, already-signed transaction while
+// honoring ctx. The caller owns the context lifetime, including any detachment
+// from an initiating request and any cancellation policy layered on top.
+func (s *Service) SubmitTxCborContext(
+	ctx context.Context,
+	txCbor string,
+) (TxResult, error) {
+	return s.submitTxCbor(ctx, txCbor)
+}
+
+func (s *Service) submitTxCbor(
 	ctx context.Context,
 	txCbor string,
 ) (TxResult, error) {
@@ -2263,10 +2287,7 @@ func (s *Service) SubmitTxCbor(
 	if err != nil {
 		return TxResult{}, fmt.Errorf("%w: tx hex: %w", ErrInvalidTx, err)
 	}
-	hashHex, err := s.Submit(
-		ctx,
-		txBytes,
-	) // existing method; wraps ErrSubmitRejected
+	hashHex, err := s.submit(ctx, txBytes)
 	if err != nil {
 		return TxResult{}, err
 	}

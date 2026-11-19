@@ -25,10 +25,11 @@ import (
 	"net"
 )
 
-// hasControlClients reports whether any profile lists a control client.
-func (a *Agent) hasControlClients() bool {
+// hasAuthorizedClients reports whether any profile lists a remote signing or
+// control client.
+func (a *Agent) hasAuthorizedClients() bool {
 	for _, p := range a.profiles {
-		if len(p.cfg.ControlClientSPKI) > 0 {
+		if len(p.cfg.SignClientSPKI) > 0 || len(p.cfg.ControlClientSPKI) > 0 {
 			return true
 		}
 	}
@@ -39,12 +40,29 @@ func (a *Agent) hasControlClients() bool {
 // public key; fingerprint is nil for a connection without a verified client
 // certificate, which controls nothing.
 func (a *Agent) controlProfilesFor(fingerprint *[sha256.Size]byte) []*profile {
+	return a.profilesFor(fingerprint, func(p *profile) [][sha256.Size]byte {
+		return p.cfg.ControlClientSPKI
+	})
+}
+
+// signProfilesFor returns the profiles whose signing list has the client's
+// public key. Control authority never implies signing authority.
+func (a *Agent) signProfilesFor(fingerprint *[sha256.Size]byte) []*profile {
+	return a.profilesFor(fingerprint, func(p *profile) [][sha256.Size]byte {
+		return p.cfg.SignClientSPKI
+	})
+}
+
+func (a *Agent) profilesFor(
+	fingerprint *[sha256.Size]byte,
+	clientKeys func(*profile) [][sha256.Size]byte,
+) []*profile {
 	if fingerprint == nil {
 		return nil
 	}
 	var out []*profile
 	for _, p := range a.profiles {
-		for _, entry := range p.cfg.ControlClientSPKI {
+		for _, entry := range clientKeys(p) {
 			if subtle.ConstantTimeCompare(fingerprint[:], entry[:]) == 1 {
 				out = append(out, p)
 				break

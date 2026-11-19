@@ -312,7 +312,7 @@ func RunTxBuild(
 	certificateFiles []string,
 	witnessCount uint,
 	outFile string,
-	ttlMargin uint64,
+	ttlMargin, maxFee uint64,
 	timeoutSeconds int64,
 	voteFlags PoolVoteFlags,
 ) error {
@@ -345,6 +345,7 @@ func RunTxBuild(
 		CertificateFiles: certificateFiles,
 		WitnessCount:     witnessCount,
 		TTLMargin:        ttlMargin,
+		MaxFee:           maxFee,
 		Vote:             vote,
 	})
 	if err != nil {

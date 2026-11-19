@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../src/identity', () => ({
+  pairingCode: vi.fn(async () => 'verified-key-fingerprint'),
+  challengeHeaders: vi.fn(async () => ({ 'X-Bursa-Challenge': 'nonce', 'X-Bursa-Signature': 'proof' })),
+  loadIdentity: vi.fn(async () => ({ privateKey: {}, publicKey: 'test-public-key' })),
+  loadOrCreateIdentity: vi.fn(async () => ({ privateKey: {}, publicKey: 'test-public-key' })),
+}));
+
 // Chrome mock — set up BEFORE any module import so side effects see the mock
 const storageMock: Record<string, unknown> = {};
 const chromeMock = {
@@ -99,18 +106,21 @@ describe('popup UI', () => {
     expect(url).toBe('http://127.0.0.1:8090/connector/pair');
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body as string);
-    expect(body).toEqual({ extension_id: window.location.origin });
+    expect(body).toEqual({
+      extension_id: window.location.origin,
+      public_key: 'test-public-key',
+    });
 
     const codeSection = document.getElementById('code-section')!;
     expect(codeSection.hidden).toBe(false);
   });
 
-  it('confirm button click → step 2 POST with code, stores token', async () => {
+  it('checks desktop approval with a key signature and stores only pairing state', async () => {
     // No port stored: confirm handler falls back to the default port 8090.
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ token: 'abc123' }),
+      json: async () => ({ ok: true }),
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -124,15 +134,15 @@ describe('popup UI', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, opts] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('http://127.0.0.1:8090/connector/pair');
+    expect(url).toBe('http://127.0.0.1:8090/connector/challenge');
     expect(opts.method).toBe('POST');
-    const body = JSON.parse(opts.body as string);
-    expect(body).toEqual({ extension_id: window.location.origin, code: '1234' });
+    expect(opts.body).toBeUndefined();
+    expect(opts.headers).toEqual({ 'X-Bursa-Challenge': 'nonce', 'X-Bursa-Signature': 'proof' });
 
-    expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ token: 'abc123' });
+    expect(chromeMock.storage.local.set).toHaveBeenCalledWith({ paired: true });
 
-    // The confirm handler calls await init() after storing the token. The mock
-    // get() re-reads storageMock (now containing the token), so init() takes the
+    // The confirm handler calls await init() after storing pairing state. The
+    // mock get() re-reads storageMock, so init() takes the
     // connected branch and updates the UI.
     const statusBar = document.getElementById('status-bar')!;
     const pairSection = document.getElementById('pair-section')!;
@@ -201,7 +211,7 @@ describe('popup UI', () => {
     const confirmFetch = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ token: 'abc123' }),
+      json: async () => ({ ok: true }),
     }));
     vi.stubGlobal('fetch', confirmFetch);
     (document.getElementById('code-input') as HTMLInputElement).value = '1234';
@@ -212,25 +222,17 @@ describe('popup UI', () => {
 
     // Confirm reads the stored port, not the input, and init() re-renders it.
     const [confirmURL] = confirmFetch.mock.calls[0] as unknown as [string];
-    expect(confirmURL).toBe('http://127.0.0.1:9100/connector/pair');
+    expect(confirmURL).toBe('http://127.0.0.1:9100/connector/challenge');
     expect((document.getElementById('port-input') as HTMLInputElement).value).toBe('9100');
   });
 
-  it('rejects a blank pairing code without contacting the connector', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-
-    (document.getElementById('code-input') as HTMLInputElement).value = '   ';
-    document.getElementById('confirm-btn')!.click();
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    const codeError = document.getElementById('code-error')!;
-    expect(codeError.hidden).toBe(false);
-    expect(codeError.textContent).toBe('Enter the pairing code from Bursa Settings.');
+  it('displays the locally computed key fingerprint without trusting the listener', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 202, ok: true, json: async () => ({ code: 'substituted' }) })));
+    document.getElementById('pair-btn')!.click();
+    await vi.waitFor(() => expect((document.getElementById('code-input') as HTMLInputElement).value).toBe('verified-key-fingerprint'));
   });
 
-  it('does not store a token when the confirm response is not ok', async () => {
+  it('does not store pairing state when the confirm response is not ok', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: false,
       status: 401,

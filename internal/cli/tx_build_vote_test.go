@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blinklabs-io/bursa/internal/txbuilder"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 	"github.com/btcsuite/btcd/btcutil/bech32"
 	"github.com/stretchr/testify/require"
@@ -121,7 +122,8 @@ func TestPoolVoteFlagsInvalid(t *testing.T) {
 // does not exist, so a dial would fail with a different error.
 func TestRunTxBuildValidatesVoteBeforeDialing(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "missing.socket")
-	err := RunTxBuild(socket, "preview", "addr_test1x", nil, 1, "", 3600, 5,
+	err := RunTxBuild(socket, "preview", "addr_test1x", nil, 1, "", 3600,
+		txbuilder.DefaultMaxFee, 5,
 		PoolVoteFlags{
 			PoolID:    votePoolBech32(t),
 			GovAction: voteTxID + "#1",

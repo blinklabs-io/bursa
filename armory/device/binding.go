@@ -31,6 +31,10 @@ const ProtocolSummary = "bursa-attested-signer/2"
 // key signature.
 const identityDomain = "bursa-armory-identity/1"
 
+// inventoryProfileDomain separates a profile-bound inventory attestation from
+// the legacy unprofiled inventory binding.
+const inventoryProfileDomain = "bursa-attested-inventory-profile/1"
+
 // KeyInfo is one key in an inventory.
 type KeyInfo struct {
 	Role      string `json:"role"`
@@ -61,9 +65,10 @@ func IdentityBinding(
 	return h.Sum(nil)
 }
 
-// InventoryBinding is the digest the identity key signs for an inventory. It
-// matches Bursa's backend.InventoryBinding: the protocol version, the
-// caller's nonce, then each key's length-prefixed role and public key.
+// InventoryBinding is the legacy unprofiled digest the identity key signs for
+// an inventory. It matches Bursa's backend.InventoryBinding: the protocol
+// version, the caller's nonce, then each key's length-prefixed role and public
+// key. Profiled callers use InventoryBindingForProfile.
 func InventoryBinding(nonce []byte, keys []KeyInfo) []byte {
 	h := sha256.New()
 	h.Write([]byte(Protocol))
@@ -74,6 +79,36 @@ func InventoryBinding(nonce []byte, keys []KeyInfo) []byte {
 		h.Write(k.PublicKey)
 	}
 
+	return h.Sum(nil)
+}
+
+// InventoryBindingForProfile is the inventory digest for a selected profile.
+// An empty profile retains InventoryBinding exactly. A non-empty profile uses
+// a separate domain and length-prefixes the protocol, nonce and profile before
+// the existing ordered key encoding.
+func InventoryBindingForProfile(
+	nonce []byte,
+	profile string,
+	keys []KeyInfo,
+) []byte {
+	if profile == "" {
+		return InventoryBinding(nonce, keys)
+	}
+
+	h := sha256.New()
+	for _, field := range [][]byte{
+		[]byte(inventoryProfileDomain),
+		[]byte(Protocol),
+		nonce,
+		[]byte(profile),
+	} {
+		h.Write([]byte(strconv.Itoa(len(field)) + ":"))
+		h.Write(field)
+	}
+	for _, k := range keys {
+		h.Write([]byte(strconv.Itoa(len(k.Role)) + ":" + k.Role))
+		h.Write(k.PublicKey)
+	}
 	return h.Sum(nil)
 }
 

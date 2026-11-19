@@ -267,6 +267,7 @@ func opCertPayload(kes []byte, chain, period uint64) []byte {
 func verifyInventory(
 	identity ed25519.PublicKey,
 	nonce []byte,
+	profile string,
 	inv device.Inventory,
 ) (map[string]ed25519.PublicKey, error) {
 	if inv.Version != device.Protocol {
@@ -279,7 +280,7 @@ func verifyInventory(
 
 	if !ed25519.Verify(
 		identity,
-		device.InventoryBinding(nonce, inv.Keys),
+		device.InventoryBindingForProfile(nonce, profile, inv.Keys),
 		inv.Attestation,
 	) {
 		return nil, errors.New(

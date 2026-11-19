@@ -113,7 +113,7 @@ func TestQueueCancelsOnlyMatchingPairingAuthority(t *testing.T) {
 		nextID++
 		return fmt.Sprintf("req%d", nextID), nil
 	}, time.Second)
-	authority := pairingAuthority{extensionID: "ext", token: "old-token"}
+	authority := pairingAuthority{extensionID: "ext", publicKey: "old-key"}
 	revoked, err := q.submitAuthorized(
 		"https://dapp.example",
 		"enable",
@@ -131,7 +131,7 @@ func TestQueueCancelsOnlyMatchingPairingAuthority(t *testing.T) {
 		"https://other.example",
 		"enable",
 		nil,
-		pairingAuthority{extensionID: "other", token: "other-token"},
+		pairingAuthority{extensionID: "other", publicKey: "other-key"},
 	)
 	if err != nil {
 		t.Fatalf("submit other authority: %v", err)

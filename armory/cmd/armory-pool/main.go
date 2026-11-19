@@ -173,7 +173,7 @@ func (s *session) inventory() (map[string]ed25519.PublicKey, error) {
 		}
 	}
 
-	return verifyInventory(s.identity, nonce, inv)
+	return verifyInventory(s.identity, nonce, s.profile, inv)
 }
 
 func (s *session) keys(outDir, network string, out io.Writer) error {

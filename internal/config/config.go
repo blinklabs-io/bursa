@@ -111,6 +111,9 @@ type KESAgentConfig struct {
 	// ControlClientSPKISHA256 is control_client_spki_sha256 for the single
 	// profile built from the fields above; with profiles, set it in each.
 	ControlClientSPKISHA256 []string `yaml:"control_client_spki_sha256" envconfig:"KESAGENT_CONTROL_CLIENT_SPKI_SHA256"`
+	// SignClientSPKISHA256 is sign_client_spki_sha256 for the single profile
+	// built from the fields above; with profiles, set it in each.
+	SignClientSPKISHA256 []string `yaml:"sign_client_spki_sha256" envconfig:"KESAGENT_SIGN_CLIENT_SPKI_SHA256"`
 }
 
 // KESAgentStoreConfig selects where the KES agent keeps its slot guard.
@@ -156,6 +159,11 @@ type KESAgentProfileConfig struct {
 	// the attested listener with attested_client_ca_file and is refused with
 	// attested_plaintext.
 	ControlClientSPKISHA256 []string `yaml:"control_client_spki_sha256"`
+	// SignClientSPKISHA256 lists the SHA-256 SPKI digests (64 hex characters
+	// each) of the client certificates that may open a remote signing session
+	// for this profile. It needs the attested listener with
+	// attested_client_ca_file and is refused with attested_plaintext.
+	SignClientSPKISHA256 []string `yaml:"sign_client_spki_sha256"`
 }
 
 // SignerConfig holds configuration for the bursa signer daemon.
@@ -214,11 +222,20 @@ type SignerAuthorizedKeyConfig struct {
 	Ed25519PubkeyHex string `yaml:"ed25519_pubkey_hex"`
 }
 
-// SignerCallerConfig grants a JWT subject access to specific keys.
-// When any callers are configured, unlisted subjects are denied all keys.
+// SignerCallerConfig grants an authenticated caller access to specific keys.
+// When any callers are configured, unlisted callers are denied all keys.
 type SignerCallerConfig struct {
-	Subject string   `yaml:"subject"`
-	Keys    []string `yaml:"keys"` // key hashes (hex blake2b-224)
+	Subject string                     `yaml:"subject"`
+	Keys    []string                   `yaml:"keys"` // key hashes (hex blake2b-224)
+	OpCerts []SignerCallerOpCertConfig `yaml:"opcerts"`
+}
+
+// SignerCallerOpCertConfig grants a caller authority to certify specific KES
+// verification keys with one cold key. Listing several KES keys preserves an
+// explicit rotation path without granting arbitrary KES-key certification.
+type SignerCallerOpCertConfig struct {
+	Key      string   `yaml:"key"` // cold key hash (hex blake2b-224)
+	KESVKeys []string `yaml:"kes_vkeys"`
 }
 
 // SignerWatermarkConfig configures the anti-double-sign watermark store.

@@ -245,10 +245,11 @@ paths:
       tags: [ops]
       summary: Readiness probe
       description: |
-        Pings the configured SQLite or PostgreSQL watermark store with a
-        three-second timeout. Returns 503 while that dependency is unreachable.
-        The in-memory store has no external dependency and is always ready after
-        startup.
+        Reports the latest background writeability check of the configured
+        SQLite or PostgreSQL watermark store. Checks run every ten seconds with
+        a three-second timeout. Returns 503 while that dependency is unreachable
+        or before the first check completes. The in-memory store has no external
+        dependency and is always ready after startup.
       security: []
       responses:
         '200':

@@ -32,6 +32,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/opcertrule"
@@ -44,6 +45,14 @@ const (
 	envelopeActive    = "active"
 	maxRequestBody    = 64 << 10
 	maxRequestNonces  = 4096
+	// signRequestTimeout bounds a whole signing request from handler entry,
+	// counter write included. The server's read timeout bounds the body
+	// read, which a context cannot interrupt, and the budget starts at
+	// handler entry so body and signing together stay within it. The serve
+	// command's HTTP write timeout is 30 seconds and starts when the headers
+	// were read, just before the handler; the margin lets the response of a
+	// write that commits near this deadline still be sent.
+	signRequestTimeout = 20 * time.Second
 )
 
 // TokenSource requests a custom-audience attestation token from the
@@ -107,28 +116,54 @@ type envelope struct {
 	Phase      string          `json:"phase,omitempty"`
 	Role       backend.KeyType `json:"role"`
 	KMSKey     string          `json:"kms_key"`
-	PublicKey  []byte          `json:"public_key"`
-	Nonce      []byte          `json:"nonce"`
-	Ciphertext []byte          `json:"ciphertext"`
+	PublicKey  []byte          `json:"public_key,omitempty"`
+	Nonce      []byte          `json:"nonce,omitempty"`
+	Ciphertext []byte          `json:"ciphertext,omitempty"`
 	WrappedDEK []byte          `json:"wrapped_dek"`
+	// Keys is the profile-to-key map of a multi-key envelope
+	// (envelopeVersionKeys), which has no top-level key.
+	Keys []envelopeKey `json:"keys,omitempty"`
 }
 
 type keyMaterial struct {
-	priv    ed25519.PrivateKey
-	stored  []byte
-	active  []byte
-	pending bool
+	priv ed25519.PrivateKey
+	// profileKeys holds the key of each profile of a multi-key envelope, and
+	// priv is nil.
+	profileKeys map[string]ed25519.PrivateKey
+	stored      []byte
+	active      []byte
+	pending     bool
+}
+
+// wipe clears every private key the material holds.
+func (k *keyMaterial) wipe() {
+	wipe(k.priv)
+	for _, priv := range k.profileKeys {
+		wipe(priv)
+	}
+}
+
+// profileKey is the key a multi-key workload serves one profile with.
+type profileKey struct {
+	priv ed25519.PrivateKey
+	pub  ed25519.PublicKey
+	hash backend.KeyHash
 }
 
 // Workload implements the enclave side of the attested signer protocol for a
-// single pool cold key. The private key exists only in this process and in the
-// encrypted envelope persisted by Store.
+// pool cold key, or, with a multi-key envelope, one pool cold key per profile.
+// The private keys exist only in this process and in the encrypted envelope
+// persisted by Store.
 type Workload struct {
 	audience string
 	tokens   TokenSource
 	pub      ed25519.PublicKey
 	priv     ed25519.PrivateKey
 	hash     backend.KeyHash
+	// keys is the key of each profile of a multi-key envelope. It is nil for
+	// a single-key envelope, whose one key (pub, priv, hash) serves every
+	// profile.
+	keys map[string]profileKey
 	// counters holds the counter store of each served profile; the
 	// unprofiled workload has the single entry "".
 	counters map[string]CounterStore
@@ -170,19 +205,32 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	if err != nil {
 		return nil, err
 	}
-	pub := append(
-		ed25519.PublicKey(nil),
-		key.priv.Public().(ed25519.PublicKey)...)
-	hash := backend.HashPublicKey(pub)
+	keys, err := serviceKeys(key, counters)
+	if err != nil {
+		key.wipe()
+		return nil, err
+	}
+	var pub ed25519.PublicKey
+	var hash backend.KeyHash
+	if keys == nil {
+		pub = append(
+			ed25519.PublicKey(nil),
+			key.priv.Public().(ed25519.PublicKey)...)
+		hash = backend.HashPublicKey(pub)
+	}
 	for _, profile := range slices.Sorted(maps.Keys(counters)) {
 		counter, ok := counters[profile]
 		if !ok {
-			wipe(key.priv)
+			key.wipe()
 			return nil, fmt.Errorf("profile %q has no counter store", profile)
 		}
 		allowCreate := key.pending || (profile != "" && create[profile])
-		if err := counter.Prepare(ctx, hash, allowCreate); err != nil {
-			wipe(key.priv)
+		counterHash := hash
+		if keys != nil {
+			counterHash = keys[profile].hash
+		}
+		if err := counter.Prepare(ctx, counterHash, allowCreate); err != nil {
+			key.wipe()
 			if profile != "" {
 				return nil, fmt.Errorf(
 					"prepare counter state of profile %q: %w", profile, err,
@@ -193,7 +241,7 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 	}
 	if key.pending {
 		if err := activateEnvelope(ctx, cfg, key, pub); err != nil {
-			wipe(key.priv)
+			key.wipe()
 			return nil, fmt.Errorf("activate wrapped key: %w", err)
 		}
 	}
@@ -203,11 +251,64 @@ func New(ctx context.Context, cfg Config) (*Workload, error) {
 		pub:       pub,
 		priv:      key.priv,
 		hash:      hash,
+		keys:      keys,
 		counters:  counters,
 		nonces:    make(map[[32]byte]struct{}),
 		nonceFIFO: make([][32]byte, 0, maxRequestNonces),
 		signFunc:  ed25519.Sign,
 	}, nil
+}
+
+// serviceKeys returns the key of each served profile for a multi-key
+// envelope, nil for a single-key one. A multi-key envelope is served only by a
+// workload whose profiles are exactly the envelope's, so no key is left
+// unserved and no profile is left without its own key.
+func serviceKeys(
+	key *keyMaterial,
+	counters map[string]CounterStore,
+) (map[string]profileKey, error) {
+	if key.profileKeys == nil {
+		return nil, nil
+	}
+	if _, unprofiled := counters[""]; unprofiled {
+		return nil, errors.New(
+			"a multi-key envelope requires profiles",
+		)
+	}
+	keys := make(map[string]profileKey, len(key.profileKeys))
+	for profile, priv := range key.profileKeys {
+		if _, ok := counters[profile]; !ok {
+			return nil, fmt.Errorf(
+				"the envelope holds a key for profile %q, which is not served",
+				profile,
+			)
+		}
+		pub := append(
+			ed25519.PublicKey(nil),
+			priv.Public().(ed25519.PublicKey)...)
+		keys[profile] = profileKey{
+			priv: priv, pub: pub, hash: backend.HashPublicKey(pub),
+		}
+	}
+	for profile := range counters {
+		if _, ok := keys[profile]; !ok {
+			return nil, fmt.Errorf(
+				"the envelope holds no key for profile %q", profile,
+			)
+		}
+	}
+	return keys, nil
+}
+
+// keyFor returns the key that serves profile.
+func (w *Workload) keyFor(
+	profile string,
+) (ed25519.PrivateKey, ed25519.PublicKey, backend.KeyHash) {
+	if w.keys != nil {
+		k := w.keys[profile]
+		return k.priv, k.pub, k.hash
+	}
+	return w.priv, w.pub, w.hash
 }
 
 // profileBoundCounter is a counter store that reports the profile whose
@@ -334,6 +435,17 @@ func createEnvelope(
 		return nil, fmt.Errorf("generate pool key: %w", err)
 	}
 	defer wipe(seed)
+	return wrapSeed(ctx, cfg, seed)
+}
+
+// wrapSeed envelope-encrypts the Ed25519 seed under a fresh data-encryption
+// key that Cloud KMS wraps. createEnvelope passes it a generated seed; an
+// import passes the seed the operator supplied.
+func wrapSeed(
+	ctx context.Context,
+	cfg Config,
+	seed []byte,
+) (*keyMaterial, error) {
 	priv := ed25519.NewKeyFromSeed(seed)
 	pub := append(ed25519.PublicKey(nil), priv.Public().(ed25519.PublicKey)...)
 
@@ -427,8 +539,12 @@ func openEnvelope(
 			"wrapped key metadata does not match workload configuration",
 		)
 	}
-	if len(e.PublicKey) != ed25519.PublicKeySize || len(e.Nonce) == 0 ||
-		len(e.Ciphertext) == 0 ||
+	if e.multiKey() {
+		if err := validateEnvelopeKeys(e, true); err != nil {
+			return nil, err
+		}
+	} else if len(e.Keys) != 0 || len(e.PublicKey) != ed25519.PublicKeySize ||
+		len(e.Nonce) == 0 || len(e.Ciphertext) == 0 ||
 		len(e.WrappedDEK) == 0 {
 		return nil, errors.New("wrapped key is incomplete")
 	}
@@ -450,6 +566,16 @@ func openEnvelope(
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("initialize envelope AEAD: %w", err)
+	}
+	if e.multiKey() {
+		privs, err := openEnvelopeKeys(e, gcm)
+		if err != nil {
+			return nil, err
+		}
+		return &keyMaterial{
+			profileKeys: privs,
+			stored:      append([]byte(nil), data...),
+		}, nil
 	}
 	if len(e.Nonce) != gcm.NonceSize() {
 		return nil, errors.New("wrapped key nonce has invalid length")
@@ -493,6 +619,8 @@ func validEnvelopePhase(e envelope) bool {
 		return e.Phase == ""
 	case envelopeVersion:
 		return e.Phase == envelopePending || e.Phase == envelopeActive
+	case envelopeVersionKeys:
+		return e.Phase == envelopeActive
 	default:
 		return false
 	}
@@ -510,8 +638,11 @@ func envelopeAAD(e envelope) []byte {
 		[]byte(e.KMSKey),
 		e.PublicKey,
 	}
-	if e.Version == envelopeVersion {
+	if e.Version == envelopeVersion || e.multiKey() {
 		parts = append(parts, []byte(e.Phase))
+	}
+	for _, k := range e.Keys {
+		parts = append(parts, []byte(k.Profile), k.PublicKey)
 	}
 	for _, part := range parts {
 		var size [4]byte
@@ -565,9 +696,8 @@ var errProfileNotServed = errors.New("profile is not served by this workload")
 
 // Inventory returns the public key and a custom token bound to the caller's
 // nonce and the exact inventory. profile must be one the workload serves, ""
-// for an unprofiled workload. The attested binding does not cover the profile:
-// every key is the same under all profiles, and each profiled signature is
-// bound to its profile by its own binding signature.
+// for an unprofiled workload. A profiled inventory attestation covers the
+// selected profile even when every profile exposes the same public key.
 func (w *Workload) Inventory(
 	ctx context.Context,
 	nonce []byte,
@@ -576,15 +706,16 @@ func (w *Workload) Inventory(
 	if _, ok := w.counters[profile]; !ok {
 		return backend.AttestedInventory{}, errProfileNotServed
 	}
+	_, pub, _ := w.keyFor(profile)
 	if len(nonce) != 32 {
 		return backend.AttestedInventory{}, errors.New(
 			"inventory nonce must be 32 bytes",
 		)
 	}
 	keys := []backend.AttestedKeyInfo{
-		{Role: backend.KeyTypePool, PublicKey: append([]byte(nil), w.pub...)},
+		{Role: backend.KeyTypePool, PublicKey: append([]byte(nil), pub...)},
 	}
-	binding := backend.InventoryBinding(nonce, keys)
+	binding := backend.InventoryBindingForProfile(nonce, profile, keys)
 	token, err := w.tokens.Token(
 		ctx,
 		w.audience,
@@ -624,12 +755,13 @@ func (w *Workload) Sign(
 		Nonce:   append([]byte(nil), req.Nonce...),
 	}
 	counter, served := w.counters[req.Profile]
+	priv, pub, hash := w.keyFor(req.Profile)
 	if !served ||
 		req.Version != backend.AttestedProtocol ||
 		(req.Purpose != backend.PurposeOpCert &&
 			req.Purpose != backend.PurposeOpCertNext) ||
 		req.Role != backend.KeyTypePool ||
-		req.KeyHash != w.hash.String() ||
+		req.KeyHash != hash.String() ||
 		len(req.Nonce) != 32 ||
 		len(req.Payload) != 48 {
 		resp.Error = "request refused"
@@ -652,7 +784,7 @@ func (w *Workload) Sign(
 	chainOrIssue := binary.BigEndian.Uint64(req.Payload[32:40])
 	period := binary.BigEndian.Uint64(req.Payload[40:])
 	if req.Purpose == backend.PurposeOpCertNext {
-		issue, err := counter.NextOpCert(ctx, w.hash, chainOrIssue, period)
+		issue, err := counter.NextOpCert(ctx, hash, chainOrIssue, period)
 		if err != nil {
 			resp.Error = opCertNextRefusal(err)
 			return resp, nil
@@ -662,7 +794,7 @@ func (w *Workload) Sign(
 		issued = &issue
 	} else if err := counter.CheckAndAdvance(
 		ctx,
-		w.hash,
+		hash,
 		chainOrIssue,
 		period,
 	); err != nil {
@@ -677,9 +809,9 @@ func (w *Workload) Sign(
 		w.nonceFIFO = append(w.nonceFIFO, nonce)
 	}
 	w.nonces[nonce] = struct{}{}
-	sig := w.signFunc(w.priv, signable)
+	sig := w.signFunc(priv, signable)
 	if len(sig) != ed25519.SignatureSize ||
-		!ed25519.Verify(w.pub, signable, sig) {
+		!ed25519.Verify(pub, signable, sig) {
 		wipe(sig)
 		return backend.AttestedResponse{}, errors.New(
 			"pool key signature verification failed",
@@ -687,9 +819,9 @@ func (w *Workload) Sign(
 	}
 	if req.Profile != "" {
 		binding := backend.AttestedResponseBinding(req, sig, "")
-		bsig := w.signFunc(w.priv, binding)
+		bsig := w.signFunc(priv, binding)
 		if len(bsig) != ed25519.SignatureSize ||
-			!ed25519.Verify(w.pub, binding, bsig) {
+			!ed25519.Verify(pub, binding, bsig) {
 			wipe(sig)
 			wipe(bsig)
 			return backend.AttestedResponse{}, errors.New(
@@ -763,12 +895,16 @@ func (w *Workload) handleInventory(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Workload) handleSign(rw http.ResponseWriter, r *http.Request) {
+	// The budget starts here, before the body is read: the server's write
+	// timeout already runs while the body arrives.
+	ctx, cancel := context.WithTimeout(r.Context(), signRequestTimeout)
+	defer cancel()
 	var req backend.AttestedRequest
 	if err := decodeRequest(rw, r, &req); err != nil {
 		http.Error(rw, "invalid request", http.StatusBadRequest)
 		return
 	}
-	resp, err := w.Sign(r.Context(), req)
+	resp, err := w.Sign(ctx, req)
 	if err != nil {
 		http.Error(rw, "signing unavailable", http.StatusServiceUnavailable)
 		return
@@ -812,6 +948,9 @@ func (w *Workload) Close() error {
 	defer w.mu.Unlock()
 	if !w.closed {
 		wipe(w.priv)
+		for _, k := range w.keys {
+			wipe(k.priv)
+		}
 		w.closed = true
 	}
 	return nil
