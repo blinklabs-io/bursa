@@ -716,6 +716,11 @@ jobs:
             $msys2Loc = "$env:MSYS2_LOC_AMD64"
             $env:CC = "$msys2Loc\mingw64\bin\gcc.exe"
             $env:CXX = "$msys2Loc\mingw64\bin\g++.exe"
+            # gcc spawns cc1 from lib\gcc\..., not bin\, so Windows resolves
+            # cc1's DLL imports (libz-1.dll, libgmp-10.dll, ...) through PATH.
+            # Without this, cc1 loads them from whichever other MinGW is first
+            # on the runner PATH, or fails to start when that one lacks a DLL.
+            $env:PATH = "$msys2Loc\mingw64\bin;$env:PATH"
           } else {
             $msys2Loc = "$env:MSYS2_LOC_ARM64"
             $env:CC = "$msys2Loc\clangarm64\bin\clang.exe"
