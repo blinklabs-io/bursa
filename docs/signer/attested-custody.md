@@ -302,9 +302,11 @@ back, once this release has signed a certificate.
 
 Without `--profile` the workload serves unprofiled requests only, and refuses
 any request or inventory that names a profile. With `--profile NAME`
-(repeatable) it holds the same cold key under each named profile, so one
-workload can serve a pool on several networks to signer backends that each set
-`profile`:
+(repeatable) it serves each named profile, so one workload can serve a pool on
+several networks, or several pools, to signer backends that each set
+`profile`. A single-key envelope holds one cold key under every profile; a
+multi-key envelope (see "Several pool keys in one workload") holds a different
+cold key under each profile:
 
 - Requests and inventories must name a configured profile; an unprofiled
   request or an unknown profile is refused, and the refusal consumes no nonce
@@ -325,8 +327,10 @@ workload can serve a pool on several networks to signer backends that each set
   not match the profile it asked for, so an untrusted proxy cannot move a
   request to another profile.
 - The attestation token is bound to the nonce, selected profile and key list.
-  The key is the same under every profile, while inventory attribution,
-  signing requests and counters remain separated by profile.
+  With a single-key envelope the key is the same under every profile, while
+  inventory attribution, signing requests and counters remain separated by
+  profile. With a multi-key envelope the key list of a profile is that
+  profile's key alone.
 - First boot, and a restart that finishes a pending bootstrap, create every
   profile's counter object, as they create the unprofiled one. With an active
   envelope a missing profile counter stops startup, so a deleted object is not
@@ -531,17 +535,24 @@ bursa confidential-space import \
   checks it again before it wraps anything.
 - `--authority-key-file` is the authority's hex Ed25519 seed (or 64-byte private
   key).
-- Each `--profile` is `NAME=NEXT`: the next issue number that profile may sign.
+- Each `--profile` is `NAME=NEXT`. `NEXT` belongs to that profile alone: it
+  seeds the profile's own counter record (`NextIssueNumber`), the one the
+  profile's counter object or sealed record holds, so profiles never share it
+  and may start at different values, as in the example above. It is the next
+  issue number the profile may sign, for the key that profile signs with: the
+  shared key with plain key paths, or the profile's own key with `NAME=FILE`.
+  Work it out per profile, from that profile's key and chain.
   Stop issuing certificates with the old signer first. `NEXT` is one above the
-  highest issue number the key has signed, whether or not that certificate is
-  on chain, and never below the pool's on-chain operational-certificate counter
-  plus one. Take that highest number from the old signer's records; do not
-  import while it cannot be established. Use `0` for a pool that has never issued. Every profile signs with
-  the one imported key. `NEXT` seeds `NextIssueNumber`. For a positive `NEXT`,
-  both the last issued number and the `opcert-next` floor are `NEXT - 1`, so the
-  explicit-counter path cannot issue below `NEXT` and `opcert-next` refuses a
-  chain counter below `NEXT - 1`. `NEXT = 0` records no issued certificate and
-  no floor. The workload cannot correct `NEXT` after the import.
+  highest issue number that key has signed on that profile's network, whether
+  or not that certificate is on chain, and never below that pool's on-chain
+  operational-certificate counter plus one. Take that highest number from the
+  old signer's records; do not import while it cannot be established. Use `0`
+  for a profile whose key has never issued. For a positive `NEXT`, both the
+  last issued number and the `opcert-next` floor of that profile are
+  `NEXT - 1`, so the explicit-counter path cannot issue below `NEXT` and
+  `opcert-next` refuses a chain counter below `NEXT - 1`. `NEXT = 0` records no
+  issued certificate and no floor. The workload cannot correct `NEXT` after the
+  import.
 
 The import runs in three steps.
 
@@ -561,6 +572,63 @@ The import runs in three steps.
    authority signs, with Ed25519, a digest of that binding and the SHA-256 of the
    ciphertext, as Nitro provisioning signs its binding.
 
+#### Several pool keys in one workload
+
+A single-key envelope holds one cold key and every profile signs with it.
+To hold a different cold key under each profile, so that several pools share
+one workload, KMS binding and state secret, import with a key per profile: give
+`--signing-key-file` and `--vkey-file` as `NAME=FILE` for every `--profile`,
+each profile under a distinct key:
+
+```text
+  --profile pool-a@mainnet=8 --profile pool-b@mainnet=0 \
+  --signing-key-file pool-a@mainnet=pool-a.skey \
+  --signing-key-file pool-b@mainnet=pool-b.skey \
+  --vkey-file pool-a@mainnet=pool-a.vkey \
+  --vkey-file pool-b@mainnet=pool-b.vkey
+```
+
+A value is `NAME=FILE` when the text before its first `=` is a valid profile
+name; write a path that contains `=` as `./PATH`. Plain paths, one of each, are
+the shared key as before, and the two forms are not mixed. The profiles must be
+exactly the `--profile` set, the keys must differ (a key given under two
+profiles is refused; use a plain path to share one), and each key must derive
+its own `--vkey-file`.
+
+The import then writes an envelope of version
+`bursa-confidential-space-key/3`. (`/2` is the existing pending/active
+envelope, so the multi-key envelope is `/3`.) It has no top-level key; `keys`
+maps each profile to its public key and its sealed seed, all under one
+KMS-wrapped data-encryption key. The wrapped key's additional data covers the
+whole profile-to-public-key map and each seed's covers its profile, so moving a
+seed to another profile or editing the map stops startup. The envelope is
+always `active`, only an import writes it, and the workload never replaces it
+or generates a key for it.
+
+- Inventory for a profile reports that profile's key only. A request signs with
+  the profile's key and must carry that key's hash; another profile's hash is
+  refused without consuming a nonce or counter. `binding_signature` is made
+  with the profile's key, so a signer backend verifies it against the key its
+  own inventory reported.
+- Counters stay per profile, as above, and each is bound to its profile's key.
+  Each is seeded from that profile's own `NEXT`, which is not shared with any
+  other profile.
+- Start the workload with exactly the `--profile` flags of the envelope's
+  profiles. A start with an unprofiled workload, a missing profile, or a
+  profile the envelope holds no key for stops, and so does
+  `--create-profile-counter` naming a profile with no key.
+- The set of profiles is fixed at import. To add or remove a profile or key,
+  import into a new, empty state secret.
+- Migration: a single-key envelope (`/1` and `/2`) and its state secret load
+  unchanged, with or without `--profile`, and unprofiled behaviour is
+  unchanged. Nothing converts one into the other. A state secret that holds a
+  `/3` envelope cannot be read by an earlier release, which refuses the
+  envelope, so a workload cannot be rolled back to one while it is in use.
+- The import protocol for per-profile keys is
+  `bursa-confidential-space-import/2`; the binding covers the version, so a
+  request cannot be replayed as the shared-key `/1`. An import client and
+  an import-mode workload must both be of a release that has it.
+
 `POST /v1/import` verifies the authority's signature, opens the request, and
 spends the challenge, which is used once. It then checks that the key derives
 the expected verification key and refuses a mismatch, wraps the key into an
@@ -579,8 +647,8 @@ imported profiles to serve the key. The envelope is `active`, so a start
 creates no counter: a profile that was not imported stops startup.
 
 An import into an empty secret is the whole of this mode. It does not add a
-pool to a secret that holds a key, and it holds one key: every profile signs
-with it.
+pool to a secret that holds a key. It holds one key that every profile signs
+with, or, with `NAME=FILE` keys, one key per profile.
 
 Configure `tls_ca_file` on the signer with the CA that issued the workload
 server certificate. Configure `tls_client_cert_file` and

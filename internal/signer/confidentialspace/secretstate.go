@@ -192,10 +192,14 @@ type SecretStateStore struct {
 	parent   string
 	stopped  error
 	envelope []byte
-	pub      ed25519.PublicKey
-	hash     backend.KeyHash
-	sealKey  []byte
-	states   map[string]counterState
+	// pub and hash are the one key of a single-key envelope, which serves
+	// every profile. A multi-key envelope leaves them empty and holds each
+	// profile's public key in profileKeys.
+	pub         ed25519.PublicKey
+	hash        backend.KeyHash
+	profileKeys map[string]ed25519.PublicKey
+	sealKey     []byte
+	states      map[string]counterState
 
 	// pendingKeep is the version of the newest write whose older versions
 	// are not yet destroyed, 0 if none.
@@ -290,6 +294,35 @@ func (s *SecretStateStore) Counter(
 	return &SecretCounterStore{state: s, profile: profile}, nil
 }
 
+// keyFor returns the public key and hash that serve profile, and false for a
+// profile a multi-key envelope holds no key for. The caller holds s.mu.
+func (s *SecretStateStore) keyFor(
+	profile string,
+) (ed25519.PublicKey, backend.KeyHash, bool) {
+	if s.profileKeys == nil {
+		return s.pub, s.hash, true
+	}
+	pub, ok := s.profileKeys[profile]
+	if !ok {
+		return nil, backend.KeyHash{}, false
+	}
+	return pub, backend.HashPublicKey(pub), true
+}
+
+// setKeys records the public keys of e as the ones the store serves.
+func (s *SecretStateStore) setKeys(e envelope) {
+	s.pub, s.hash, s.profileKeys = nil, backend.KeyHash{}, nil
+	if !e.multiKey() {
+		s.pub = ed25519.PublicKey(bytes.Clone(e.PublicKey))
+		s.hash = backend.HashPublicKey(s.pub)
+		return
+	}
+	s.profileKeys = make(map[string]ed25519.PublicKey, len(e.Keys))
+	for _, k := range e.Keys {
+		s.profileKeys[k.Profile] = ed25519.PublicKey(bytes.Clone(k.PublicKey))
+	}
+}
+
 func (s *SecretStateStore) rpcContext(
 	parent context.Context,
 ) (context.Context, context.CancelFunc) {
@@ -333,6 +366,9 @@ func (s *SecretStateStore) Replace(expected, data []byte) error {
 	e, err := parseStateEnvelope(data, s.kmsKey)
 	if err != nil {
 		return err
+	}
+	if e.multiKey() || s.profileKeys != nil {
+		return errors.New("a multi-key envelope is never replaced")
 	}
 	if !s.pub.Equal(ed25519.PublicKey(e.PublicKey)) {
 		return errors.New("replacement envelope has another public key")
@@ -379,8 +415,12 @@ func (s *SecretStateStore) Import(
 	}
 	// A pending envelope would make a start create the counters of every
 	// profile it serves, which a starting counter must never be replaced by.
-	if e.Version != envelopeVersion || e.Phase != envelopeActive {
+	if (e.Version != envelopeVersion && !e.multiKey()) ||
+		e.Phase != envelopeActive {
 		return errors.New("imported envelope must be active")
+	}
+	if e.multiKey() && len(nextIssue) != len(e.Keys) {
+		return errors.New("imported counters must name every profile's key")
 	}
 	readCtx, cancel := s.rpcContext(ctx)
 	resp, err := s.readNewest(readCtx)
@@ -399,8 +439,7 @@ func (s *SecretStateStore) Import(
 	if err != nil {
 		return err
 	}
-	pub := ed25519.PublicKey(bytes.Clone(e.PublicKey))
-	hash := backend.HashPublicKey(pub)
+	s.setKeys(e)
 	states := make(map[string]counterState, len(nextIssue))
 	for profile, next := range nextIssue {
 		if err := ValidateProfile(profile); err != nil {
@@ -411,12 +450,18 @@ func (s *SecretStateStore) Import(
 			wipe(sealKey)
 			return ErrCounterRegression
 		}
+		_, hash, ok := s.keyFor(profile)
+		if !ok {
+			wipe(sealKey)
+			return fmt.Errorf("the envelope holds no key for profile %q", profile)
+		}
 		states[profile] = seededCounterState(hash, profile, next)
 	}
-	s.sealKey, s.pub = sealKey, pub
+	s.sealKey = sealKey
 	defer func() {
 		wipe(s.sealKey)
-		s.sealKey, s.pub = nil, nil
+		s.sealKey = nil
+		s.pub, s.hash, s.profileKeys = nil, backend.KeyHash{}, nil
 	}()
 	return s.saveLocked(ctx, envelopeBytes, states)
 }
@@ -540,8 +585,8 @@ func (s *SecretStateStore) loadLocked() error {
 	if err != nil {
 		return err
 	}
-	pub := ed25519.PublicKey(bytes.Clone(e.PublicKey))
-	hash := backend.HashPublicKey(pub)
+	loaded := &SecretStateStore{}
+	loaded.setKeys(e)
 	states := make(map[string]counterState, len(doc.Counters))
 	for profile, sealed := range doc.Counters {
 		if profile != "" {
@@ -549,6 +594,13 @@ func (s *SecretStateStore) loadLocked() error {
 				wipe(sealKey)
 				return err
 			}
+		}
+		pub, hash, ok := loaded.keyFor(profile)
+		if !ok {
+			wipe(sealKey)
+			return fmt.Errorf(
+				"counter state names profile %q, which has no key", profile,
+			)
 		}
 		state, err := openSealedCounter(
 			sealKey, pub, s.kmsKey, profile, hash.String(), sealed,
@@ -561,8 +613,7 @@ func (s *SecretStateStore) loadLocked() error {
 	}
 	s.parent, _, _ = strings.Cut(resp.GetName(), "/versions/")
 	s.envelope = bytes.Clone(doc.Envelope)
-	s.pub = pub
-	s.hash = hash
+	s.pub, s.hash, s.profileKeys = loaded.pub, loaded.hash, loaded.profileKeys
 	s.sealKey = sealKey
 	s.states = states
 	s.loaded = true
@@ -704,7 +755,12 @@ func parseStateEnvelope(data []byte, kmsKey string) (envelope, error) {
 			"wrapped key metadata does not match workload configuration",
 		)
 	}
-	if len(e.PublicKey) != ed25519.PublicKeySize || len(e.WrappedDEK) == 0 {
+	if e.multiKey() {
+		if err := validateEnvelopeKeys(e, true); err != nil {
+			return envelope{}, err
+		}
+	} else if len(e.Keys) != 0 ||
+		len(e.PublicKey) != ed25519.PublicKeySize || len(e.WrappedDEK) == 0 {
 		return envelope{}, errors.New("wrapped key is incomplete")
 	}
 	return e, nil
@@ -763,6 +819,10 @@ func (s *SecretStateStore) sealCounter(
 	profile string,
 	state counterState,
 ) ([]byte, error) {
+	pub, _, ok := s.keyFor(profile)
+	if !ok {
+		return nil, fmt.Errorf("the envelope holds no key for profile %q", profile)
+	}
 	gcm, err := counterGCM(s.sealKey)
 	if err != nil {
 		return nil, err
@@ -776,7 +836,7 @@ func (s *SecretStateStore) sealCounter(
 		return nil, fmt.Errorf("generate counter nonce: %w", err)
 	}
 	return gcm.Seal(
-		nonce, nonce, plain, sealedCounterAAD(s.pub, s.kmsKey, profile),
+		nonce, nonce, plain, sealedCounterAAD(pub, s.kmsKey, profile),
 	), nil
 }
 
@@ -1015,7 +1075,7 @@ func (c *SecretCounterStore) begin(
 			"state secret has not been loaded",
 		)
 	}
-	if key != s.hash {
+	if _, hash, ok := s.keyFor(c.profile); !ok || key != hash {
 		return counterState{}, false, errors.New(
 			"counter state does not match the pool cold key",
 		)

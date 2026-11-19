@@ -51,10 +51,21 @@ type ImportParams struct {
 	Seed []byte
 	// VKey is the pool's registered cold verification key, taken from an
 	// input independent of Seed.
-	VKey     []byte
+	VKey []byte
+	// Keys gives each profile its own pool cold key, in place of Seed and
+	// VKey, which one key shared by every profile uses. It names exactly the
+	// profiles of Profiles, under distinct keys.
+	Keys     map[string]ImportKey
 	Profiles []ImportProfile
 	// Authority is the provisioning authority's signing key.
 	Authority ed25519.PrivateKey
+}
+
+// ImportKey is one profile's pool cold key: its Ed25519 seed and the pool's
+// registered verification key, taken from an input independent of the seed.
+type ImportKey struct {
+	Seed []byte
+	VKey []byte
 }
 
 // VerifyImportChallenge checks that the attestation token vouches for this
@@ -110,11 +121,17 @@ func buildImportRequest(
 	ch ImportChallenge,
 	p ImportParams,
 ) (ImportRequest, error) {
-	if len(p.Seed) != ed25519.SeedSize ||
-		len(p.VKey) != ed25519.PublicKeySize ||
+	multi := len(p.Keys) > 0
+	if (!multi && (len(p.Seed) != ed25519.SeedSize ||
+		len(p.VKey) != ed25519.PublicKeySize)) ||
+		(multi && (len(p.Seed) != 0 || len(p.VKey) != 0)) ||
 		len(p.Authority) != ed25519.PrivateKeySize ||
 		p.KMSKey == "" {
 		return ImportRequest{}, errors.New("import parameters are incomplete")
+	}
+	protocol := ImportProtocol
+	if multi {
+		protocol = ImportProtocolKeys
 	}
 	entries := slices.Clone(p.Profiles)
 	slices.SortFunc(entries, func(a, b ImportProfile) int {
@@ -130,6 +147,11 @@ func buildImportRequest(
 	if err := validateImportProfiles(names); err != nil {
 		return ImportRequest{}, err
 	}
+	if multi && len(p.Keys) != len(names) {
+		return ImportRequest{}, errors.New(
+			"import keys must name exactly the import profiles",
+		)
+	}
 	counters, err := json.Marshal(entries)
 	if err != nil {
 		return ImportRequest{}, err
@@ -140,11 +162,29 @@ func buildImportRequest(
 	if len(counters) > maxRequestBody {
 		return ImportRequest{}, errors.New("import profiles exceed size limit")
 	}
-	body := make([]byte, 0, importBodyFixedSize+len(counters))
-	body = append(body, p.Seed...)
-	body = append(body, p.VKey...)
+	keyCount := 1
+	if multi {
+		keyCount = len(names)
+	}
+	body := make([]byte, 0, keyCount*importBodyFixedSize+len(counters))
+	defer func() { wipe(body) }()
+	if multi {
+		for _, name := range names {
+			k, ok := p.Keys[name]
+			if !ok || len(k.Seed) != ed25519.SeedSize ||
+				len(k.VKey) != ed25519.PublicKeySize {
+				return ImportRequest{}, errors.New(
+					"import keys must name exactly the import profiles",
+				)
+			}
+			body = append(body, k.Seed...)
+			body = append(body, k.VKey...)
+		}
+	} else {
+		body = append(body, p.Seed...)
+		body = append(body, p.VKey...)
+	}
 	body = append(body, counters...)
-	defer wipe(body)
 
 	clientSeed := make([]byte, curve25519.ScalarSize)
 	if _, err := rand.Read(clientSeed); err != nil {
@@ -160,7 +200,11 @@ func buildImportRequest(
 		return ImportRequest{}, errors.New("workload channel key is invalid")
 	}
 	defer wipe(shared)
-	binding := importBinding(
+	bind := importBinding
+	if multi {
+		bind = importBindingKeys
+	}
+	binding := bind(
 		route, ch.Challenge, tokenNonceOf(ch.PublicKey), ch.PublicKey,
 		clientKey, p.KMSKey, names,
 	)
@@ -179,7 +223,7 @@ func buildImportRequest(
 	}
 	ciphertext := aead.Seal(nil, nonce, body, binding)
 	return ImportRequest{
-		Version:         ImportProtocol,
+		Version:         protocol,
 		Challenge:       bytes.Clone(ch.Challenge),
 		Profiles:        names,
 		ClientPublicKey: clientKey,

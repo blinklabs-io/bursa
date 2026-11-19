@@ -250,7 +250,7 @@ func confidentialSpaceCommand() *cobra.Command {
 	cmd.Flags().
 		StringVar(&counterObject, "counter-object", "", "Cloud Storage object for the pool issue counter; with --profile, the base name of each profile's counter object")
 	cmd.Flags().
-		StringArrayVar(&profiles, "profile", nil, "serve the key under this profile, repeatable; each profile has its own counter object <counter-object>/profiles/<profile>, which does not take over the --counter-object state, and requests without a profile are refused")
+		StringArrayVar(&profiles, "profile", nil, "serve this profile, repeatable (with a multi-key envelope, exactly its profiles, each with its own key); each profile has its own counter object <counter-object>/profiles/<profile>, which does not take over the --counter-object state, and requests without a profile are refused")
 	cmd.Flags().
 		StringArrayVar(&createProfiles, "create-profile-counter", nil, "create the missing counter object of this --profile, repeatable, for the one start that adds it; a missing counter object of any other profile still stops startup")
 	cmd.Flags().
