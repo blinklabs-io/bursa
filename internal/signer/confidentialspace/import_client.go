@@ -167,7 +167,7 @@ func buildImportRequest(
 		keyCount = len(names)
 	}
 	body := make([]byte, 0, keyCount*importBodyFixedSize+len(counters))
-	defer wipe(body)
+	defer func() { wipe(body) }()
 	if multi {
 		for _, name := range names {
 			k, ok := p.Keys[name]
