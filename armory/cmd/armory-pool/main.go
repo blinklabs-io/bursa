@@ -672,12 +672,16 @@ func runIO(args []string, stdin io.Reader, stdout io.Writer) error {
 			}
 		}
 
+		requestInput := stdin
+		if sub == "reset" {
+			requestInput = bytes.NewReader(nil)
+		}
 		file, in, err := adminKeyFile(
 			route,
 			*hk,
 			*hostKeyDir,
 			*scopeFlag,
-			stdin,
+			requestInput,
 		)
 		if err != nil {
 			return err

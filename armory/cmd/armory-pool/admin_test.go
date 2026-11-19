@@ -378,3 +378,29 @@ func TestAdminRequestChecksRouteFirst(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestResetDoesNotReadStdin(t *testing.T) {
+	t.Parallel()
+	for _, input := range []string{"", "{}", "not a request"} {
+		t.Run(input, func(t *testing.T) {
+			srv := adminServer(t)
+			in := &countingReader{r: strings.NewReader(input)}
+			var out bytes.Buffer
+			err := runIO([]string{
+				"-signer", srv.URL, "-source", "", "reset",
+			}, in, &out)
+			if reads := in.reads.Load(); reads != 0 {
+				t.Fatalf(
+					"reset read stdin %d times; it takes no request input",
+					reads,
+				)
+			}
+			if err != nil {
+				t.Fatalf("reset: %v", err)
+			}
+			if out.String() != "resetting\n" {
+				t.Fatalf("reset response %q", out.String())
+			}
+		})
+	}
+}
