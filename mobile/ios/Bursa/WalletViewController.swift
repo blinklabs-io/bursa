@@ -188,24 +188,33 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
         let fileManager = FileManager.default
         var firstFailure: String?
         for directory in contactDirectoriesRequiringFileExclusion {
-            let contacts = directory.appendingPathComponent("contacts.json")
+            var candidates = [directory.appendingPathComponent("contacts.json")]
             do {
-                _ = try fileManager.attributesOfItem(atPath: contacts.path)
-            } catch {
-                let lookupError = error as NSError
-                if lookupError.domain == NSCocoaErrorDomain,
-                   lookupError.code == CocoaError.Code.fileReadNoSuchFile.rawValue ||
-                   lookupError.code == CocoaError.Code.fileNoSuchFile.rawValue {
-                    continue
+                let names = try fileManager.contentsOfDirectory(atPath: directory.path)
+                for name in names where name.hasPrefix(".contacts-") && name.hasSuffix(".tmp") {
+                    candidates.append(directory.appendingPathComponent(name))
                 }
-                if firstFailure == nil {
+            } catch {
+                if !Self.isMissingFile(error), firstFailure == nil {
                     firstFailure = error.localizedDescription
                 }
-                continue
             }
-            let detail = Self.excludeFromBackup(contacts)
-            if firstFailure == nil {
-                firstFailure = detail
+            for contacts in candidates {
+                do {
+                    _ = try fileManager.attributesOfItem(atPath: contacts.path)
+                } catch {
+                    if Self.isMissingFile(error) {
+                        continue
+                    }
+                    if firstFailure == nil {
+                        firstFailure = error.localizedDescription
+                    }
+                    continue
+                }
+                let detail = Self.excludeFromBackup(contacts)
+                if firstFailure == nil {
+                    firstFailure = detail
+                }
             }
         }
         if let firstFailure {
@@ -218,6 +227,13 @@ class WalletViewController: UIViewController, WKNavigationDelegate {
                 ]
             )
         }
+    }
+
+    private static func isMissingFile(_ error: Error) -> Bool {
+        let fileError = error as NSError
+        return fileError.domain == NSCocoaErrorDomain &&
+            (fileError.code == CocoaError.Code.fileReadNoSuchFile.rawValue ||
+             fileError.code == CocoaError.Code.fileNoSuchFile.rawValue)
     }
 
     // Written only after a migration has copied and verified every entry, so

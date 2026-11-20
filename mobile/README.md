@@ -214,7 +214,8 @@ When the selected wallet tree cannot be excluded, the iOS shell disables
 contact persistence before boot. The address book stays empty and contact
 mutations return a service-unavailable error for that launch, so plaintext
 names, addresses, and notes are never added to backup-eligible storage. The
-shell attempts protection of every existing contact copy, even after a failure.
+shell attempts protection of every existing contact copy, including temporary
+`.contacts-*.tmp` files left by an interrupted write, even after a failure.
 If a contact file cannot be excluded or its existence cannot be determined,
 startup stops. Stopping does not itself exclude an existing file: that file may
 remain eligible for device backup until a subsequent exclusion succeeds.

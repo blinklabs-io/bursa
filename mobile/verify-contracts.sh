@@ -92,9 +92,14 @@ printf '%s\n' "$backup_failure" | rg -U -q 'backupExclusionFailureDetail = detai
 printf '%s\n' "$migration_catch" | rg -U -q 'excludeDirectoryFromBackup\(fallback, containsContacts: true\)'
 contact_protection=$(sed -n '/private func protectExistingContactsFromBackup(/,/^    }/p' "$ios")
 printf '%s\n' "$contact_protection" | rg -U -q 'try fileManager\.attributesOfItem\(atPath: contacts\.path\)'
-printf '%s\n' "$contact_protection" | rg -U -q 'lookupError.domain == NSCocoaErrorDomain,[\s\S]*fileReadNoSuchFile.rawValue[\s\S]*fileNoSuchFile.rawValue[\s\S]*continue'
+missing_file=$(sed -n '/private static func isMissingFile(/,/^    }/p' "$ios")
+printf '%s\n' "$missing_file" | rg -U -q 'fileError.domain == NSCocoaErrorDomain &&[\s\S]*fileReadNoSuchFile.rawValue[\s\S]*fileNoSuchFile.rawValue'
+printf '%s\n' "$contact_protection" | rg -U -q 'try fileManager\.contentsOfDirectory\(atPath: directory.path\)'
+printf '%s\n' "$contact_protection" | rg -U -q 'name.hasPrefix\("\.contacts-"\) && name.hasSuffix\("\.tmp"\)[\s\S]*candidates.append\(directory.appendingPathComponent\(name\)\)'
+printf '%s\n' "$contact_protection" | rg -U -q 'if !Self.isMissingFile\(error\), firstFailure == nil'
+printf '%s\n' "$contact_protection" | rg -U -q 'for contacts in candidates[\s\S]*if Self.isMissingFile\(error\) \{\n                        continue'
 printf '%s\n' "$contact_protection" | rg -U -q 'firstFailure = error.localizedDescription'
-printf '%s\n' "$contact_protection" | rg -U -q 'let detail = Self\.excludeFromBackup\(contacts\)\n            if firstFailure == nil \{\n                firstFailure = detail\n            \}\n        \}\n        if let firstFailure \{\n            throw NSError'
+printf '%s\n' "$contact_protection" | rg -U -q 'let detail = Self\.excludeFromBackup\(contacts\)\n                if firstFailure == nil \{\n                    firstFailure = detail\n                \}\n            \}\n        \}\n        if let firstFailure \{\n            throw NSError'
 view_load=$(sed -n '/override func viewDidLoad(/,/^    }/p' "$ios")
 printf '%s\n' "$view_load" | rg -U -q 'try protectExistingContactsFromBackup\(\)\n        \} catch \{\n            migrationFailureDetail = nil\n            backupExclusionFailureDetail = nil\n[^\n]*\n            showStartupError\([^\n]*\n            return\n        \}[\s\S]*startWallet\('
 start_fn=$(sed -n '/private func startWallet(/,/^    }/p' "$ios")
