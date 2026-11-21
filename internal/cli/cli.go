@@ -1577,7 +1577,7 @@ func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
 		if v4 := ip.To4(); v4 != nil {
 			relay.Ipv4 = &v4
 		} else {
-			v6 := ledgerIPv6Bytes(ip)
+			v6 := ip.To16()
 			relay.Ipv6 = &v6
 		}
 		relays = append(relays, relay)
@@ -1623,21 +1623,6 @@ func parsePoolRelays(f PoolRelayFlags) ([]lcommon.PoolRelay, error) {
 		})
 	}
 	return relays, nil
-}
-
-// ledgerIPv6Bytes returns the IPv6 address in the ledger wire form. The
-// ledger serializes an IPv6 address as four 32-bit words, each stored
-// little-endian, and cardano-cli emits that form. The PoolRelay encoder in
-// gouroboros writes the 16 bytes in network order, so the bytes of each word
-// are reversed before they are handed to it.
-func ledgerIPv6Bytes(ip net.IP) net.IP {
-	ip16 := ip.To16()
-	out := make(net.IP, len(ip16))
-	for i := 0; i < len(ip16); i += 4 {
-		out[i], out[i+1], out[i+2], out[i+3] =
-			ip16[i+3], ip16[i+2], ip16[i+1], ip16[i]
-	}
-	return out
 }
 
 func parseRelayPort(spec, portStr string) (uint32, error) {
