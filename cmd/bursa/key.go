@@ -45,6 +45,7 @@ Examples:
   bursa key payment --mnemonic-file seed.txt --signing-key-file -
   bursa key stake --mnemonic-file seed.txt --signing-key-file -
   bursa key pool-cold --mnemonic-file seed.txt --signing-key-file -
+  bursa key pool-id --cold-vkey pool-cold.vkey
   bursa key pool-owner --mnemonic-file seed.txt --signing-key-file owner.skey
   bursa key policy --mnemonic-file seed.txt --signing-key-file -
   bursa key calidus --mnemonic-file seed.txt --signing-key-file -
@@ -61,6 +62,7 @@ Examples:
 		keyStakeCommand(),
 		keyPolicyCommand(),
 		keyPoolColdCommand(),
+		keyPoolIDCommand(),
 		keyPoolOwnerCommand(),
 		keyCalidusCommand(),
 		keyVRFCommand(),
@@ -452,6 +454,75 @@ Examples:
 		"",
 		"Path to write verification key in cardano-cli compatible JSON format",
 	)
+
+	return &cmd
+}
+
+func keyPoolIDCommand() *cobra.Command {
+	var mnemonicFile string
+	var password string
+	var index uint32
+	var coldVKeyFile string
+	var outputFormat string
+	var outFile string
+
+	cmd := cobra.Command{
+		Use:   "pool-id",
+		Short: "Print a stake pool ID from its cold key",
+		Long: `Prints a stake pool's ID, the Blake2b-224 hash of its cold verification key.
+
+The key is read from --cold-vkey, a cardano-cli verification key file such as
+the one written by "bursa key pool-cold". Without --cold-vkey the pool cold key
+is derived from the mnemonic first, at CIP-1853 index --index.
+
+Output is bech32 (pool1...) by default; --output-format hex prints 56 hex
+digits. Both forms are accepted by --pool-id elsewhere in bursa.
+
+Examples:
+  bursa key pool-id --cold-vkey pool-cold.vkey
+  bursa key pool-id --cold-vkey pool-cold.vkey --output-format hex
+  bursa key pool-id --mnemonic-file seed.txt
+  bursa key pool-id --cold-vkey pool-cold.vkey --out-file pool.id`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cli.RunKeyPoolID(
+				"",
+				mnemonicFile,
+				password,
+				coldVKeyFile,
+				outputFormat,
+				outFile,
+				index,
+			)
+		},
+	}
+
+	addSecretFlags(&cmd, &mnemonicFile, &password)
+	cmd.Flags().Uint32Var(
+		&index,
+		"index",
+		0,
+		"Pool cold key index when deriving from a mnemonic (default: 0)",
+	)
+	cmd.Flags().StringVar(
+		&coldVKeyFile,
+		"cold-vkey",
+		"",
+		"Pool cold verification key file",
+	)
+	cmd.Flags().StringVar(
+		&outputFormat,
+		"output-format",
+		"bech32",
+		"Output format: bech32 or hex",
+	)
+	cmd.Flags().StringVar(
+		&outFile,
+		"out-file",
+		"",
+		"Write the pool ID to this file instead of standard output",
+	)
+	cmd.MarkFlagsMutuallyExclusive("cold-vkey", "mnemonic-file")
+	cmd.MarkFlagsMutuallyExclusive("cold-vkey", "password-file")
 
 	return &cmd
 }
