@@ -124,6 +124,21 @@ func (p *blackholeProxy) close() {
 	p.wg.Wait()
 }
 
+// allowsPlaintext reports whether cfg's sslmode permits a connection without
+// TLS: disable, or allow/prefer, which pgconn expresses as a fallback with no
+// TLS config.
+func allowsPlaintext(cfg *pgconn.Config) bool {
+	if cfg.TLSConfig == nil {
+		return true
+	}
+	for _, fb := range cfg.Fallbacks {
+		if fb.TLSConfig == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // A pooled connection that goes silent without a reset must not cost the
 // guard write: pgxpool pings a connection idle for over a second on acquire,
 // and an unbounded ping spends the caller's whole context, leaving none to
@@ -137,9 +152,13 @@ func TestPostgres_DeadIdleConnectionDoesNotConsumeWriteContext(t *testing.T) {
 	if strings.HasPrefix(cfg.Host, "/") {
 		t.Skipf("%s uses a Unix socket; the proxy relays TCP", pgDSNEnv)
 	}
+	// The proxy DSN dials a loopback address, which a TLS server certificate
+	// for the backend would not match, so it connects without TLS. Skip rather
+	// than send credentials in plaintext to a backend whose DSN requires TLS.
+	if !allowsPlaintext(cfg) {
+		t.Skipf("%s requires TLS; the proxy DSN connects without it", pgDSNEnv)
+	}
 	proxy := newBlackholeProxy(t, net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port)))
-	// The proxy is a plain TCP relay, so the test backend must accept
-	// connections without TLS.
 	dsn := (&url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(cfg.User, cfg.Password),
