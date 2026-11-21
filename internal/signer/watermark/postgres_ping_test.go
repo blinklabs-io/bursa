@@ -124,19 +124,48 @@ func (p *blackholeProxy) close() {
 	p.wg.Wait()
 }
 
-// allowsPlaintext reports whether cfg's sslmode permits a connection without
-// TLS: disable, or allow/prefer, which pgconn expresses as a fallback with no
-// TLS config.
+// allowsPlaintext reports whether cfg permits a connection without TLS to its
+// primary host and port, the backend the proxy relays to: sslmode disable, or
+// allow/prefer, which pgconn expresses as a fallback for the same host and
+// port with no TLS config. A plaintext fallback for another host, such as a
+// Unix socket listed after a TCP host, does not count.
 func allowsPlaintext(cfg *pgconn.Config) bool {
 	if cfg.TLSConfig == nil {
 		return true
 	}
 	for _, fb := range cfg.Fallbacks {
-		if fb.TLSConfig == nil {
+		if fb.Host == cfg.Host && fb.Port == cfg.Port && fb.TLSConfig == nil {
 			return true
 		}
 	}
 	return false
+}
+
+func TestAllowsPlaintext(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		dsn  string
+		want bool
+	}{
+		{"host=db.example.com sslmode=disable", true},
+		{"host=db.example.com sslmode=allow", true},
+		{"host=db.example.com sslmode=prefer", true},
+		{"host=db.example.com sslmode=require", false},
+		{"host=db.example.com sslmode=verify-full", false},
+		// The socket fallback has no TLS config, but the proxy relays to
+		// the TCP primary, which requires TLS.
+		{"host=db.example.com,/var/run/postgresql sslmode=require", false},
+		{"host=db.example.com,/var/run/postgresql sslmode=prefer", true},
+	}
+	for _, tt := range tests {
+		cfg, err := pgconn.ParseConfig(tt.dsn)
+		if err != nil {
+			t.Fatalf("parse %q: %v", tt.dsn, err)
+		}
+		if got := allowsPlaintext(cfg); got != tt.want {
+			t.Errorf("allowsPlaintext(%q) = %v, want %v", tt.dsn, got, tt.want)
+		}
+	}
 }
 
 // A pooled connection that goes silent without a reset must not cost the
