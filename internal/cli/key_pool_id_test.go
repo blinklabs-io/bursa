@@ -25,9 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The cold key is 32 bytes of 0xbb. The expected hash comes from
-// `printf 'bb%.0s' $(seq 32) | basenc --base16 -d | b2sum -l 224` and the
-// bech32 form from an independent Python bech32 encoder, not from bursa.
+// The cold key is 32 bytes of 0xbb. Both expected values are cardano-cli
+// `stake-pool id` output for that key, not bursa's.
 const (
 	knownPoolIDHex    = "3984ee65457a47e2c847c9a9a3870d466e06a13d3fb08b5b29dfeb22"
 	knownPoolIDBech32 = "pool18xzwue290fr79jz8ex568pcdgehqdgfa87cgkkefml4jyjgwm7e"
@@ -131,6 +130,25 @@ func TestRunKeyPoolID_FromMnemonicMatchesColdVKey(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, strings.TrimSpace(string(a)), 56)
 	assert.Equal(t, string(a), string(b))
+}
+
+// Expected values are cardano-cli `stake-pool id --output-format hex` on the
+// pool cold vkey derived from the all-"abandon" mnemonic at each index.
+func TestRunKeyPoolID_FromMnemonicKnownIDs(t *testing.T) {
+	t.Parallel()
+	mnemonic := strings.TrimSpace(strings.Repeat("abandon ", 11) + "about")
+	for index, want := range map[uint32]string{
+		0: "b875f7452266acb53bcc349ee3b2aa9c843b73d26a43a73a54a737f2",
+		1: "0996bee5ed9ce72755f315a3d3c142f63b6cbd8ab29424380c71b55b",
+	} {
+		outFile := filepath.Join(t.TempDir(), "pool.id")
+		require.NoError(
+			t, RunKeyPoolID(mnemonic, "", "", "", "hex", outFile, index),
+		)
+		got, err := os.ReadFile(outFile)
+		require.NoError(t, err)
+		assert.Equal(t, want+"\n", string(got), "index %d", index)
+	}
 }
 
 func writeSeed(t *testing.T, dir, mnemonic string) string {
