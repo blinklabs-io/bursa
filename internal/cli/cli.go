@@ -3228,3 +3228,89 @@ func writeWalletOutputsWithWriter(
 
 	return errors.Join(workerErrors...)
 }
+
+// RunKeyPoolID prints a stake pool's ID: the Blake2b-224 hash of its cold
+// verification key. The key comes from coldVKeyFile or, when that is empty,
+// is derived from the mnemonic at the given pool cold key index.
+func RunKeyPoolID(
+	mnemonic, mnemonicFile, password, coldVKeyFile, outputFormat, outFile string,
+	index uint32,
+) error {
+	var format string
+	switch outputFormat {
+	case "", "bech32":
+		format = "bech32"
+	case "hex":
+		format = "hex"
+	default:
+		return fmt.Errorf(
+			"invalid output format %q: expected bech32 or hex",
+			outputFormat,
+		)
+	}
+
+	var vkey []byte
+	if coldVKeyFile != "" {
+		data, err := os.ReadFile(coldVKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read cold verification key: %w", err)
+		}
+		vkey, err = parseVerificationKey(data)
+		if err != nil {
+			return fmt.Errorf("failed to parse cold verification key: %w", err)
+		}
+	} else {
+		resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+		if err != nil {
+			return err
+		}
+		rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+		if err != nil {
+			return fmt.Errorf("failed to derive root key: %w", err)
+		}
+		poolColdKey, err := bursa.GetPoolColdKey(rootKey, 0, index)
+		if err != nil {
+			return fmt.Errorf("failed to derive pool cold key: %w", err)
+		}
+		kf, err := bursa.GetPoolColdVKey(poolColdKey)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to create pool cold verification key: %w",
+				err,
+			)
+		}
+		cborBytes, err := hex.DecodeString(kf.CborHex)
+		if err != nil {
+			return fmt.Errorf("failed to decode cold verification key: %w", err)
+		}
+		if _, err := cbor.Decode(cborBytes, &vkey); err != nil {
+			return fmt.Errorf("failed to decode cold verification key: %w", err)
+		}
+	}
+
+	keyHash, err := hashVerificationKey(vkey)
+	if err != nil {
+		return err
+	}
+
+	poolID := hex.EncodeToString(keyHash)
+	if format == "bech32" {
+		words, err := bech32.ConvertBits(keyHash, 8, 5, true)
+		if err != nil {
+			return fmt.Errorf("failed to convert pool ID bits: %w", err)
+		}
+		poolID, err = bech32.Encode("pool", words)
+		if err != nil {
+			return fmt.Errorf("failed to encode pool ID: %w", err)
+		}
+	}
+
+	if outFile == "" {
+		fmt.Println(poolID)
+		return nil
+	}
+	if err := os.WriteFile(outFile, []byte(poolID+"\n"), 0o644); err != nil {
+		return fmt.Errorf("failed to write pool ID file: %w", err)
+	}
+	return nil
+}
