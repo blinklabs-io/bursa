@@ -113,7 +113,7 @@ func TestRunKeyPoolID_FromMnemonicMatchesColdVKey(t *testing.T) {
 	vkeyPath := filepath.Join(dir, "pool-cold.vkey")
 	require.NoError(
 		t,
-		RunKeyPoolCold("", writeSeed(t, dir, mnemonic), "", "", vkeyPath, 0),
+		RunKeyPoolCold(mnemonic, "", "", "", vkeyPath, 0),
 	)
 
 	fromVKey := filepath.Join(dir, "from-vkey.id")
@@ -150,13 +150,6 @@ func TestRunKeyPoolID_FromMnemonicKnownIDs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want+"\n", string(got), "index %d", index)
 	}
-}
-
-func writeSeed(t *testing.T, dir, mnemonic string) string {
-	t.Helper()
-	path := filepath.Join(dir, "seed.txt")
-	require.NoError(t, os.WriteFile(path, []byte(mnemonic), 0o600))
-	return path
 }
 
 func TestRunKeyPoolID_RejectsNonColdVKeyEnvelope(t *testing.T) {
