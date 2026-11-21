@@ -3325,11 +3325,31 @@ func RunKeyPoolID(
 	}
 
 	if outFile == "" {
-		fmt.Println(poolID)
+		if _, err := fmt.Println(poolID); err != nil {
+			return fmt.Errorf("failed to write pool ID: %w", err)
+		}
 		return nil
 	}
-	if err := os.WriteFile(outFile, []byte(poolID+"\n"), 0o600); err != nil {
+	if err := writePoolIDFile(outFile, poolID); err != nil {
 		return fmt.Errorf("failed to write pool ID file: %w", err)
 	}
 	return nil
+}
+
+// writePoolIDFile writes the ID with mode 0600. The open mode applies only
+// when the file is created, so an existing file is chmodded as well.
+func writePoolIDFile(path, poolID string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.WriteString(poolID + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }

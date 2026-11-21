@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -202,4 +203,37 @@ func TestRunKeyPoolID_RejectsNonColdVKeyEnvelope(t *testing.T) {
 	got, err := os.ReadFile(outFile)
 	require.NoError(t, err)
 	assert.Equal(t, knownPoolIDHex+"\n", string(got))
+}
+
+func TestRunKeyPoolID_OutFileExistingModeIs0600(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	outFile := filepath.Join(t.TempDir(), "pool.id")
+	require.NoError(t, os.WriteFile(outFile, []byte("stale\n"), 0o600))
+	require.NoError(t, os.Chmod(outFile, 0o644))
+
+	require.NoError(
+		t, RunKeyPoolID("", "", "", poolIDColdVKey(t), "hex", outFile, 0),
+	)
+	info, err := os.Stat(outFile)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	got, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	assert.Equal(t, knownPoolIDHex+"\n", string(got))
+}
+
+func TestRunKeyPoolID_StdoutWriteError(t *testing.T) {
+	// Not t.Parallel: swaps os.Stdout.
+	vkey := poolIDColdVKey(t)
+	readOnly, err := os.Open(vkey)
+	require.NoError(t, err)
+	defer readOnly.Close()
+	old := os.Stdout
+	os.Stdout = readOnly
+	defer func() { os.Stdout = old }()
+
+	require.Error(t, RunKeyPoolID("", "", "", vkey, "", "", 0))
 }
