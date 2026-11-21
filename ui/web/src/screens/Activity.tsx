@@ -166,7 +166,7 @@ function TransactionDetailDrawer({ hash, onClose }: { hash: string; onClose: () 
   }, [hash]);
 
   return (
-    <Drawer title="Transaction Detail" onClose={onClose}>
+    <Drawer title="Transaction detail" onClose={onClose}>
       {loading && <p>Loading…</p>}
       {error && (
         <p role="alert" className="error-text">

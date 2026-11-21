@@ -731,7 +731,6 @@ export function App() {
           {!addingWallet && ["send", "receive", "activity", "stake", "staking", "rewards", "pools", "settings"].includes(screenLabel) && (
             <header className="page-heading">
               <h1>{["stake", "staking", "rewards", "pools"].includes(screenLabel) ? "Staking" : screenLabel.charAt(0).toUpperCase() + screenLabel.slice(1)}</h1>
-              <p>{screenLabel === "send" ? "Choose a recipient and review your transfer." : screenLabel === "receive" ? "Your addresses for ADA and Cardano native tokens." : screenLabel === "activity" ? "Transfers recorded by your node." : screenLabel === "settings" ? "Manage your wallet, privacy, and connections." : "Manage delegation and your staking rewards."}</p>
             </header>
           )}
           <ErrorBoundary

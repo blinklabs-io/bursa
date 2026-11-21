@@ -81,7 +81,7 @@ export class ErrorBoundary extends Component<Props, State> {
           {this.props.label
             ? `The ${this.props.label} screen could not be displayed.`
             : "This screen could not be displayed."}{" "}
-          Your keys are safe — this is a display fault, not a change to your
+          Your keys are safe. This is a display fault, not a change to your
           wallet.
         </p>
         <p className="helper-text">

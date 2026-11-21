@@ -39,7 +39,7 @@ export function SurveyConfirm({ summary, signedContent, preview, onBack, onDone 
 
   if (result) {
     return (
-      <Card title="Transaction Submitted">
+      <Card title="Transaction submitted">
         <div className="done-details">
           <p>{summary} was submitted through your node.</p>
           <p className="field-label">Transaction hash</p>

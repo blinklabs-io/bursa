@@ -57,7 +57,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
   if (vaultPassword !== null) {
     return (
       <div className="vault-setup">
-        <Card title="Vault Created">
+        <Card title="Vault created">
           <p className="helper-text">
             Your vault is ready. Add your first wallet to begin.
           </p>
@@ -66,7 +66,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
           network={network}
           knownVaultPassword={vaultPassword}
           onAdded={onReady}
-          title="Add Your First Wallet"
+          title="Add your first wallet"
           submitLabel="Add Wallet"
         />
       </div>
@@ -74,7 +74,7 @@ export function CreateVault({ network, onReady }: CreateVaultProps) {
   }
 
   return (
-    <Card title="Create Vault">
+    <Card title="Create vault">
       <form onSubmit={handleCreate}>
         <p className="helper-text">
           The vault password unlocks this app and reveals your wallets in read-only

@@ -98,8 +98,8 @@ export function Stake({
                   <Card title="Delegation">
                     <p className="helper-text">
                       This wallet cannot submit a delegation. Delegating needs a
-                      fully synced node and a wallet that can sign a certificate
-                      — a watch-only wallet, or a hardware wallet whose device
+                      fully synced node and a wallet that can sign a certificate.
+                      A watch-only wallet, or a hardware wallet whose device
                       does not sign certificates, can still browse pools and
                       review rewards here.
                     </p>

@@ -269,7 +269,7 @@ export function ConnectorApproval() {
         style={{ width: "100%", maxWidth: "640px", maxHeight: "calc(100vh - 2rem)", overflowY: "auto" }}
       >
         <Card
-          title={current.method === "remoteSubmitTx" ? "Remote Submission Request" : "dApp Request"}
+          title={current.method === "remoteSubmitTx" ? "Remote submission request" : "dApp request"}
         >
           {degraded && (
             <div
@@ -314,7 +314,7 @@ export function ConnectorApproval() {
                         fontSize: "0.8em",
                       }}
                     >
-                      ⚠ Contents unverified — raw data payload.
+                      ⚠ Contents unverified: raw data payload.
                       Bursa cannot decode what is shown below, so it may not reflect what you expect.
                       Only approve if you trust {current.origin} and understand exactly what you are
                       signing.

@@ -53,7 +53,7 @@ export function MigrateLegacyKeystore({ onReady, onCreateNew }: MigrateLegacyKey
   }
 
   return (
-    <Card title="Import Existing Wallet">
+    <Card title="Import existing wallet">
       <form onSubmit={handleSubmit}>
         <p className="helper-text">
           An older encrypted wallet was found. Import it into a vault to continue.

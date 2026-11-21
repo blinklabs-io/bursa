@@ -107,10 +107,10 @@ export function PoolDirectory({ network, onDelegate }: PoolDirectoryProps) {
 
   return (
     <div className="pool-directory">
-      <Card title="Stake Pool Directory">
+      <Card title="Stake pool directory">
         <p className="helper-text">
-          Browse and search stake pools your embedded node has indexed — read
-          directly from the node, no external service is contacted.
+          Browse and search stake pools your embedded node has indexed. Everything is read
+          from the node, and no external service is contacted.
         </p>
 
         <label htmlFor="pool-search">Search by pool ID</label>

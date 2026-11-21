@@ -1,10 +1,10 @@
 # Bursa UI review
 
-The wallet uses a gold wordmark, compact asset rows, grouped wallets and accounts, token logos, NFT media states, pool metrics and a quote-only swap flow. Geist typography, warm solid surfaces and quiet dividers carry the interface. The transfer card and mobile amount panel use a subdued satin-gold finish with recessed Bursa lettering.
+The wallet uses a gold wordmark, compact asset rows, grouped wallets and accounts, token logos, NFT media states, pool metrics and a quote-only swap flow. Geist typography, warm solid surfaces and quiet dividers carry the interface. Motion is limited to feedback: button presses, copy confirmation, switches, and drawer and dialog entrances. The lock and first-run screens sit on a static warm-graphite grain. The transfer card and mobile amount panel use a subdued satin-gold finish with recessed Bursa lettering.
 
 ## Current screenshots
 
-Captured October 8, 2026 from the production SPA build after the Geist and warm-surface pass, based on `main` at `9909075`. These are the actual React screens with synthetic API data. Desktop captures are 1440 × 900; mobile captures are 390 × 844 at device scale 1. Each image is a viewport capture. Longer screens continue below the viewport.
+Captured November 12, 2026 from the production SPA build after the declutter and motion pass, based on `main` at `9d1aab5`. These are the actual React screens with synthetic API data. Desktop captures are 1440 × 900; mobile captures are 390 × 844 at device scale 1. Each image is a viewport capture. Longer screens continue below the viewport.
 
 | Screen | Desktop | Mobile |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ Captured October 8, 2026 from the production SPA build after the Geist and warm-
 | Settings | [Desktop](screenshots/current/settings-desktop.png) | [Mobile](screenshots/current/settings-mobile.png) |
 | Import transaction | [Desktop](screenshots/current/import-desktop.png) | [Mobile](screenshots/current/import-mobile.png) |
 | Swap quote | [Desktop](screenshots/current/swap-desktop.png) | [Mobile](screenshots/current/swap-mobile.png) |
+| Unlock vault | [Desktop](screenshots/current/unlock-desktop.png) | [Mobile](screenshots/current/unlock-mobile.png) |
 | Create vault | [Desktop](screenshots/current/vault-create-desktop.png) | [Mobile](screenshots/current/vault-create-mobile.png) |
 | Add first wallet | [Desktop](screenshots/current/add-wallet-desktop.png) | [Mobile](screenshots/current/add-wallet-mobile.png) |
 | Recovery phrase layout | [Desktop](screenshots/current/recovery-phrase-desktop.png) | [Mobile](screenshots/current/recovery-phrase-mobile.png) |
@@ -64,11 +65,8 @@ The first-run scenario accepts a demo password of at least 12 characters, then o
 ## Validation
 
 - `npm ci`, lint (zero errors, one existing unused-disable warning), type-check and production build passed.
-- 1,029 tests across 73 files passed, including preview URL/write guards, Send progress, visible copy feedback and mobile navigation behavior. Existing jsdom navigation diagnostics appear during the suite; all tests pass.
-- UI Go vet/tests and `make wallet-binary` passed.
-- Browser spacing checks cover 90 screen/viewport combinations at 1440, 1024, 768, 390 and 320px, including first-run states, message tools, contact forms, delegation, rewards and expanded QR codes. No horizontal overflow or page errors were observed. An additional 320 × 740 check covers the primary routes.
-- Computed card padding is 24px on desktop and 20px on mobile; unboxed editors and ledgers use zero. The open balance area keeps vertical breathing room. Flat-form labels sit 8px above their controls. Wallet setup stays in one column and recovery words fit small phones. The Settings tools have a measured 24px gap.
-- Receive with unknown usage has no hero card, zero outer padding, a transparent background and no shadow at both screenshot sizes.
-- The self-hosted Geist WOFF2 loads with the correct MIME type. Additional browser checks cover font failure fallback, a 720px layout for enlarged desktop use, tabular digits, 16px Send field-group gaps and solid panel surfaces.
+- 1,058 tests across 74 files passed. Existing jsdom navigation diagnostics appear during the suite; all tests pass.
+- UI Go vet and tests passed.
+- The screenshots above were captured with headless Chrome against `design-preview.mjs`.
 
 Live IPFS retrieval, hardware signing, native webviews and physical devices were not exercised. NFT media requires the `nftmedia` build capability. Swap execution stays with the chosen DEX.

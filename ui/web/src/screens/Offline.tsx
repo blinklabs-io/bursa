@@ -295,7 +295,7 @@ export function Offline() {
   const [busy, setBusy] = useState(false);
 
   return (
-    <Card title="Offline Signing">
+    <Card title="Offline signing">
       <div className="tab-bar">
         <button
           className={tab === "sign" ? "tab active" : "tab"}

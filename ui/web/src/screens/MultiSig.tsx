@@ -183,7 +183,7 @@ export function ComposeMultiSig({
   }
 
   return (
-    <Card title="New Multi-sig Account">
+    <Card title="New multi-sig account">
       <div className="send-form">
         <label htmlFor="ms-label">Label</label>
         <Input
@@ -434,7 +434,7 @@ export function MultiSigSpend({ account, canSpend, canSign, onSpent }: MultiSigS
 
   if (result) {
     return (
-      <Card title="Transaction Submitted">
+      <Card title="Transaction submitted">
         <div className="done-details">
           <p>Your multi-sig transaction has been submitted.</p>
           <p className="field-label">Transaction hash</p>
@@ -571,7 +571,7 @@ function CollectAndSubmit({
   }
 
   return (
-    <Card title="Collect Signatures">
+    <Card title="Collect signatures">
       <div className="send-form">
         <p className="helper-text">
           Share this unsigned transaction with co-signers. Each signs with their
