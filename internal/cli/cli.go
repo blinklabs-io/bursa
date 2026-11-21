@@ -3255,6 +3255,25 @@ func RunKeyPoolID(
 		if err != nil {
 			return fmt.Errorf("failed to read cold verification key: %w", err)
 		}
+		// parseVerificationKey ignores the envelope type, so a signing key
+		// or another role's vkey would hash to a plausible but wrong ID.
+		var env keyEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			return fmt.Errorf(
+				"cold verification key must be a key envelope: %w",
+				err,
+			)
+		}
+		switch env.Type {
+		case "StakePoolVerificationKey_ed25519",
+			"StakePoolVerificationKeyShelley_ed25519":
+		default:
+			return fmt.Errorf(
+				"cold verification key has envelope type %q: expected "+
+					"StakePoolVerificationKey_ed25519",
+				env.Type,
+			)
+		}
 		vkey, err = parseVerificationKey(data)
 		if err != nil {
 			return fmt.Errorf("failed to parse cold verification key: %w", err)

@@ -157,3 +157,49 @@ func writeSeed(t *testing.T, dir, mnemonic string) string {
 	require.NoError(t, os.WriteFile(path, []byte(mnemonic), 0o600))
 	return path
 }
+
+func TestRunKeyPoolID_RejectsNonColdVKeyEnvelope(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Each input carries 32 key bytes, so only the envelope type separates
+	// it from a cold verification key.
+	inputs := map[string]string{
+		"signing key": createTestVkeyFile(
+			t, dir, "pool-cold.skey",
+			"StakePoolSigningKey_ed25519",
+			"Stake Pool Operator Signing Key",
+			testColdVKeyCborHex,
+		),
+		"payment vkey": createTestVkeyFile(
+			t, dir, "payment.vkey",
+			"PaymentVerificationKeyShelley_ed25519",
+			"Payment Verification Key",
+			testColdVKeyCborHex,
+		),
+		"bare hex": func() string {
+			path := filepath.Join(dir, "bare.hex")
+			require.NoError(
+				t,
+				os.WriteFile(path, []byte(strings.Repeat("bb", 32)), 0o600),
+			)
+			return path
+		}(),
+	}
+	for name, path := range inputs {
+		err := RunKeyPoolID("", "", "", path, "hex", "", 0)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "cold verification key", name)
+	}
+
+	shelley := createTestVkeyFile(
+		t, dir, "pool-cold-shelley.vkey",
+		"StakePoolVerificationKeyShelley_ed25519",
+		"Stake Pool Operator Verification Key",
+		testColdVKeyCborHex,
+	)
+	outFile := filepath.Join(dir, "pool.id")
+	require.NoError(t, RunKeyPoolID("", "", "", shelley, "hex", outFile, 0))
+	got, err := os.ReadFile(outFile)
+	require.NoError(t, err)
+	assert.Equal(t, knownPoolIDHex+"\n", string(got))
+}
