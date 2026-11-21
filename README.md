@@ -256,6 +256,7 @@ bursa key payment --mnemonic-file seed.txt --signing-key-file - # Payment key (C
 bursa key stake --mnemonic-file seed.txt --signing-key-file - # Stake key (CIP-1852)
 bursa key policy --mnemonic-file seed.txt --signing-key-file - # Forging policy key (CIP-1855)
 bursa key pool-cold --mnemonic-file seed.txt --signing-key-file - # Pool cold key (CIP-1853)
+bursa key pool-id --cold-vkey pool-cold.vkey # Pool ID (pool1...; --output-format hex for hex)
 bursa key pool-owner --mnemonic-file seed.txt --signing-key-file owner.skey # Plain Ed25519 stake key for hardware (CIP-1852 path)
 bursa key drep --mnemonic-file seed.txt --signing-key-file - # DRep key (CIP-0105)
 bursa key committee-cold --mnemonic-file seed.txt --signing-key-file - # Committee cold key (CIP-0105)

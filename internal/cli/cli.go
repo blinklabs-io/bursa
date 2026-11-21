@@ -3213,3 +3213,128 @@ func writeWalletOutputsWithWriter(
 
 	return errors.Join(workerErrors...)
 }
+
+// RunKeyPoolID prints a stake pool's ID: the Blake2b-224 hash of its cold
+// verification key. The key comes from coldVKeyFile or, when that is empty,
+// is derived from the mnemonic at the given pool cold key index.
+func RunKeyPoolID(
+	mnemonic, mnemonicFile, password, coldVKeyFile, outputFormat, outFile string,
+	index uint32,
+) error {
+	var format string
+	switch outputFormat {
+	case "", "bech32":
+		format = "bech32"
+	case "hex":
+		format = "hex"
+	default:
+		return fmt.Errorf(
+			"invalid output format %q: expected bech32 or hex",
+			outputFormat,
+		)
+	}
+
+	var vkey []byte
+	if coldVKeyFile != "" {
+		data, err := os.ReadFile(coldVKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to read cold verification key: %w", err)
+		}
+		// parseVerificationKey ignores the envelope type, so a signing key
+		// or another role's vkey would hash to a plausible but wrong ID.
+		var env keyEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			return fmt.Errorf(
+				"cold verification key must be a key envelope: %w",
+				err,
+			)
+		}
+		switch env.Type {
+		case "StakePoolVerificationKey_ed25519",
+			"StakePoolVerificationKeyShelley_ed25519":
+		default:
+			return fmt.Errorf(
+				"cold verification key has envelope type %q: expected "+
+					"StakePoolVerificationKey_ed25519",
+				env.Type,
+			)
+		}
+		vkey, err = parseVerificationKey(data)
+		if err != nil {
+			return fmt.Errorf("failed to parse cold verification key: %w", err)
+		}
+	} else {
+		resolvedMnemonic, err := resolveMnemonic(mnemonic, mnemonicFile)
+		if err != nil {
+			return err
+		}
+		rootKey, err := bursa.GetRootKeyFromMnemonic(resolvedMnemonic, password)
+		if err != nil {
+			return fmt.Errorf("failed to derive root key: %w", err)
+		}
+		poolColdKey, err := bursa.GetPoolColdKey(rootKey, 0, index)
+		if err != nil {
+			return fmt.Errorf("failed to derive pool cold key: %w", err)
+		}
+		kf, err := bursa.GetPoolColdVKey(poolColdKey)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to create pool cold verification key: %w",
+				err,
+			)
+		}
+		cborBytes, err := hex.DecodeString(kf.CborHex)
+		if err != nil {
+			return fmt.Errorf("failed to decode cold verification key: %w", err)
+		}
+		if _, err := cbor.Decode(cborBytes, &vkey); err != nil {
+			return fmt.Errorf("failed to decode cold verification key: %w", err)
+		}
+	}
+
+	keyHash, err := hashVerificationKey(vkey)
+	if err != nil {
+		return err
+	}
+
+	poolID := hex.EncodeToString(keyHash)
+	if format == "bech32" {
+		words, err := bech32.ConvertBits(keyHash, 8, 5, true)
+		if err != nil {
+			return fmt.Errorf("failed to convert pool ID bits: %w", err)
+		}
+		poolID, err = bech32.Encode("pool", words)
+		if err != nil {
+			return fmt.Errorf("failed to encode pool ID: %w", err)
+		}
+	}
+
+	if outFile == "" {
+		if _, err := fmt.Println(poolID); err != nil {
+			return fmt.Errorf("failed to write pool ID: %w", err)
+		}
+		return nil
+	}
+	if err := writePoolIDFile(outFile, poolID); err != nil {
+		return fmt.Errorf("failed to write pool ID file: %w", err)
+	}
+	return nil
+}
+
+// writePoolIDFile writes the ID with mode 0600. The open mode applies only
+// when the file is created, so an existing file is chmodded as well.
+func writePoolIDFile(path, poolID string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.WriteString(poolID + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
