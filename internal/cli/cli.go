@@ -3309,7 +3309,7 @@ func RunKeyPoolID(
 		fmt.Println(poolID)
 		return nil
 	}
-	if err := os.WriteFile(outFile, []byte(poolID+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(outFile, []byte(poolID+"\n"), 0o600); err != nil {
 		return fmt.Errorf("failed to write pool ID file: %w", err)
 	}
 	return nil
