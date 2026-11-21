@@ -47,6 +47,16 @@ type PostgresWatermark struct {
 	pool *pgxpool.Pool
 }
 
+// poolPingTimeout bounds the liveness ping pgxpool runs on a connection that
+// has been idle for over a second. Unbounded, the ping spends the caller's
+// whole context on a connection that went silent without a reset, leaving
+// none to dial a replacement. The bound applies to each ping, so an acquire
+// pays it once per dead idle connection before dialing. It sits well above a
+// healthy round trip; a live server slower than this to answer has the
+// connection destroyed and redialed. pgxpool.Config.PingTimeout is not
+// settable from the DSN.
+const poolPingTimeout = 300 * time.Millisecond
+
 // NewPostgresWatermark connects to Postgres at dsn (a libpq/pgx connection
 // string or URL), creates the watermark tables if they do not exist, and
 // returns a ready store. The dsn must be sourced from the environment by the
@@ -69,6 +79,7 @@ func NewPostgresWatermark(
 	if err := validatePostgresWatermarkConfig(poolConfig.ConnConfig); err != nil {
 		return nil, err
 	}
+	poolConfig.PingTimeout = poolPingTimeout
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres watermark pool: %w", err)
