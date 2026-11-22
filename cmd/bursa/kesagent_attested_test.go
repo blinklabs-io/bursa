@@ -26,6 +26,7 @@ import (
 
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/kesagent"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 )
 
 func TestAttestedListenerPlaintextRefusesTLSFiles(t *testing.T) {
@@ -262,5 +263,36 @@ func TestAttestedServiceConfigTransport(t *testing.T) {
 			cfg.ClientCertOptional != tc.wantCertOptional {
 			t.Fatalf("%s: plaintext=%v optional=%v", tc.name, cfg.Plaintext, cfg.ClientCertOptional)
 		}
+	}
+}
+
+// The attestation key attestedListener returns is the served certificate's
+// key, so an attestation it signs carries the pin the agent logs as
+// server_spki_sha256, the value a signer's kes_agents grant names.
+func TestAttestedListenerIdentityAttestsUnderTheLoggedPin(t *testing.T) {
+	t.Parallel()
+	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
+	ln, pin, identity, err := attestedListener(config.KESAgentConfig{
+		AttestedListenAddress: "127.0.0.1:0",
+		AttestedTLSCertFile:   certFile,
+		AttestedTLSKeyFile:    keyFile,
+	})
+	if err != nil {
+		t.Fatalf("attestedListener: %v", err)
+	}
+	defer ln.Close()
+	if identity == nil {
+		t.Fatal("attestedListener returned no attestation key for a TLS listener")
+	}
+	att, err := wire.SignStagedKey(identity, "pool-a", make([]byte, 32), make([]byte, 28))
+	if err != nil {
+		t.Fatalf("SignStagedKey: %v", err)
+	}
+	if err := att.Verify(); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	sum := att.SPKISHA256()
+	if got := hex.EncodeToString(sum[:]); got != pin {
+		t.Fatalf("attestation pin = %s, logged pin = %s", got, pin)
 	}
 }
