@@ -110,8 +110,9 @@ type attestedKeyState struct {
 	period   uint64
 }
 
-// permittedKeyState resolves a session's profile among the profiles the
-// client may use for its requested role, and only those. A name or key that
+// permittedKeyState resolves a control session's profile among the profiles
+// the client may use, and only those; the profile may have no active key, and
+// selecting by KES key needs one. A name or key that
 // resolves anywhere else, or nowhere, is ErrRoleNotPermitted, so a refused
 // request tells the client nothing about profiles outside its list.
 func permittedKeyState(
@@ -143,7 +144,7 @@ func permittedKeyState(
 	if p == nil || (name != "" && name != p.cfg.Name) {
 		return nil, attestedKeyState{}, ErrRoleNotPermitted
 	}
-	st, err := p.attestedKeyState()
+	st, err := p.controlKeyState()
 	if err != nil {
 		return nil, attestedKeyState{}, err
 	}

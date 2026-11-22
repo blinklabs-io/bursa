@@ -149,7 +149,8 @@ type AttestationRequest struct {
 }
 
 // AttestationResponse binds the active KES state to measured-workload
-// evidence. The KES signing key is deliberately absent.
+// evidence. The KES signing key is deliberately absent. A control session on a
+// profile with no active key omits KESVKey, OpCert and Period.
 type AttestationResponse struct {
 	Type     string `json:"type"`
 	Protocol string `json:"protocol"`
