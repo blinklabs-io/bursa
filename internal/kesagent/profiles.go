@@ -530,6 +530,26 @@ func (a *Agent) Close() {
 func (p *profile) attestedKeyState() (attestedKeyState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.attestedKeyStateLocked()
+}
+
+// controlKeyState is attestedKeyState for a control session, which may be
+// admitted for a profile with no active key so a first key can be installed.
+// The keyless state carries only the cold key; its empty key, opcert and
+// period are what tell a control client the profile is keyless.
+func (p *profile) controlKeyState() (attestedKeyState, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.mode == ModeSign && p.active == nil {
+		return attestedKeyState{
+			coldVKey: append([]byte(nil), p.cfg.ColdVKey...),
+		}, nil
+	}
+	return p.attestedKeyStateLocked()
+}
+
+// attestedKeyStateLocked is attestedKeyState with p.mu held.
+func (p *profile) attestedKeyStateLocked() (attestedKeyState, error) {
 	if p.mode != ModeSign {
 		return attestedKeyState{}, errors.New(
 			"kesagent: attested service requires sign mode",

@@ -87,6 +87,15 @@ type controlRig struct {
 
 func (p *controlPKI) serve(t *testing.T, a *Agent) *controlRig {
 	t.Helper()
+	rig := &controlRig{attester: &countingAttester{}}
+	rig.addr = p.listen(t, a, rig.attester)
+	return rig
+}
+
+// listen serves a on a verifying TLS listener with attester and returns its
+// address.
+func (p *controlPKI) listen(t *testing.T, a *Agent, attester Attester) string {
+	t.Helper()
 	pool := x509.NewCertPool()
 	pool.AddCert(p.ca)
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
@@ -98,12 +107,11 @@ func (p *controlPKI) serve(t *testing.T, a *Agent) *controlRig {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	rig := &controlRig{addr: ln.Addr().String(), attester: &countingAttester{}}
 	serveAttested(t, a, ln, AttestedServiceConfig{
 		Provider: "fake",
-		Attester: rig.attester,
+		Attester: attester,
 	})
-	return rig
+	return ln.Addr().String()
 }
 
 // open dials with client and returns the connection after the hello.

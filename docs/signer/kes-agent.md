@@ -218,9 +218,15 @@ and the connection closes. The attestation response carries `role` with the
 admitted role. The server hello is sent before the request and always names
 mode `sign`. The control session answers the same attestation exchange as a
 sign session, for the profile chosen by the request's `profile` and
-`kes_vkey`, which must be one the client is listed for. The profile needs an
-installed key to be attested, so a first key is installed on the local control
-socket.
+`kes_vkey`, which must be one the client is listed for. A profile with no
+installed key, such as after an agent restart without a shared key store, is
+admitted to a listed control client: the attestation response omits
+`kes_vkey`, `opcert` and `period`, and any evidence binds that keyless state,
+so it never verifies as a keyed one. `info` then reports no active key,
+and `gen-staged-key` and `install-key` install a first key as on a keyed
+profile. Selecting the profile by `kes_vkey` needs an active key; select it by
+`profile`, or omit both on a single-profile agent. A sign session still
+requires an installed key and is refused on a keyless profile.
 
 The session serves `gen-staged-key`, `install-key` and `info`, each on a
 profile the client is listed for. Each command names its `profile` when the
