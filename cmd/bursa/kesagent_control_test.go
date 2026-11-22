@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -26,6 +27,7 @@ import (
 
 	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/kesagent"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/stretchr/testify/require"
 )
@@ -133,4 +135,52 @@ func writeEnvelope(t *testing.T, path, typ string, cborData []byte) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, data, 0o600))
+}
+
+func TestWriteAttestationFileWritesTheSignerRequestObject(t *testing.T) {
+	t.Parallel()
+	_, id, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	att, err := wire.SignStagedKey(
+		id, "pool-a", bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 28),
+	)
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "kes.attestation.json")
+	require.NoError(t, writeAttestationFile(path, att))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var got wire.StagedKeyAttestation
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.NoError(t, got.Verify())
+	require.Equal(t, *att, got)
+
+	require.Error(t, writeAttestationFile(path, att),
+		"an existing file is not replaced")
+}
+
+func TestWriteAttestationFileRefusesAMissingAttestation(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "kes.attestation.json")
+	require.ErrorContains(t, writeAttestationFile(path, nil), "no attestation")
+	_, err := os.Stat(path)
+	require.True(t, os.IsNotExist(err), "no file is left behind")
+}
+
+func TestPrintControlReplyShowsTheAttestationPin(t *testing.T) {
+	t.Parallel()
+	_, id, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	att, err := wire.SignStagedKey(
+		id, "pool-a", bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 28),
+	)
+	require.NoError(t, err)
+	var out bytes.Buffer
+	require.NoError(t, printControlReply(&out, kesagent.Reply{
+		Ok: true, KESVKey: att.KESVKey, StagedKeyAttestation: att,
+	}))
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+	sum := sha256.Sum256(att.SPKI)
+	require.Equal(t, hex.EncodeToString(sum[:]), got["attestation_spki_sha256"])
 }

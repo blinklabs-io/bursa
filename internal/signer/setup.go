@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -274,6 +275,16 @@ func BuildBackends(
 type CallerGrant struct {
 	Keys    []backend.KeyHash
 	OpCerts map[backend.KeyHash][][32]byte
+	// KESAgents lists, per cold key, the KES agents trusted to stage KES keys
+	// for it.
+	KESAgents map[backend.KeyHash][]KESAgentPin
+}
+
+// KESAgentPin trusts the KES agent whose attestation key has this SPKI
+// SHA-256, optionally only for one agent profile.
+type KESAgentPin struct {
+	SPKISHA256 [sha256.Size]byte
+	Profile    string
 }
 
 // BuildCallerACL parses the configured caller list into caller grants.
@@ -312,6 +323,7 @@ func BuildCallerACL(
 			keySet[h] = struct{}{}
 		}
 		opcerts := make(map[backend.KeyHash][][32]byte, len(c.OpCerts))
+		agents := make(map[backend.KeyHash][]KESAgentPin)
 		for _, opcert := range c.OpCerts {
 			h, err := backend.ParseKeyHash(opcert.Key)
 			if err != nil {
@@ -336,12 +348,19 @@ func BuildCallerACL(
 					opcert.Key,
 				)
 			}
-			if len(opcert.KESVKeys) == 0 {
+			if len(opcert.KESVKeys) == 0 && len(opcert.KESAgents) == 0 {
 				return nil, fmt.Errorf(
-					"caller %q opcert key %q has no kes_vkeys",
+					"caller %q opcert key %q has neither kes_vkeys nor kes_agents",
 					c.Subject,
 					opcert.Key,
 				)
+			}
+			pins, err := buildKESAgentPins(c.Subject, opcert)
+			if err != nil {
+				return nil, err
+			}
+			if len(pins) > 0 {
+				agents[h] = pins
 			}
 			vkeys := make([][32]byte, 0, len(opcert.KESVKeys))
 			seen := make(map[[32]byte]struct{}, len(opcert.KESVKeys))
@@ -370,9 +389,49 @@ func BuildCallerACL(
 			}
 			opcerts[h] = vkeys
 		}
-		out[c.Subject] = CallerGrant{Keys: hashes, OpCerts: opcerts}
+		out[c.Subject] = CallerGrant{
+			Keys:      hashes,
+			OpCerts:   opcerts,
+			KESAgents: agents,
+		}
 	}
 	return out, nil
+}
+
+// buildKESAgentPins parses an opcert grant's kes_agents. A pin must be 64 hex
+// characters and each agent may be listed once per cold key.
+func buildKESAgentPins(
+	subject string,
+	opcert config.SignerCallerOpCertConfig,
+) ([]KESAgentPin, error) {
+	pins := make([]KESAgentPin, 0, len(opcert.KESAgents))
+	seen := make(map[[sha256.Size]byte]struct{}, len(opcert.KESAgents))
+	for _, a := range opcert.KESAgents {
+		raw, err := hex.DecodeString(a.SPKISHA256)
+		if err != nil || len(raw) != sha256.Size {
+			return nil, fmt.Errorf(
+				"caller %q opcert key %q has invalid kes_agents spki_sha256 %q: want %d hex characters",
+				subject,
+				opcert.Key,
+				a.SPKISHA256,
+				2*sha256.Size,
+			)
+		}
+		var pin KESAgentPin
+		copy(pin.SPKISHA256[:], raw)
+		pin.Profile = a.Profile
+		if _, dup := seen[pin.SPKISHA256]; dup {
+			return nil, fmt.Errorf(
+				"caller %q opcert key %q has duplicate kes_agents spki_sha256 %q",
+				subject,
+				opcert.Key,
+				a.SPKISHA256,
+			)
+		}
+		seen[pin.SPKISHA256] = struct{}{}
+		pins = append(pins, pin)
+	}
+	return pins, nil
 }
 
 // BuildAuthorizedKeys parses the configured authorized-keys request-signing

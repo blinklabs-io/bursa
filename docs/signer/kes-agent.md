@@ -267,9 +267,31 @@ bursa kes-agent control --config /etc/bursa/kes-agent/config.yaml info
 ```
 
 `--out` writes the verification key as a cardano-cli envelope and refuses to
-replace an existing file. `install-key` reads a cardano-cli
+replace an existing file. `--attestation-out` writes the agent's signed
+attestation of the staged key as JSON, for the signer's opcert request (see
+[Staged-key attestation](#staged-key-attestation)). `install-key` reads a cardano-cli
 `NodeOperationalCertificate` envelope. The command exits non-zero when the
 agent refuses a command.
+
+### Staged-key attestation
+
+When the agent runs in sign mode with an attested TLS listener
+(`attested_tls_cert_file` and `attested_tls_key_file`), `gen-staged-key`, on
+the local socket and on a remote control session, also returns an attestation:
+a signature by the listener's TLS key over `bursa-kes-agent-staged-key-v1`, the
+profile name, the staged KES verification key and the hash of the profile's
+cold key, with the key's SPKI. The TLS key is the identity because its SPKI
+SHA-256 (`server_spki_sha256`, logged at startup) is already what clients pin.
+It is ed25519, ECDSA or RSA, whatever the certificate carries. Without a TLS
+listener (serve-key mode, or `attested_plaintext`) the agent has no such key and
+returns no attestation; rotation then relies on the signer's `kes_vkeys` list.
+
+A signer that lists this agent under `opcerts[].kes_agents` certifies the
+staged key from the attestation alone; see the signer
+[runbook](runbook.md#caller-acl). The attestation names the cold key, so it
+cannot be replayed to certify the key for another pool. Each agent is
+identified by its own TLS key, so with several replicas pin the SPKI of each one
+unless they share a certificate.
 
 ## Period guard
 

@@ -331,10 +331,32 @@ Unknown commands return `{ "ok": false, "error": "unknown command \"...\"" }`.
   "ok": true,
   "error": "",
   "kes_vkey": "<b64, gen-staged-key only>",
+  "staged_key_attestation": { ... },
   "info": { ... },
   "profiles": [ { ... } ]
 }
 ```
+
+### Staged-key attestation (`staged_key_attestation` field)
+
+`gen-staged-key` includes it when the agent has an attestation identity key (a
+TLS attested listener); it is absent otherwise, and clients that do not know the
+field ignore it.
+
+```json
+{
+  "profile": "pool-a",
+  "kes_vkey": "<b64, 32 bytes>",
+  "cold_key_hash": "<b64, 28 bytes, blake2b-224 of the cold vkey>",
+  "spki": "<b64, DER SubjectPublicKeyInfo of the signing key>",
+  "signature": "<b64>"
+}
+```
+
+The signature covers `"bursa-kes-agent-staged-key-v1"` followed by `profile`,
+`kes_vkey` and `cold_key_hash`, each as a uint64 big-endian length and its
+bytes. ed25519 signs that message; ECDSA (ASN.1) and RSA (PKCS#1 v1.5) sign its
+SHA-256. A verifier trusts `spki` only when its SHA-256 matches a configured pin.
 
 ### AgentInfo (`info` field)
 

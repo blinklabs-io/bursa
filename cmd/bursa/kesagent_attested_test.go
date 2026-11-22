@@ -39,7 +39,7 @@ func TestAttestedListenerPlaintextRefusesTLSFiles(t *testing.T) {
 	for name, kc := range cases {
 		kc.AttestedListenAddress = "127.0.0.1:0"
 		kc.AttestedPlaintext = true
-		ln, _, err := attestedListener(kc)
+		ln, _, _, err := attestedListener(kc)
 		if err == nil {
 			_ = ln.Close()
 			t.Fatalf("%s: plaintext with a TLS file was accepted", name)
@@ -49,7 +49,7 @@ func TestAttestedListenerPlaintextRefusesTLSFiles(t *testing.T) {
 
 func TestAttestedListenerPlaintextServesPlainTCP(t *testing.T) {
 	t.Parallel()
-	ln, _, err := attestedListener(config.KESAgentConfig{
+	ln, _, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedPlaintext:     true,
 	})
@@ -83,7 +83,7 @@ func TestAttestedListenerPlaintextServesPlainTCP(t *testing.T) {
 func TestAttestedListenerTLSRequiresCertAndKey(t *testing.T) {
 	t.Parallel()
 	certFile, _ := writeConfidentialSpaceTLSFixture(t)
-	ln, _, err := attestedListener(config.KESAgentConfig{
+	ln, _, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 	})
@@ -136,7 +136,7 @@ func acceptHandshake(t *testing.T, ln net.Listener) (error, int) {
 func TestAttestedListenerTLSWithoutClientCAAcceptsNoCert(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
-	ln, _, err := attestedListener(config.KESAgentConfig{
+	ln, _, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 		AttestedTLSKeyFile:    keyFile,
@@ -153,7 +153,7 @@ func TestAttestedListenerTLSWithoutClientCAAcceptsNoCert(t *testing.T) {
 func TestAttestedListenerTLSWithClientCARefusesNoCert(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
-	ln, _, err := attestedListener(config.KESAgentConfig{
+	ln, _, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 		AttestedTLSKeyFile:    keyFile,
@@ -174,7 +174,7 @@ func TestAttestedListenerTLSWithClientCARefusesNoCert(t *testing.T) {
 func TestAttestedListenerPinMatchesServedCert(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := writeConfidentialSpaceTLSFixture(t)
-	ln, pin, err := attestedListener(config.KESAgentConfig{
+	ln, pin, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedTLSCertFile:   certFile,
 		AttestedTLSKeyFile:    keyFile,
@@ -223,7 +223,7 @@ func TestAttestedListenerPinMatchesServedCert(t *testing.T) {
 
 func TestAttestedListenerPlaintextHasNoPin(t *testing.T) {
 	t.Parallel()
-	ln, pin, err := attestedListener(config.KESAgentConfig{
+	ln, pin, _, err := attestedListener(config.KESAgentConfig{
 		AttestedListenAddress: "127.0.0.1:0",
 		AttestedPlaintext:     true,
 	})

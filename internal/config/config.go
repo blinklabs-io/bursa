@@ -230,12 +230,24 @@ type SignerCallerConfig struct {
 	OpCerts []SignerCallerOpCertConfig `yaml:"opcerts"`
 }
 
-// SignerCallerOpCertConfig grants a caller authority to certify specific KES
-// verification keys with one cold key. Listing several KES keys preserves an
-// explicit rotation path without granting arbitrary KES-key certification.
+// SignerCallerOpCertConfig grants a caller authority to certify KES
+// verification keys with one cold key: exactly the keys listed in KESVKeys,
+// and any key a trusted KES agent in KESAgents attests it staged for this
+// cold key. At least one of the two is required.
 type SignerCallerOpCertConfig struct {
-	Key      string   `yaml:"key"` // cold key hash (hex blake2b-224)
-	KESVKeys []string `yaml:"kes_vkeys"`
+	Key       string                 `yaml:"key"` // cold key hash (hex blake2b-224)
+	KESVKeys  []string               `yaml:"kes_vkeys"`
+	KESAgents []SignerKESAgentConfig `yaml:"kes_agents"`
+}
+
+// SignerKESAgentConfig names a KES agent the signer trusts to stage KES keys
+// for a cold key, by the SHA-256 of its attestation key's SPKI (the
+// server_spki_sha256 the agent logs at startup).
+type SignerKESAgentConfig struct {
+	SPKISHA256 string `yaml:"spki_sha256"` // 64 hex characters
+	// Profile, when set, restricts the pin to attestations from that agent
+	// profile.
+	Profile string `yaml:"profile"`
 }
 
 // SignerWatermarkConfig configures the anti-double-sign watermark store.

@@ -127,6 +127,39 @@ that list before a rotation, then submit the opcert request. An absent caller
 ACL or a cold-key grant without the requested KES key does not authorize an
 opcert.
 
+To rotate without editing the config for every new KES key, trust the KES agent
+that stages the keys instead. List it under the cold key's `opcerts[].kes_agents`
+by the SHA-256 of its attestation key's SPKI (64 hex characters):
+
+```yaml
+callers:
+  - subject: spo-ops@example.com
+    keys: ["<cold key hash>"]
+    opcerts:
+      - key: "<cold key hash>"
+        kes_agents:
+          - spki_sha256: "<64 hex characters>"
+            profile: pool-a   # optional: only this agent profile
+```
+
+An opcert entry needs `kes_vkeys`, `kes_agents`, or both. The opcert request
+then carries the attestation `gen-staged-key` returned in an `attestation`
+field (`bursa kes-agent control gen-staged-key --attestation-out`). The signer
+issues the opcert when the caller holds the cold key and either the KES key is
+listed in `kes_vkeys` or the attestation verifies: a valid signature by an
+agent pinned for that cold key, over exactly the requested KES verification
+key, that cold key's hash, and, when the pin sets `profile`, that profile. A key
+the caller generated itself carries no attestation and is still refused unless
+listed. An attestation that is present but malformed, over another key or pool,
+from an unpinned agent or with a bad signature is refused with an error naming
+the reason, even when the KES key is also listed.
+
+The pin is the agent's `server_spki_sha256`, logged at startup. A signer
+refuses a config with a pin that is not 64 hex characters, a duplicate pin for
+one cold key, or an opcert entry with neither `kes_vkeys` nor `kes_agents`.
+An attestation proves which agent generated the key, not that the caller is
+entitled to the cold key; the caller grant still decides that.
+
 ## 4. TLS
 
 The signer serves server-side TLS when both `tls_cert_file` and `tls_key_file`

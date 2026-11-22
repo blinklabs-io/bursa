@@ -17,6 +17,7 @@ package kesagent
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,8 +25,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync/atomic"
 	"time"
 
+	"github.com/blinklabs-io/bursa/internal/signer/backend"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/blinklabs-io/gouroboros/cbor"
 	"github.com/blinklabs-io/gouroboros/ledger/babbage"
 )
@@ -66,7 +70,34 @@ type Agent struct {
 	profiles []*profile
 	byName   map[string]*profile
 
+	// stagedKeyIdentity signs staged-key attestations. Unset, gen-staged-key
+	// replies carry none. It is set before the control listeners are served.
+	stagedKeyIdentity atomic.Pointer[crypto.Signer]
+
 	now func() time.Time // injectable clock (tests); profiles read it
+}
+
+// SetStagedKeyIdentity sets the key that signs the attestation returned with
+// each staged key. A nil signer disables attestations.
+func (a *Agent) SetStagedKeyIdentity(identity crypto.Signer) {
+	if identity == nil {
+		a.stagedKeyIdentity.Store(nil)
+		return
+	}
+	a.stagedKeyIdentity.Store(&identity)
+}
+
+// attestStagedKey signs vkey for p, or returns nil when no identity is set.
+func (a *Agent) attestStagedKey(
+	p *profile,
+	vkey []byte,
+) (*wire.StagedKeyAttestation, error) {
+	identity := a.stagedKeyIdentity.Load()
+	if identity == nil {
+		return nil, nil
+	}
+	coldHash := backend.HashPublicKey(p.cfg.ColdVKey)
+	return wire.SignStagedKey(*identity, p.cfg.Name, vkey, coldHash[:])
 }
 
 // New constructs an Agent, validating configuration and opening every
