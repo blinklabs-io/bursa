@@ -152,7 +152,7 @@ func (a *StagedKeyAttestation) Verify() error {
 	}
 	pub, err := x509.ParsePKIXPublicKey(a.SPKI)
 	if err != nil {
-		return fmt.Errorf("%w: spki: %v", ErrStagedKeyAttestationMalformed, err)
+		return fmt.Errorf("%w: spki: %w", ErrStagedKeyAttestationMalformed, err)
 	}
 	msg := StagedKeyAttestationMessage(a.Profile, a.KESVKey, a.ColdKeyHash)
 	digest := sha256.Sum256(msg)
