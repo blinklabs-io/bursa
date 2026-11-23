@@ -25,6 +25,7 @@ import (
 	bursa "github.com/blinklabs-io/bursa"
 	"github.com/blinklabs-io/bursa/internal/config"
 	"github.com/blinklabs-io/bursa/internal/kesagent"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/spf13/cobra"
 )
 
@@ -79,7 +80,7 @@ node.cert.`,
 		},
 	})
 
-	var vkeyOut string
+	var vkeyOut, attestationOut string
 	gen := &cobra.Command{
 		Use:   "gen-staged-key",
 		Short: "Generate a staged KES key and print its verification key",
@@ -102,14 +103,21 @@ node.cert.`,
 			if err := printControlReply(c.OutOrStdout(), reply); err != nil {
 				return err
 			}
-			if vkeyOut == "" {
+			if vkeyOut != "" {
+				if err := writeKESVKeyFile(vkeyOut, reply.KESVKey); err != nil {
+					return err
+				}
+			}
+			if attestationOut == "" {
 				return nil
 			}
-			return writeKESVKeyFile(vkeyOut, reply.KESVKey)
+			return writeAttestationFile(attestationOut, reply.StagedKeyAttestation)
 		},
 	}
 	gen.Flags().
 		StringVar(&vkeyOut, "out", "", "also write the KES verification key to this file as a cardano-cli envelope")
+	gen.Flags().
+		StringVar(&attestationOut, "attestation-out", "", "also write the agent's signed attestation of the staged key to this file as JSON, for the signer's opcert request attestation field")
 	cmd.AddCommand(gen)
 
 	var opcertFile string
@@ -225,6 +233,33 @@ func writeKESVKeyFile(path string, vkey []byte) error {
 	return f.Close()
 }
 
+// writeAttestationFile writes att as the JSON object the signer's opcert
+// request takes in its attestation field. An agent without an attestation
+// identity key returns none, which is an error here rather than an empty file.
+func writeAttestationFile(
+	path string,
+	att *wire.StagedKeyAttestation,
+) error {
+	if att == nil {
+		return errors.New(
+			"the agent returned no attestation: it has no attestation key (sign mode with an attested TLS listener)",
+		)
+	}
+	data, err := json.MarshalIndent(att, "", "    ")
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) //nolint:gosec // an attestation is public
+	if err != nil {
+		return fmt.Errorf("write attestation: %w", err)
+	}
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write attestation: %w", err)
+	}
+	return f.Close()
+}
+
 // controlInfoView is AgentInfo with its byte fields in hex.
 type controlInfoView struct {
 	Version           string `json:"version"`
@@ -268,15 +303,22 @@ func infoView(i kesagent.AgentInfo) controlInfoView {
 // error when the agent refused the command.
 func printControlReply(w io.Writer, reply kesagent.Reply) error {
 	view := struct {
-		Ok       bool              `json:"ok"`
-		Error    string            `json:"error,omitempty"`
-		KESVKey  string            `json:"kes_vkey,omitempty"`
-		Info     *controlInfoView  `json:"info,omitempty"`
-		Profiles []controlInfoView `json:"profiles,omitempty"`
+		Ok      bool   `json:"ok"`
+		Error   string `json:"error,omitempty"`
+		KESVKey string `json:"kes_vkey,omitempty"`
+		// AttestationSPKISHA256 is the pin a signer grant names for the agent
+		// that attested the staged key.
+		AttestationSPKISHA256 string            `json:"attestation_spki_sha256,omitempty"`
+		Info                  *controlInfoView  `json:"info,omitempty"`
+		Profiles              []controlInfoView `json:"profiles,omitempty"`
 	}{
 		Ok:      reply.Ok,
 		Error:   reply.Error,
 		KESVKey: hex.EncodeToString(reply.KESVKey),
+	}
+	if att := reply.StagedKeyAttestation; att != nil {
+		sum := att.SPKISHA256()
+		view.AttestationSPKISHA256 = hex.EncodeToString(sum[:])
 	}
 	if reply.Info != nil {
 		v := infoView(*reply.Info)

@@ -137,7 +137,16 @@ func (a *Agent) dispatch(ctx context.Context, cmd Command) Reply {
 		if err != nil {
 			return Reply{Ok: false, Error: err.Error()}
 		}
-		return Reply{Ok: true, KESVKey: vkey, Info: a.profileInfo(p)}
+		att, err := a.attestStagedKey(p, vkey)
+		if err != nil {
+			return Reply{Ok: false, Error: err.Error()}
+		}
+		return Reply{
+			Ok:                   true,
+			KESVKey:              vkey,
+			StagedKeyAttestation: att,
+			Info:                 a.profileInfo(p),
+		}
 	case CmdInstallKey:
 		if _, err := p.installKey(ctx, cmd.OpCert); err != nil {
 			return Reply{Ok: false, Error: err.Error()}

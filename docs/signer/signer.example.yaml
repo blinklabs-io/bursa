@@ -187,6 +187,14 @@ signer:
           kes_vkeys:
             # Add each staged KES verification key before requesting its opcert.
             - "0000000000000000000000000000000000000000000000000000000000000000"
+          # Alternatively (or additionally) trust the KES agent that stages the
+          # keys. An opcert request then carries the attestation printed by
+          # `bursa kes-agent control gen-staged-key --attestation-out`, and any
+          # key that agent staged for this cold key is certified without an
+          # entry above. spki_sha256 is the agent's logged server_spki_sha256.
+          kes_agents:
+            - spki_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+              profile: "pool-a"   # optional: only this agent profile
 
 # The SOPS backend uses this project for GCP Secret Manager access.
 google:

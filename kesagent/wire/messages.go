@@ -102,6 +102,9 @@ type Reply struct {
 	Error   string     `json:"error,omitempty"`
 	KESVKey []byte     `json:"kes_vkey,omitempty"`
 	Info    *AgentInfo `json:"info,omitempty"`
+	// StagedKeyAttestation accompanies gen-staged-key when the agent has an
+	// attestation identity key. It is absent otherwise.
+	StagedKeyAttestation *StagedKeyAttestation `json:"staged_key_attestation,omitempty"`
 	// Profiles is the status of every profile, returned by info when the
 	// agent has several and no profile was named.
 	Profiles []AgentInfo `json:"profiles,omitempty"`

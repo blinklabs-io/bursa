@@ -28,6 +28,7 @@ import (
 	"github.com/blinklabs-io/bursa/internal/signer"
 	"github.com/blinklabs-io/bursa/internal/signer/backend"
 	"github.com/blinklabs-io/bursa/internal/signer/policy"
+	"github.com/blinklabs-io/bursa/kesagent/wire"
 	"github.com/google/uuid"
 )
 
@@ -54,6 +55,9 @@ type SignRequest struct {
 	// then chooses the issue counter (ChainCounter + 1) and IssueCounter is
 	// ignored.
 	ChainCounter *uint64 `json:"chain_counter,omitempty"`
+	// Attestation, for opcert, is the signed statement a trusted KES agent
+	// returned when it staged KesVkey. See CallerACL.AuthorizeAttestedOpCert.
+	Attestation *wire.StagedKeyAttestation `json:"attestation,omitempty"`
 }
 
 // SignTxResponse is returned for type=tx.
@@ -552,7 +556,17 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		// exact cold-key and KES-key pair. This remains fail closed even when
 		// the general key ACL is otherwise unrestricted.
 		h, hashErr := backend.ParseKeyHash(req.Key)
-		if hashErr == nil && !s.acl.AllowsOpCert(caller, h, kesVkey) {
+		var denied error
+		if hashErr == nil {
+			if req.Attestation != nil {
+				denied = s.acl.AuthorizeAttestedOpCert(
+					caller, h, kesVkey, req.Attestation,
+				)
+			} else if !s.acl.AllowsOpCert(caller, h, kesVkey) {
+				denied = ErrOpCertNotGranted
+			}
+		}
+		if denied != nil {
 			s.coord.Metrics().ObserveDeny("acl")
 			s.audit(
 				r,
@@ -566,11 +580,11 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 				"reason",
 				"caller opcert ACL",
 			)
-			writeErr(
-				w,
-				http.StatusForbidden,
-				"caller is not authorized for this opcert",
-			)
+			msg := denied.Error()
+			if !errors.Is(denied, ErrOpCertNotGranted) {
+				msg = "opcert attestation refused: " + msg
+			}
+			writeErr(w, http.StatusForbidden, msg)
 			return
 		}
 		var (

@@ -17,6 +17,7 @@ package signer
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -420,5 +421,92 @@ func TestBuildBackends_SopsNoSecrets(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when no secrets match the prefix")
+	}
+}
+
+func TestBuildCallerACLKESAgents(t *testing.T) {
+	t.Parallel()
+	hash := strings.Repeat("ab", 28)
+	kesVKey := strings.Repeat("cd", 32)
+	pin := strings.Repeat("0f", 32)
+	build := func(op config.SignerCallerOpCertConfig) (map[string]CallerGrant, error) {
+		op.Key = hash
+		return BuildCallerACL([]config.SignerCallerConfig{{
+			Subject: "alice",
+			Keys:    []string{hash},
+			OpCerts: []config.SignerCallerOpCertConfig{op},
+		}})
+	}
+
+	t.Run("kes_agents alone is a grant", func(t *testing.T) {
+		t.Parallel()
+		m, err := build(config.SignerCallerOpCertConfig{
+			KESAgents: []config.SignerKESAgentConfig{
+				{SPKISHA256: strings.ToUpper(pin), Profile: "pool-a"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("BuildCallerACL: %v", err)
+		}
+		h, _ := backend.ParseKeyHash(hash)
+		pins := m["alice"].KESAgents[h]
+		if len(pins) != 1 || pins[0].Profile != "pool-a" ||
+			hex.EncodeToString(pins[0].SPKISHA256[:]) != pin {
+			t.Fatalf("pins = %#v", pins)
+		}
+		if len(m["alice"].OpCerts[h]) != 0 {
+			t.Fatalf("unexpected kes_vkeys: %#v", m["alice"].OpCerts)
+		}
+	})
+	t.Run("kes_vkeys and kes_agents together", func(t *testing.T) {
+		t.Parallel()
+		m, err := build(config.SignerCallerOpCertConfig{
+			KESVKeys:  []string{kesVKey},
+			KESAgents: []config.SignerKESAgentConfig{{SPKISHA256: pin}},
+		})
+		if err != nil {
+			t.Fatalf("BuildCallerACL: %v", err)
+		}
+		h, _ := backend.ParseKeyHash(hash)
+		if len(m["alice"].OpCerts[h]) != 1 || len(m["alice"].KESAgents[h]) != 1 {
+			t.Fatalf("grant = %#v", m["alice"])
+		}
+	})
+
+	refused := []struct {
+		name string
+		op   config.SignerCallerOpCertConfig
+		want string
+	}{
+		{"neither kes_vkeys nor kes_agents", config.SignerCallerOpCertConfig{},
+			"neither kes_vkeys nor kes_agents"},
+		{"short pin", config.SignerCallerOpCertConfig{
+			KESAgents: []config.SignerKESAgentConfig{{SPKISHA256: pin[:62]}},
+		}, "spki_sha256"},
+		{"long pin", config.SignerCallerOpCertConfig{
+			KESAgents: []config.SignerKESAgentConfig{{SPKISHA256: pin + "00"}},
+		}, "spki_sha256"},
+		{"non-hex pin", config.SignerCallerOpCertConfig{
+			KESAgents: []config.SignerKESAgentConfig{
+				{SPKISHA256: strings.Repeat("zz", 32)},
+			},
+		}, "spki_sha256"},
+		{"empty pin", config.SignerCallerOpCertConfig{
+			KESAgents: []config.SignerKESAgentConfig{{}},
+		}, "spki_sha256"},
+		{"duplicate pin", config.SignerCallerOpCertConfig{
+			KESAgents: []config.SignerKESAgentConfig{
+				{SPKISHA256: pin}, {SPKISHA256: strings.ToUpper(pin), Profile: "x"},
+			},
+		}, "duplicate kes_agents"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := build(tc.op)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }
