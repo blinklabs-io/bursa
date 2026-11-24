@@ -107,6 +107,8 @@ kes_agent:
   #     system_start: "2022-06-01T00:00:00Z"
   #     shelley_start_slot: 86400
   #     shelley_start_time: "2022-06-21T00:00:00Z"
+  #     network_magic: 1             # optional; set when another profile with
+  #                                  # the same cold key shares system_start
   #     slot_length: 1               # default 1
   #     slots_per_kes_period: 129600
   #     max_kes_evolutions: 62       # default 62

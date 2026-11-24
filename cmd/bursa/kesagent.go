@@ -847,6 +847,7 @@ func kesAgentProfile(
 		ControlClientSPKI: control,
 		SignClientSPKI:    sign,
 		SystemStart:       systemStart,
+		NetworkMagic:      pc.NetworkMagic,
 		ShelleyStartSlot:  pc.ShelleyStartSlot,
 		ShelleyStartTime:  shelleyStart,
 		SlotLength:        time.Duration(pc.SlotLength * float64(time.Second)),

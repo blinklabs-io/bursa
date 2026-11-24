@@ -323,3 +323,23 @@ func TestKESAgentProfilesRefusesTopLevelControlListWithProfiles(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestKESAgentProfileCarriesNetworkMagic(t *testing.T) {
+	t.Parallel()
+	pc := config.KESAgentProfileConfig{
+		Name:              "net",
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2026-10-18T00:00:00Z",
+		NetworkMagic:      42,
+		SlotLength:        1,
+		SlotsPerKESPeriod: 129600,
+		GuardFile:         "/var/lib/bursa/net.json",
+	}
+	got, err := kesAgentProfile(pc, "kes_agent.profiles[0]")
+	if err != nil {
+		t.Fatalf("kesAgentProfile: %v", err)
+	}
+	if got.NetworkMagic != 42 {
+		t.Fatalf("NetworkMagic = %d, want 42", got.NetworkMagic)
+	}
+}

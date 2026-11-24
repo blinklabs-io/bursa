@@ -140,12 +140,15 @@ type KESAgentStoreConfig struct {
 }
 
 // KESAgentProfileConfig is one pool on one network served by the KES agent.
-// slot_length and max_kes_evolutions default to 1 and 62.
+// slot_length and max_kes_evolutions default to 1 and 62. network_magic is
+// optional: set it to the Cardano network magic when another profile serves
+// the same cold key on a network with the same system_start; zero is unset.
 type KESAgentProfileConfig struct {
 	Name              string  `yaml:"name"`
 	ColdVKeyFile      string  `yaml:"cold_vkey_file"`
 	ColdVKeyHex       string  `yaml:"cold_vkey_hex"`
 	SystemStart       string  `yaml:"system_start"`
+	NetworkMagic      uint32  `yaml:"network_magic"`
 	ShelleyStartSlot  uint64  `yaml:"shelley_start_slot"`
 	ShelleyStartTime  string  `yaml:"shelley_start_time"`
 	SlotLength        float64 `yaml:"slot_length"`

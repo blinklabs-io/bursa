@@ -113,9 +113,10 @@ type Config struct {
 // genesis parameters of the network it forges on, and the durable guard file
 // that holds its period floor and last signed slot.
 type ProfileConfig struct {
-	Name        string
-	Depth       uint64    // KES tree depth (default kes.CardanoKesDepth)
-	SystemStart time.Time // Shelley genesis system start
+	Name         string
+	Depth        uint64    // KES tree depth (default kes.CardanoKesDepth)
+	SystemStart  time.Time // Shelley genesis system start
+	NetworkMagic uint32
 	// ShelleyStartSlot and ShelleyStartTime anchor the slot clock at the
 	// first Shelley slot, for networks whose Byron era ran with longer slots
 	// (mainnet, preprod). Without them the anchor is slot 0 at SystemStart,
@@ -323,7 +324,7 @@ func newProfile(
 			"kesagent: guard_path must be unset when a shared guard store is configured",
 		)
 	case shared != nil:
-		g, err := newSharedGuard(shared, cfg.ColdVKey, cfg.SystemStart)
+		g, err := newSharedGuard(shared, cfg.ColdVKey, cfg.SystemStart, cfg.NetworkMagic)
 		if err != nil {
 			return nil, err
 		}
@@ -351,7 +352,7 @@ func newProfile(
 		p.keys = keys
 		p.sealer = sealer
 		p.keyPool = hex.EncodeToString(poolKey[:])
-		p.keyNetwork = cfg.SystemStart.UTC().Format(time.RFC3339Nano)
+		p.keyNetwork = networkScope(cfg.SystemStart, cfg.NetworkMagic)
 	}
 	// A first start has no guard file, but on any later start a missing one
 	// means the last signed slot was lost, so the slot guard cannot refuse a

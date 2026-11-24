@@ -61,7 +61,7 @@ const sharedGuardTimeout = 5 * time.Second
 
 // sharedGuard is a profile's guard in a SharedGuardStore. The record key is
 // the hash of the pool's cold verification key; scopes carry the profile's
-// network (its genesis system start), because one cold key may serve several
+// network (its genesis system start and network magic), because one cold key may serve several
 // networks whose slot numbers overlap.
 //
 //   - The period floor is one non-decreasing counter, raised with
@@ -99,8 +99,9 @@ func newSharedGuard(
 	store SharedGuardStore,
 	coldVKey []byte,
 	systemStart time.Time,
+	networkMagic uint32,
 ) (*sharedGuard, error) {
-	network := systemStart.UTC().Format(time.RFC3339Nano)
+	network := networkScope(systemStart, networkMagic)
 	g := &sharedGuard{
 		store:      store,
 		key:        backend.HashPublicKey(coldVKey),
@@ -267,4 +268,17 @@ func (g *sharedGuard) raiseLocalFloorLocked(period uint64) {
 	if !g.set || period > g.floor {
 		g.floor, g.set = period, true
 	}
+}
+
+// networkScope names a profile's network in store scopes: its genesis start,
+// plus the network magic when one is set. An unset magic yields the start
+// alone, byte for byte what agents wrote before the magic existed, so their
+// stored records still apply. Two networks can share a genesis start; the
+// magic then keeps their records apart.
+func networkScope(systemStart time.Time, networkMagic uint32) string {
+	scope := systemStart.UTC().Format(time.RFC3339Nano)
+	if networkMagic == 0 {
+		return scope
+	}
+	return scope + "/magic=" + strconv.FormatUint(uint64(networkMagic), 10)
 }

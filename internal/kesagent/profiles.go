@@ -224,9 +224,10 @@ func New(cfg Config, logger *slog.Logger, metrics *Metrics) (*Agent, error) {
 		// Each profile keeps its own slot record, so two profiles for one
 		// pool on one network would each sign a header for the same slot:
 		// two blocks from the pool in that slot. One cold key stays allowed
-		// on several networks, which a different genesis start tells apart.
+		// on several networks, which a different genesis start or network
+		// magic tells apart.
 		poolKey := hex.EncodeToString(pc.ColdVKey) + "@" +
-			pc.SystemStart.UTC().Format(time.RFC3339Nano)
+			networkScope(pc.SystemStart, pc.NetworkMagic)
 		if other, dup := pools[poolKey]; dup {
 			a.Close()
 			return nil, fmt.Errorf(

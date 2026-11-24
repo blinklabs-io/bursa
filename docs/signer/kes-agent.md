@@ -41,7 +41,16 @@ profile in `kes_agent.profiles` with:
 - its network's `system_start`, `slot_length` (default 1),
   `slots_per_kes_period`, `max_kes_evolutions` (default 62) and
   `max_clock_skew` (default `5s`);
+- optionally `network_magic` (the Cardano network magic, a number): set it
+  when two profiles use the same cold key on networks with the same
+  `system_start`. It becomes part of the profile's identity and of its guard
+  and key-store records. Without it a profile is identified by cold key and
+  `system_start` alone, exactly as before;
 - its own `guard_file`. Two profiles may not share a guard file.
+
+Two profiles with the same cold key, `system_start` and `network_magic` (or
+none) are the same pool on the same network and are refused at startup, since
+each would sign its own header for one slot.
 
 Each profile has its own staged and active KES key, operational certificate,
 evolution schedule, period floor and last signed slot, and its own lock. A
@@ -366,8 +375,12 @@ requires `sslmode=verify-full`; a Unix socket or loopback host does not. The
 agent uses the signer's watermark tables (`signer_watermark` and
 `signer_counter_watermark`) and creates them if they do not exist. Its records
 are keyed by the hash of the pool cold verification key and scoped by the
-profile's network (`system_start`), so one cold key on several networks keeps
-separate records.
+profile's network (`system_start`, and `network_magic` when set), so one cold
+key on several networks keeps separate records. A profile without
+`network_magic` uses the same scopes as before the setting existed, so
+existing records apply unchanged; adding `network_magic` to a profile that
+already has records starts it with empty ones, so set it before the first
+start against the store.
 
 - The KES period floor is one shared non-decreasing record: a period below it
   is refused on every replica.
@@ -404,7 +417,8 @@ kes_agent:
 `type: postgres`. Like other secret key files, `age_identity_file` is refused
 when group or other users can access it. The keys live in the `kes_agent_key` table, created on first
 use, with at most one staged and one installed key per pool cold key and
-network (the same identity the guard records use).
+network (the same identity the guard records use, including `network_magic`
+when set).
 
 - `gen-staged-key` on any replica generates the key, seals it with age to
   `age_recipients` and stores it as the staged key, replacing any staged
