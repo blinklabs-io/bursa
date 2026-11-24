@@ -17,6 +17,7 @@ package kesagent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blinklabs-io/bursa/internal/signer/watermark"
 	"github.com/blinklabs-io/gouroboros/kes"
 )
 
@@ -525,5 +527,92 @@ func TestNewRefusesAGuardFileReachedThroughALink(t *testing.T) {
 	_, err := New(Config{Mode: ModeSign, Profiles: []ProfileConfig{a, b}}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "share guard file") {
 		t.Fatalf("err = %v, want a shared guard file refusal", err)
+	}
+}
+
+func withMagic(pc ProfileConfig, magic uint32) ProfileConfig {
+	pc.NetworkMagic = magic
+	return pc
+}
+
+// Two networks can share a genesis start; the network magic tells them apart.
+func TestNewAcceptsOnePoolOnTwoNetworksWithOneStartAndDifferentMagic(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	a, err := New(Config{
+		Mode: ModeSign,
+		Profiles: []ProfileConfig{
+			profileOn(t, withMagic(networkA, 1), "net-1", cold),
+			profileOn(t, withMagic(networkA, 2), "net-2", cold),
+		},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	a.Close()
+}
+
+func TestNewAcceptsMagicAlongsideUnsetMagic(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	a, err := New(Config{
+		Mode: ModeSign,
+		Profiles: []ProfileConfig{
+			profileOn(t, networkA, "legacy", cold),
+			profileOn(t, withMagic(networkA, 2), "net-2", cold),
+		},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	a.Close()
+}
+
+func TestNewRefusesTwoProfilesForOnePoolWithOneMagic(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	_, err := New(Config{
+		Mode: ModeSign,
+		Profiles: []ProfileConfig{
+			profileOn(t, withMagic(networkA, 7), "pool", cold),
+			profileOn(t, withMagic(networkA, 7), "pool-rotated", cold),
+		},
+	}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "same pool on the same network") {
+		t.Fatalf("New with one magic twice: err = %v", err)
+	}
+}
+
+// With the shared stores, profiles on two networks of one start get their
+// own key-store network, and an unset magic keeps the start-only identity.
+func TestProfileKeyNetworkIncludesMagic(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	r := replica{guard: watermark.NewMemWatermark(), keys: newMemKeyStore()}
+	var nets [3]string
+	for i, magic := range []uint32{0, 1, 2} {
+		pc := profileOn(t, withMagic(networkA, magic), fmt.Sprintf("p%d", i), cold)
+		pc.GuardPath = ""
+		a, err := New(Config{
+			Mode:        ModeSign,
+			SharedGuard: r.guard,
+			KeyStore:    r.keys,
+			KeySealer:   testSealer(t),
+			Profiles:    []ProfileConfig{pc},
+		}, nil, nil)
+		if err != nil {
+			t.Fatalf("New magic %d: %v", magic, err)
+		}
+		nets[i] = sole(t, a).keyNetwork
+		a.Close()
+	}
+	if want := "2020-01-01T00:00:00Z"; nets[0] != want {
+		t.Fatalf("unset magic keyNetwork = %q, want %q", nets[0], want)
+	}
+	if want := "2020-01-01T00:00:00Z/magic=1"; nets[1] != want {
+		t.Fatalf("magic 1 keyNetwork = %q, want %q", nets[1], want)
+	}
+	if nets[1] == nets[2] {
+		t.Fatalf("magics 1 and 2 share keyNetwork %q", nets[1])
 	}
 }

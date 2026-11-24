@@ -37,6 +37,10 @@ kes_agent:
   # genesis file, e.g. Preprod: 2022-06-01T00:00:00Z, same slot/evolution
   # values).
   system_start: "2017-09-23T21:44:51Z"   # env: KESAGENT_SYSTEM_START
+  # Optional Cardano network magic (env: KESAGENT_NETWORK_MAGIC; 0 is unset).
+  # With a shared store, set it when another agent or profile serves the same
+  # cold key on a network with the same system_start. See kes-agent.md.
+  # network_magic: 764824073
 
   # First Shelley slot and its time. Required on networks whose Byron era
   # used 20-second slots (mainnet, preprod): without them slots are counted
@@ -88,8 +92,9 @@ kes_agent:
 
   # Several pools, on one network or several, can be served by one agent in
   # sign mode. profiles replaces the single-pool settings above
-  # (cold_vkey_file/cold_vkey_hex, system_start, shelley_start_slot,
-  # shelley_start_time, slots_per_kes_period, max_clock_skew, guard_file),
+  # (cold_vkey_file/cold_vkey_hex, system_start, network_magic,
+  # shelley_start_slot, shelley_start_time, slots_per_kes_period,
+  # max_clock_skew, guard_file),
   # which must be removed; slot_length and max_kes_evolutions
   # must be removed or left at their defaults (1 and 62). Each profile has
   # its own keys, schedule and guard file.
@@ -107,6 +112,8 @@ kes_agent:
   #     system_start: "2022-06-01T00:00:00Z"
   #     shelley_start_slot: 86400
   #     shelley_start_time: "2022-06-21T00:00:00Z"
+  #     network_magic: 1             # optional; set when another profile with
+  #                                  # the same cold key shares system_start
   #     slot_length: 1               # default 1
   #     slots_per_kes_period: 129600
   #     max_kes_evolutions: 62       # default 62

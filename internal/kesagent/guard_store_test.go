@@ -62,7 +62,7 @@ func openSharedGuard(
 	systemStart time.Time,
 ) *sharedGuard {
 	t.Helper()
-	g, err := newSharedGuard(store, cold.pub, systemStart)
+	g, err := newSharedGuard(store, cold.pub, systemStart, 0)
 	if err != nil {
 		t.Fatalf("newSharedGuard: %v", err)
 	}
@@ -453,4 +453,76 @@ func TestNewRefusesGuardPathWithSharedGuard(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "guard_path must be unset") {
 		t.Fatalf("New with guard_path and a shared store: got %v", err)
 	}
+}
+
+// An unset network magic leaves the scopes exactly as agents wrote them
+// before the setting existed, so their stored records still apply; a set
+// magic gives the profile scopes of its own.
+func TestSharedGuardScopesByNetworkMagic(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	store := watermark.NewMemWatermark()
+
+	unset := openSharedGuardMagic(t, store, cold, epoch, 0)
+	if want := "kes-agent:2020-01-01T00:00:00Z:kes-period-floor"; unset.floorScope != want {
+		t.Fatalf("unset floorScope = %q, want %q", unset.floorScope, want)
+	}
+	if want := "kes-agent:2020-01-01T00:00:00Z:slot:"; unset.slotPrefix != want {
+		t.Fatalf("unset slotPrefix = %q, want %q", unset.slotPrefix, want)
+	}
+	withMagic := openSharedGuardMagic(t, store, cold, epoch, 42)
+	if want := "kes-agent:2020-01-01T00:00:00Z/magic=42:kes-period-floor"; withMagic.floorScope != want {
+		t.Fatalf("floorScope = %q, want %q", withMagic.floorScope, want)
+	}
+	if want := "kes-agent:2020-01-01T00:00:00Z/magic=42:slot:"; withMagic.slotPrefix != want {
+		t.Fatalf("slotPrefix = %q, want %q", withMagic.slotPrefix, want)
+	}
+}
+
+// Two networks sharing a genesis start and a cold key keep separate slot
+// and floor records when their magics differ.
+func TestSharedGuardNetworkMagicKeepsRecordsApart(t *testing.T) {
+	t.Parallel()
+	cold := newColdKey(t)
+	store := watermark.NewMemWatermark()
+	a := openSharedGuardMagic(t, store, cold, epoch, 1)
+	b := openSharedGuardMagic(t, store, cold, epoch, 2)
+
+	if err := a.AuthorizeHeader("k", 5, 52, []byte("A")); err != nil {
+		t.Fatalf("network 1 header at 52: %v", err)
+	}
+	if !b.Fresh() {
+		t.Fatal("network 2 shares network 1's floor")
+	}
+	if err := b.AuthorizeHeader("k", 1, 52, []byte("B")); err != nil {
+		t.Fatalf("network 2 header at slot 52 after network 1 signed it: %v", err)
+	}
+	if err := a.AuthorizeHeader(
+		"k", 5, 52, []byte("B"),
+	); !errors.Is(err, ErrSlotEquivocation) {
+		t.Fatalf("network 1 second body at 52: want ErrSlotEquivocation, got %v", err)
+	}
+	if err := a.AuthorizeHeader("k", 5, 53, []byte("C")); err != nil {
+		t.Fatalf("network 1 header at 53: %v", err)
+	}
+	// Network 1's floor of 5 does not refuse network 2's lower period.
+	if err := b.Authorize("k", 1); err != nil {
+		t.Fatalf("network 2 Authorize 1 under network 1's floor: %v", err)
+	}
+}
+
+func openSharedGuardMagic(
+	t *testing.T,
+	store SharedGuardStore,
+	cold coldKeyPair,
+	systemStart time.Time,
+	magic uint32,
+) *sharedGuard {
+	t.Helper()
+	g, err := newSharedGuard(store, cold.pub, systemStart, magic)
+	if err != nil {
+		t.Fatalf("newSharedGuard: %v", err)
+	}
+	t.Cleanup(g.Close)
+	return g
 }
