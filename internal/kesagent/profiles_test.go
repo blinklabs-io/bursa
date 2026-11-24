@@ -589,7 +589,7 @@ func TestProfileKeyNetworkIncludesMagic(t *testing.T) {
 	t.Parallel()
 	cold := newColdKey(t)
 	r := replica{guard: watermark.NewMemWatermark(), keys: newMemKeyStore()}
-	var nets []string
+	var nets [3]string
 	for i, magic := range []uint32{0, 1, 2} {
 		pc := profileOn(t, withMagic(networkA, magic), fmt.Sprintf("p%d", i), cold)
 		pc.GuardPath = ""
@@ -603,7 +603,7 @@ func TestProfileKeyNetworkIncludesMagic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New magic %d: %v", magic, err)
 		}
-		nets = append(nets, sole(t, a).keyNetwork)
+		nets[i] = sole(t, a).keyNetwork
 		a.Close()
 	}
 	if want := "2020-01-01T00:00:00Z"; nets[0] != want {
