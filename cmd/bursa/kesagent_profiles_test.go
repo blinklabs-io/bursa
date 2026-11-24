@@ -100,6 +100,14 @@ func TestKESAgentProfilesRefusesMixedOrIncompleteConfig(t *testing.T) {
 			want: "kes_agent.profiles replaces",
 		},
 		{
+			name: "profiles and single-pool network_magic",
+			kc: config.KESAgentConfig{
+				NetworkMagic: 42,
+				Profiles:     []config.KESAgentProfileConfig{complete},
+			},
+			want: "network_magic",
+		},
+		{
 			name: "profile without system_start",
 			kc: config.KESAgentConfig{
 				Profiles: []config.KESAgentProfileConfig{complete, noStart},
@@ -341,5 +349,23 @@ func TestKESAgentProfileCarriesNetworkMagic(t *testing.T) {
 	}
 	if got.NetworkMagic != 42 {
 		t.Fatalf("NetworkMagic = %d, want 42", got.NetworkMagic)
+	}
+}
+
+func TestKESAgentProfilesSinglePoolCarriesNetworkMagic(t *testing.T) {
+	got, err := kesAgentProfiles(config.KESAgentConfig{
+		ColdVKeyHex:       testColdVKeyHex,
+		SystemStart:       "2022-10-25T00:00:00Z",
+		NetworkMagic:      42,
+		SlotLength:        1,
+		SlotsPerKESPeriod: 129600,
+		MaxKESEvolutions:  62,
+		GuardFile:         "/var/lib/bursa/guard.json",
+	})
+	if err != nil {
+		t.Fatalf("kesAgentProfiles: %v", err)
+	}
+	if len(got) != 1 || got[0].NetworkMagic != 42 {
+		t.Fatalf("profiles = %+v", got)
 	}
 }

@@ -63,6 +63,9 @@ type KESAgentConfig struct {
 	ColdVKeyHex string `yaml:"cold_vkey_hex"           envconfig:"KESAGENT_COLD_VKEY_HEX"`
 	// SystemStart is the Shelley genesis system start (RFC3339).
 	SystemStart string `yaml:"system_start"            envconfig:"KESAGENT_SYSTEM_START"`
+	// NetworkMagic is the optional Cardano network magic; see
+	// KESAgentProfileConfig. Zero is unset.
+	NetworkMagic uint32 `yaml:"network_magic"           envconfig:"KESAGENT_NETWORK_MAGIC"`
 	// ShelleyStartSlot and ShelleyStartTime (RFC3339) are the first Shelley
 	// slot and its time. They are required on networks whose Byron era used
 	// longer slots (mainnet: 4492800 at 2020-07-29T21:44:51Z; preprod: 86400
@@ -100,7 +103,8 @@ type KESAgentConfig struct {
 	AttesterAddress string `yaml:"attester_address"        envconfig:"KESAGENT_ATTESTER_ADDRESS"`
 	// Profiles lets one agent serve several pools, on one network or many.
 	// When it is set, the single-pool fields above (cold_vkey_file,
-	// cold_vkey_hex, system_start, slots_per_kes_period, guard_file) must
+	// cold_vkey_hex, system_start, network_magic, slots_per_kes_period,
+	// guard_file) must
 	// be left unset, and slot_length and max_kes_evolutions at their
 	// defaults. Profiles are configured in YAML only.
 	Profiles []KESAgentProfileConfig `yaml:"profiles"                ignored:"true"`

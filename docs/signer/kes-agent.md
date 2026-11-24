@@ -41,11 +41,13 @@ profile in `kes_agent.profiles` with:
 - its network's `system_start`, `slot_length` (default 1),
   `slots_per_kes_period`, `max_kes_evolutions` (default 62) and
   `max_clock_skew` (default `5s`);
-- optionally `network_magic` (the Cardano network magic, a number): set it
-  when two profiles use the same cold key on networks with the same
-  `system_start`. It becomes part of the profile's identity and of its guard
-  and key-store records. Without it a profile is identified by cold key and
-  `system_start` alone, exactly as before;
+- optionally `network_magic` (the Cardano network magic, a number; 0 is
+  unset): set it when two profiles use the same cold key on networks with the
+  same `system_start`. It becomes part of the profile's identity and, with
+  `store.type: postgres`, of its guard and key-store records (see
+  [Shared guard store](#shared-guard-store-postgresql)). Without it a
+  profile is identified by cold key and `system_start` alone, exactly as
+  before;
 - its own `guard_file`. Two profiles may not share a guard file.
 
 Two profiles with the same cold key, `system_start` and `network_magic` (or
@@ -72,10 +74,11 @@ Control commands take the profile name. With one profile it may be omitted,
 and `info` without a name lists every profile.
 
 A configuration without `profiles` serves one profile named `default` from the
-single-pool settings (`cold_vkey_file`, `system_start`, `guard_file` and so
-on), and its existing guard file is that profile's state. Setting `profiles`
-together with those single-pool settings is refused at startup, as is a
-top-level `slot_length` or `max_kes_evolutions` other than its default.
+single-pool settings (`cold_vkey_file`, `system_start`, `network_magic`,
+`guard_file` and so on), and its existing guard file is that profile's state.
+Setting `profiles` together with those single-pool settings is refused at
+startup, as is a top-level `slot_length` or `max_kes_evolutions` other than
+its default.
 
 ## Sockets
 
@@ -376,11 +379,11 @@ agent uses the signer's watermark tables (`signer_watermark` and
 `signer_counter_watermark`) and creates them if they do not exist. Its records
 are keyed by the hash of the pool cold verification key and scoped by the
 profile's network (`system_start`, and `network_magic` when set), so one cold
-key on several networks keeps separate records. A profile without
-`network_magic` uses the same scopes as before the setting existed, so
-existing records apply unchanged; adding `network_magic` to a profile that
-already has records starts it with empty ones, so set it before the first
-start against the store.
+key on several networks keeps separate records. Set `network_magic` (in the
+profile, or at the top level for a single-pool configuration) when agents or
+profiles sharing one database serve the same cold key on networks with the
+same `system_start`. A profile without `network_magic` uses the same scopes as
+before the setting existed, so existing records apply unchanged.
 
 - The KES period floor is one shared non-decreasing record: a period below it
   is refused on every replica.
@@ -396,6 +399,13 @@ warning and sets `bursa_kesagent_guard_fresh` to 1, as for a missing guard
 file. Moving from guard files to the store does not copy the file's floor.
 A database error refuses the signature; it is not counted as a slot-guard
 refusal.
+
+Every replica of a profile must use the same `network_magic`: replicas that
+differ use separate records, and each can sign a header for the same slot.
+Adding or changing `network_magic` on a profile that already has records
+starts it with empty ones, as on a first start, losing its signed-slot
+record, period floor and shared keys, so set it before the first start
+against the store.
 
 ### Shared KES key (sealed with age)
 

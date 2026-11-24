@@ -488,3 +488,31 @@ func TestLoadConfigFile_KESAgentProfileNetworkMagic(t *testing.T) {
 		t.Fatalf("profiles = %+v", got)
 	}
 }
+
+// Not t.Parallel: LoadConfigFile writes the package-level config, and the
+// test sets the environment.
+func TestLoadConfigFile_KESAgentSinglePoolNetworkMagic(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "kes-agent.yaml")
+	if err := os.WriteFile(cfgFile, []byte(`kes_agent:
+  mode: sign
+  network_magic: 7
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFile(cfgFile)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	if cfg.KESAgent.NetworkMagic != 7 {
+		t.Fatalf("network_magic = %d, want 7", cfg.KESAgent.NetworkMagic)
+	}
+	globalConfig = defaultConfig()
+	t.Setenv("KESAGENT_NETWORK_MAGIC", "42")
+	cfg, err = LoadConfigFile(cfgFile)
+	if err != nil {
+		t.Fatalf("LoadConfigFile (env override): %v", err)
+	}
+	if cfg.KESAgent.NetworkMagic != 42 {
+		t.Fatalf("env network_magic = %d, want 42", cfg.KESAgent.NetworkMagic)
+	}
+}

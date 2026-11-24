@@ -718,6 +718,7 @@ func kesAgentProfiles(
 			ColdVKeyFile:      kc.ColdVKeyFile,
 			ColdVKeyHex:       kc.ColdVKeyHex,
 			SystemStart:       kc.SystemStart,
+			NetworkMagic:      kc.NetworkMagic,
 			ShelleyStartSlot:  kc.ShelleyStartSlot,
 			ShelleyStartTime:  kc.ShelleyStartTime,
 			SlotLength:        kc.SlotLength,
@@ -735,13 +736,14 @@ func kesAgentProfiles(
 		return []kesagent.ProfileConfig{p}, nil
 	}
 	if kc.ColdVKeyFile != "" || kc.ColdVKeyHex != "" ||
-		kc.SystemStart != "" || kc.SlotsPerKESPeriod != 0 ||
+		kc.SystemStart != "" || kc.NetworkMagic != 0 ||
+		kc.SlotsPerKESPeriod != 0 ||
 		kc.GuardFile != "" || kc.ShelleyStartTime != "" ||
 		kc.ShelleyStartSlot != 0 || kc.MaxClockSkew != "" ||
 		len(kc.ControlClientSPKISHA256) > 0 ||
 		len(kc.SignClientSPKISHA256) > 0 {
 		return nil, errors.New(
-			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew, guard_file, control_client_spki_sha256 and sign_client_spki_sha256; set them in each profile",
+			"kes_agent.profiles replaces cold_vkey_file, cold_vkey_hex, system_start, network_magic, shelley_start_slot, shelley_start_time, slots_per_kes_period, max_clock_skew, guard_file, control_client_spki_sha256 and sign_client_spki_sha256; set them in each profile",
 		)
 	}
 	// slot_length and max_kes_evolutions carry config defaults, so only a
