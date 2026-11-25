@@ -311,7 +311,7 @@ jobs:
         uses: 'google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db' # v3.0.1 https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1
       - name: Sign Windows CLI binaries
         if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
-        uses: blinklabs-io/shared-actions/sign-windows@ce1213d07b5c13c2f267c581c0bbda5c4d2d82f0
+        uses: blinklabs-io/shared-actions/sign-windows@f3ae0ebd71fbb78b8336fb7d8cc6b303e7c02707
         with:
           files: |
             build/windows-amd64/bursa.exe
@@ -761,7 +761,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1 https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1
       - name: Sign Windows wallet binary
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
-        uses: blinklabs-io/shared-actions/sign-windows@ce1213d07b5c13c2f267c581c0bbda5c4d2d82f0
+        uses: blinklabs-io/shared-actions/sign-windows@f3ae0ebd71fbb78b8336fb7d8cc6b303e7c02707
         with:
           files: bursa-wallet.exe
           application-name: Bursa
@@ -795,7 +795,7 @@ jobs:
           }
       - name: Sign Windows wallet MSI
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
-        uses: blinklabs-io/shared-actions/sign-windows@ce1213d07b5c13c2f267c581c0bbda5c4d2d82f0
+        uses: blinklabs-io/shared-actions/sign-windows@f3ae0ebd71fbb78b8336fb7d8cc6b303e7c02707
         with:
           files: ${{ env.MSI_PATH }}
           application-name: Bursa
