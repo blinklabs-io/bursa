@@ -46,6 +46,7 @@ func TestMacOSSigningSecretPrompt(t *testing.T) {
 	dir := t.TempDir()
 	security := filepath.Join(dir, "security")
 	stub := `#!/bin/sh
+[ "${TEST_NO_PROMPT:-}" != 1 ] || exit 0
 printf 'Password:'
 IFS= read -r secret
 [ "$secret" = 'fixture-secret' ] || exit 4
@@ -73,6 +74,14 @@ IFS= read -r secret
 			}
 		})
 	}
+	t.Run("missing prompt", func(t *testing.T) {
+		cmd := exec.CommandContext(t.Context(), expect, "-c", script)
+		cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "SECRET_INPUT=fixture-secret", "SECRET_ACTION=create", "SECRET_KEYCHAIN=fixture.keychain", "TEST_NO_PROMPT=1")
+		output, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "did not request its secret") {
+			t.Fatalf("missing prompt not detected: %v\n%s", err, output)
+		}
+	})
 	t.Run("command failure", func(t *testing.T) {
 		cmd := exec.CommandContext(t.Context(), expect, "-c", script)
 		cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "SECRET_INPUT=fixture-secret", "SECRET_ACTION=create", "SECRET_KEYCHAIN=fixture.keychain", "TEST_FAIL=1")
