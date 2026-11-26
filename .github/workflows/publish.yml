@@ -234,9 +234,7 @@ jobs:
     # A manual run exists to exercise the macOS packaging path. This job
     # publishes or finalises release output, so it stays on the push triggers.
     if: github.event_name != 'workflow_dispatch'
-    # The CLI is pure Go (CGO_ENABLED=0), so every target cross-compiles from one
-    # ubuntu runner. Only darwin/arm64 needs macOS, for codesign and notarytool.
-    # Each row builds its space-separated GOOS/GOARCH targets in turn.
+    # Windows verifies the CLI signatures natively; macOS notarizes its archive.
     name: build-binaries (${{ matrix.name }})
     strategy:
       matrix:
@@ -244,11 +242,17 @@ jobs:
           - name: darwin
             runner: macos-15
             targets: darwin/arm64
-          - name: freebsd, linux, windows
+          - name: freebsd, linux
             runner: ubuntu-latest
-            targets: freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
+            targets: freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64
+          - name: windows
+            runner: windows-latest
+            targets: windows/amd64 windows/arm64
       max-parallel: 2
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
     needs: [create-draft-release]
     permissions:
       actions: write
@@ -280,9 +284,12 @@ jobs:
             _arch="${_target#*/}"
             echo "::group::GOOS=${_os} GOARCH=${_arch}"
             rm -f bursa
+            if [[ "${_os}" == windows ]]; then export CGO_ENABLED=0; fi
             GOOS="${_os}" GOARCH="${_arch}" make build
             mkdir -p "build/${_os}-${_arch}"
-            mv bursa "build/${_os}-${_arch}/bursa"
+            _binary=bursa
+            if [[ "${_os}" == windows ]]; then _binary=bursa.exe; fi
+            mv bursa "build/${_os}-${_arch}/${_binary}"
             echo "::endgroup::"
           done
 
@@ -302,34 +309,18 @@ jobs:
       - name: Set up Cloud SDK
         if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
         uses: 'google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db' # v3.0.1 https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1
-      - name: Sign windows binaries
-        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'windows/') }}
-        run: |
-          echo "Downloading jsign.jar"
-          curl -L -o jsign.jar https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar
-          echo "Verifying jsign.jar checksum"
-          echo '05ca18d4ab7b8c2183289b5378d32860f0ea0f3bdab1f1b8cae5894fb225fa8a  jsign.jar' | sha256sum -c
-          echo "${{ secrets.CERTIFICATE_CHAIN }}" | base64 --decode > codesign-chain.pem
-          set +x
-          ACCESS_TOKEN=$(gcloud auth print-access-token)
-          echo "::add-mask::$ACCESS_TOKEN"
-          export JSIGN_STOREPASS="$ACCESS_TOKEN"
-          for _filename in build/windows-*/bursa; do
-            java -jar jsign.jar \
-              --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} \
-              --storepass env:JSIGN_STOREPASS \
-              --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} \
-              --alias ${{ secrets.CERTIFICATE_KEY_NAME }} \
-              --certfile codesign-chain.pem \
-              --tsmode RFC3161 \
-              --tsaurl http://timestamp.globalsign.com/tsa/r6advanced1 \
-              "${_filename}"
-            echo "Signed Windows binary: ${_filename}"
-          done
-          unset JSIGN_STOREPASS ACCESS_TOKEN
-          set -x
-          echo "Cleaning up certificate chain"
-          rm -f codesign-chain.pem
+      - name: Sign Windows CLI binaries
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Windows'
+        uses: blinklabs-io/shared-actions/sign-windows@f3ae0ebd71fbb78b8336fb7d8cc6b303e7c02707
+        with:
+          files: |
+            build/windows-amd64/bursa.exe
+            build/windows-arm64/bursa.exe
+          application-name: Bursa
+          store-type: ${{ secrets.CERTIFICATE_STORE_TYPE || 'GOOGLECLOUD' }}
+          certificate-chain: ${{ secrets.CERTIFICATE_CHAIN }}
+          keystore: ${{ secrets.CERTIFICATE_KEYSTORE }}
+          key-name: ${{ secrets.CERTIFICATE_KEY_NAME }}
 
       # Sign MacOS build
 
@@ -400,7 +391,7 @@ jobs:
             _filename="bursa-${RELEASE_TAG}-${_os}-${_arch}"
             if [[ "${_os}" == "windows" ]]; then
               _filename="${_filename}.exe"
-              cp "${_dir}/bursa" "${_filename}"
+              cp "${_dir}/bursa.exe" "${_filename}"
             fi
             if [[ "${_os}" == "linux" || "${_os}" == "freebsd" ]]; then
               _filename="${_filename}.tar.gz"
@@ -768,47 +759,16 @@ jobs:
       - name: Set up Cloud SDK
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1 https://github.com/google-github-actions/setup-gcloud/releases/tag/v3.0.1
-      - name: Sign Windows binary (bursa-wallet.exe)
-        if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
-        shell: pwsh
-        run: |
-          Write-Host "Downloading jsign.jar"
-          Invoke-WebRequest -Uri "https://github.com/ebourg/jsign/releases/download/6.0/jsign-6.0.jar" -OutFile "jsign.jar"
-          $expectedHash = "05ca18d4ab7b8c2183289b5378d32860f0ea0f3bdab1f1b8cae5894fb225fa8a"
-          $actualHash = (Get-FileHash -Path "jsign.jar" -Algorithm SHA256).Hash.ToLower()
-          if ($actualHash -ne $expectedHash) {
-            Write-Error "Hash verification failed for jsign.jar (expected $expectedHash, got $actualHash)"
-            exit 1
-          }
-          [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${{ secrets.CERTIFICATE_CHAIN }}")) | Out-File -FilePath "codesign-chain.pem" -Encoding utf8
-          $ACCESS_TOKEN = & gcloud auth print-access-token
-          Write-Host "::add-mask::$ACCESS_TOKEN"
-          $env:JSIGN_STOREPASS = $ACCESS_TOKEN
-          $filename = "bursa-wallet.exe"
-          if (-not (Test-Path $filename)) { Write-Error "Expected binary not found: $filename"; exit 1 }
-          Write-Host "Signing $filename"
-          java -jar jsign.jar `
-            --storetype ${{ secrets.CERTIFICATE_STORE_TYPE }} `
-            --storepass "env:JSIGN_STOREPASS" `
-            --keystore ${{ secrets.CERTIFICATE_KEYSTORE }} `
-            --alias ${{ secrets.CERTIFICATE_KEY_NAME }} `
-            --certfile "codesign-chain.pem" `
-            --alg SHA-256 `
-            --tsmode RFC3161 `
-            --tsaurl "http://timestamp.globalsign.com/tsa/r6advanced1" `
-            --tsretries 3 `
-            --tsretrywait 10 `
-            --name "Bursa" `
-            --url "https://github.com/blinklabs-io/bursa" `
-            $filename
-          if ($LASTEXITCODE -ne 0) { Write-Error "jsign failed on $filename"; exit 1 }
-          $sig = Get-AuthenticodeSignature $filename
-          if ($sig.Status -ne 'Valid') { Write-Error "signature not valid for ${filename}: $($sig.Status)"; exit 1 }
-          if ($null -eq $sig.TimeStamperCertificate) { Write-Error "signature for ${filename} is not timestamped"; exit 1 }
-          Write-Host "Signed + verified: $filename"
-          $env:JSIGN_STOREPASS = $null
-          $ACCESS_TOKEN = $null
-          # jsign.jar and codesign-chain.pem are kept for the MSI-sign step.
+      - name: Sign Windows wallet binary
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
+        uses: blinklabs-io/shared-actions/sign-windows@f3ae0ebd71fbb78b8336fb7d8cc6b303e7c02707
+        with:
+          files: bursa-wallet.exe
+          application-name: Bursa
+          store-type: ${{ secrets.CERTIFICATE_STORE_TYPE || 'GOOGLECLOUD' }}
+          certificate-chain: ${{ secrets.CERTIFICATE_CHAIN }}
+          keystore: ${{ secrets.CERTIFICATE_KEYSTORE }}
+          key-name: ${{ secrets.CERTIFICATE_KEY_NAME }}
 
       - name: Install WiX toolset (Windows)
         # Install WiX on every push so the MSI build (below) runs on non-tag
@@ -820,44 +780,30 @@ jobs:
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & "$env:USERPROFILE\.dotnet\tools\wix.exe" --version
       - name: Build MSI (Windows)
-        # Build the MSI on every push to validate the packaging path. Signing is
-        # gated on tags: branch pushes produce an UNSIGNED installer (build-msi.ps1
-        # skips signing when JSIGN_STOREPASS is empty), tags produce a signed one.
         if: matrix.os == 'windows'
         shell: pwsh
         env:
-          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
-          # Reuse the already-built exe: build-msi.ps1 skips its internal
-          # `go build` when BURSA_EXE points at an existing file. On tags this
-          # exe was signed in place by the signing step above.
           BURSA_EXE: ${{ github.workspace }}\bursa-wallet.exe
           ARCH: ${{ matrix.arch }}
-          JSIGN_JAR: ${{ github.workspace }}\jsign.jar
-          JSIGN_KEYSTORE: ${{ secrets.CERTIFICATE_KEYSTORE }}
-          JSIGN_STORETYPE: ${{ secrets.CERTIFICATE_STORE_TYPE }}
-          JSIGN_ALIAS: ${{ secrets.CERTIFICATE_KEY_NAME }}
-          JSIGN_CERTFILE: ${{ github.workspace }}\codesign-chain.pem
-          JSIGN_TSAURL: 'http://timestamp.globalsign.com/tsa/r6advanced1'
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/') && env.RELEASE_TAG || '' }}
         run: |
-          if ($env:IS_RELEASE -eq 'true') {
-            # Release: pin the MSI version to the cleaned tag and sign it.
-            $env:VERSION = $env:RELEASE_TAG
-            $ACCESS_TOKEN = & gcloud auth print-access-token
-            Write-Host "::add-mask::$ACCESS_TOKEN"
-            $env:JSIGN_STOREPASS = $ACCESS_TOKEN
-          } else {
-            # Non-tag push: leave VERSION unset so build-msi.ps1 derives it from
-            # `git describe`, and clear JSIGN_STOREPASS so signing is skipped.
-            $env:JSIGN_STOREPASS = $null
-          }
           pwsh ./packaging/windows/build-msi.ps1
-          if ($LASTEXITCODE -ne 0) { Write-Error "build-msi.ps1 failed"; exit 1 }
-          if ($env:IS_RELEASE -eq 'true') {
-            $env:JSIGN_STOREPASS = $null
-            $ACCESS_TOKEN = $null
-            Remove-Item -Path "codesign-chain.pem" -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "jsign.jar"          -Force -ErrorAction SilentlyContinue
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:VERSION) {
+            $version = $env:VERSION -replace '^v', ''
+            "MSI_PATH=dist/bursa-wallet-$version-windows-$($env:ARCH).msi" >> $env:GITHUB_ENV
           }
+      - name: Sign Windows wallet MSI
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
+        uses: blinklabs-io/shared-actions/sign-windows@f3ae0ebd71fbb78b8336fb7d8cc6b303e7c02707
+        with:
+          files: ${{ env.MSI_PATH }}
+          application-name: Bursa
+          store-type: ${{ secrets.CERTIFICATE_STORE_TYPE || 'GOOGLECLOUD' }}
+          certificate-chain: ${{ secrets.CERTIFICATE_CHAIN }}
+          keystore: ${{ secrets.CERTIFICATE_KEYSTORE }}
+          key-name: ${{ secrets.CERTIFICATE_KEY_NAME }}
+
       - name: Verify MSI signature (Windows)
         if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows' }}
         shell: pwsh
@@ -875,8 +821,7 @@ jobs:
               | Sort-Object FullName -Descending | Select-Object -First 1
           }
           if (-not $signtool) { Write-Error "signtool.exe not found under $sdkRoot"; exit 1 }
-          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
-          $msi = "dist\bursa-wallet-$cleanVersion-windows-$env:MATRIX_ARCH.msi"
+          $msi = $env:MSI_PATH
           if (-not (Test-Path $msi)) { Write-Error "MSI not found at $msi"; exit 1 }
           & $signtool.FullName verify /pa /v $msi
           if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $msi"; exit 1 }
@@ -918,18 +863,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
         shell: pwsh
         env:
-          MATRIX_OS: ${{ matrix.os }}
-          MATRIX_ARCH: ${{ matrix.arch }}
           RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $cleanVersion = "$env:RELEASE_TAG" -replace '^v', ''
-          $msiPath  = "dist\bursa-wallet-$cleanVersion-windows-$env:MATRIX_ARCH.msi"
-          # Name the uploaded asset with the same v-stripped version as the file
-          # produced (and as the macOS .pkg upload), not the raw RELEASE_TAG.
-          $assetName = "bursa-wallet-$cleanVersion-$env:MATRIX_OS-$env:MATRIX_ARCH.msi"
-          if (-not (Test-Path $msiPath)) { Write-Error "MSI not found at $msiPath"; exit 1 }
-          "MSI_PATH=$msiPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $msiPath = $env:MSI_PATH
+          $assetName = Split-Path -Leaf $msiPath
+          if (-not (Test-Path -LiteralPath $msiPath)) { throw "MSI not found at $msiPath" }
           $headers = @{
             "Authorization" = "token $env:GH_TOKEN"
             "Content-Type" = "application/octet-stream"
