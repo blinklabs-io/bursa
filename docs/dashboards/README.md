@@ -16,8 +16,14 @@
   `kes-agent` mode. The replica panels find agents through the chart's
   `<release>-kes-agent` ConfigMap and read **kube-state-metrics** and
   **cAdvisor** for deployment replicas, pod readiness, restarts and memory.
-- Producers running Dingo with the KES agent in sign mode, for the producer
-  round-trip series (`dingo_kes_agent_sign_latency_seconds`).
+  Agent pods are found through their ReplicaSet and Deployment owners
+  (`kube_pod_owner`, `kube_replicaset_owner`).
+- Producers running Dingo with the KES agent in sign mode, with their Dingo
+  metrics scraped into the same Prometheus datasource, for the producer
+  round-trip series (`dingo_kes_agent_sign_latency_seconds`). That metric
+  carries no label linking a producer to an agent, so the round-trip series
+  cover every producer in the datasource and ignore the `$namespace`,
+  `$profile` and `$pod` variables.
 
 ## Datasource
 
