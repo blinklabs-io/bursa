@@ -35,6 +35,15 @@ func loadMacOSReleaseWorkflow(t *testing.T) macOSReleaseWorkflow {
 	return wf
 }
 
+func requireWorkflowTools(t *testing.T, tools ...string) {
+	t.Helper()
+	for _, name := range tools {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Skipf("%s is required for workflow script tests", name)
+		}
+	}
+}
+
 func TestMacOSReleaseUsesGovernedSettings(t *testing.T) {
 	wf := loadMacOSReleaseWorkflow(t)
 	for job, tc := range map[string]struct{ action, config, artifactType string }{
@@ -95,6 +104,7 @@ func TestMacOSReleaseUsesGovernedSettings(t *testing.T) {
 }
 
 func TestMacOSCLIUploadsOnlyVerifiedArchive(t *testing.T) {
+	requireWorkflowTools(t, "bash")
 	var script string
 	for _, step := range loadMacOSReleaseWorkflow(t).Jobs["build-binaries"].Steps {
 		if step.Name == "Upload release assets" {
@@ -149,7 +159,8 @@ func TestMacOSCLIUploadsOnlyVerifiedArchive(t *testing.T) {
 					t.Fatalf("uploaded wrong path: %s %v", calls, err)
 				}
 				env, err := os.ReadFile(envfile)
-				if err != nil || !strings.Contains(string(env), archive) {
+				want := "ASSET_PATHS<<ASSET_PATHS_EOF_1_1\n" + archive + "\nASSET_PATHS_EOF_1_1\n"
+				if err != nil || string(env) != want {
 					t.Fatalf("attestation did not use archive: %s %v", env, err)
 				}
 			} else if _, err := os.Stat(log); !os.IsNotExist(err) {
@@ -160,6 +171,7 @@ func TestMacOSCLIUploadsOnlyVerifiedArchive(t *testing.T) {
 }
 
 func TestMacOSWalletUploadsAndAttestsVerifiedPackage(t *testing.T) {
+	requireWorkflowTools(t, "bash")
 	var script string
 	var attests bool
 	for _, step := range loadMacOSReleaseWorkflow(t).Jobs["build-wallet-binaries"].Steps {
@@ -223,6 +235,7 @@ func TestMacOSWalletUploadsAndAttestsVerifiedPackage(t *testing.T) {
 }
 
 func TestMacOSSettingsLoader(t *testing.T) {
+	requireWorkflowTools(t, "bash", "python3")
 	wf := loadMacOSReleaseWorkflow(t)
 	for job, id := range map[string]string{"build-binaries": "macos-cli-config", "build-wallet-binaries": "macos-wallet-config"} {
 		var script string
