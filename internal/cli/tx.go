@@ -339,7 +339,7 @@ func RunTxBuild(
 	if err := chain.Open(ctx); err != nil {
 		return err
 	}
-	defer chain.Close()
+	defer chain.Close(ctx)
 	built, err := txbuilder.Build(ctx, chain, txbuilder.BuildOptions{
 		ChangeAddress:    changeAddress,
 		CertificateFiles: certificateFiles,

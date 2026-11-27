@@ -42,7 +42,7 @@ func defaultQueryPool(
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
 	}
-	defer chain.Close()
+	defer chain.Close(ctx)
 	return chain.QueryPool(ctx, poolID, network)
 }
 
@@ -54,7 +54,7 @@ func defaultQueryStake(
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
 	}
-	defer chain.Close()
+	defer chain.Close(ctx)
 	return chain.QueryStakeAddress(ctx, address, network)
 }
 
@@ -66,7 +66,7 @@ func defaultQueryUtxo(
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
 	}
-	defer chain.Close()
+	defer chain.Close(ctx)
 	return chain.QueryUTxOs(ctx, address)
 }
 
@@ -78,7 +78,7 @@ func defaultQueryTip(
 	if err := chain.Open(ctx); err != nil {
 		return nil, err
 	}
-	defer chain.Close()
+	defer chain.Close(ctx)
 	return chain.QueryTip(ctx)
 }
 

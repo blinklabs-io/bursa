@@ -21,6 +21,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blinklabs-io/bursa"
 	ouroboros "github.com/blinklabs-io/gouroboros"
@@ -29,6 +30,23 @@ import (
 	"github.com/blinklabs-io/gouroboros/ledger/shelley"
 	"github.com/blinklabs-io/gouroboros/protocol/localstatequery"
 )
+
+// closeTimeout bounds how long a connection close waits for the connection's
+// goroutines to finish.
+const closeTimeout = 10 * time.Second
+
+// closeConn closes conn within closeTimeout. ctx is typically already
+// cancelled when a close is needed, so only its values carry over. None of
+// the connections here register protocol callbacks, and no lock is held
+// across a close, so waiting for the connection to wind down cannot deadlock.
+func closeConn(ctx context.Context, conn *ouroboros.Connection) error {
+	closeCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		closeTimeout,
+	)
+	defer cancel()
+	return conn.Close(closeCtx)
+}
 
 // N2CChain queries and submits through a node's local socket. Between Open
 // and Close every query shares one connection, whose local state query
@@ -57,17 +75,18 @@ func (n *N2CChain) Open(ctx context.Context) error {
 		return err
 	}
 	n.conn = conn
-	n.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
+	n.stop = context.AfterFunc(ctx, func() { _ = closeConn(ctx, conn) })
 	return nil
 }
 
-// Close closes a connection made by Open.
-func (n *N2CChain) Close() error {
+// Close closes a connection made by Open. ctx supplies values only; the close
+// is bounded by closeTimeout even when ctx has already ended.
+func (n *N2CChain) Close(ctx context.Context) error {
 	if n.conn == nil {
 		return nil
 	}
 	n.stop()
-	err := n.conn.Close()
+	err := closeConn(ctx, n.conn)
 	n.conn, n.stop = nil, nil
 	return err
 }
@@ -84,8 +103,8 @@ func (n *N2CChain) session(
 	if err != nil {
 		return nil, nil, err
 	}
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	return conn, func() { stop(); _ = conn.Close() }, nil
+	stop := context.AfterFunc(ctx, func() { _ = closeConn(ctx, conn) })
+	return conn, func() { stop(); _ = closeConn(ctx, conn) }, nil
 }
 
 func (n *N2CChain) networkMagic() (uint32, error) {
@@ -133,7 +152,7 @@ func (n *N2CChain) dial(ctx context.Context) (*ouroboros.Connection, error) {
 	}()
 	select {
 	case <-ctx.Done():
-		_ = conn.Close()
+		_ = closeConn(ctx, conn)
 		return nil, ctx.Err()
 	case err := <-done:
 		if err != nil {
