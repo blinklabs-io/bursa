@@ -1,0 +1,21 @@
+# Generated automatically by org-governance-bot. Do not edit manually.
+name: "test-macos-cli-release"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  orchestrate:
+    uses: blinklabs-io/shared-actions/.github/workflows/reuseable-test-macos-release.yml@a80f7002ed898be8536905f5a59002fce59890c4
+    secrets:
+      apple-app-specific-password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      apple-certificate: ${{ secrets.APPLE_CERTIFICATE }}
+      apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      apple-id: ${{ secrets.APPLE_ID }}
+      apple-keychain-password: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+      apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+    with:
+      config: '{"artifact_type":"zip","artifact_basename":"bursa","build":{"binaries":[{"name":"bursa","module":".","package":"./cmd/bursa","cgo":false,"tags":[]}],"version_prefix":"preserve"},"cli_binary":"bursa","signing_identifier":"com.blinklabssoftware.bursa"}'
