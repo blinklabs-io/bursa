@@ -1,0 +1,1 @@
+{"artifact_type":"zip","artifact_basename":"bursa","build":{"binaries":[{"name":"bursa","module":".","package":"./cmd/bursa","cgo":false,"tags":[]}],"version_prefix":"preserve"},"cli_binary":"bursa","signing_identifier":"com.blinklabssoftware.bursa"}
