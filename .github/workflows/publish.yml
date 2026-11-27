@@ -18,147 +18,6 @@ on:
 
 concurrency: ${{ github.ref }}
 
-env:
-  MACOS_SECRET_EXPECT: |
-    set timeout 60
-    foreach name {SECRET_INPUT SECRET_ACTION SECRET_KEYCHAIN} {
-        if {![info exists env($name)]} {
-            puts stderr "$name is required"
-            exit 1
-        }
-    }
-    set secret $env(SECRET_INPUT)
-    set action $env(SECRET_ACTION)
-    set keychain $env(SECRET_KEYCHAIN)
-    unset env(SECRET_INPUT)
-    set supplied 0
-    log_user 0
-    switch -- $action {
-        create {
-            spawn -noecho security create-keychain $keychain
-        }
-        unlock {
-            spawn -noecho security unlock-keychain $keychain
-        }
-        partition-cli {
-            spawn -noecho security set-key-partition-list -S apple-tool:,apple:,codesign: -s $keychain
-        }
-        partition-wallet {
-            spawn -noecho security set-key-partition-list -S apple-tool:,apple:,codesign:,productsign: -s $keychain
-        }
-        notary {
-            foreach name {SECRET_PROFILE NOTARY_APPLE_ID NOTARY_TEAM_ID} {
-                if {![info exists env($name)]} {
-                    puts stderr "$name is required"
-                    exit 1
-                }
-            }
-            spawn -noecho xcrun notarytool store-credentials $env(SECRET_PROFILE) --apple-id $env(NOTARY_APPLE_ID) --team-id $env(NOTARY_TEAM_ID)
-        }
-        default {
-            puts stderr "unsupported secret command"
-            exit 1
-        }
-    }
-    expect {
-        -re {(?i)(password|passphrase)[^:\r\n]*:} {
-            set supplied 1
-            send -- "$secret\r"
-            exp_continue
-        }
-        eof {}
-        timeout {
-            puts stderr "$action timed out waiting for a secret prompt"
-            exit 1
-        }
-    }
-    if {!$supplied} {
-        puts stderr "$action did not request its secret"
-        exit 1
-    }
-    set result [wait]
-    if {[lindex $result 2] != 0} {
-        puts stderr "$action could not be started"
-        exit 1
-    }
-    set exit_code [lindex $result 3]
-    if {$exit_code != 0} {
-        puts stderr "$action failed with exit status $exit_code"
-    }
-    exit $exit_code
-  MACOS_P12_IMPORT_SWIFT: |
-    import Darwin
-    import Foundation
-    import Security
-
-    func fail(_ operation: String, _ status: OSStatus? = nil) -> Never {
-        var message = operation
-        if let status = status {
-            let detail = SecCopyErrorMessageString(status, nil) as String? ?? "unknown error"
-            message += ": \(detail) (\(status))"
-        }
-        FileHandle.standardError.write(Data("\(message)\n".utf8))
-        exit(EXIT_FAILURE)
-    }
-
-    let environment = ProcessInfo.processInfo.environment
-    guard let password = environment["P12_PASSWORD"],
-          let path = environment["P12_PATH"],
-          let trustedPath = environment["TRUSTED_APPLICATION"] else {
-        fail("PKCS#12 import environment is incomplete")
-    }
-
-    let data: Data
-    do {
-        data = try Data(contentsOf: URL(fileURLWithPath: path))
-    } catch {
-        fail("could not read PKCS#12 file: \(error.localizedDescription)")
-    }
-
-    var keychain: SecKeychain?
-    var status = SecKeychainCopyDefault(&keychain)
-    guard status == errSecSuccess, let keychain = keychain else {
-        fail("could not open the default keychain", status)
-    }
-
-    var trustedApplication: SecTrustedApplication?
-    status = trustedPath.withCString {
-        SecTrustedApplicationCreateFromPath($0, &trustedApplication)
-    }
-    guard status == errSecSuccess, let trustedApplication = trustedApplication else {
-        fail("could not create signing access", status)
-    }
-
-    var access: SecAccess?
-    status = SecAccessCreate(
-        "Bursa release signing" as CFString,
-        [trustedApplication] as CFArray,
-        &access
-    )
-    guard status == errSecSuccess, let access = access else {
-        fail("could not create signing access", status)
-    }
-
-    let options: [String: Any] = [
-        kSecImportExportPassphrase as String: password,
-        kSecImportExportKeychain as String: keychain,
-        kSecImportExportAccess as String: access,
-    ]
-    var importedItems: CFArray?
-    status = SecPKCS12Import(data as CFData, options as CFDictionary, &importedItems)
-    guard status == errSecSuccess else {
-        fail("could not import PKCS#12 identity", status)
-    }
-    guard let importedItems = importedItems as? [[String: Any]],
-          importedItems.contains(where: {
-              guard let item = $0[kSecImportItemIdentity as String] else {
-                  return false
-              }
-              return CFGetTypeID(item as AnyObject) == SecIdentityGetTypeID()
-          }) else {
-        fail("PKCS#12 import returned no identities")
-    }
-
 jobs:
   create-draft-release:
     runs-on: ubuntu-latest
@@ -242,6 +101,7 @@ jobs:
           - name: darwin
             runner: macos-15
             targets: darwin/arm64
+            arch: arm64
           - name: freebsd, linux
             runner: ubuntu-latest
             targets: freebsd/amd64 freebsd/arm64 linux/amd64 linux/arm64
@@ -282,6 +142,7 @@ jobs:
           for _target in $TARGETS; do
             _os="${_target%/*}"
             _arch="${_target#*/}"
+            if [[ "${_os}" == darwin && "${GITHUB_REF}" == refs/tags/* ]]; then continue; fi
             echo "::group::GOOS=${_os} GOARCH=${_arch}"
             rm -f bursa
             if [[ "${_os}" == windows ]]; then export CGO_ENABLED=0; fi
@@ -322,65 +183,38 @@ jobs:
           keystore: ${{ secrets.CERTIFICATE_KEYSTORE }}
           key-name: ${{ secrets.CERTIFICATE_KEY_NAME }}
 
-      # Sign MacOS build
-
-      - name: Sign macos binary
-        if: ${{ startsWith(github.ref, 'refs/tags/') && contains(matrix.targets, 'darwin/') }}
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Load macOS CLI settings
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS'
+        id: macos-cli-config
+        shell: bash
         run: |
-          set -euo pipefail
-          apple_certificate="${APPLE_CERTIFICATE}"
-          apple_certificate_password="${APPLE_CERTIFICATE_PASSWORD}"
-          apple_keychain_password="${APPLE_KEYCHAIN_PASSWORD}"
-          apple_id="${APPLE_ID}"
-          apple_app_specific_password="${APPLE_APP_SPECIFIC_PASSWORD}"
-          apple_team_id="${APPLE_TEAM_ID}"
-          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
-            APPLE_KEYCHAIN_PASSWORD APPLE_ID \
-            APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
-          trap 'rm -f apple_certificate.p12' EXIT
-          echo "Decoding and importing Apple certificate..."
-          (umask 077 && printf '%s' "${apple_certificate}" | base64 --decode -o apple_certificate.p12)
-          apple_certificate=''
-          SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=create \
-            SECRET_KEYCHAIN=build.keychain \
-            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-          security default-keychain -s build.keychain
-          security set-keychain-settings -lut 21600 build.keychain
-          SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=unlock \
-            SECRET_KEYCHAIN=build.keychain \
-            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-          P12_PASSWORD="${apple_certificate_password}" \
-            P12_PATH=apple_certificate.p12 \
-            TRUSTED_APPLICATION=/usr/bin/codesign \
-            xcrun swift - <<< "${MACOS_P12_IMPORT_SWIFT}"
-          rm -f apple_certificate.p12
-          apple_certificate_password=''
-          SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=partition-cli \
-            SECRET_KEYCHAIN=build.keychain \
-            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-          apple_keychain_password=''
-          SECRET_INPUT="${apple_app_specific_password}" SECRET_ACTION=notary \
-            SECRET_KEYCHAIN=build.keychain SECRET_PROFILE=notarytool-profile \
-            NOTARY_APPLE_ID="${apple_id}" NOTARY_TEAM_ID="${apple_team_id}" \
-            /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-          apple_app_specific_password=''
-          for _dir in build/darwin-*; do
-            _arch="${_dir#build/darwin-}"
-            /usr/bin/codesign --force -s "Developer ID Application: Blink Labs Software (${apple_team_id})" --timestamp --options runtime -i com.blinklabssoftware.bursa "${_dir}/bursa" -v
-            _filename="bursa-${RELEASE_TAG}-darwin-${_arch}.zip"
-            (cd "${_dir}" && zip -r "${GITHUB_WORKSPACE}/${_filename}" bursa)
-            xcrun notarytool submit "${_filename}" --keychain-profile "notarytool-profile" --wait
-          done
+          python3 - <<'PYCODE'
+          import json, os
+          with open('.github/governance/macos-cli.json', encoding='utf-8') as source:
+              config = json.load(source)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('config=' + json.dumps(config, separators=(',', ':')) + '\n')
+          PYCODE
+      - name: Build signed macOS CLI archive
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS'
+        id: macos-cli
+        uses: blinklabs-io/shared-actions/macos-release@a80f7002ed898be8536905f5a59002fce59890c4
+        with:
+          config: ${{ steps.macos-cli-config.outputs.config }}
+          architecture: ${{ matrix.arch }}
+          version: ${{ env.RELEASE_TAG }}
+          mode: signed
+          application-certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          application-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MACOS_CLI_PATH: ${{ steps.macos-cli.outputs.artifact }}
         run: |
           set -euo pipefail
           _assets=()
@@ -397,21 +231,22 @@ jobs:
               _filename="${_filename}.tar.gz"
               tar czf "${_filename}" -C "${_dir}" bursa
             fi
+            _path="${_filename}"
             if [[ "${_os}" == "darwin" ]]; then
-              # macOS stays a .zip: notarization above is submitted for the
-              # zipped binary, so re-use that exact archive as the asset.
               _filename="${_filename}.zip"
-              if [[ ! -e "${_filename}" ]]; then
-                (cd "${_dir}" && zip -r "${GITHUB_WORKSPACE}/${_filename}" bursa)
+              _path="${MACOS_CLI_PATH}"
+              if [[ ! -f "${_path}" || "$(basename "${_path}")" != "${_filename}" ]]; then
+                echo "::error::Signed macOS archive does not match the release asset name" >&2
+                exit 1
               fi
             fi
             curl \
               --fail --show-error --silent \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Content-Type: application/octet-stream" \
-              --data-binary @"${_filename}" \
+              --data-binary @"${_path}" \
               "https://uploads.github.com/repos/${{ github.repository_owner }}/bursa/releases/${{ needs.create-draft-release.outputs.RELEASE_ID }}/assets?name=${_filename}"
-            _assets+=("${_filename}")
+            _assets+=("${_path}")
           done
           # Export the shipped asset paths so the attest step below targets the
           # ACTUAL uploaded artifacts (mirrors the wallet job's TARBALL_PATH
@@ -438,7 +273,7 @@ jobs:
   # The desktop app is the `-tags webview` variant (CGO + a system webview:
   # WKWebView on macOS, WebView2 on Windows, webkit2gtk on Linux) and CANNOT be
   # cross-compiled, so each installer is built on a NATIVE per-arch runner:
-  #   * macOS  -> signed + notarized arm64 .pkg (build-pkg.sh) on macos-15
+  #   * macOS  -> signed + notarized arm64 .pkg on macos-15
   #   * Windows-> signed .msi (build-msi.ps1) on windows-latest / windows-11-arm
   #   * Linux  -> a native webview binary (webkit2gtk), shipped as a tarball
   #   * FreeBSD-> the pure-Go headless cross-build (no system webview), tarball
@@ -534,144 +369,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      # ---- macOS: signed + notarized .pkg ----------------------------------
-      #
-      # On tag pushes: import both Developer ID certs, store notarytool creds,
-      # then run build-pkg.sh which produces a signed + notarized + stapled
-      # .pkg under dist/. On non-tag pushes: run build-pkg.sh unsigned to
-      # validate the packaging path on every push. build-pkg.sh builds the web
-      # bundle and the webview binary itself.
-      - name: Build macOS .pkg
+      - name: Load macOS wallet settings
         if: matrix.os == 'darwin'
-        env:
-          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
-          # A tag always signs; a manual run signs when asked to. Everything
-          # else builds the pkg unsigned to keep exercising the packaging path.
-          IS_SIGNED_RUN: ${{ startsWith(github.ref, 'refs/tags/') || inputs.exercise_macos_signing }}
-          MATRIX_ARCH: ${{ matrix.arch }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # The "Developer ID Installer" cert used by productsign shares the
-          # existing certificate password secret.
-          # When absent, build-pkg.sh emits an UNSIGNED .pkg (env-gated).
-          APPLE_INSTALLER_CERTIFICATE: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
-          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        id: macos-wallet-config
+        shell: bash
         run: |
-          set -euo pipefail
-          apple_certificate="${APPLE_CERTIFICATE}"
-          apple_certificate_password="${APPLE_CERTIFICATE_PASSWORD}"
-          apple_installer_certificate="${APPLE_INSTALLER_CERTIFICATE}"
-          apple_installer_certificate_password="${APPLE_INSTALLER_CERTIFICATE_PASSWORD}"
-          apple_keychain_password="${APPLE_KEYCHAIN_PASSWORD}"
-          apple_id="${APPLE_ID}"
-          apple_app_specific_password="${APPLE_APP_SPECIFIC_PASSWORD}"
-          apple_team_id="${APPLE_TEAM_ID}"
-          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
-            APPLE_INSTALLER_CERTIFICATE APPLE_INSTALLER_CERTIFICATE_PASSWORD \
-            APPLE_KEYCHAIN_PASSWORD APPLE_ID \
-            APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
-          # umask 077 covers only the decoded .p12 files: build-pkg.sh below
-          # must create the app bundle world-readable and executable.
-          trap 'rm -f apple_app.p12 apple_installer.p12' EXIT
-
-          if [ "${IS_SIGNED_RUN}" = "true" ] && [ -n "${apple_certificate}" ]; then
-            echo "::group::Import Apple Developer ID certificate(s)"
-            (umask 077 && printf '%s' "${apple_certificate}" | base64 --decode -o apple_app.p12)
-            apple_certificate=''
-
-            SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=create \
-              SECRET_KEYCHAIN=build.keychain \
-              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-            security default-keychain -s build.keychain
-            security set-keychain-settings -lut 21600 build.keychain
-            SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=unlock \
-              SECRET_KEYCHAIN=build.keychain \
-              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-
-            # Application cert signs the binary / .app.
-            P12_PASSWORD="${apple_certificate_password}" P12_PATH=apple_app.p12 \
-              TRUSTED_APPLICATION=/usr/bin/codesign \
-              xcrun swift - <<< "${MACOS_P12_IMPORT_SWIFT}"
-            rm -f apple_app.p12
-            apple_certificate_password=''
-            export SIGNING_IDENTITY="Developer ID Application: Blink Labs Software (${apple_team_id})"
-
-            # Installer cert (NEW, optional) signs the .pkg. Absent => unsigned pkg.
-            if [ -n "${apple_installer_certificate}" ]; then
-              (umask 077 && printf '%s' "${apple_installer_certificate}" | base64 --decode -o apple_installer.p12)
-              apple_installer_certificate=''
-              P12_PASSWORD="${apple_installer_certificate_password}" \
-                P12_PATH=apple_installer.p12 \
-                TRUSTED_APPLICATION=/usr/bin/productsign \
-                xcrun swift - <<< "${MACOS_P12_IMPORT_SWIFT}"
-              rm -f apple_installer.p12
-              export INSTALLER_IDENTITY="Developer ID Installer: Blink Labs Software (${apple_team_id})"
-            else
-              echo "APPLE_INSTALLER_CERTIFICATE not set - the .pkg will be UNSIGNED (add the secret to sign it)."
-            fi
-            apple_installer_certificate_password=''
-
-            SECRET_INPUT="${apple_keychain_password}" SECRET_ACTION=partition-wallet \
-              SECRET_KEYCHAIN=build.keychain \
-              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-            apple_keychain_password=''
-            echo "::endgroup::"
-
-            echo "::group::Store notarytool credentials"
-            SECRET_INPUT="${apple_app_specific_password}" SECRET_ACTION=notary \
-              SECRET_KEYCHAIN=build.keychain SECRET_PROFILE=bursa-notary \
-              NOTARY_APPLE_ID="${apple_id}" NOTARY_TEAM_ID="${apple_team_id}" \
-              /usr/bin/expect -c "${MACOS_SECRET_EXPECT}"
-            apple_app_specific_password=''
-            echo "::endgroup::"
-
-            export NOTARY_PROFILE="bursa-notary"
-            # A manual exercise run has no tag; let build-pkg.sh derive the
-            # version from git describe rather than naming the pkg after an
-            # empty string.
-            if [ "${IS_RELEASE}" = "true" ]; then
-              export VERSION="${RELEASE_TAG#v}"
-            fi
-          fi
-
-          export ARCH="${MATRIX_ARCH}"
-          ./packaging/macos/build-pkg.sh
-
-          # SECURITY: never publish an unsigned / un-notarized .pkg as a release
-          # asset. A genuinely distributable pkg needs BOTH identities - the app
-          # cert (SIGNING_IDENTITY) signs the binary/.app and the installer cert
-          # (INSTALLER_IDENTITY) signs the .pkg and gates notarization. On a real
-          # tag push, if either is missing, fail loudly instead of uploading +
-          # attesting an unsigned installer. Unsigned output stays allowed ONLY
-          # for non-tag/dev builds (which merely validate the packaging path).
-          if [ "${IS_SIGNED_RUN}" = "true" ] && { [ -z "${SIGNING_IDENTITY:-}" ] || [ -z "${INSTALLER_IDENTITY:-}" ]; }; then
-            echo "::error::Refusing to finish a signed macOS run with an unsigned .pkg: both APPLE_CERTIFICATE (app signing) and APPLE_INSTALLER_CERTIFICATE (installer signing + notarization) must be set. A run that is asked to sign and cannot must fail, not fall back to an unsigned installer."
-            exit 1
-          fi
-
-          # Resolve the built pkg by globbing rather than reconstructing its
-          # name: build-pkg.sh derives the version itself when VERSION is unset,
-          # so a reconstructed path would miss the file on a non-tag run.
-          # -print -quit rather than `| head -n1`: under pipefail, head exiting
-          # first kills find with SIGPIPE and the assignment returns 141.
-          PKG_PATH=$(find dist -maxdepth 1 -name '*.pkg' -print -quit || true)
-          if [ -z "${PKG_PATH}" ]; then
-            echo "::error::build-pkg.sh produced no .pkg under dist/"
-            exit 1
-          fi
-
-          if [ -n "${INSTALLER_IDENTITY:-}" ]; then
-            echo "::group::Verify pkg signature, notarization and installation"
-            # The runner is ephemeral, so replacing anything already at
-            # /Applications/Bursa.app is safe here.
-            BURSA_REPLACE_INSTALLED=1 BURSA_EXPECTED_ARCH="${MATRIX_ARCH}" \
-              ./packaging/macos/verify-pkg.sh "${PKG_PATH}"
-            echo "::endgroup::"
-          fi
+          python3 - <<'PYCODE'
+          import json, os
+          with open('.github/governance/macos-wallet.json', encoding='utf-8') as source:
+              config = json.load(source)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('config=' + json.dumps(config, separators=(',', ':')) + '\n')
+          PYCODE
+      - name: Build macOS package
+        if: matrix.os == 'darwin'
+        id: macos-package
+        uses: blinklabs-io/shared-actions/macos-release@a80f7002ed898be8536905f5a59002fce59890c4
+        with:
+          config: ${{ steps.macos-wallet-config.outputs.config }}
+          architecture: ${{ matrix.arch }}
+          version: ${{ startsWith(github.ref, 'refs/tags/') && env.RELEASE_TAG || '' }}
+          mode: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.exercise_macos_signing) && 'signed' || 'unsigned' }}
+          application-certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          application-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          installer-certificate: ${{ secrets.APPLE_INSTALLER_CERTIFICATE }}
+          installer-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
 
       # A manual exercise run publishes nothing to a release, so surface the
       # verified pkg as a workflow artifact for inspection.
@@ -680,7 +406,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 https://github.com/actions/upload-artifact/releases/tag/v7.0.2
         with:
           name: bursa-wallet-macos-pkg-${{ matrix.arch }}
-          path: dist/*.pkg
+          path: ${{ steps.macos-package.outputs.artifact }}
           if-no-files-found: error
 
       # ---- Windows: build the webview .exe (validates the CGO build) -------
@@ -849,11 +575,16 @@ jobs:
           MATRIX_ARCH: ${{ matrix.arch }}
           RELEASE_ID: ${{ needs.create-draft-release.outputs.RELEASE_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MACOS_PACKAGE_PATH: ${{ steps.macos-package.outputs.artifact }}
         run: |
           set -euo pipefail
           _version="${RELEASE_TAG#v}"
           _filename="bursa-wallet-${_version}-${MATRIX_OS}-${MATRIX_ARCH}.pkg"
-          _path="dist/${_filename}"
+          _path="${MACOS_PACKAGE_PATH}"
+          if [[ ! -f "${_path}" || "$(basename "${_path}")" != "${_filename}" ]]; then
+            echo "::error::Verified macOS package does not match the release asset name" >&2
+            exit 1
+          fi
           curl --fail --show-error --silent \
             -H "Authorization: token ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
@@ -905,7 +636,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'darwin'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
         with:
-          subject-path: 'dist/*.pkg'
+          subject-path: ${{ steps.macos-package.outputs.artifact }}
       - name: Attest MSI (Windows)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2 https://github.com/actions/attest/releases/tag/v4.2.2
