@@ -1,0 +1,47 @@
+# Bursa Grafana Dashboards
+
+| Dashboard | File | Description |
+|-----------|------|-------------|
+| **Bursa — KES Agent** | `bursa-kes-agent.json` | KES agent replicas, signing and guard-write latency against the producers' sign timeout, signs by profile and result, slot-guard refusals and store errors, key evolutions, and KES periods left per profile |
+
+## Prerequisites
+
+- **Grafana 12+** with the
+  **[Business Text plugin](https://grafana.com/grafana/plugins/marcusolsson-dynamictext-panel/)**
+  (`marcusolsson-dynamictext-panel`) for the header panel.
+- **Prometheus** scraping the KES agent's `/metrics` endpoint (see
+  [Health and metrics](../signer/kes-agent.md#health-and-metrics)), with
+  `namespace` and `pod` labels on its series.
+- The KES agent deployed on Kubernetes by the `bursa` Helm chart in
+  `kes-agent` mode. The replica panels find agents through the chart's
+  `<release>-kes-agent` ConfigMap and read **kube-state-metrics** and
+  **cAdvisor** for deployment replicas, pod readiness, restarts and memory.
+- Producers running Dingo with the KES agent in sign mode, for the producer
+  round-trip series (`dingo_kes_agent_sign_latency_seconds`).
+
+## Datasource
+
+Every panel queries the Prometheus datasource selected by the `$datasource`
+variable, which starts on the datasource marked default.
+
+## Template variables
+
+| Variable | Purpose |
+|----------|---------|
+| `$datasource` | Prometheus datasource every panel and variable queries. |
+| `$namespace` | Namespaces running a KES agent. |
+| `$profile` | KES agent profiles (`profile` label). |
+| `$pod` | KES agent replicas. |
+
+## Sign budget
+
+Latency panels are drawn against Dingo's default KES agent sign timeout of
+500 ms (`CARDANO_SHELLEY_KES_AGENT_SIGN_TIMEOUT`): amber from 250 ms, red from
+400 ms. A producer configured with a different timeout needs the thresholds
+on the signing panels adjusted to match.
+
+## Navigation
+
+The dashboard links to the Dingo operator dashboards (`dingonodes`,
+`dingo-forging`, `dingo-operator`) from the `dingo-operator` repository, which
+show the producers this agent signs for.
