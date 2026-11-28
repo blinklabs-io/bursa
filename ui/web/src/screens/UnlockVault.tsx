@@ -34,7 +34,7 @@ export function UnlockVault({ walletCount, onUnlocked }: UnlockVaultProps) {
   }
 
   return (
-    <Card title="Unlock Vault">
+    <Card title="Unlock vault">
       <form onSubmit={handleSubmit}>
         <p className="helper-text">
           {walletCount === 1

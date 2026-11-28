@@ -105,7 +105,7 @@ export function Diagnostics() {
 
       <Card title="Sync">
         <p>
-          <StatusPill tone={STATE_TONE[sync.state] ?? "muted"}>{sync.state}</StatusPill>
+          <StatusPill tone={STATE_TONE[sync.state] ?? "muted"}>{sync.state.charAt(0).toUpperCase() + sync.state.slice(1)}</StatusPill>
         </p>
         {sync.state === "bootstrapping" && sync.bootstrapPercent != null && (
           <p className="helper-text">
@@ -134,7 +134,7 @@ export function Diagnostics() {
         />
       </Card>
 
-      <Card title="Network & Node">
+      <Card title="Network & node">
         <Stats
           items={[
             ["Network", node.network || "—"],
@@ -165,7 +165,7 @@ export function Diagnostics() {
         <h3>Configured peers</h3>
         <p className="helper-text">
           Outbound peers your node is configured to dial (from its topology).
-          This is the configured set, not a live-connection list — the embedded
+          This is the configured set, not a live-connection list. The embedded
           node does not expose per-peer connection detail.
         </p>
         {peers.configured.length > 0 ? (
@@ -186,7 +186,7 @@ export function Diagnostics() {
         )}
       </Card>
 
-      <Card title="Ports & Uptime">
+      <Card title="Ports & uptime">
         <Stats
           items={[
             ["Control surface", listen.controlSurface || "—"],

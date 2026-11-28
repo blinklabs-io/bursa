@@ -25,7 +25,6 @@ import { getKeystoneXfp, setKeystoneXfp } from "../hw/deviceKind";
 import { recoverSeedSignerXfp } from "../hw/seedsigner";
 import { useSeedSignerQRBridge } from "../components/SeedSignerQRModal";
 import { Card } from "../components/Card";
-import { Icon } from "../components/Icon";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { StatusPill } from "../components/StatusPill";
@@ -56,7 +55,7 @@ const VOTE_OPTIONS: { type: VoteType; title: string; sub: string }[] = [
   {
     type: "drep",
     title: "A specific DRep",
-    sub: "Delegate to a DRep by ID — verified by your node.",
+    sub: "Delegate to a DRep by ID, verified by your node.",
   },
   {
     type: "register_self",
@@ -622,7 +621,7 @@ function PreviewPhase({ preview, isHardware, walletId, onBack, onDone }: Preview
 
 function DonePhase({ result, onReset }: { result: TxResult; onReset: () => void }) {
   return (
-    <Card title="Transaction Submitted">
+    <Card title="Transaction submitted">
       <div className="done-details">
         <p>Your delegation transaction has been submitted successfully.</p>
         <p className="field-label">Transaction hash</p>
@@ -668,7 +667,6 @@ function ActiveState({ poolId, withdrawable, note, onChange, onWithdraw, network
     <>
       <StatusPanel poolId={poolId} active={true} network={network} />
       <Card title="Rewards">
-        <div className="stake-reward-symbol" aria-hidden="true"><Icon name="stake" size={42} /></div>
         <div className="dl-row reward-balance">
           <dt className="field-label">Withdrawable</dt>
           <dd className="total-accent mono">{formatAda(withdrawable)} ADA</dd>

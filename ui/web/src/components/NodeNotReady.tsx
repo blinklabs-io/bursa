@@ -54,7 +54,7 @@ export function NodeNotReady({
     <Card title="Waiting for the node">
       <p className="helper-text">
         {what} {verb} from your own node, which is still starting up. Nothing is
-        wrong — this screen fills in by itself once the node can answer, and
+        wrong. This screen fills in by itself once the node can answer, and
         nothing here needs the network.
       </p>
       {bootstrap ? (
@@ -65,7 +65,7 @@ export function NodeNotReady({
         state && <p className="setting-state">{state}</p>
       )}
       <p className="helper-text">
-        Your keys are already in the vault — nothing is lost and nothing needs
+        Your keys are already in the vault. Nothing is lost and nothing needs
         your attention. Balances, history and addresses are all read through the
         node, so they fill in together once it is ready.
       </p>

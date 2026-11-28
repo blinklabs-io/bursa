@@ -274,7 +274,7 @@ test("remote submission shows its bounded summary and requires explicit approval
     params: { transaction_id: "abc", size_bytes: 321, summary: { is_complete: true } },
   }));
 
-  await waitFor(() => expect(screen.getByText("Remote Submission Request")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Remote submission request")).toBeInTheDocument());
   expect(screen.getByText(/fully signed transaction from another wallet/i)).toBeInTheDocument();
   expect(screen.queryByLabelText(/spending password/i)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /approve/i }));

@@ -176,11 +176,10 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
 
   return (
     <div className="portfolio">
-      <header className="portfolio-heading"><div><h1>Portfolio</h1><p>Your assets, in one place.</p></div></header>
+      <header className="portfolio-heading"><h1>Portfolio</h1></header>
       <section className="balance-panel" aria-label="Balance">
         <div className="balance-copy"><div className="wallet-card-heading"><h2>Balance</h2><span className="card-chain"><span className="cardano-mark" aria-hidden="true">₳</span>Cardano</span></div>
         <p className="balance-ada">{formatAda(lovelace)} <span>ADA</span></p>
-        <p className="balance-source">ADA in your selected account</p>
         {/* Send and Receive are actions, not places. They sit on the balance
             they act on — where you already are when you decide to move funds —
             rather than costing two entries in a nav you have to scan. */}
@@ -201,14 +200,14 @@ export function Portfolio({ canSend = false, sendDisabledReason, multiSigError }
             actual reason this wallet cannot spend, and the generic line under the
             buttons would only restate it in weaker words. */}
         {!canSend && !multiSigError && sendDisabledReason && (
-          <p className="helper-text">Send is unavailable — {sendDisabledReason.toLowerCase()}.</p>
+          <p className="helper-text">Send is unavailable: {sendDisabledReason.toLowerCase()}.</p>
         )}
         </div>
       </section>
 
       <div className="portfolio-assets"><Card>
         <div className="asset-toolbar">
-          <h2>Native Tokens <span className="asset-count" aria-label={`${assets.length} native tokens`}>{assets.length}</span></h2>
+          <h2>Native tokens <span className="asset-count" aria-label={`${assets.length} native tokens`}>{assets.length}</span></h2>
           {assets.length > 0 && <div className="asset-search"><Icon name="search" size={16} /><Input
             type="text"
             className="token-search"

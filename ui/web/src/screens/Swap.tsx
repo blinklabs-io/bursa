@@ -35,7 +35,7 @@ function OrderPanel({ quote, metadata, onBack }: { quote: DexQuote; metadata: Me
     amount_in: quote.amount_in, expected_amount_out: quote.amount_out,
     price_impact_pct: quote.price_impact_pct, effective_fee: quote.effective_fee,
   }, null, 2);
-  return <div className="swap-order"><Card title="Prepared Order">
+  return <div className="swap-order"><Card title="Prepared order">
     <p className="helper-text">Take these parameters to your chosen DEX to execute the swap. Bursa does not build or send swap transactions.</p>
     <dl className="preview-summary">
       <div className="dl-row"><dt>DEX</dt><dd>{quote.protocol}</dd></div>
@@ -137,7 +137,7 @@ export function Swap() {
     <header className="page-heading"><h1>Swap</h1><p>Find a quote across the pools on your node.</p></header>
     <div className="swap-layout">
       <section className="swap-composer" aria-label="Swap quote">
-        <div className="swap-composer-heading"><h2>Swap Quote</h2><span className="quote-badge">Quote only</span></div>
+        <div className="swap-composer-heading"><h2>Swap quote</h2><span className="quote-badge">Quote only</span></div>
         <div className="swap-input-panel">
           {picker("in")}
           <label htmlFor="swap-amount">Amount in ({decimals === undefined ? "base units" : shortId(assetName(unitIn, metadata))})</label>

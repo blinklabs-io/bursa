@@ -112,7 +112,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
 
   return (
     <div className="receive">
-      {usageKnown && (<Card title="Next Unused Address">
+      {usageKnown && (<Card title="Next unused address">
         <div className="receive-pass-mark" aria-hidden="true"><BursaLogo /></div>
         <div className="receive-next">
           {nextUnused && (
@@ -127,7 +127,7 @@ export function Receive({ network = "preview" }: ReceiveProps = {}) {
         </div>
       </Card>)}
 
-      <Card title="Receive Addresses">
+      <Card title="Receive addresses">
         {!usageKnown && receive.length > 0 && (
           <p className="muted" role="status">
             On-chain usage is unavailable for this account. You can still receive at an address below, but Bursa cannot identify an unused address.

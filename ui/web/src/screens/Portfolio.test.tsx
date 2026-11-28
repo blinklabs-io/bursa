@@ -335,7 +335,7 @@ test("a disabled Send says why it is disabled", () => {
   render(<Portfolio canSend={false} sendDisabledReason="Needs a synced node" />);
 
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(screen.getByText(/send is unavailable — needs a synced node/i)).toBeInTheDocument();
+  expect(screen.getByText(/send is unavailable: needs a synced node/i)).toBeInTheDocument();
 });
 
 test("an enabled Send explains nothing", () => {

@@ -66,7 +66,7 @@ test("renders sync, network, peers, ports and logs from the report", () => {
   render(<Diagnostics />);
 
   // Sync
-  expect(screen.getByText("syncing")).toBeInTheDocument();
+  expect(screen.getByText("Syncing")).toBeInTheDocument();
   expect(screen.getByText("123,456")).toBeInTheDocument(); // tip slot
   expect(screen.getByText("812")).toBeInTheDocument(); // epoch
   // Network & node versions

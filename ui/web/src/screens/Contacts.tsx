@@ -197,7 +197,7 @@ export function Contacts() {
 
   return (
     <div className="screen-contacts">
-      <Card title="Address Book">
+      <Card title="Address book">
         {!hasLoaded && contacts.loading ? (
           <p className="muted">Loading…</p>
         ) : hasLoaded && list.length === 0 ? (

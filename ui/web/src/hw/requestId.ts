@@ -24,7 +24,7 @@ export function newRequestId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   if (!c?.randomUUID) {
     throw new Error(
-      "This browser has no crypto.randomUUID (requires a secure context) — cannot generate " +
+      "This browser has no crypto.randomUUID (requires a secure context), so it cannot generate " +
         "an unpredictable request identifier for the air-gapped QR round-trip.",
     );
   }
@@ -42,7 +42,7 @@ export function assertStringRequestIdMatches(
 ): void {
   if (actual === undefined) {
     throw new Error(
-      `${context} has no request identifier — cannot confirm it answers the active request (possible stale scan).`,
+      `${context} has no request identifier, so it cannot be matched to the active request (possible stale scan).`,
     );
   }
   if (typeof actual !== "string") {
@@ -50,7 +50,7 @@ export function assertStringRequestIdMatches(
   }
   if (actual !== expected) {
     throw new Error(
-      `${context} request identifier does not match the active request — this looks like a stale or unrelated scan.`,
+      `${context} request identifier does not match the active request. This looks like a stale or unrelated scan.`,
     );
   }
 }
@@ -66,7 +66,7 @@ export function assertUuidRequestIdMatches(
 ): void {
   if (actual === undefined) {
     throw new Error(
-      `${context} has no request identifier — cannot confirm it answers the active request (possible stale scan).`,
+      `${context} has no request identifier, so it cannot be matched to the active request (possible stale scan).`,
     );
   }
   if (actual.length !== 16) {
@@ -79,7 +79,7 @@ export function assertUuidRequestIdMatches(
   for (const b of actual) actualHex += b.toString(16).padStart(2, "0");
   if (actualHex !== expectedHex) {
     throw new Error(
-      `${context} request identifier does not match the active request — this looks like a stale or unrelated scan.`,
+      `${context} request identifier does not match the active request. This looks like a stale or unrelated scan.`,
     );
   }
 }

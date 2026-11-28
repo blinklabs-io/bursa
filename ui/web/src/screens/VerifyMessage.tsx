@@ -46,7 +46,7 @@ export function VerifyMessage() {
   }
 
   return (
-    <Card title="Verify Message">
+    <Card title="Verify message">
       <div className="sign-form">
         <p className="helper-text">
           Check a CIP-8 / CIP-30 signature. Paste the COSE_Sign1 signature and
@@ -106,7 +106,7 @@ export function VerifyMessage() {
             setExpectedAddress(e.target.value);
             clearResult();
           }}
-          placeholder="addr1… — leave blank to accept any signer"
+          placeholder="addr1… (leave blank to accept any signer)"
           aria-label="Expected address"
           disabled={loading}
         />

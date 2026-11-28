@@ -57,7 +57,6 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03em; }
 .portfolio { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr); grid-template-areas: "heading heading" "balance staking" "assets collectibles"; max-width: var(--content-width); margin-inline: auto; gap: var(--section-gap); }
 .portfolio-heading { grid-area: heading; display: flex; justify-content: space-between; align-items: center; }
-.portfolio-heading p { color: var(--text-muted); font-size: var(--text-body); margin-top: var(--space-2); }
 .balance-panel { grid-area: balance; background: transparent; padding: var(--panel-padding) 0; border: 0; min-width: 0; display: flex; align-items: center; }
 .balance-copy { min-width: 0; width: 100%; }
 .wallet-card-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-compact); margin-bottom: var(--space-3); }
@@ -66,9 +65,9 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 .cardano-mark { color: var(--accent); font-size: 17px; }
 .balance-ada { font-family: var(--font); font-size: 56px; font-weight: 550; letter-spacing: -.03em; line-height: 1.2; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; color: var(--text); }
 .balance-ada > span { font-size: 20px; font-weight: 500; color: var(--text-muted); letter-spacing: 0; }
-.balance-source { font-size: 12px; color: var(--text-muted); margin-top: var(--space-2); }
 .portfolio-actions { display: flex; margin-top: var(--space-4); gap: var(--space-2); }
-.btn { min-height: 44px; padding: var(--space-2) var(--space-3); font: 600 var(--text-label) var(--font); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border-radius: 8px; transition: background .15s ease, color .15s ease; }
+.btn { min-height: 44px; padding: var(--space-2) var(--space-3); font: 600 var(--text-label) var(--font); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border-radius: 8px; transition: background var(--dur-press) var(--ease-out), color var(--dur-press) var(--ease-out), transform var(--dur-press) var(--ease-out); }
+.btn:active:not(:disabled), .btn-icon:active:not(:disabled) { transform: scale(.97); }
 .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
 .btn.primary:hover:not(:disabled) { background: var(--accent-strong); }
 .btn.ghost { background: transparent; border-color: var(--border); color: var(--text); }
@@ -80,14 +79,14 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 .portfolio-assets, .portfolio-staking, .portfolio-collectibles { min-width: 0; }
 .card { padding: var(--panel-padding); border-color: var(--divider); }
 .helper-text { font-family: var(--font); font-size: var(--text-body); }
-.card h2 { font-family: var(--font); font-size: 16px; font-weight: 650; letter-spacing: -.015em; text-transform: none; color: var(--text); margin-bottom: var(--space-3); }
+.card h2 { font-family: var(--font); font-size: 16px; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--text); margin-bottom: var(--space-3); }
 .portfolio-staking > .card { height: 100%; padding: var(--panel-padding); background: var(--surface); border: 0; box-shadow: none; }
 .portfolio-staking .card h2 { font-size: 14px; }
-.delegation-details .dl-row { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; font-size: 12px; }
+.delegation-details .dl-row { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 0; font-size: 12px; }
 .delegation-details dt { font-family: var(--font); text-transform: none; letter-spacing: 0; color: var(--text-muted); flex-shrink: 0; }
 .delegation-details dd { font-family: var(--font); text-align: right; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .staking-rewards dd { color: var(--text); font-size: 16px; font-weight: 600; }
-.staking-link { display: flex; align-items: center; justify-content: space-between; width: 100%; padding-top: var(--space-3); margin-top: var(--space-compact); border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--accent); font: 600 var(--text-label) var(--font); cursor: pointer; min-height: 42px; }
+.staking-link { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: var(--space-3); border: 0; background: transparent; color: var(--accent); font: 600 var(--text-label) var(--font); cursor: pointer; min-height: 42px; }
 .portfolio-assets > .card, .portfolio-collectibles > .card { padding: 0; background: transparent; border: 0; }
 .portfolio-assets .asset-toolbar { min-height: 40px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-compact); margin-bottom: var(--space-3); }
 .portfolio-assets .card h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; }
@@ -138,6 +137,13 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 .mobile-bottom-nav { display: none; }
 .field-group label, .field-label, .send-form label, .sign-form label, .staking-form label, .preview-details > label { font: var(--text-label) var(--font); letter-spacing: 0; text-transform: none; }
 .content-centered { justify-content: center; min-height: calc(100svh - 28px); padding: var(--space-5) var(--page-gutter); }
+/* Warm graphite behind the lock and first-run card: faint grain plus sparse
+   brass specks (#c6ad77 in the colour matrix). Static tiles, rasterised once.
+   The card stays an opaque panel, so text contrast is unaffected. */
+.content-centered { position: relative; isolation: isolate; }
+.content-centered::before, .content-centered::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.content-centered::before { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 200px; opacity: .12; mix-blend-mode: overlay; }
+.content-centered::after { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .776 0 0 0 0 .678 0 0 0 0 .467 0 0 0 8 -5.4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E") 0 0 / 200px; opacity: .28; }
 .content-centered > .card, .vault-setup > .card { padding: var(--panel-padding); border-color: var(--divider); }
 .content-centered > .vault-setup { display: flex; flex-direction: column; gap: var(--section-gap); max-width: 560px; }
 .content-centered .card h2 { font-size: 26px; }
@@ -183,7 +189,4 @@ h1 { font-size: 30px; line-height: 1.25; font-weight: 650; letter-spacing: -.03e
 }
 @media (max-width: 480px) {
   .recovery-phrase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
