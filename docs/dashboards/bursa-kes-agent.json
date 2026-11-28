@@ -533,7 +533,7 @@
       "type": "timeseries",
       "id": 63,
       "title": "Sign and Guard Write by Replica",
-      "description": "The same two agent-side timings as the panel above, split by replica instead of by profile: the mean per sign over 15-minute windows of the whole sign (`bursa_kesagent_sign_duration_seconds`) and of every shared slot-guard store write (`bursa_kesagent_slot_guard_write_duration_seconds`), which includes writes outside the signs shown. A replica whose guard write is consistently higher is the one with the slower guard store. **Healthy: both replicas close together and below the amber band** (amber from 250 ms, red from 400 ms, close to the 500 ms sign timeout). Points, because signs are sparse.",
+      "description": "The same two agent-side timings as the panel above, split by replica instead of by profile: the mean per sign over 15-minute windows of the whole sign (`bursa_kesagent_sign_duration_seconds`) and of every shared slot-guard store write (`bursa_kesagent_slot_guard_write_duration_seconds`), which includes writes outside the signs shown. A replica whose guard write is consistently higher is the one with the slower guard store. **Healthy: replicas close together and below the amber band** (amber from 250 ms, red from 400 ms, close to the 500 ms sign timeout). Points, because signs are sparse.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -954,7 +954,7 @@
     {
       "type": "timeseries",
       "title": "Key Evolutions and Keys Served",
-      "description": "KES key forward-evolutions per hour, and KES keys pushed to producers (serve-key mode). **Expected: one evolution per KES period (1.5 days) per profile on each replica**; none for longer than that means the key is not advancing and signs will fail on period errors. The agent runs in sign mode here, so **zero keys served is expected**; anything else means a profile is handing out key material.",
+      "description": "KES key forward-evolutions per hour, and KES keys pushed to producers (serve-key mode). **Expected: one evolution per KES period (1.5 days) per profile on each replica**; none for longer than that means the key is not advancing and signs will fail on period errors. With every producer in sign mode, **zero keys served is expected**; anything else means a profile is handing out key material.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1038,7 +1038,7 @@
     {
       "type": "table",
       "title": "Profiles by replica",
-      "description": "One line per namespace, profile and replica: current and last signable KES period, periods left, opcert issue number, exhausted and guard-fresh flags, time since the last sign, and signs, errors, refusals and store errors over the dashboard range. **Healthy: both replicas of a profile agree on every key column**; a mismatch means one replica did not pick up a rotation. Only replicas reporting metrics at the end of the selected range are listed: a pod replaced inside the time range drops out, and its signs stay in the header total and in Signs by Replica.",
+      "description": "One line per namespace, profile and replica: current and last signable KES period, periods left, opcert issue number, exhausted and guard-fresh flags, time since the last sign, and signs, errors, refusals and store errors over the dashboard range. **Healthy: all replicas of a profile agree on every key column**; a mismatch means one replica did not pick up a rotation. Only replicas reporting metrics at the end of the selected range are listed: a pod replaced inside the time range drops out, and its signs stay in the header total and in Signs by Replica.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -1465,7 +1465,7 @@
       "type": "gauge",
       "id": 67,
       "title": "KES Key Fuel: Periods Left per Profile",
-      "description": "A fuel gauge per profile: KES periods left on the key the agent holds (last signable period minus the current period, the lower of the two replicas), on a dial that is full at 62 periods, a fresh key. One period is 1.5 days. **Healthy: green, more than 8 periods.** Amber at 8 or fewer, where dingo-operator should be rotating the key; red under 4 (6 days), where the pool stops forging soon unless a new key is installed. The rotation itself is on **Operator**.",
+      "description": "A fuel gauge per profile: KES periods left on the key the agent holds (last signable period minus the current period, the lowest across replicas), on a dial that is full at 62 periods, a fresh key. One period is 1.5 days. **Healthy: green, more than 8 periods.** Amber at 8 or fewer, where dingo-operator should be rotating the key; red under 4 (6 days), where the pool stops forging soon unless a new key is installed. The rotation itself is on **Operator**.",
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource"
@@ -1638,7 +1638,7 @@
       "type": "timeseries",
       "id": 41,
       "title": "Memory: Share of the Container Limit",
-      "description": "Working-set memory of each replica as a share of its container memory limit. **Healthy: flat and below the amber band** (today about a quarter of the limit). The amber band starts at 80% and the red at 95%: a replica that climbs into them will be OOM-killed and restart, which shows up as a red stretch in Replica Readiness.",
+      "description": "Working-set memory of each replica as a share of its container memory limit. **Healthy: flat and below the amber band**. The amber band starts at 80% and the red at 95%: a replica that climbs into them will be OOM-killed and restart, which shows up as a red stretch in Replica Readiness.",
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource"
