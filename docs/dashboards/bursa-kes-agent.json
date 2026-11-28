@@ -1,0 +1,1807 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "For the pool operator, when a producer reports sign or dial failures, or before and after a KES rotation. Answers: is the Bursa KES agent - the service that holds the KES keys and signs block headers for the Dingo producers - up, signing fast enough, and refusing only what it should? Bad looks like: no replica ready, sign errors, an equivocation refusal (two producers active for one pool), guard store errors, an exhausted key, few KES periods left, or sign latency near the producers' 500 ms timeout.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 2,
+  "links": [
+    {
+      "title": "Dingo",
+      "type": "dashboards",
+      "tags": [
+        "dingo"
+      ],
+      "asDropdown": true,
+      "icon": "external link",
+      "keepTime": true,
+      "targetBlank": false,
+      "includeVars": true
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "marcusolsson-dynamictext-panel",
+      "pluginVersion": "6.2.0",
+      "title": "",
+      "id": 62,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#22c55e",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (namespace, deployment) (kube_deployment_status_replicas_available{namespace=~\"$namespace\"} * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{namespace=~\"$namespace\",configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\")))",
+          "legendFormat": "",
+          "refId": "REP",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (namespace, deployment) (kube_deployment_spec_replicas{namespace=~\"$namespace\"} * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{namespace=~\"$namespace\",configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\")))",
+          "legendFormat": "",
+          "refId": "DES",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "instant": true,
+          "range": false,
+          "expr": "count by (namespace) (count by (namespace, pod) (bursa_kesagent_sign_total{namespace=~\"$namespace\",result=\"ok\"}) and on (namespace, pod) (kube_pod_status_ready{namespace=~\"$namespace\",condition=\"true\"} == 1))",
+          "refId": "TEL"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"ok\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "SOK",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"error\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "SER",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile) (increase(bursa_kesagent_sign_duration_seconds_sum{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) / (sum by (profile) (increase(bursa_kesagent_sign_duration_seconds_count{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) > 0)",
+          "legendFormat": "",
+          "refId": "AS",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile) (increase(bursa_kesagent_slot_guard_write_duration_seconds_sum{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) / (sum by (profile) (increase(bursa_kesagent_slot_guard_write_duration_seconds_count{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) > 0)",
+          "legendFormat": "",
+          "refId": "GW",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(bursa_kesagent_slot_guard_refusals_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",reason=\"equivocation\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "EQ",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(bursa_kesagent_slot_guard_refusals_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",reason=\"rollback\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "RB",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(bursa_kesagent_slot_guard_store_errors_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "SE",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (profile) (bursa_kesagent_exhausted{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}) > 0",
+          "legendFormat": "",
+          "refId": "EXH",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (profile) (bursa_kesagent_guard_fresh{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}) > 0",
+          "legendFormat": "",
+          "refId": "FR",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "min by (profile) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} + 1)",
+          "legendFormat": "",
+          "refId": "KES",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max(container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"bursa\"} / on (namespace, pod, container) kube_pod_container_resource_limits{namespace=~\"$namespace\",resource=\"memory\"} * on (namespace, pod) group_left() max by (namespace, pod) (label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\"}, \"replicaset\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, replicaset) group_left() max by (namespace, replicaset) (label_replace(kube_replicaset_owner{namespace=~\"$namespace\",owner_kind=\"Deployment\"}, \"deployment\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{namespace=~\"$namespace\",configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\")))))",
+          "legendFormat": "",
+          "refId": "MEM",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[24h]) * on (namespace, pod) group_left() max by (namespace, pod) (label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\"}, \"replicaset\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, replicaset) group_left() max by (namespace, replicaset) (label_replace(kube_replicaset_owner{namespace=~\"$namespace\",owner_kind=\"Deployment\"}, \"deployment\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{namespace=~\"$namespace\",configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\")))))",
+          "legendFormat": "",
+          "refId": "RST",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "renderMode": "data",
+        "editors": [],
+        "editor": {
+          "language": "html",
+          "format": "auto"
+        },
+        "wrap": false,
+        "contentPartials": [],
+        "content": "<div class=\"hx\" id=\"hx-bursa\" data-s=\"na\"><div class=\"hx-top\"><div class=\"hx-id\"><div class=\"hx-eye\">Bursa · producer suite</div><div class=\"hx-title\">KES Agent</div><div class=\"hx-sub\">The Bursa KES agent signs block headers for the producers that keep no KES key of their own. Is it up, signing without errors or refusals, and how long does a sign take?</div></div><div class=\"hx-badge\" id=\"hx-bursa-badge\"><i></i><span>No data</span></div></div><div class=\"hx-verdict\" id=\"hx-bursa-verdict\">Reading the data…</div><div class=\"hx-kpis\"><div class=\"hx-k\" id=\"hx-bursa-k-rep\" data-s=\"na\"><div class=\"hx-kl\">Replicas ready</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-sgn\" data-s=\"na\"><div class=\"hx-kl\">Signs</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-ags\" data-s=\"na\"><div class=\"hx-kl\">Slowest sign</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-gw\" data-s=\"na\"><div class=\"hx-kl\">Guard write</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-grd\" data-s=\"na\"><div class=\"hx-kl\">Guard blocked</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-kes\" data-s=\"na\"><div class=\"hx-kl\">Least KES left</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div></div></div>",
+        "defaultContent": "<div class=\"hx\" id=\"hx-bursa\" data-s=\"na\"><div class=\"hx-top\"><div class=\"hx-id\"><div class=\"hx-eye\">Bursa · producer suite</div><div class=\"hx-title\">KES Agent</div><div class=\"hx-sub\">The Bursa KES agent signs block headers for the producers that keep no KES key of their own. Is it up, signing without errors or refusals, and how long does a sign take?</div></div><div class=\"hx-badge\" id=\"hx-bursa-badge\"><i></i><span>No data</span></div></div><div class=\"hx-verdict\" id=\"hx-bursa-verdict\">No data came back for this time range, so there is nothing to judge.</div><div class=\"hx-kpis\"><div class=\"hx-k\" id=\"hx-bursa-k-rep\" data-s=\"na\"><div class=\"hx-kl\">Replicas ready</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-sgn\" data-s=\"na\"><div class=\"hx-kl\">Signs</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-ags\" data-s=\"na\"><div class=\"hx-kl\">Slowest sign</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-gw\" data-s=\"na\"><div class=\"hx-kl\">Guard write</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-grd\" data-s=\"na\"><div class=\"hx-kl\">Guard blocked</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div><div class=\"hx-k\" id=\"hx-bursa-k-kes\" data-s=\"na\"><div class=\"hx-kl\">Least KES left</div><div class=\"hx-kv\">–</div><div class=\"hx-kn\">&nbsp;</div></div></div></div>",
+        "helpers": "",
+        "afterRender": "// KES Agent: header afterRender JS (shared suite prelude + this dashboard's KPIs)\n(function () {\n  var ROOT_ID = 'hx-bursa';\n  try {\n\n  var s = (context && context.panelData && context.panelData.series) ? context.panelData.series : [];\n  function lastv(v) { if (!v) return undefined; for (var i = v.length - 1; i >= 0; i--) { var x = v[i]; if (x !== null && x !== undefined && isFinite(x)) return Number(x) } return undefined }\n  /* rows(ref): [{l: labels, v: last value}] for every series of that query */\n  function rows(ref) {\n    var out = [];\n    for (var si = 0; si < s.length; si++) {\n      if (!s[si] || s[si].refId !== ref) continue;\n      var f = s[si].fields || [];\n      for (var j = 0; j < f.length; j++) {\n        if (f[j].type !== 'number') continue;\n        var v = lastv(f[j].values && f[j].values.toArray ? f[j].values.toArray() : f[j].values);\n        if (v !== undefined) out.push({ l: f[j].labels || {}, v: v });\n      }\n    }\n    return out;\n  }\n  function one(ref) { var r = rows(ref); return r.length ? r[0].v : undefined }\n  function sum(ref) { var r = rows(ref), t = 0; for (var i = 0; i < r.length; i++) t += r[i].v; return r.length ? t : undefined }\n  function minRow(r) { var m = null; for (var i = 0; i < r.length; i++) if (!m || r[i].v < m.v) m = r[i]; return m }\n  function maxRow(r) { var m = null; for (var i = 0; i < r.length; i++) if (!m || r[i].v > m.v) m = r[i]; return m }\n  function byLabel(ref, label) { var r = rows(ref), o = {}; for (var i = 0; i < r.length; i++) { var k = r[i].l[label]; if (k !== undefined) o[k] = r[i].v } return o }\n  function has(x) { return x !== undefined && x !== null && isFinite(x) }\n  function n0(x) { return has(x) ? String(Math.round(x)) : '–' }\n  function ms(sec) { if (!has(sec)) return '–'; var m = sec * 1000; return m >= 10000 ? (m / 1000).toFixed(1) + ' s' : (m >= 100 ? Math.round(m) : (m >= 10 ? m.toFixed(0) : m.toFixed(1))) + ' ms' }\n  function plural(n, one_, many) { return n + ' ' + (n === 1 ? one_ : many) }\n  function names(a, max) { max = max || 3; return a.length <= max ? a.join(', ') : a.slice(0, max).join(', ') + ' +' + (a.length - max) }\n  function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;') }\n  var RANK = { na: 0, ok: 1, warn: 2, bad: 3 };\n  function worst(a, b) { return RANK[b] > RANK[a] ? b : a }\n  /* lower is better: ok under w, warn under b, else bad */\n  function low(x, w, b) { return !has(x) ? 'na' : (x < w ? 'ok' : (x < b ? 'warn' : 'bad')) }\n  /* higher is better: ok at or above g, warn at or above a, else bad */\n  function high(x, g, a) { return !has(x) ? 'na' : (x >= g ? 'ok' : (x >= a ? 'warn' : 'bad')) }\n  function el(id) { return document.getElementById(id) }\n  var root = el(ROOT_ID);\n  /* light theme: ask Grafana, else infer it from the inherited text colour (dark text = light theme) */\n  try {\n    var th = context.grafana && context.grafana.theme, light = null;\n    if (th && typeof th.isDark === 'boolean') light = !th.isDark;\n    if (light === null && root && typeof getComputedStyle === 'function') {\n      var m = /(\\d+)[, ]+(\\d+)[, ]+(\\d+)/.exec(getComputedStyle(root).color || '');\n      if (m) light = (0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3]) < 128;\n    }\n    if (root && light && String(root.className).indexOf('hx-light') < 0) root.className += ' hx-light';\n  } catch (e) { }\n  /* fit(): a dynamic-text panel scrolls inside itself when its content is taller than the panel, and that\n     captures the page scroll. Find the scrolling ancestor and, while the content overflows it, step through the\n     compact levels (hx-fit1 drops the detail line, hx-fit2 also thins the rows and drops the legend). */\n  function fit() {\n    try {\n      if (!root || !root.parentElement || typeof getComputedStyle !== 'function') return;\n      root.className = String(root.className).replace(/ hx-fit\\d/g, '');\n      var box = root.parentElement, found = false;\n      /* only a scroller inside this panel counts: stop at the panel chrome (<section>) or the grid item */\n      while (box && box !== document.body) {\n        var cls = typeof box.className === 'string' ? box.className : '';\n        if (box.tagName === 'SECTION' || cls.indexOf('react-grid-item') >= 0) break;\n        var oy = getComputedStyle(box).overflowY;\n        if ((oy === 'auto' || oy === 'scroll') && box.clientHeight > 0) { found = true; break }\n        box = box.parentElement;\n      }\n      if (!found) return;\n      for (var lvl = 1; lvl <= 2 && box.scrollHeight > box.clientHeight + 1; lvl++) root.className += ' hx-fit' + lvl;\n    } catch (e) { }\n  }\n  function dur(sec) { if (!has(sec)) return '–'; var a = Math.abs(sec); if (a < 90) return Math.round(a) + ' s'; if (a < 5400) return Math.round(a / 60) + ' min'; if (a < 172800) return (a / 3600).toFixed(a < 36000 ? 1 : 0) + ' h'; return (a / 86400).toFixed(a < 864000 ? 1 : 0) + ' d' }\n  var overall = 'na';\n  /* kpi(key, value, unit, status, note): fill one tile; value '–' when undefined */\n  function kpi(key, value, unit, status, note) {\n    var t = el(ROOT_ID + '-k-' + key); if (!t) return;\n    var miss = value === undefined || value === null || value === '–';\n    var st = miss ? 'na' : (status || 'na');\n    t.setAttribute('data-s', st);\n    var c = t.children;\n    if (c[1]) c[1].innerHTML = miss ? '–' : esc(value) + (unit ? '<small>' + esc(unit) + '</small>' : '');\n    if (c[2]) c[2].textContent = miss ? (note || 'no data') : (note || '');\n    if (c[2]) c[2].title = miss ? '' : (note || '');\n    overall = worst(overall, st);\n  }\n  var BADGE = { ok: 'Healthy', warn: 'Attention', bad: 'Action needed', na: 'No data' };\n  function verdict(html, status) {\n    var st = status || overall;\n    if (root) root.setAttribute('data-s', st);\n    var b = el(ROOT_ID + '-badge'); if (b) b.lastChild.textContent = BADGE[st];\n    var v = el(ROOT_ID + '-verdict'); if (v) v.innerHTML = html;\n    fit();\n  }\n\n  var issues = [], sev = 'ok';\n  function issue(st, text) { issues.push({ st: st, text: text }); sev = worst(sev, st) }\n  /* REP and DES come per agent deployment, TEL per namespace. Judge each deployment on its own and each\n     namespace against its own exporters, and keep the worst, so a surplus in one cannot hide a shortfall in another. */\n  function byWorkload(ref) { var r = rows(ref), o = {}; for (var i = 0; i < r.length; i++) o[(r[i].l.namespace || '') + '/' + (r[i].l.deployment || '')] = r[i].v; return o }\n  var repBy = byWorkload('REP'), desBy = byWorkload('DES'), telBy = byLabel('TEL', 'namespace');\n  var wlList = Object.keys(desBy); for (var rk in repBy) if (!(rk in desBy)) wlList.push(rk);\n  var multi = wlList.length > 1, rep = sum('REP'), des = sum('DES');\n  var down = [], short = [], dark = [], repNs = {};\n  for (var wi = 0; wi < wlList.length; wi++) {\n    var wk = wlList[wi], nr = has(repBy[wk]) ? repBy[wk] : 0, nd = desBy[wk], wns = wk.split('/')[0];\n    if (nr < 1) down.push(wk); else if (has(nd) && nr < nd) short.push(wk);\n    repNs[wns] = (repNs[wns] || 0) + nr;\n  }\n  /* Bursa exports sign_total for every profile from startup, so a ready pod without it reports no agent telemetry */\n  for (var nk in repNs) if (repNs[nk] > 0 && !(telBy[nk] >= repNs[nk])) dark.push(nk);\n  if (!has(rep)) kpi('rep'); else {\n    var rs = down.length ? 'bad' : (short.length ? 'warn' : 'ok');\n    kpi('rep', n0(rep) + (has(des) ? '/' + n0(des) : ''), '', rs, rs === 'ok' ? 'every replica can sign' : (rs === 'bad' ? 'producers cannot sign' : 'reduced redundancy'));\n    if (down.length) issue('bad', '<b>no agent replica is ready</b>' + (multi ? ' in ' + esc(names(down)) : '') + ', so the producers that depend on it cannot sign');\n    if (short.length) issue('warn', multi ? 'agent replicas are short in <b>' + esc(names(short)) + '</b>' : 'only <b>' + n0(rep) + ' of ' + n0(des) + '</b> agent replicas are ready');\n  }\n  var tel = sum('TEL'), telAll = has(tel) && tel > 0 && !dark.length;\n  var sok = one('SOK'), ser = one('SER'), nOk = has(sok) ? Math.round(sok) : undefined, nEr = has(ser) ? Math.round(ser) : 0;\n  kpi('sgn', has(nOk) ? String(nOk) : undefined, 'ok', nEr ? 'bad' : 'ok', !has(nOk) ? 'no agent telemetry' : (nEr ? nEr + ' failed' : (nOk ? 'none failed' : 'no sign in this range')));\n  if (nEr) issue('bad', plural(nEr, 'sign', 'signs') + ' <b>failed</b> inside the agent');\n  var slow = maxRow(rows('AS')), gwBy = byLabel('GW', 'profile'), gw = slow ? gwBy[slow.l.profile] : undefined;\n  kpi('ags', slow ? n0(slow.v * 1000) : undefined, 'ms', slow ? low(slow.v, 0.25, 0.4) : 'na', slow ? (slow.l.profile || '') + ' · mean' : 'no sign in this range');\n  var share = slow && has(gw) && slow.v > 0 ? Math.min(100, Math.round(gw / slow.v * 100)) : undefined;\n  kpi('gw', has(gw) ? n0(gw * 1000) : undefined, 'ms', has(gw) ? low(gw, 0.1, 0.4) : 'na', has(share) ? (share >= 99 ? 'nearly all' : share + '%') + ' of the sign mean' : 'no write in this range');\n  if (slow && slow.v >= 0.25) issue(low(slow.v, 0.25, 0.4), 'a sign for <b>' + esc(slow.l.profile) + '</b> takes ' + ms(slow.v) + ' inside the agent' + (has(share) ? '; the mean slot-guard write is ' + (share >= 99 ? 'nearly all' : share + '%') + ' of that' : ''));\n  if (has(gw) && gw >= 0.1) issue(low(gw, 0.1, 0.4), 'a slot-guard write for <b>' + esc(slow.l.profile) + '</b> takes ' + ms(gw) + ' on average');\n  var eq = one('EQ'), rb = one('RB'), se = one('SE');\n  var nEq = has(eq) ? Math.round(eq) : 0, nRb = has(rb) ? Math.round(rb) : 0, nSe = has(se) ? Math.round(se) : 0, blocked = nEq + nRb + nSe;\n  kpi('grd', has(eq) || has(rb) || has(se) ? String(blocked) : undefined, '', nEq || nSe ? 'bad' : (nRb ? 'warn' : 'ok'), blocked ? nEq + ' equivocation · ' + nRb + ' rollback · ' + nSe + ' store' : 'no refusal, no store error');\n  if (nEq) issue('bad', 'the slot guard refused <b>' + plural(nEq, 'double sign', 'double signs') + '</b> (two producers active on one pool)');\n  if (nSe) issue('bad', plural(nSe, 'slot-guard store call', 'slot-guard store calls') + ' failed (check the slot-guard store)');\n  if (nRb) issue('warn', 'the slot guard refused ' + plural(nRb, 'rollback sign', 'rollback signs'));\n  var exh = rows('EXH').map(function (r) { return r.l.profile });\n  if (exh.length) issue('bad', 'the KES key for <b>' + esc(names(exh)) + '</b> is exhausted and can no longer sign');\n  var fresh = rows('FR').map(function (r) { return r.l.profile });\n  if (fresh.length) issue('warn', 'the slot guard for <b>' + esc(names(fresh)) + '</b> started with no record of earlier signs');\n  var kes = minRow(rows('KES'));\n  kpi('kes', kes ? n0(kes.v) : undefined, 'periods', kes ? high(kes.v, 9, 4) : 'na', kes ? (kes.l.profile || '') + ' · ' + n0(kes.v * 1.5) + ' days' : '');\n  if (kes && kes.v < 9) issue(high(kes.v, 9, 4), 'the key for <b>' + esc(kes.l.profile) + '</b> has ' + plural(Math.round(kes.v), 'KES period', 'KES periods') + ' left');\n  var mem = one('MEM'); if (has(mem) && mem >= 0.8) issue(low(mem, 0.8, 0.95), 'a replica uses <b>' + n0(mem * 100) + '%</b> of its memory limit');\n  var rst = one('RST'); if (has(rst) && Math.round(rst) > 0) issue('warn', 'the agent restarted ' + plural(Math.round(rst), 'time', 'times') + ' in 24 h');\n  if (!issues.length && !has(rep) && !has(sok) && !kes) { verdict('No KES agent metrics in this time range.', 'na') }\n  else if (!issues.length && !telAll) {\n    verdict((has(tel) && tel > 0 ? (multi ? 'Not every ready replica in ' + esc(names(dark)) + ' reports agent metrics' : 'Only ' + n0(tel) + (has(rep) ? ' of ' + n0(rep) : '') + ' ready replicas report agent metrics') : 'No agent metrics came back' + (has(rep) ? ' for the ' + plural(Math.round(rep), 'ready replica', 'ready replicas') : '')) + ', so signing and the slot guard cannot be judged.', 'na');\n  }\n  else if (!issues.length) {\n    verdict((has(rep) ? (rep === 2 ? 'Both replicas are ready' : plural(Math.round(rep), 'replica is', 'replicas are') + ' ready') : 'The agent is answering') +\n      (nOk ? '; ' + plural(nOk, 'sign', 'signs') + ', none failed or refused' : '; no sign was requested in this range') +\n      (slow ? '; a sign takes ' + ms(slow.v) + ' inside the agent' + (has(share) ? '; the mean slot-guard write is ' + (share >= 99 ? 'nearly all' : share + '%') + ' of that' : '') : '') + '.', 'ok');\n  } else {\n    issues.sort(function (x, y) { return RANK[y.st] - RANK[x.st] });\n    var txt = issues.slice(0, 3).map(function (x) { return x.text }).join('; ');\n    if (issues.length > 3) txt += '; and ' + (issues.length - 3) + ' more';\n    if (txt.charAt(0) !== '<') txt = txt.charAt(0).toUpperCase() + txt.slice(1);\n    verdict(txt + '.' + (has(rep) && rep >= 1 ? ' ' + n0(rep) + (has(des) ? ' of ' + n0(des) : '') + ' replicas ready' + (has(nOk) ? ', ' + plural(nOk, 'sign', 'signs') + ' served.' : '.') : ''), sev);\n  }\n\n  } catch (e) {\n    var v = document.getElementById(ROOT_ID + '-verdict');\n    if (v) v.textContent = 'Header script error: ' + (e && e.message ? e.message : e);\n  }\n})();\n",
+        "externalStyles": [],
+        "styles": ".hx{--ok:#3ecf73;--warn:#f5b12e;--bad:#f2605a;--na:rgba(140,148,160,.9);--info:#5b9cf5;--line:rgba(128,136,150,.22);--tint:rgba(128,136,150,.07);box-sizing:border-box;width:100%;min-height:100%;display:flex;flex-direction:column;gap:8px;padding:10px 16px 10px 18px;border:1px solid var(--line);border-left:4px solid var(--na);border-radius:8px;background:linear-gradient(135deg,var(--tint),rgba(128,136,150,0) 70%);font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:inherit;line-height:1.25}.hx *{box-sizing:border-box}body.theme-light .hx,.hx.hx-light{--ok:#15803d;--warn:#b45309;--bad:#c2261d;--na:rgba(90,98,110,.9);--info:#1d5fd0;--line:rgba(60,70,90,.2);--tint:rgba(60,70,90,.05)}.hx[data-s=ok]{border-left-color:var(--ok)}.hx[data-s=warn]{border-left-color:var(--warn)}.hx[data-s=bad]{border-left-color:var(--bad)}.hx-top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:6px 18px}.hx-id{min-width:0;flex:1 1 320px}.hx-eye{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;opacity:.55}.hx-title{font-size:22px;font-weight:650;letter-spacing:-.01em;margin-top:1px}.hx-sub{font-size:12px;opacity:.68;margin-top:2px;max-width:92ch}.hx-badge{flex:0 0 auto;display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);font-size:11px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;color:var(--na);white-space:nowrap}.hx-badge i{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}.hx[data-s=ok] .hx-badge{color:var(--ok)}.hx[data-s=warn] .hx-badge{color:var(--warn)}.hx[data-s=bad] .hx-badge{color:var(--bad)}.hx-verdict{font-size:14px;font-weight:500;padding:6px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow-wrap:anywhere}.hx-verdict b{font-weight:650}.hx-kpis{flex:1 1 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px}.hx-k{min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:7px 10px 8px;border-radius:6px;background:var(--tint);border-top:2px solid var(--na)}.hx-kl{font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;opacity:.62;overflow-wrap:anywhere}.hx-kv{font-size:24px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--na)}.hx-kv small{font-size:12px;font-weight:500;letter-spacing:0;margin-left:3px;opacity:.8}.hx-kn{font-size:11px;line-height:1.3;opacity:.66;overflow-wrap:anywhere;min-height:14px}.hx-k[data-s=ok]{border-top-color:var(--ok)}.hx-k[data-s=ok] .hx-kv{color:var(--ok)}.hx-k[data-s=warn]{border-top-color:var(--warn)}.hx-k[data-s=warn] .hx-kv{color:var(--warn)}.hx-k[data-s=bad]{border-top-color:var(--bad)}.hx-k[data-s=bad] .hx-kv{color:var(--bad)}.hx-fit1>.hx-top .hx-sub{display:none}.hx-fit2>.hx-top .hx-eye{display:none}.hx-fit2 .hx-kv{font-size:19px}.hx-fit2 .hx-k{padding:4px 9px 5px}.hx-fit2>.hx-verdict{font-size:13px;padding:4px 0}.hx-fit2 .hx-title{font-size:19px}.hx.hx-plain{border:0;border-left:0;background:none;padding:2px 4px;gap:6px;min-height:0}.hx-lg{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:11px;opacity:.8;align-items:center}.hx-lg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}.hx-rows{display:flex;flex-direction:column}.hx-r{display:grid;grid-template-columns:minmax(120px,200px) minmax(120px,1fr) minmax(150px,230px);gap:2px 12px;align-items:center;padding:5px 0;border-top:1px solid var(--line)}.hx-rn{min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 7px}.hx-rn b{font-size:13px;font-weight:650}.hx-rn span{font-size:11px;opacity:.62}.hx-bar{position:relative;height:20px;border-radius:4px;background:var(--tint);overflow:hidden;display:flex}.hx-bar u{display:block;height:100%;min-width:2px;text-decoration:none}.hx-bar s{position:absolute;top:0;bottom:0;width:1px;background:var(--line);text-decoration:none}.hx-bar em{position:absolute;top:-2px;bottom:-2px;width:2px;background:currentColor;border-radius:1px}.hx-ax{position:relative;height:13px;font-size:10px;opacity:.55}.hx-ax span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.hx-ax span:first-child{transform:none}.hx-ax span:last-child{transform:translateX(-100%)}.hx-rv{min-width:0;font-size:12px;font-variant-numeric:tabular-nums}.hx-rv b{font-size:15px;font-weight:650;color:var(--na)}.hx-rv[data-s=ok] b{color:var(--ok)}.hx-rv[data-s=warn] b{color:var(--warn)}.hx-rv[data-s=bad] b{color:var(--bad)}.hx-seg{grid-column:2 / 4;font-size:11px;opacity:.75;display:flex;flex-wrap:wrap;gap:1px 12px}.hx-seg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px}.hx-fit1 .hx-seg{display:none}.hx-fit2 .hx-r{padding:2px 0}.hx-fit2 .hx-bar{height:13px}.hx-fit2 .hx-rv b{font-size:13px}.hx-fit2 .hx-lg{display:none}.hx-rings{display:flex;flex-wrap:wrap;justify-content:space-around;align-content:space-around;gap:6px 10px;flex:1 1 auto}.hx-ring{flex:1 1 118px;max-width:230px;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center}.hx-ring svg{width:100%;max-width:132px;height:auto;display:block}.hx-ring .trk{fill:none;stroke:var(--line);stroke-width:9}.hx-ring .arc{fill:none;stroke:var(--na);stroke-width:9;stroke-linecap:round}.hx-ring .tk{stroke:currentColor;stroke-width:1.5;opacity:.55}.hx-ring[data-s=ok] .arc{stroke:var(--ok)}.hx-ring[data-s=warn] .arc{stroke:var(--warn)}.hx-ring[data-s=bad] .arc{stroke:var(--bad)}.hx-ring .v{font-size:19px;font-weight:650;fill:currentColor;font-variant-numeric:tabular-nums}.hx-ring .u{font-size:9.5px;fill:currentColor;opacity:.62}.hx-ring b{font-size:13px;font-weight:650;overflow-wrap:anywhere}.hx-ring span{font-size:11px;opacity:.66;overflow-wrap:anywhere}.hx-fit1 .hx-ring{flex-basis:100px}.hx-fit1 .hx-ring svg{max-width:100px}.hx-fit1 .hx-ring span.x{display:none}.hx-fit2 .hx-ring{flex-basis:84px}.hx-fit2 .hx-ring svg{max-width:84px}.hx-fit2 .hx-ring span{display:none}.hx-fit2 .hx-ring b{font-size:11px}.hx-none{padding:18px 4px;font-size:13px;opacity:.7}@media (max-width:620px){.hx-r{grid-template-columns:1fr}.hx-seg{grid-column:1}.hx-title{font-size:19px}.hx-kv{font-size:20px}}"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Signing timing: where does a sign's time go, against the 500 ms timeout?",
+      "id": 60,
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 61,
+      "title": "Signing Timing: Producer Round Trip, Agent Sign, Guard Write",
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#f59e0b",
+                "value": 0.25
+              },
+              {
+                "color": "#ef4444",
+                "value": 0.4
+              }
+            ]
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*round trip.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#E88C30",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*agent sign.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#94a3b8",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*guard write.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#B877D9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (alias) (increase(dingo_kes_agent_sign_latency_seconds_sum[15m])) / (sum by (alias) (increase(dingo_kes_agent_sign_latency_seconds_count[15m])) > 0)",
+          "legendFormat": "{{alias}} producer round trip"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "refId": "B",
+          "range": true,
+          "expr": "sum by (profile) (increase(bursa_kesagent_sign_duration_seconds_sum{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) / (sum by (profile) (increase(bursa_kesagent_sign_duration_seconds_count{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) > 0)",
+          "legendFormat": "{{profile}} agent sign"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "refId": "C",
+          "range": true,
+          "expr": "sum by (profile) (increase(bursa_kesagent_slot_guard_write_duration_seconds_sum{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) / (sum by (profile) (increase(bursa_kesagent_slot_guard_write_duration_seconds_count{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) > 0)",
+          "legendFormat": "{{profile}} guard write"
+        }
+      ],
+      "transparent": true,
+      "description": "Time spent signing each block header, as the mean per sign over 15m windows, so one point is one sign (or the average of the signs in that window). The histogram buckets (0.1 / 0.25 / 0.5 s) are too coarse for quantiles at a few signs an hour. Producer round trip (orange): the producer's view, from sending the sign request to holding the signature, per producer alias. Agent sign (grey): KES signing inside the agent, per profile. Guard write (purple): the mean of every write the agent makes to a shared slot-guard store, per profile, including writes for refused headers, failed signs, key installs and evolutions; empty with a guard file. Agent sign already includes its guard write. Round trip minus agent sign is time outside the agent's measurement (network, TLS and the producer's client), and only approximately, since the two means cover different requests. Producer series ignore the Namespace, Profile and Replica variables: the producer metric carries no label linking it to an agent, so it covers every producer in the datasource. The shaded bands are the budget: amber from 250 ms, half the producer's 500 ms sign timeout, red from 400 ms, close enough to it that an ordinary slow moment loses a block (Dingo's KES agent client gives up on a sign after 500 ms by default, set by `CARDANO_SHELLEY_KES_AGENT_SIGN_TIMEOUT`, which Dingo allows under 1 s, and the block is then not forged). **Healthy: every point below the amber band.**"
+    },
+    {
+      "type": "gauge",
+      "id": 64,
+      "title": "Sign Budget: Mean Time Against the 500 ms Timeout",
+      "description": "Three dials for the mean time of a sign over the dashboard range, each drawn against the producer's 500 ms sign timeout (set by `CARDANO_SHELLEY_KES_AGENT_SIGN_TIMEOUT`, which Dingo allows under 1 s). **Producer round trip**: what the producer waits, request sent to signature held, for every producer in the datasource: the producer metric carries no label linking it to an agent, so this dial ignores the Namespace, Profile and Replica variables and is not comparable to a filtered agent dial. **Agent sign**: the whole sign inside the agent, including its guard write. **Guard write**: the mean of every write to a shared slot-guard store, including writes for refused headers, failed signs, key installs and evolutions. The dials average different sets of requests, so they do not nest exactly: the gap between the first and second dial is only an estimate of the time outside the agent (network, TLS and the producer's client). **Healthy: all three green, under 250 ms.** Amber from 250 ms, red from 400 ms: that close to the timeout an ordinary slow moment loses a block. If the guard-write dial is nearly as high as the agent-sign dial, the database is the whole cost. Empty when no sign was requested in the range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "1000 * (sum(increase(dingo_kes_agent_sign_latency_seconds_sum[$__range])) / (sum(increase(dingo_kes_agent_sign_latency_seconds_count[$__range])) > 0))",
+          "legendFormat": "Producer round trip (all producers)",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "1000 * (sum(increase(bursa_kesagent_sign_duration_seconds_sum{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) / (sum(increase(bursa_kesagent_sign_duration_seconds_count{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) > 0))",
+          "legendFormat": "Agent sign",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "1000 * (sum(increase(bursa_kesagent_slot_guard_write_duration_seconds_sum{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) / (sum(increase(bursa_kesagent_slot_guard_write_duration_seconds_count{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range])) > 0))",
+          "legendFormat": "Guard write",
+          "refId": "C",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#22c55e",
+                "value": null
+              },
+              {
+                "color": "#f59e0b",
+                "value": 250
+              },
+              {
+                "color": "#ef4444",
+                "value": 400
+              }
+            ]
+          },
+          "mappings": [],
+          "max": 500
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75,
+        "shape": "gauge",
+        "segmentCount": 20,
+        "segmentSpacing": 0.3,
+        "barWidthFactor": 0.5,
+        "barShape": "flat",
+        "sparkline": false,
+        "textMode": "value_and_name",
+        "endpointMarker": "none",
+        "effects": {
+          "gradient": true,
+          "barGlow": false,
+          "centerGlow": false
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 63,
+      "title": "Sign and Guard Write by Replica",
+      "description": "The same two agent-side timings as the panel above, split by replica instead of by profile: the mean per sign over 15-minute windows of the whole sign (`bursa_kesagent_sign_duration_seconds`) and of every shared slot-guard store write (`bursa_kesagent_slot_guard_write_duration_seconds`), which includes writes outside the signs shown. A replica whose guard write is consistently higher is the one with the slower guard store. **Healthy: replicas close together and below the amber band** (amber from 250 ms, red from 400 ms, close to the 500 ms sign timeout). Points, because signs are sparse.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#f59e0b",
+                "value": 0.25
+              },
+              {
+                "color": "#ef4444",
+                "value": 0.4
+              }
+            ]
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*guard write.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#B877D9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (pod) (increase(bursa_kesagent_sign_duration_seconds_sum{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) / (sum by (pod) (increase(bursa_kesagent_sign_duration_seconds_count{result=\"ok\",namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) > 0)",
+          "legendFormat": "{{pod}} agent sign"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "refId": "B",
+          "range": true,
+          "expr": "sum by (pod) (increase(bursa_kesagent_slot_guard_write_duration_seconds_sum{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) / (sum by (pod) (increase(bursa_kesagent_slot_guard_write_duration_seconds_count{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[15m])) > 0)",
+          "legendFormat": "{{pod}} guard write"
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "id": 34,
+      "title": "Signs by Replica",
+      "description": "Which replica served the signs over the dashboard range. With PreferClose routing a producer uses the replica in its own zone while it is ready, so the split follows which producers had leader slots; a replica name that is no longer running is a pod that was replaced inside the range. **Healthy: signs on whichever replica is closest to each producer, none lost in a failover.** A replica that never appears although its zone's producer forged is not reachable from it. Empty when no sign was requested in the range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 17
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (pod) (increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"ok\"}[$__range])) > 0",
+          "legendFormat": "{{pod}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "sort": "desc",
+        "displayLabels": [
+          "percent"
+        ],
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ],
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "piechart",
+      "id": 33,
+      "title": "Signs by Profile and Result",
+      "description": "Signs over the dashboard range by profile (one profile per pool), with every failed sign in one red slice. Each block a pool forges is one header sign, so this is also each pool's share of the blocks signed through the agent. **Healthy: no red slice.** The total should match Agent signs on Forging Health. Empty when no sign was requested in the range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 17
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile) (increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"ok\"}[$__range])) > 0",
+          "legendFormat": "{{profile}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"error\"}[$__range])) > 0",
+          "legendFormat": "failed",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#ef4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "pieType": "donut",
+        "sort": "desc",
+        "displayLabels": [
+          "percent"
+        ],
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ],
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Slot guard: refusals and key evolutions",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "panels": [],
+      "id": 55
+    },
+    {
+      "type": "timeseries",
+      "title": "Slot-Guard Refusals and Store Errors",
+      "description": "Per hour, by profile: headers the slot guard refused, by reason - equivocation (a second body for an already signed slot) or rollback (an older slot or period) - and guard store calls that timed out or failed. **Healthy: every line at zero.** No line at all means no scrape in that hour, which says nothing about the guard. Equivocation means two active producers on one pool; rollback a producer on a stale fork; a store error fails the sign without being a refusal, so check the slot-guard store.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisSoftMax": 1
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* equivocation$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#ef4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* rollback$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#f59e0b",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* store error$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#b91c1c",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "showLegend": true,
+          "sortBy": "Max",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile, reason) (increase(bursa_kesagent_slot_guard_refusals_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[1h]))",
+          "legendFormat": "{{profile}} {{reason}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile) (increase(bursa_kesagent_slot_guard_store_errors_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[1h]))",
+          "legendFormat": "{{profile}} store error",
+          "refId": "B"
+        }
+      ],
+      "transparent": true,
+      "interval": "1h",
+      "id": 29
+    },
+    {
+      "type": "timeseries",
+      "title": "Key Evolutions and Keys Served",
+      "description": "KES key forward-evolutions per hour, and KES keys pushed to producers (serve-key mode). **Expected: one evolution per KES period (1.5 days) per profile on each replica**; none for longer than that means the key is not advancing and signs will fail on period errors. With every producer in sign mode, **zero keys served is expected**; anything else means a profile is handing out key material.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "axisSoftMax": 1
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "showLegend": true,
+          "sortBy": "Max",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile) (increase(bursa_kesagent_evolutions_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[1h]))",
+          "legendFormat": "{{profile}} evolution",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum by (profile) (increase(bursa_kesagent_served_keys_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[1h]))",
+          "legendFormat": "{{profile}} key served",
+          "refId": "B"
+        }
+      ],
+      "transparent": true,
+      "interval": "1h",
+      "id": 35
+    },
+    {
+      "type": "row",
+      "title": "Profiles and keys",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": [],
+      "id": 19
+    },
+    {
+      "type": "table",
+      "title": "Profiles by replica",
+      "description": "One line per namespace, profile and replica: current and last signable KES period, periods left, opcert issue number, exhausted and guard-fresh flags, time since the last sign, and signs, errors, refusals and store errors over the dashboard range. **Healthy: all replicas of a profile agree on every key column**; a mismatch means one replica did not pick up a rotation. Only replicas reporting metrics at the end of the selected range are listed: a pod replaced inside the time range drops out, and its signs stay in the header total and in Signs by Replica.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Periods left"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#ef4444",
+                      "value": null
+                    },
+                    {
+                      "color": "#f59e0b",
+                      "value": 4
+                    },
+                    {
+                      "color": "#22c55e",
+                      "value": 9
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Exhausted"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "no",
+                        "color": "#22c55e"
+                      },
+                      "1": {
+                        "text": "YES",
+                        "color": "#ef4444"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Guard fresh"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "no",
+                        "color": "#22c55e"
+                      },
+                      "1": {
+                        "text": "yes",
+                        "color": "#f59e0b"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last sign"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Signs OK"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sign errors"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22c55e",
+                      "value": null
+                    },
+                    {
+                      "color": "#ef4444",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Refusals"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22c55e",
+                      "value": null
+                    },
+                    {
+                      "color": "#ef4444",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Store errors"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "#22c55e",
+                      "value": null
+                    },
+                    {
+                      "color": "#ef4444",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Profile",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) (bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) (bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "legendFormat": "",
+          "refId": "B",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} + 1)",
+          "legendFormat": "",
+          "refId": "C",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) (bursa_kesagent_opcert_issue_number{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "legendFormat": "",
+          "refId": "D",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) (bursa_kesagent_exhausted{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "legendFormat": "",
+          "refId": "E",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) (bursa_kesagent_guard_fresh{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "legendFormat": "",
+          "refId": "F",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (namespace, profile, pod) (time() - (bursa_kesagent_last_sign_timestamp_seconds{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0))",
+          "legendFormat": "",
+          "refId": "G",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "(sum by (namespace, profile, pod) (increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"ok\"}[$__range]))) and on (namespace, profile, pod) bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}",
+          "legendFormat": "",
+          "refId": "H",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "(sum by (namespace, profile, pod) (increase(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\",result=\"error\"}[$__range]))) and on (namespace, profile, pod) bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}",
+          "legendFormat": "",
+          "refId": "I",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "(sum by (namespace, profile, pod) (increase(bursa_kesagent_slot_guard_refusals_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range]))) and on (namespace, profile, pod) bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}",
+          "legendFormat": "",
+          "refId": "J",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "(sum by (namespace, profile, pod) (increase(bursa_kesagent_slot_guard_store_errors_total{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}[$__range]))) and on (namespace, profile, pod) bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"}",
+          "legendFormat": "",
+          "refId": "K",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "namespace": 0,
+              "profile": 1,
+              "pod": 2,
+              "Value #A": 3,
+              "Value #B": 4,
+              "Value #C": 5,
+              "Value #D": 6,
+              "Value #E": 7,
+              "Value #F": 8,
+              "Value #G": 9,
+              "Value #H": 10,
+              "Value #I": 11,
+              "Value #J": 12,
+              "Value #K": 13
+            },
+            "renameByName": {
+              "namespace": "Namespace",
+              "profile": "Profile",
+              "pod": "Replica",
+              "Value #A": "KES period",
+              "Value #B": "Last period",
+              "Value #C": "Periods left",
+              "Value #D": "Opcert issue",
+              "Value #E": "Exhausted",
+              "Value #F": "Guard fresh",
+              "Value #G": "Last sign",
+              "Value #H": "Signs OK",
+              "Value #I": "Sign errors",
+              "Value #J": "Refusals",
+              "Value #K": "Store errors"
+            }
+          }
+        }
+      ],
+      "transparent": true,
+      "id": 20
+    },
+    {
+      "type": "gauge",
+      "id": 67,
+      "title": "KES Key Fuel: Periods Left per Profile",
+      "description": "A fuel gauge per profile: KES periods left on the key the agent holds (last signable period minus the current period, plus one for the current period, the lowest across replicas), on a dial that is full at 62 periods, a fresh key. One period is 1.5 days. **Healthy: green, more than 8 periods.** Amber at 8 or fewer, where dingo-operator should be rotating the key; red under 4 (6 days), where the pool stops forging soon unless a new key is installed. The rotation itself is on **Operator**.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "min by (profile) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} + 1)",
+          "legendFormat": "{{profile}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#ef4444",
+                "value": null
+              },
+              {
+                "color": "#f59e0b",
+                "value": 4
+              },
+              {
+                "color": "#22c55e",
+                "value": 9
+              }
+            ]
+          },
+          "mappings": [],
+          "max": 62
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75,
+        "shape": "gauge",
+        "segmentCount": 31,
+        "segmentSpacing": 0.3,
+        "barWidthFactor": 0.5,
+        "barShape": "flat",
+        "sparkline": false,
+        "textMode": "value_and_name",
+        "endpointMarker": "none",
+        "effects": {
+          "gradient": true,
+          "barGlow": false,
+          "centerGlow": false
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Replicas",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "panels": [],
+      "id": 38
+    },
+    {
+      "type": "state-timeline",
+      "title": "Replica Readiness",
+      "description": "Readiness of each agent pod over time. **Healthy: solid green on both.** A red stretch on one replica is covered by the other; overlapping red stretches are a signing outage.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Ready",
+                  "color": "#22c55e"
+                },
+                "0": {
+                  "text": "Not ready",
+                  "color": "#ef4444"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#6b7280",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "rowHeight": 0.8,
+        "alignValue": "left",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "max by (pod) (kube_pod_status_ready{namespace=~\"$namespace\",condition=\"true\"} * on (namespace, pod) group_left() max by (namespace, pod) (label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\"}, \"replicaset\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, replicaset) group_left() max by (namespace, replicaset) (label_replace(kube_replicaset_owner{namespace=~\"$namespace\",owner_kind=\"Deployment\"}, \"deployment\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{namespace=~\"$namespace\",configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\")))))",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "transparent": true,
+      "id": 54
+    },
+    {
+      "type": "timeseries",
+      "id": 41,
+      "title": "Memory: Share of the Container Limit",
+      "description": "Working-set memory of each replica as a share of its container memory limit. **Healthy: flat and below the amber band**. The amber band starts at 80% and the red at 95%: a replica that climbs into them will be OOM-killed and restart, which shows up as a red stretch in Replica Readiness.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "transparent": true,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "refId": "A",
+          "range": true,
+          "expr": "max by (pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"bursa\"} / on (namespace, pod, container) kube_pod_container_resource_limits{namespace=~\"$namespace\",resource=\"memory\"} * on (namespace, pod) group_left() max by (namespace, pod) (label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\"}, \"replicaset\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, replicaset) group_left() max by (namespace, replicaset) (label_replace(kube_replicaset_owner{namespace=~\"$namespace\",owner_kind=\"Deployment\"}, \"deployment\", \"$1\", \"owner_name\", \"(.+)\") * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{namespace=~\"$namespace\",configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\")))))",
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed+area"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#f59e0b",
+                "value": 0.8
+              },
+              {
+                "color": "#ef4444",
+                "value": 0.95
+              }
+            ]
+          },
+          "min": 0,
+          "max": 1,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "bursa",
+    "kes-agent",
+    "cardano",
+    "dingo"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "selected": true,
+          "text": "default",
+          "value": "default"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "refresh": 1,
+        "label": "Data Source"
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "label": "Namespace",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "query": {
+          "qryType": 3,
+          "query": "query_result(count by (namespace) (kube_deployment_spec_replicas * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\"))))",
+          "refId": "namespace"
+        },
+        "definition": "query_result(count by (namespace) (kube_deployment_spec_replicas * on (namespace, deployment) group_left() max by (namespace, deployment) (label_replace(kube_configmap_info{configmap=~\".+-kes-agent\"}, \"deployment\", \"$1\", \"configmap\", \"(.+)-kes-agent\"))))",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {},
+        "hide": 0,
+        "sort": 1,
+        "regex": "/namespace=\"([^\"]+)\"/"
+      },
+      {
+        "name": "profile",
+        "label": "Profile",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(bursa_kesagent_sign_total{namespace=~\"$namespace\"}, profile)",
+          "refId": "profile"
+        },
+        "definition": "label_values(bursa_kesagent_sign_total{namespace=~\"$namespace\"}, profile)",
+        "current": {},
+        "refresh": 2,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "sort": 1
+      },
+      {
+        "name": "pod",
+        "label": "Replica",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "$datasource"
+        },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\"}, pod)",
+          "refId": "pod"
+        },
+        "definition": "label_values(bursa_kesagent_sign_total{namespace=~\"$namespace\",profile=~\"$profile\"}, pod)",
+        "current": {},
+        "refresh": 2,
+        "hide": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "sort": 1
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Bursa — KES Agent",
+  "uid": "bursa-kes-agent",
+  "version": 1
+}

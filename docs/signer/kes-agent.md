@@ -519,7 +519,8 @@ listener:
   or while any profile has an installed key in the shared key store that the
   replica could not read or load on its latest poll. A profile with no
   installed key does not make it unready.
-- `GET /metrics` - Prometheus metrics.
+- `GET /metrics` - Prometheus metrics. A Grafana dashboard for them is in
+  [docs/dashboards](../dashboards/README.md).
 
 The configured address must be a loopback host without a port; it defaults to
 `127.0.0.1` so a local collector can scrape it without exposing KES activity
