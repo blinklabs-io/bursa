@@ -48,6 +48,8 @@ on the signing panels adjusted to match.
 
 ## Navigation
 
-The dashboard links to the Dingo operator dashboards (`dingonodes`,
-`dingo-forging`, `dingo-operator`) from the `dingo-operator` repository, which
-show the producers this agent signs for.
+The dashboard is tagged `dingo` and has a **Dingo** menu in the top bar that
+lists every loaded dashboard with that tag, such as the Dingo operator
+dashboards (`dingonodes`, `dingo-forging`, `dingo-operator`) from the
+`dingo-operator` repository, which show the producers this agent signs for.
+The menu keeps the time range and the `$datasource` selection.

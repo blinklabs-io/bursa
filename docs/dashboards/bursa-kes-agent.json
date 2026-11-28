@@ -8,36 +8,16 @@
   "graphTooltip": 2,
   "links": [
     {
-      "title": "Dingonodes",
-      "url": "/d/dingonodes",
-      "type": "link",
+      "title": "Dingo",
+      "type": "dashboards",
+      "tags": [
+        "dingo"
+      ],
+      "asDropdown": true,
       "icon": "external link",
       "keepTime": true,
-      "targetBlank": false
-    },
-    {
-      "title": "Forging Health",
-      "url": "/d/dingo-forging",
-      "type": "link",
-      "icon": "external link",
-      "keepTime": true,
-      "targetBlank": false
-    },
-    {
-      "title": "Operator",
-      "url": "/d/dingo-operator",
-      "type": "link",
-      "icon": "external link",
-      "keepTime": true,
-      "targetBlank": false
-    },
-    {
-      "title": "Bursa KES Agent",
-      "url": "/d/bursa-kes-agent",
-      "type": "link",
-      "icon": "external link",
-      "keepTime": true,
-      "targetBlank": false
+      "targetBlank": false,
+      "includeVars": true
     }
   ],
   "liveNow": false,
@@ -1726,7 +1706,8 @@
   "tags": [
     "bursa",
     "kes-agent",
-    "cardano"
+    "cardano",
+    "dingo"
   ],
   "templating": {
     "list": [
