@@ -189,7 +189,7 @@
             "type": "prometheus",
             "uid": "$datasource"
           },
-          "expr": "min by (profile) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "expr": "min by (profile) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} + 1)",
           "legendFormat": "",
           "refId": "KES",
           "instant": true,
@@ -1297,7 +1297,7 @@
             "type": "prometheus",
             "uid": "$datasource"
           },
-          "expr": "max by (namespace, profile, pod) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "expr": "max by (namespace, profile, pod) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} + 1)",
           "legendFormat": "",
           "refId": "C",
           "instant": true,
@@ -1445,7 +1445,7 @@
       "type": "gauge",
       "id": 67,
       "title": "KES Key Fuel: Periods Left per Profile",
-      "description": "A fuel gauge per profile: KES periods left on the key the agent holds (last signable period minus the current period, the lowest across replicas), on a dial that is full at 62 periods, a fresh key. One period is 1.5 days. **Healthy: green, more than 8 periods.** Amber at 8 or fewer, where dingo-operator should be rotating the key; red under 4 (6 days), where the pool stops forging soon unless a new key is installed. The rotation itself is on **Operator**.",
+      "description": "A fuel gauge per profile: KES periods left on the key the agent holds (last signable period minus the current period, plus one for the current period, the lowest across replicas), on a dial that is full at 62 periods, a fresh key. One period is 1.5 days. **Healthy: green, more than 8 periods.** Amber at 8 or fewer, where dingo-operator should be rotating the key; red under 4 (6 days), where the pool stops forging soon unless a new key is installed. The rotation itself is on **Operator**.",
       "datasource": {
         "type": "prometheus",
         "uid": "$datasource"
@@ -1463,7 +1463,7 @@
             "type": "prometheus",
             "uid": "$datasource"
           },
-          "expr": "min by (profile) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"})",
+          "expr": "min by (profile) ((bursa_kesagent_last_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} > 0) - bursa_kesagent_current_period{namespace=~\"$namespace\",profile=~\"$profile\",pod=~\"$pod\"} + 1)",
           "legendFormat": "{{profile}}",
           "refId": "A",
           "instant": true,
